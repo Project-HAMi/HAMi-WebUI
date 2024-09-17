@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Node {
+  rpc GetSummary (GetSummaryReq) returns (DeviceSummaryReply) {
+    option (google.api.http) = {
+      post: "/v1/summary"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "首页统计";
+    };
+  }
+
+  rpc GetAllNodes (GetAllNodesReq) returns (NodesReply) {
+    option (google.api.http) = {
+      post: "/v1/nodes"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "节点列表";
+    };
+  }
+
+  rpc GetNode (GetNodeReq) returns (NodeReply) {
+    option (google.api.http) = {
+      get: "/v1/node"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "节点详情";
+    };
+  }
+}
+
+message GetSummaryReq {
+  message Filters {
+    string type = 1;
+    string node_uid = 2;
+    string device_id = 3;
+  }
+  Filters filters = 1;
+}
+
+message DeviceSummaryReply {
+  int32 vgpu_used = 1;
+  int32 vgpu_total = 2;
+  int32 core_used = 3;
+  int32 core_total = 4;
+  int32 memory_used = 5;
+  int32 memory_total = 6;
+  int32 gpu_count = 7;
+  int32 node_count = 8;
+}
+
+message GetAllNodesReq {
+  message Filters {
+    string ip = 1;
+    string type = 2;
+    string is_schedulable = 3;
+  }
+  Filters filters = 1;
+}
+
+message GetNodeReq {
+  string uid = 1;
+}
+
+message NodeReply {
+  string ip = 1;
+  bool is_schedulable = 2;
+  bool is_ready = 3;
+  repeated string type = 4;
+  int32 vgpu_used = 5;
+  int32 vgpu_total = 6;
+  int32 core_used = 7;
+  int32 core_total = 8;
+  int32 memory_used = 9;
+  int32 memory_total = 10;
+  string uid = 11;
+  string name = 12;
+  int32 card_cnt = 13;
+  string os_image = 14;
+  string operating_system = 15;
+  string kernel_version = 16;
+  string container_runtime_version = 17;
+  string kubelet_version = 18;
+  string kube_proxy_version = 19;
+  string architecture = 20;
+  string creation_timestamp = 21;
+}
+
+message NodesReply {
+  repeated NodeReply list = 1;
+}

@@ -1,0 +1,150 @@
+# Default values for hami-webui.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  frontend:
+    repository: projecthami/hami-webui-fe-oss
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: "v1.0.0"
+  backend:
+    repository: projecthami/hami-webui-be-oss
+    pullPolicy: IfNotPresent
+    tag: "v1.0.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+# fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+# runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+  # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources:
+  frontend:
+    limits:
+      cpu: 200m
+      memory: 500Mi
+    requests:
+      cpu: 200m
+      memory: 500Mi
+  backend:
+    limits:
+      cpu: 50m
+      memory: 250Mi
+    requests:
+      cpu: 50m
+      memory: 250Mi
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  honorLabels: false
+  additionalLabels:
+    jobRelease: hami-webui-prometheus
+  relabelings: []
+
+hamiServiceMonitor:
+  enabled: true
+  interval: 15s
+  honorLabels: false
+  additionalLabels:
+    jobRelease: hami-webui-prometheus
+  svcNamespace: kube-system
+  relabelings: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+dcgm-exporter:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    honorLabels: false
+    additionalLabels:
+      jobRelease: hami-webui-prometheus
+  nodeSelector:
+    gpu: "on"
+
+kube-prometheus-stack:
+  enabled: true
+  crds:
+    enabled: false
+  defaultRules:
+    create: false
+  alertmanager:
+    enabled: false
+  grafana:
+    enabled: false
+  kubernetesServiceMonitors:
+    enabled: false
+  nodeExporter:
+    enabled: false
+  prometheusOperator:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      serviceMonitorSelector:
+        matchLabels:
+          jobRelease: hami-webui-prometheus
+
+externalPrometheus:
+  enabled: false
+  # If externalPrometheus.enabled is true, this address will be used
+  address: "http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"

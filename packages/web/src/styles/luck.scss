@@ -1,0 +1,21 @@
+@import './variables.scss';
+
+.form-control-md {
+  height: $md-height !important;
+}
+
+.btn-md {
+  height: $md-height !important;
+}
+
+.w-20 {
+  width: 20rem !important;
+}
+
+.avatar-list-stacked .avatar.avatar-mr-3 {
+  margin-right: calc(-0.3 * var(--tblr-avatar-size)) !important;
+}
+
+.tag-btn-close {
+  position: relative !important;
+}

@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Container {
+  rpc GetAllContainers (GetAllContainersReq) returns (ContainersReply) {
+    option (google.api.http) = {
+      post: "/v1/containers"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "任务列表";
+    };
+  }
+  rpc GetContainer (GetContainerReq) returns (ContainerReply) {
+    option (google.api.http) = {
+      get: "/v1/container"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "任务详情";
+    };
+  }
+}
+
+message GetAllContainersReq {
+  message Filters {
+    string name = 1;
+    string node_name = 2;
+    string status = 3;
+    string device_id = 4;
+    string node_uid = 5;
+    string resource_group = 6;
+    string priority = 7;
+  }
+  message PageSize {
+    int32 pageSize = 1;
+    int32 pageNo = 2;
+    string sort = 3;
+    string sortField = 4;
+  }
+  Filters filters = 1;
+  PageSize pageSize = 2;
+}
+
+message ContainerReply {
+  string name = 1;
+  string status = 2;
+  string app_name = 3;
+  string node_name = 4;
+  int32 allocated_devices = 5;
+  int32 allocated_cores = 6;
+  int32 allocated_mem = 7;
+  string type = 8;
+  string create_time = 9;
+  string start_time = 10;
+  string end_time = 11;
+  string pod_uid = 12;
+  string node_uid = 13;
+  string resource_pool = 14;
+  string flavor = 15;
+  string priority = 16;
+  string namespace = 17;
+  repeated string device_ids = 18;
+}
+
+message ContainersReply {
+  repeated ContainerReply items = 1;
+}
+
+message GetContainerReq {
+  string name = 1;
+  string pod_uid = 2;
+  string device_id = 3;
+}

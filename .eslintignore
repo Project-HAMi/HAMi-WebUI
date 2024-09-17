@@ -1,0 +1,7 @@
+public
+dist
+
+packages/web/build/*.js
+packages/web/src/assets
+packages/web/public
+packages/web/dist

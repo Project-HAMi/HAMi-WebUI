@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package api.v1;
+import "errors/errors.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+enum TaskErrorReason {
+  option (errors.default_code) = 500;
+
+  NOT_FOUND_ERROR = 0 [(errors.code) = 521];
+  TRANSFORM_ERROR = 1 [(errors.code) = 522];
+  VGPU_DOMAIN_ERROR = 2 [(errors.code) = 523];
+  VGPU_STATUS_VALIDATE_ERROR = 3 [(errors.code) = 524];
+  PARAMS_VALIDATOR_ERROR = 4 [(errors.code) = 525];
+}

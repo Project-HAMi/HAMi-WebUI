@@ -1,0 +1,32 @@
+syntax = "proto3";
+package kratos.api;
+
+option go_package = "vgpu/internal/conf;conf";
+
+import "google/protobuf/duration.proto";
+
+message Bootstrap {
+  Server server = 1;
+  Prometheus prometheus = 2;
+}
+
+message Server {
+  message HTTP {
+    string network = 1;
+    string addr = 2;
+    google.protobuf.Duration timeout = 3;
+  }
+  message GRPC {
+    string network = 1;
+    string addr = 2;
+    google.protobuf.Duration timeout = 3;
+  }
+  HTTP http = 1;
+  GRPC grpc = 2;
+}
+
+message Prometheus {
+  string address = 1;
+  string timeout = 2;
+  string auth = 3;
+}

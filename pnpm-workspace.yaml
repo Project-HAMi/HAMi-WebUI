@@ -1,0 +1,21 @@
+# pnpm-workspace.yaml
+
+# 定义工作区的根目录
+root: .
+
+# 定义工作区的包含的子项目或包的路径
+packages:
+  - packages/*
+
+# 定义工作区的特殊配置选项
+packagesOptions:
+  # 定义子项目或包的特殊配置
+  - package: packages/web
+    # 定义子项目或包的依赖是否共享
+    shared: true
+    # 定义子项目或包的依赖是否安装在根目录的 node_modules 中
+    hoist: true
+    # 定义子项目或包的依赖是否安装在子项目或包的 node_modules 中
+    independentLeaves: true
+    # 定义子项目或包的依赖是否使用符号链接
+    symlink: false

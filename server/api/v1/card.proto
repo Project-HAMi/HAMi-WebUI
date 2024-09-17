@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Card {
+  rpc GetAllGPUs (GetAllGpusReq) returns (GPUsReply) {
+    option (google.api.http) = {
+      post: "/v1/gpus"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "显卡列表";
+    };
+  }
+
+  rpc GetAllGPUTypes (GetAllGpusReq) returns (GPUsReply) {
+    option (google.api.http) = {
+      post: "/v1/gpu-types"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "显卡类型";
+    };
+  }
+
+  rpc GetGPU (GetGpuReq) returns (GPUReply) {
+    option (google.api.http) = {
+      get: "/v1/gpu"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "显卡详情";
+    };
+  }
+}
+
+message GetGpuReq {
+  string uid = 1;
+}
+
+message GetAllGpusReq {
+  message Filters {
+    string uid = 1;
+    string type = 2;
+    string node_name = 3;
+    string provider = 4;
+  }
+  Filters filters = 1;
+}
+
+message GPUReply {
+  string uuid = 1;
+  string node_name = 2;
+  string type = 3;
+  int32 vgpu_used = 4;
+  int32 vgpu_total = 5;
+  int32 core_used = 6;
+  int32 core_total = 7;
+  int32 memory_used = 8;
+  int32 memory_total = 9;
+  string node_uid = 10;
+  bool health = 11;
+}
+
+message GPUsReply {
+  repeated GPUReply list = 1;
+}

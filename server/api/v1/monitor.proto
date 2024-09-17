@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Monitor {
+  rpc QueryRange (QueryRangeRequest) returns (RangeResponse) {
+    option (google.api.http) = {
+      post: "/v1/monitor/query/range-vector"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "查询区间向量"
+    };
+  }
+
+  rpc QueryInstant (QueryInstantRequest) returns (InstantResponse) {
+    option (google.api.http) = {
+      post: "/v1/monitor/query/instant-vector"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "查询瞬时向量"
+    };
+  }
+
+  rpc Summary (SummaryFilter) returns (SummaryResponse) {
+    option (google.api.http) = {
+      post: "/v1/monitor/summary"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "资源使用情况概览"
+    };
+  }
+}
+
+message Range {
+  string start = 1;
+  string end = 2;
+  string step = 3;
+}
+
+message QueryRangeRequest {
+  string query = 1;
+  Range range = 2;
+}
+
+message SamplePair {
+  float value = 1;
+  int64 timestamp = 2;
+}
+
+message SampleStream {
+  map<string, string> metric = 1;
+  repeated SamplePair values = 2;
+}
+
+message RangeResponse {
+  repeated SampleStream data = 1;
+}
+
+message QueryInstantRequest {
+  string query = 1;
+}
+
+message InstantResponse {
+  repeated Sample data = 1;
+}
+
+message Sample {
+	map<string, string> metric = 1;
+	float value = 2;
+	int64 timestamp = 3;
+}
+
+message SummaryFilter {
+  string node = 1;
+  string device = 2;
+}
+
+message SummaryResponse {
+  DistributionRate distributionRate = 1;
+  Scaling scaling = 2;
+}
+
+message DistributionRate {
+  float vgpu = 1;
+  float memory = 2;
+  float core = 3;
+}
+
+message UseRate {
+  float vgpu = 1;
+  float memory = 2;
+  float core = 3;
+}
+
+message Scaling {
+  float vgpu = 1;
+  float memory = 2;
+  float core = 3;
+}
