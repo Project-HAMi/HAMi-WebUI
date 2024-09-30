@@ -56,8 +56,9 @@ jobs:
       - name: Run golint
         uses: golangci/golangci-lint-action@v6
         with:
+          working-directory: ./server
           version: v1.60
-          args: "--timeout=5m ./server/..."
+          args: "--timeout=5m"
 
   build-and-push-backend:
     name: Build and Push Backend Image

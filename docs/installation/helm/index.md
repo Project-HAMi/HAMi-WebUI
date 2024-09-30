@@ -88,13 +88,17 @@ When you create a new namespace in Kubernetes, you can better organize, allocate
    helm search repo hami-charts/hami-webui
    ```
 
-3. Before proceeding, navigate to the [Configuration Guide for HAMi-WebUI Helm Chart](../../../charts/hami-webui/README.md#configuration-guide-for-hamiwebui-helm-chart), where you'll find instructions on configuring the necessary `values.yaml` based on your cluster's requirements. 
-   > It is **critical** to modify the values accordingly before deploying.
+3. Before deploying, ensure that you configure the `values.yaml` file to match your cluster’s requirements. For detailed instructions, refer to the [Configuration Guide for HAMi-WebUI Helm Chart](../../../charts/hami-webui/README.md#configuration-guide-for-hamiwebui-helm-chart)
+   > _**Important**_: You must adjust the values.yaml before proceeding with the deployment.
+
+   Download the `values.yaml` file from the Helm Charts repository:
+
+   https://github.com/Project-HAMi/HAMi-WebUI/blob/main/charts/hami-webui/values.yaml
 
 4. Once you've adjusted the `values.yaml`, run the following command to deploy the HAMi-WebUI Helm Chart inside your namespace:
 
    ```bash
-   helm install my-hami-webui hami-charts/hami-webui --namespace hami
+   helm install my-hami-webui hami-charts/hami-webui --namespace hami -f values.yaml
    ```
 
    Where:
