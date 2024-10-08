@@ -1,11 +1,11 @@
 # HAMi-WebUI
 
-![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0](https://img.shields.io/badge/AppVersion-1.0.0-informational?style=flat-square)
+![Version: 1.0.2](https://img.shields.io/badge/Version-1.0.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.2](https://img.shields.io/badge/AppVersion-1.0.2-informational?style=flat-square)
 
 ## Get Repo Info
 
 ```console
-helm repo add hami-charts https://project-hami.github.io/HAMi/
+helm repo add hami-webui https://project-hami.github.io/HAMi-WebUI
 helm repo update
 ```
 
@@ -13,10 +13,16 @@ _See [helm repo](https://helm.sh/docs/helm/helm_repo/) for command documentation
 
 ## Installing the Chart
 
-To install the chart with the release name `my-release`:
+Before deploying, ensure that you configure the `values.yaml` file to match your cluster’s requirements. For detailed instructions, refer to the [Configuration Guide for HAMi-WebUI Helm Chart](#configuration-guide-for-hamiwebui-helm-chart)
+> _**Important**_: You must adjust the values.yaml before proceeding with the deployment.
+
+Download the `values.yaml` file from the Helm Charts repository:
+
+https://github.com/Project-HAMi/HAMi-WebUI/blob/main/charts/hami-webui/values.yaml
+
 
 ```console
-helm install hami-webui hami-charts/hami-webui
+helm install my-hami-webui hami-webui/hami-webui --create-namespace --namespace hami -f values.yaml
 ```
 
 ## Uninstalling the Chart
@@ -24,7 +30,7 @@ helm install hami-webui hami-charts/hami-webui
 To uninstall/delete the my-release deployment:
 
 ```console
-helm delete hami-webui
+helm delete my-hami-webui
 ```
 
 The command removes all the Kubernetes components associated with the chart and deletes the release.
