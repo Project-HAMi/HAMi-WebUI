@@ -37,19 +37,19 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
    The following example adds the `hami-webui` Helm repository.
 
    ```bash
-   helm repo add hami-charts https://project-hami.github.io/HAMi/
+   helm repo add hami-webui https://project-hami.github.io/HAMi-WebUI
    ```
 
 2. Run the following command to verify the repository was added:
 
    ```bash
-   helm repo list | grep hami
+   helm repo list | grep hami-webui
    ```
 
    After you add the repository, you should see an output similar to the following:
 
    ```bash
-   hami-charts  https://project-hami.github.io/HAMi/
+   hami-webui  https://project-hami.github.io/HAMi-WebUI
    ```
 
 3. Run the following command to update the repository to download the latest HAMi-WebUI Helm charts:
@@ -78,14 +78,14 @@ When you create a new namespace in Kubernetes, you can better organize, allocate
    namespace/hami created
    ```
 
-2. Search for the official `hami-charts/hami-webui` repository using the command:
+2. Search for the official `hami-webui/hami-webui` repository using the command:
 
    `helm search repo <repo-name/package-name>`
 
    For example, the following command provides a list of the HAMi-WebUI Helm Charts from which you will install the latest version of the HAMi-WebUI chart.
 
    ```bash
-   helm search repo hami-charts/hami-webui
+   helm search repo hami-webui/hami-webui
    ```
 
 3. Before deploying, ensure that you configure the `values.yaml` file to match your cluster’s requirements. For detailed instructions, refer to the [Configuration Guide for HAMi-WebUI Helm Chart](../../../charts/hami-webui/README.md#configuration-guide-for-hamiwebui-helm-chart)
@@ -98,7 +98,7 @@ When you create a new namespace in Kubernetes, you can better organize, allocate
 4. Once you've adjusted the `values.yaml`, run the following command to deploy the HAMi-WebUI Helm Chart inside your namespace:
 
    ```bash
-   helm install my-hami-webui hami-charts/hami-webui --namespace hami -f values.yaml
+   helm install my-hami-webui hami-webui/hami-webui --namespace hami -f values.yaml
    ```
 
    Where:

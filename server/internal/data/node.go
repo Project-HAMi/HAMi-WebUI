@@ -68,7 +68,9 @@ func (r *nodeRepo) updateLocalNodes() {
 			}
 			for _, node := range nodes {
 				bizNode := r.fetchNodeInfo(node)
-				n[node.UID] = bizNode
+				if _, ok := n[node.UID]; !ok {
+					n[node.UID] = bizNode
+				}
 				devices, err := p.FetchDevices(node)
 				if err != nil {
 					r.log.Warnf("list devices info error: %s", err)

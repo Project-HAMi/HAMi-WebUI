@@ -39,26 +39,7 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: projecthami/hami-webui-fe:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
-
-  golang-lint:
-    name: Lint Go Code
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go environment
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-
-      - name: Run golint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          working-directory: ./server
-          version: v1.60
-          args: "--timeout=5m"
+          tags: projecthami/hami-webui-fe-oss:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
 
   build-and-push-backend:
     name: Build and Push Backend Image
@@ -87,4 +68,4 @@ jobs:
           context: ./server
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: projecthami/hami-webui-be:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
+          tags: projecthami/hami-webui-be-oss:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
