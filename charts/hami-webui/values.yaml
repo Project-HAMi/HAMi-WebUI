@@ -88,6 +88,14 @@ resources:
     #   cpu: 100m
     #   memory: 128Mi
 
+env:
+  frontend:
+    - name: TZ
+      value: "Asia/Shanghai"
+  backend:
+    - name: TZ
+      value: "Asia/Shanghai"
+
 serviceMonitor:
   enabled: true
   interval: 15s
