@@ -2,6 +2,25 @@ apiVersion: v1
 entries:
   hami-webui:
   - apiVersion: v2
+    appVersion: 1.0.3
+    created: "2024-10-12T07:29:10.786103131Z"
+    dependencies:
+    - condition: dcgm-exporter.enabled
+      name: dcgm-exporter
+      repository: https://nvidia.github.io/dcgm-exporter/helm-charts
+      version: 3.5.0
+    - condition: kube-prometheus-stack.enabled
+      name: kube-prometheus-stack
+      repository: https://prometheus-community.github.io/helm-charts
+      version: 62.6.0
+    description: A Helm chart for Kubernetes
+    digest: b6202869ad9640a33e28f3e6f06f23a9ee98994882f9dcd6a7c34c04a2a735ff
+    name: hami-webui
+    type: application
+    urls:
+    - https://github.com/Project-HAMi/HAMi-WebUI/releases/download/hami-webui-1.0.3/hami-webui-1.0.3.tgz
+    version: 1.0.3
+  - apiVersion: v2
     appVersion: 1.0.2
     created: "2024-10-08T03:12:57.127130873Z"
     dependencies:
@@ -39,4 +58,4 @@ entries:
     urls:
     - https://github.com/Project-HAMi/HAMi-WebUI/releases/download/hami-webui-1.0.1/hami-webui-1.0.1.tgz
     version: 1.0.1
-generated: "2024-10-08T03:12:57.127140972Z"
+generated: "2024-10-12T07:29:10.786120573Z"
