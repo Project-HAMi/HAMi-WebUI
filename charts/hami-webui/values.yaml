@@ -9,11 +9,11 @@ image:
     repository: projecthami/hami-webui-fe-oss
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
-    tag: "v1.0.2"
+    tag: "v1.0.3"
   backend:
     repository: projecthami/hami-webui-be-oss
     pullPolicy: IfNotPresent
-    tag: "v1.0.2"
+    tag: "v1.0.3"
 
 imagePullSecrets: []
 nameOverride: ""
