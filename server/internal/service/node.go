@@ -127,12 +127,12 @@ func (s *NodeService) buildNodeReply(ctx context.Context, node *biz.Node) (*pb.N
 func (s *NodeService) queryNodeMetrics(ctx context.Context, nodeName string) (int32, int32, error) {
 	coreTotal, memoryTotal := int32(0), int32(0)
 
-	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_core_size{node=~\"%s\"})", nodeName)})
+	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(sum(hami_core_size{node=~\"%s\"}) by (instance))", nodeName)})
 	if err == nil && len(resp.Data) > 0 {
 		coreTotal = int32(resp.Data[0].Value)
 	}
 
-	resp, err = s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_memory_size{node=~\"%s\"})", nodeName)})
+	resp, err = s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(sum(hami_memory_size{node=~\"%s\"}) by (instance))", nodeName)})
 	if err == nil && len(resp.Data) > 0 {
 		memoryTotal = int32(resp.Data[0].Value)
 	}
