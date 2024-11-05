@@ -5,6 +5,7 @@ English | [简体中文](README_ZH.md)
 An open-source platform for managing and observing GPU resources, based on the HAMi project
 
 [![License](https://img.shields.io/github/license/Project-HAMi/HAMi)](LICENSE)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FProject-HAMi%2FHAMi-WebUI.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FProject-HAMi%2FHAMi-WebUI?ref=badge_shield)
 
 HAMi-WebUI is built upon the [HAMi](https://github.com/Project-HAMi/HAMi) open-source project. It extends HAMi by providing an intuitive web interface for visualizing and managing GPU resource allocation and usage across nodes. The platform supports detailed views for tasks and GPUs, enabling teams to monitor resource consumption effectively.
 
@@ -35,3 +36,5 @@ If you're interested in contributing to HAMi-WebUI:
 ## License
 
 HAMi-WebUI is distributed under [Apache-2.0](LICENSE). For details, see [LICENSE](LICENSE).
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FProject-HAMi%2FHAMi-WebUI.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FProject-HAMi%2FHAMi-WebUI?ref=badge_large)
