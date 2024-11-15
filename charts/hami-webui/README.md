@@ -101,6 +101,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | securityContext | object | `{}`                                                                               |  |
 | service.port | int | `3000`                                                                             |  |
 | service.type | string | `"ClusterIP"`                                                                      |  |
+| service.nodePort | int | `30000`                                                                      |  |
 | serviceAccount.annotations | object | `{}`                                                                               |  |
 | serviceAccount.create | bool | `true`                                                                             |  |
 | serviceAccount.name | string | `""`                                                                               |  |
