@@ -17,20 +17,23 @@ import (
 type Hygon struct {
 	prom *prom.Client
 	log  *log.Helper
+
+	nodeSelectors string
 }
 
-func NewHygon(prom *prom.Client, log *log.Helper) *Hygon {
+func NewHygon(prom *prom.Client, log *log.Helper, nodeSelectors string) *Hygon {
 	return &Hygon{
-		prom: prom,
-		log:  log,
+		prom:          prom,
+		log:           log,
+		nodeSelectors: nodeSelectors,
 	}
 }
 
-func (c *Hygon) GetNodeDevicePluginLabels() (labels.Selector, error) {
-	return labels.Parse("dcu=on")
+func (h *Hygon) GetNodeDevicePluginLabels() (labels.Selector, error) {
+	return labels.Parse(h.nodeSelectors)
 }
 
-func (c *Hygon) GetProvider() string {
+func (h *Hygon) GetProvider() string {
 	return HygonDCUDevice
 }
 
@@ -40,19 +43,19 @@ type DeviceMeta struct {
 	Driver string
 }
 
-func (c *Hygon) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.DeviceInfo {
+func (h *Hygon) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.DeviceInfo {
 	deviceMap := make(map[string]*util.DeviceInfo)
 	queryString := fmt.Sprintf("dcu_temp{node=\"%s\"}", node.Name)
 
-	vs, err := c.prom.Query(context.Background(), queryString)
+	vs, err := h.prom.Query(context.Background(), queryString)
 	if err != nil {
-		c.log.Warnf("Failed to query %s: %v", queryString, err)
+		h.log.Warnf("Failed to query %s: %v", queryString, err)
 		return deviceMap
 	}
 
 	vector, ok := vs.(model.Vector)
 	if !ok {
-		c.log.Warnf("Unexpected result type: %v", vs)
+		h.log.Warnf("Unexpected result type: %v", vs)
 		return deviceMap
 	}
 
@@ -68,34 +71,34 @@ func (c *Hygon) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.Dev
 	return deviceMap
 }
 
-func (c *Hygon) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
+func (h *Hygon) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 	devEncoded, ok := node.Annotations[RegisterAnnos]
 	if !ok {
 		return []*util.DeviceInfo{}, errors.New("annos not found " + RegisterAnnos)
 	}
-	nodedevices, err := util.DecodeNodeDevices(devEncoded, c.log)
+	nodedevices, err := util.DecodeNodeDevices(devEncoded, h.log)
 	if err != nil {
-		c.log.Errorw("failed to decode node devices", err, "node", node.Name, "device annotation", devEncoded)
+		h.log.Errorw("failed to decode node devices", err, "node", node.Name, "device annotation", devEncoded)
 		return []*util.DeviceInfo{}, err
 	}
 	if len(nodedevices) == 0 {
-		c.log.Infow("event", "no gpu device found", "node", node.Name, "device annotation", devEncoded)
+		h.log.Infow("event", "no gpu device found", "node", node.Name, "device annotation", devEncoded)
 		return []*util.DeviceInfo{}, errors.New("no gpu found on node")
 	}
-	devDecoded := util.EncodeNodeDevices(nodedevices, c.log)
-	c.log.Infow("event", "nodes device information", "node", node.Name, "nodedevices", devDecoded)
-	devDetail := c.GetDevicesFromPrometheus(node)
+	devDecoded := util.EncodeNodeDevices(nodedevices, h.log)
+	h.log.Infow("event", "nodes device information", "node", node.Name, "nodedevices", devDecoded)
+	devDetail := h.GetDevicesFromPrometheus(node)
 	for _, nodedevice := range nodedevices {
 		idParts := strings.Split(nodedevice.ID, "-")
 		if len(idParts) < 2 {
-			c.log.Warnf("Invalid nodedevice.ID format: %s", nodedevice.ID)
+			h.log.Warnf("Invalid nodedevice.ID format: %s", nodedevice.ID)
 			continue
 		}
 
 		devDetailID := idParts[1]
 		devInfo, exists := devDetail[devDetailID]
 		if !exists {
-			c.log.Warnf("Device ID %s not found in devDetail", devDetailID)
+			h.log.Warnf("Device ID %s not found in devDetail", devDetailID)
 			continue
 		}
 

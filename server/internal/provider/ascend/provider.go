@@ -16,20 +16,23 @@ import (
 type Ascend struct {
 	prom *prom.Client
 	log  *log.Helper
+
+	nodeSelectors string
 }
 
-func NewAscend(prom *prom.Client, log *log.Helper) *Ascend {
+func NewAscend(prom *prom.Client, log *log.Helper, nodeSelectors string) *Ascend {
 	return &Ascend{
-		prom: prom,
-		log:  log,
+		prom:          prom,
+		log:           log,
+		nodeSelectors: nodeSelectors,
 	}
 }
 
-func (c *Ascend) GetNodeDevicePluginLabels() (labels.Selector, error) {
-	return labels.Parse("servertype=Ascend910B-20")
+func (a *Ascend) GetNodeDevicePluginLabels() (labels.Selector, error) {
+	return labels.Parse(a.nodeSelectors)
 }
 
-func (c *Ascend) GetProvider() string {
+func (a *Ascend) GetProvider() string {
 	return AscendDevice
 }
 
@@ -39,16 +42,16 @@ type DeviceMeta struct {
 	Driver string
 }
 
-func (c *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.DeviceInfo {
+func (a *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.DeviceInfo {
 	device := make(map[string]*util.DeviceInfo)
 	queryString := fmt.Sprintf("npu_chip_info_health_status{node=\"%s\"}", node.Name)
-	vs, err := c.prom.Query(context.Background(), queryString)
+	vs, err := a.prom.Query(context.Background(), queryString)
 	if err != nil {
-		c.log.Warnf("query %s failed", queryString)
+		a.log.Warnf("query %s failed", queryString)
 	} else {
 		ds, ok := vs.(model.Vector)
 		if !ok {
-			c.log.Warnf("vectorValue: %v, failed", vs)
+			a.log.Warnf("vectorValue: %v, failed", vs)
 		} else {
 			for _, d := range ds {
 				id := d.Metric["id"]
@@ -68,12 +71,12 @@ func (c *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.De
 	return device
 }
 
-func (c *Ascend) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
+func (a *Ascend) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 
 	nodedevices := []*util.DeviceInfo{}
 	i := 0
 	cards, _ := node.Status.Capacity.Name(corev1.ResourceName(AscendResourceCoreCount), resource.DecimalSI).AsInt64()
-	tmpDevice := c.GetDevicesFromPrometheus(node)
+	tmpDevice := a.GetDevicesFromPrometheus(node)
 	for int64(i)*10 < cards {
 		index := fmt.Sprintf("%d", i)
 		if _, ok := tmpDevice[index]; !ok {

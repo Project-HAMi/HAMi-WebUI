@@ -32,17 +32,17 @@ type nodeRepo struct {
 }
 
 // NewNodeRepo .
-func NewNodeRepo(data *Data, logger log.Logger) biz.NodeRepo {
+func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger) biz.NodeRepo {
 	nodeRepo := &nodeRepo{
 		data:       data,
 		nodeNotify: make(chan struct{}, 1),
 		nodes:      map[k8stypes.UID]*biz.Node{},
 		log:        log.NewHelper(logger),
 		providers: []provider.Provider{
-			nvidia.NewNvidia(data.promCl, log.NewHelper(logger)),
-			mlu.NewCambricon(data.promCl, log.NewHelper(logger)),
-			ascend.NewAscend(data.promCl, log.NewHelper(logger)),
-			hygon.NewHygon(data.promCl, log.NewHelper(logger)),
+			nvidia.NewNvidia(data.promCl, log.NewHelper(logger), nodeSelectors[biz.NvidiaGPUDevice]),
+			mlu.NewCambricon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.CambriconGPUDevice]),
+			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice]),
+			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
 		},
 	}
 	nodeRepo.init()

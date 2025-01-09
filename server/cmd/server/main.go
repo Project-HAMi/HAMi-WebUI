@@ -8,6 +8,7 @@ import (
 	"github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2/transport/http"
 	"os"
+	"vgpu/internal/conf"
 
 	_ "go.uber.org/automaxprocs"
 )
@@ -56,4 +57,8 @@ func newApp(ctx context.Context, logger log.Logger, gs *grpc.Server, hs *http.Se
 			hs,
 		),
 	)
+}
+
+func getNodeSelectors(c *conf.Bootstrap) map[string]string {
+	return c.NodeSelectors
 }
