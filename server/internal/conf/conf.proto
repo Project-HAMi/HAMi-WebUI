@@ -8,6 +8,7 @@ import "google/protobuf/duration.proto";
 message Bootstrap {
   Server server = 1;
   Prometheus prometheus = 2;
+  map<string, string> node_selectors = 3;
 }
 
 message Server {

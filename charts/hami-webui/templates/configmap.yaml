@@ -15,3 +15,7 @@ data:
     prometheus:
       address: {{ ternary .Values.externalPrometheus.address (printf "http://%s-kube-prometh-prometheus.%s.svc.cluster.local:9090" (include "hami-webui.fullname" .) (include "hami-webui.namespace" .)) .Values.externalPrometheus.enabled }}
       timeout: 1m
+    node_selectors:
+    {{- range $key, $value := .Values.vendorNodeSelectors }}
+      {{ $key }}: {{ $value }}
+    {{- end }}

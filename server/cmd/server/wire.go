@@ -26,5 +26,6 @@ func initApp(configPath string, ctx context.Context) (*kratos.App, func(), error
 		service.ProviderSet,
 		exporter.ProviderSet,
 		newApp,
+		getNodeSelectors,
 	))
 }

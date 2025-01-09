@@ -12,17 +12,20 @@ import (
 type Nvidia struct {
 	prom *prom.Client
 	log  *log.Helper
+
+	labelSelector string
 }
 
-func NewNvidia(prom *prom.Client, log *log.Helper) *Nvidia {
+func NewNvidia(prom *prom.Client, log *log.Helper, labelSelector string) *Nvidia {
 	return &Nvidia{
-		prom: prom,
-		log:  log,
+		prom:          prom,
+		log:           log,
+		labelSelector: labelSelector,
 	}
 }
 
 func (n *Nvidia) GetNodeDevicePluginLabels() (labels.Selector, error) {
-	return labels.Parse("gpu=on")
+	return labels.Parse(n.labelSelector)
 }
 
 func (n *Nvidia) GetProvider() string {

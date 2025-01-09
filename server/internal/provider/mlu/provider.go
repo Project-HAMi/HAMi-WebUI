@@ -15,17 +15,20 @@ import (
 type Cambricon struct {
 	prom *prom.Client
 	log  *log.Helper
+
+	labelsSelector string
 }
 
-func NewCambricon(prom *prom.Client, log *log.Helper) *Cambricon {
+func NewCambricon(prom *prom.Client, log *log.Helper, labelSelector string) *Cambricon {
 	return &Cambricon{
-		prom: prom,
-		log:  log,
+		prom:           prom,
+		log:            log,
+		labelsSelector: labelSelector,
 	}
 }
 
 func (c *Cambricon) GetNodeDevicePluginLabels() (labels.Selector, error) {
-	return labels.Parse("mlu=on")
+	return labels.Parse(c.labelsSelector)
 }
 
 func (c *Cambricon) GetProvider() string {

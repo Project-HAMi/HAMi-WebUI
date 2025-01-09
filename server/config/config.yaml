@@ -8,3 +8,8 @@ server:
 prometheus:
   address: http://localhost:9090
   timeout: 1m
+node_selectors:
+  NVIDIA: gpu=on
+  Ascend: ascend=on
+  DCU: dcu=on
+  MLU: mlu=on
