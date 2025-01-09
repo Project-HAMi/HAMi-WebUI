@@ -101,10 +101,10 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		if err == nil {
 			HamiMemoryUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(deviceMemUsed))
 		}
+		HamiMemorySize.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(device.Devmem))
+		HamiMemoryUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(roundToOneDecimal(100 * float64(deviceMemUsed/float32(device.Devmem))))
 		deviceMemSize, err := s.deviceMemTotal(ctx, provider, device.Id)
 		if err == nil && deviceMemSize > 0 {
-			HamiMemorySize.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(deviceMemSize))
-			HamiMemoryUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(roundToOneDecimal(100 * float64(deviceMemUsed/deviceMemSize)))
 			HamiVMemoryScaling.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(roundToOneDecimal(float64(float32(device.Devmem) / deviceMemSize)))
 		}
 		actualCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
