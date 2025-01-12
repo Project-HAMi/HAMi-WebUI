@@ -64,6 +64,7 @@ message GPUReply {
   int32 memory_total = 9;
   string node_uid = 10;
   bool health = 11;
+  string mode = 12;
 }
 
 message GPUsReply {

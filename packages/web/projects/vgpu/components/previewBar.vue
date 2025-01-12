@@ -173,16 +173,32 @@ ul {
 
   .nodeCard {
     height: 100%;
+
     .pie {
       width: 200px;
       height: 200px;
       margin: 0 auto;
     }
+
     .nodeCard-legend {
       width: 100%;
       display: flex;
       flex-direction: column;
       gap: 15px;
+      max-height: calc(3 * (12px + 15px));
+      overflow-y: auto;
+      padding-right: 10px;
+
+      /* 自定义滚动条样式（可选） */
+      &::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background-color: rgba(0, 0, 0, 0.2);
+        border-radius: 3px;
+      }
+
       li {
         display: flex;
         justify-content: space-between;
@@ -194,8 +210,8 @@ ul {
           gap: 5px;
         }
         .color-box {
-          width: 4px;
-          height: 4px;
+          width: 10px;
+          height: 10px;
           display: inline-block;
         }
       }
