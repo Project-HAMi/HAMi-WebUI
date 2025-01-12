@@ -86,6 +86,7 @@ func (r *nodeRepo) updateLocalNodes() {
 						Devcore:  device.Devcore,
 						Type:     device.Type,
 						Numa:     device.Numa,
+						Mode:     device.Mode,
 						Health:   device.Health,
 						NodeName: node.Name,
 						NodeUid:  string(node.UID),

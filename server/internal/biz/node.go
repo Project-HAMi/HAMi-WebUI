@@ -32,6 +32,7 @@ type DeviceInfo struct {
 	Devcore  int32
 	Type     string
 	Numa     int
+	Mode     string
 	Health   bool
 	NodeName string
 	NodeUid  string

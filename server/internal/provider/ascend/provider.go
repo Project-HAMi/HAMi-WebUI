@@ -6,9 +6,8 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
-	"strings"
+	"strconv"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/util"
 )
@@ -72,31 +71,26 @@ func (a *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.De
 }
 
 func (a *Ascend) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
-
-	nodedevices := []*util.DeviceInfo{}
-	i := 0
-	cards, _ := node.Status.Capacity.Name(corev1.ResourceName(AscendResourceCoreCount), resource.DecimalSI).AsInt64()
-	tmpDevice := a.GetDevicesFromPrometheus(node)
-	for int64(i)*10 < cards {
-		index := fmt.Sprintf("%d", i)
-		if _, ok := tmpDevice[index]; !ok {
-			i++
+	for _, anno := range AscendNodeRegisterAnnos {
+		tmpDevice := a.GetDevicesFromPrometheus(node)
+		anno, ok := node.Annotations[anno]
+		if !ok {
+			log.Infof("anno %s not found", anno)
 			continue
 		}
-		mode := strings.Split(tmpDevice[index].Type, "-")
-		nodedevices = append(nodedevices, &util.DeviceInfo{
-			Index:   uint(i),
-			ID:      tmpDevice[index].ID,
-			AliasId: node.Name + "-Ascend910-" + fmt.Sprint(i),
-			Count:   10,
-			Devmem:  int32(65536),
-			Devcore: 100,
-			Type:    fmt.Sprintf("%s-%s", mode[1], mode[0]),
-			Numa:    0,
-			Health:  true,
-			Driver:  "xxx",
-		})
-		i++
+		nodeDevices, err := util.UnMarshalNodeDevices(anno)
+		if err != nil {
+			return []*util.DeviceInfo{}, err
+		}
+		for i, nodedevice := range nodeDevices {
+			nodeDevices[i].AliasId = nodedevice.ID
+			if device, exists := tmpDevice[strconv.Itoa(i)]; exists {
+				nodeDevices[i].ID = device.ID
+			} else {
+				log.Infof("Key %d not found in tmpDevice", i)
+			}
+		}
+		return nodeDevices, nil
 	}
-	return nodedevices, nil
+	return []*util.DeviceInfo{}, fmt.Errorf("")
 }

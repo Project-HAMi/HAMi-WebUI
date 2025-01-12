@@ -438,6 +438,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 	switch provider {
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("DCGM_FI_DEV_POWER_USAGE{UUID=\"%s\"}", deviceUUID)
+	case biz.AscendGPUDevice:
+		query = fmt.Sprintf("npu_chip_info_power{vdie_id=\"%s\"}", deviceUUID)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("mlu_power_usage{uuid=\"%s\"}", deviceUUID)
 	case biz.HygonGPUDevice:
@@ -462,6 +464,9 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		case biz.CambriconGPUDevice:
 			info.DriverVersion = metric["driver"]
 			info.DeviceNo = metric["sn"]
+		case biz.AscendGPUDevice:
+			info.DriverVersion = "暂无"
+			info.DeviceNo = "ascend-" + metric["id"]
 		case biz.HygonGPUDevice:
 			info.DriverVersion = "暂无"
 			info.DeviceNo = "dcu-" + metric["minor_number"]

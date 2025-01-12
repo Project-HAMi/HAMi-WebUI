@@ -1,6 +1,7 @@
 package util
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/go-kratos/kratos/v2/log"
@@ -60,12 +61,18 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 	for _, val := range tmp {
 		if strings.Contains(val, ",") {
 			items := strings.Split(val, ",")
-			if len(items) == 7 {
-				count, _ := strconv.Atoi(items[1])
-				devmem, _ := strconv.Atoi(items[2])
-				devcore, _ := strconv.Atoi(items[3])
+			if len(items) >= 7 || len(items) == 9 {
+				count, _ := strconv.ParseInt(items[1], 10, 32)
+				devmem, _ := strconv.ParseInt(items[2], 10, 32)
+				devcore, _ := strconv.ParseInt(items[3], 10, 32)
 				health, _ := strconv.ParseBool(items[6])
 				numa, _ := strconv.Atoi(items[5])
+				mode := "hami-core"
+				index := 0
+				if len(items) == 9 {
+					index, _ = strconv.Atoi(items[7])
+					mode = items[8]
+				}
 				i := DeviceInfo{
 					ID:      items[0],
 					AliasId: items[0],
@@ -75,6 +82,8 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 					Type:    items[4],
 					Numa:    numa,
 					Health:  health,
+					Mode:    mode,
+					Index:   uint(index),
 				}
 				retval = append(retval, &i)
 			} else {
@@ -306,4 +315,10 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 	}
 	log.Infof("Decoded pod annos: poddevices %v", pd)
 	return pd, nil
+}
+
+func UnMarshalNodeDevices(str string) ([]*DeviceInfo, error) {
+	var dlist []*DeviceInfo
+	err := json.Unmarshal([]byte(str), &dlist)
+	return dlist, err
 }

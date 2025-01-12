@@ -42,11 +42,16 @@
   </block-box>
 
   <block-box v-for="{ title, data } in lineConfig" :key="title" :title="title">
-    <template #extra>
+    <template #extra v-if="detail.type && detail.type.startsWith('NVIDIA')">
       <time-picker v-model="times" type="datetimerange" size="small" />
     </template>
     <div style="height: 200px">
-      <echarts-plus :options="getLineOptions({ data })" />
+      <template v-if="detail.type && !detail.type.startsWith('NVIDIA')">
+        <el-empty description="该设备厂商暂不支持任务维度监控" :image-size="60" />
+      </template>
+      <template v-else>
+        <echarts-plus :options="getLineOptions({ data })" />
+      </template>
     </div>
   </block-box>
 </template>

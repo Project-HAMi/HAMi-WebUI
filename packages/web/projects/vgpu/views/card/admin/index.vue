@@ -64,6 +64,15 @@ const columns = [
     )
   },
   {
+    title: '使用模式',
+    dataIndex: 'mode',
+    render: ({ mode, type }) => (
+        <el-tag disable-transitions>
+          {type?.split('-')[0] === "NVIDIA" ? mode : 'default'}
+        </el-tag>
+    )
+  },
+  {
     title: '所属节点',
     dataIndex: 'nodeName',
   },

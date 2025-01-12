@@ -196,6 +196,15 @@ const columns = [
     label: '驱动版本',
     value: 'driver_version',
   },
+  {
+    label: '使用模式',
+    value: 'mode',
+    render: ({ mode, type }) => (
+        <el-tag disable-transitions>
+          {type?.split('-')[0] === "NVIDIA" ? mode : 'default'}
+        </el-tag>
+    )
+  }
 ];
 
 const cp = useInstantVector(
