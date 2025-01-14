@@ -120,8 +120,10 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 		return containers
 	}
 
+	ctrIdMaps := map[string]string{}
 	containerStat := map[string]string{}
 	for _, ctr := range pod.Status.ContainerStatuses {
+		ctrIdMaps[ctr.Name] = ctr.ContainerID
 		containerStat[ctr.Name] = biz.ContainerStatusUnknown
 		if pod.Status.Phase == corev1.PodRunning && ctr.Ready {
 			containerStat[ctr.Name] = biz.ContainerStatusSuccess
@@ -129,10 +131,7 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			containerStat[ctr.Name] = biz.ContainerStatusFailed
 		}
 	}
-	ctrIdMaps := map[string]string{}
-	for _, ctr := range pod.Status.ContainerStatuses {
-		ctrIdMaps[ctr.Name] = ctr.ContainerID
-	}
+
 	for i, ctr := range pod.Spec.Containers {
 		c := &biz.Container{
 			Name:             ctr.Name,
