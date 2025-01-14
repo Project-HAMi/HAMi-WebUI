@@ -4,6 +4,7 @@ import "vgpu/internal/provider/util"
 
 const (
 	AscendDevice          = "Ascend"
+	Ascend310PDevice      = "Ascend310P"
 	AscendDeviceSelection = "huawei.com/predicate-ascend-idx-"
 	// IluvatarUseUUID is user can use specify Iluvatar device for set Iluvatar UUID.
 	AscendDeviceUseUUID = "huawei.com/use-ascenduuid"
@@ -24,6 +25,6 @@ func init() {
 	AscendNodeRegisterAnnos = []string{Ascend910BNodeRegisterAnno, Ascend310PNodeRegisterAnno}
 	util.InRequestDevices[AscendDevice] = "hami.io/Ascend910B-devices-to-allocate"
 	util.SupportDevices[AscendDevice] = "hami.io/Ascend910B-devices-allocated"
-	util.InRequestDevices["Ascend310P"] = "hami.io/Ascend310P-devices-to-allocate"
-	util.SupportDevices["Ascend310P"] = "hami.io/Ascend310P-devices-allocated"
+	util.InRequestDevices[Ascend310PDevice] = "hami.io/Ascend310P-devices-to-allocate"
+	util.SupportDevices[Ascend310PDevice] = "hami.io/Ascend310P-devices-allocated"
 }
