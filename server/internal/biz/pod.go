@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/go-kratos/kratos/v2/log"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"strings"
 	"time"
 )
 
@@ -76,7 +77,7 @@ func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, 
 	var memory int32 = 0
 	for _, t := range containers {
 		for _, cd := range t.ContainerDevices {
-			if deviceId != "" && cd.UUID != deviceId {
+			if deviceId != "" && !strings.HasPrefix(cd.UUID, deviceId) {
 				continue
 			}
 			vGPU = vGPU + 1
