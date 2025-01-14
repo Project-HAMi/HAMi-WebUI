@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
@@ -163,7 +164,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			var memory int32 = 0
 			var provider string = ""
 			for _, cd := range c.ContainerDevices {
-				if device.AliasId != "" && device.AliasId != cd.UUID {
+				if device.AliasId != "" && !strings.HasPrefix(cd.UUID, device.AliasId) {
 					continue
 				}
 				vGPU = vGPU + 1
