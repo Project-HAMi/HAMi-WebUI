@@ -17,24 +17,42 @@ const (
 	// OnePodMultiContainerSplitSymbol this is when one pod having multi container and more than one container use device, use ; symbol to join device info.
 	OnePodMultiContainerSplitSymbol = ";"
 
-	NvidiaGPUDevice    = "NVIDIA"
-	AscendGPUDevice    = "Ascend"
-	HygonGPUDevice     = "DCU"
-	CambriconGPUDevice = "MLU"
+	NvidiaGPUDevice     = "NVIDIA"
+	AscendGPUDevice     = "Ascend"
+	Ascend310PGPUDevice = "Ascend310P"
+	HygonGPUDevice      = "DCU"
+	CambriconGPUDevice  = "MLU"
 
 	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
 
 	NVIDIAPriority = "nvidia.com/priority"
 )
 
+type ascendDeviceConfig struct {
+	Usedmem   int32
+	Usedcores int32
+}
+
 var (
-	InRequestDevices map[string]string
-	SupportDevices   map[string]string
+	InRequestDevices    map[string]string
+	SupportDevices      map[string]string
+	ascendDeviceConfigs map[string]map[int32]ascendDeviceConfig
 )
 
 func init() {
 	InRequestDevices = make(map[string]string)
 	SupportDevices = make(map[string]string)
+	ascendDeviceConfigs = map[string]map[int32]ascendDeviceConfig{
+		"Ascend910B": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+		},
+		"Ascend310P": {
+			3072:  {Usedmem: 3072, Usedcores: 13},
+			6144:  {Usedmem: 6144, Usedcores: 25},
+			12288: {Usedmem: 12288, Usedcores: 50},
+		},
+	}
 	initMLUDevice()
 }
 
@@ -186,11 +204,13 @@ func DecodeNpuContainerDevices(str string) (ContainerDevices, error) {
 			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
 			tmpdev.Usedmem = int32(devmem)
 			tmpdev.Usedcores = 100
-			if tmpdev.Usedmem == 16384 {
-				tmpdev.Usedcores = 25
-			} else if tmpdev.Usedmem == 32768 {
-				tmpdev.Usedcores = 50
+
+			if configs, exists := ascendDeviceConfigs[tmpdev.Type]; exists {
+				if config, ok := configs[tmpdev.Usedmem]; ok {
+					tmpdev.Usedcores = config.Usedcores
+				}
 			}
+
 			contdev = append(contdev, tmpdev)
 		}
 	}
@@ -262,7 +282,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 		}
 		pd[devType] = make(PodSingleDevice, 0)
 		switch devType {
-		case AscendGPUDevice:
+		case AscendGPUDevice, Ascend310PGPUDevice:
 			for _, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
 				cd, err := DecodeNpuContainerDevices(s)
 				if err != nil {
