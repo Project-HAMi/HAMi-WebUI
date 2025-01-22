@@ -51,6 +51,7 @@ securityContext: {}
 service:
   type: ClusterIP
   port: 3000
+  nodePort: 30000
 
 ingress:
   enabled: false
