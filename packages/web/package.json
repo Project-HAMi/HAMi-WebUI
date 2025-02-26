@@ -21,7 +21,7 @@
     "@tabler/icons-vue": "^2.36.0",
     "animate.css": "v4.1.1",
     "axios": "1.5.1",
-    "body-parser": "1.20.2",
+    "body-parser": "1.20.3",
     "bootstrap": "5.3.1",
     "core-js": "^3.8.3",
     "crypto-browserify": "^3.12.0",
