@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "version": "0.1.0",
+  "name": "hami-webui",
+  "version": "1.0.1",
   "private": true,
   "scripts": {
     "start": "export NODE_ENV=development && vue-cli-service serve",
