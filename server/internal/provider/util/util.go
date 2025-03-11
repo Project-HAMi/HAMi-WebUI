@@ -296,7 +296,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 			}
 		case CambriconGPUDevice:
 			instance := annos[DsmluProfileAndInstance]
-			cd, err := DecodeMLUContainerDevices(fmt.Sprintf("%s_%s", str, instance, nodeName), nodeName)
+			cd, err := DecodeMLUContainerDevices(fmt.Sprintf("%s_%s_%s", str, instance, nodeName), nodeName)
 			if err != nil {
 				return PodDevices{}, nil
 			}

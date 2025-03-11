@@ -38,7 +38,7 @@
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
     "socket.io": "^4.7.4",
-    "express":"^4.19.2"
+    "express": "^4.19.2"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
