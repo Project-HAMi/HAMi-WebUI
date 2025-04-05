@@ -16,7 +16,7 @@ describe('AppController', () => {
 
   describe('root', () => {
     it('should return "Hello World!"', () => {
-      expect(appController.healthCheck()).toBe('Ok');
+      expect(appController.healthCheck()).toBe('OK');
     });
   });
 });

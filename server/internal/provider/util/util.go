@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-kratos/kratos/v2/log"
-	corev1 "k8s.io/api/core/v1"
 	"strconv"
 	"strings"
+
+	"github.com/go-kratos/kratos/v2/log"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -295,7 +296,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 			}
 		case CambriconGPUDevice:
 			instance := annos[DsmluProfileAndInstance]
-			cd, err := DecodeMLUContainerDevices(fmt.Sprintf("%s_%s", str, instance, nodeName), nodeName)
+			cd, err := DecodeMLUContainerDevices(fmt.Sprintf("%s_%s_%s", str, instance, nodeName), nodeName)
 			if err != nil {
 				return PodDevices{}, nil
 			}
