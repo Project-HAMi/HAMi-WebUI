@@ -29,6 +29,7 @@ jobs:
         uses: docker/setup-buildx-action@v1
 
       - name: Log in to DockerHub
+        if: ${{ github.event_name != 'pull_request' }}
         uses: docker/login-action@v3.1.0
         with:
           username: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -38,7 +39,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: projecthami/hami-webui-fe-oss:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
 
   build-and-push-backend:
@@ -57,6 +58,7 @@ jobs:
         uses: docker/setup-buildx-action@v1
 
       - name: Log in to DockerHub
+        if: ${{ github.event_name != 'pull_request' }}
         uses: docker/login-action@v3.1.0
         with:
           username: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -67,5 +69,5 @@ jobs:
         with:
           context: ./server
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: projecthami/hami-webui-be-oss:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
