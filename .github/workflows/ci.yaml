@@ -40,7 +40,7 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: projecthami/hami-webui-fe-oss:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
+          tags: projecthami/hami-webui-fe-oss:${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}
 
   build-and-push-backend:
     name: Build and Push Backend Image
@@ -70,4 +70,4 @@ jobs:
           context: ./server
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: projecthami/hami-webui-be-oss:${{ steps.branch-names.outputs.current_branch || steps.branch-names.outputs.tag }}
+          tags: projecthami/hami-webui-be-oss:${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}
