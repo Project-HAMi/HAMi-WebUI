@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-kratos/kratos/v2/log"
-	corev1 "k8s.io/api/core/v1"
 	"strconv"
 	"strings"
+
+	"github.com/go-kratos/kratos/v2/log"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -119,7 +120,6 @@ func DecodeContainerDevices(str, priority string) (ContainerDevices, error) {
 	}
 	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
 	contdev := ContainerDevices{}
-	tmpdev := ContainerDevice{}
 	if len(str) == 0 {
 		return ContainerDevices{}, nil
 	}
@@ -129,6 +129,7 @@ func DecodeContainerDevices(str, priority string) (ContainerDevices, error) {
 			if len(tmpstr) < 4 {
 				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
 			}
+			tmpdev := ContainerDevice{}
 			tmpdev.Idx = i
 			tmpdev.UUID = tmpstr[0]
 			tmpdev.Type = tmpstr[1]
@@ -305,7 +306,11 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 			pd[devType] = append(pd[devType], cd)
 		case NvidiaGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+				if i >= len(pod.Spec.Containers) {
+					break
+				}
 				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
 					continue
 				}
 				cd, err := DecodeContainerDevices(s, priorities[i])
@@ -319,7 +324,11 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 			}
 		case HygonGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+				if i >= len(pod.Spec.Containers) {
+					break
+				}
 				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
 					continue
 				}
 				cd, err := DecodeDCUContainerDevices(s, priorities[i], nodeName)
