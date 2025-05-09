@@ -142,10 +142,12 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			PodUID:           string(pod.UID),
 			Status:           containerStat[ctr.Name],
 			NodeUID:          r.GetNodeUUID(pod),
-			Priority:         bizContainerDevices[i][0].Priority,
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: bizContainerDevices[i],
+		}
+		if len(bizContainerDevices[i]) > 0 {
+			c.Priority = bizContainerDevices[i][0].Priority
 		}
 		containers = append(containers, c)
 	}
