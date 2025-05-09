@@ -77,7 +77,7 @@ run-debug:
 
 .PHONY: run-tests
 run-tests:
-	go test .
+	go test -v ./... -cover
 
 .PHONY: run-vet
 run-vet:
