@@ -12,7 +12,7 @@ const port = process.env.port || process.env.npm_config_port || 8080; // dev por
 
 module.exports = defineConfig({
   transpileDependencies: true,
-  publicPath: '/',
+  publicPath: './',
   outputDir: path.join(__dirname, '../../', 'public'),
   indexPath: 'index.hbs',
   assetsDir: 'static',
