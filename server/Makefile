@@ -3,6 +3,7 @@ CMD_PATH ?= ./cmd/
 BUILD_PATH ?= ./build/
 VERSION ?= $(shell git describe --tags --always)
 DIRS = $(shell ls $(CMD_PATH))
+TARGET_ARCH ?= amd64
 
 # 1. Install Go dependencies
 .PHONY: install-deps
@@ -37,10 +38,11 @@ tidy-mod:
 # 4. Build-related commands
 .PHONY: build-linux
 build-linux:
-	@ for dir in $(DIRS); \
+	@echo "Building for GOOS=linux GOARCH=$(TARGET_ARCH)" # TARGET_ARCH 会从 make 命令传入
+	@for dir in $(DIRS); \
 	do \
-		GO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o $(BUILD_PATH)$$dir ${CMD_PATH}$$dir; \
-		echo "Built $$dir for Linux"; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) go build -o $(BUILD_PATH)$$dir ${CMD_PATH}$$dir; \
+		echo "Built $$dir for Linux/$(TARGET_ARCH)"; \
 	done
 
 .PHONY: build-local
