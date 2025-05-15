@@ -43,7 +43,7 @@ type DeviceMeta struct {
 
 func (a *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.DeviceInfo {
 	device := make(map[string]*util.DeviceInfo)
-	queryString := fmt.Sprintf("npu_chip_info_health_status{node=\"%s\"}", node.Name)
+	queryString := fmt.Sprintf("npu_chip_info_health_status{} * on(namespace, pod) group_left(node) kube_pod_info{node=\"%s\"}", node.Name)
 	vs, err := a.prom.Query(context.Background(), queryString)
 	if err != nil {
 		a.log.Warnf("query %s failed", queryString)
