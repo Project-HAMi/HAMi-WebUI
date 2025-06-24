@@ -1,4 +1,4 @@
-FROM golang:1.23.1 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23.1 AS builder
 
 WORKDIR /src
 
@@ -10,6 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compil
 
 RUN make build TARGET_ARCH=${TARGETARCH}
 
-FROM debian:stable-slim
+FROM --platform=$TARGETPLATFORM debian:stable-slim
 
 COPY --from=builder /src/build/ /apps/
