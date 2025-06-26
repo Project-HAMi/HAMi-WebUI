@@ -2,13 +2,15 @@ package service
 
 import (
 	"context"
-	"github.com/jinzhu/copier"
-	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/model"
+	"math"
 	"time"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
+
+	"github.com/jinzhu/copier"
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 )
 
 type MonitorService struct {
@@ -68,7 +70,7 @@ func fillLessSamplePoint(startTime, endTime time.Time, step time.Duration, value
 	}
 
 	var filledValues []*pb.SamplePair
-	currentTime := startTime
+	currentTime := getSamplePointStartTime(startTime, step, values)
 	for !currentTime.After(endTime) {
 		currentTimestamp := currentTime.UnixMilli()
 		if value, exists := existingPoints[currentTimestamp]; exists {
@@ -79,6 +81,28 @@ func fillLessSamplePoint(startTime, endTime time.Time, step time.Duration, value
 		currentTime = currentTime.Add(step)
 	}
 	return filledValues
+}
+
+// Compatible with both Prometheus and VictoriaMetrics
+func getSamplePointStartTime(startTime time.Time, step time.Duration, values []*pb.SamplePair) time.Time {
+	if len(values) == 0 {
+		return startTime
+	}
+	startTimeMilli := startTime.UnixMilli()
+	firstValue := values[0]
+	// Case: Prometheus
+	if firstValue.Timestamp == startTimeMilli {
+		return startTime
+	}
+	// Case: VictoriaMetrics
+	stepMilli := step.Milliseconds()
+	// exists startTime data point
+	if math.Abs(float64(firstValue.Timestamp-startTimeMilli)) <= float64(stepMilli) {
+		return time.UnixMilli(firstValue.Timestamp)
+	}
+	// data points within the query time range
+	stepCount := (firstValue.Timestamp - startTimeMilli) / stepMilli
+	return time.UnixMilli(firstValue.Timestamp - stepCount*stepMilli)
 }
 
 func (s *MonitorService) QueryInstant(ctx context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
