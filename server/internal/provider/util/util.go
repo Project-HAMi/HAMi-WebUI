@@ -23,6 +23,8 @@ const (
 	Ascend310PGPUDevice = "Ascend310P"
 	HygonGPUDevice      = "DCU"
 	CambriconGPUDevice  = "MLU"
+	MetaxGPUDevice      = "Metax-GPU"
+	MetaxSGPUDevice     = "Metax-SGPU"
 
 	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
 
@@ -248,6 +250,37 @@ func DecodeMLUContainerDevices(str, nodeName string) (ContainerDevices, error) {
 	return contdev, nil
 }
 
+func DecodeMetaxContainerDevices(str string) (ContainerDevices, error) {
+	if len(str) == 0 {
+		return ContainerDevices{}, nil
+	}
+	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
+	contdev := ContainerDevices{}
+
+	for i, val := range cd {
+		if strings.Contains(val, ",") {
+			tmpstr := strings.Split(val, ",")
+			if len(tmpstr) < 4 {
+				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
+			}
+			tmpdev := ContainerDevice{}
+			tmpdev.Idx = i
+			tmpdev.UUID = tmpstr[0]
+			tmpdev.Type = tmpstr[1]
+			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
+			tmpdev.Usedmem = int32(devmem)
+			devcores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
+			if devcores == 0 {
+				tmpdev.Usedcores = 100
+			} else {
+				tmpdev.Usedcores = int32(devcores)
+			}
+			contdev = append(contdev, tmpdev)
+		}
+	}
+	return contdev, nil
+}
+
 func GetContainerPriorities(pod *corev1.Pod) []string {
 	var priorities []string
 
@@ -332,6 +365,24 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 					continue
 				}
 				cd, err := DecodeDCUContainerDevices(s, priorities[i], nodeName)
+				if err != nil {
+					return PodDevices{}, nil
+				}
+				if len(cd) == 0 {
+					continue
+				}
+				pd[devType] = append(pd[devType], cd)
+			}
+		case MetaxGPUDevice, MetaxSGPUDevice:
+			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+				if i >= len(pod.Spec.Containers) {
+					break
+				}
+				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
+					continue
+				}
+				cd, err := DecodeMetaxContainerDevices(s)
 				if err != nil {
 					return PodDevices{}, nil
 				}

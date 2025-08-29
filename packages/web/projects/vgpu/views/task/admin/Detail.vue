@@ -42,11 +42,11 @@
   </block-box>
 
   <block-box v-for="{ title, data } in lineConfig" :key="title" :title="title">
-    <template #extra v-if="detail.type && detail.type.startsWith('NVIDIA')">
+    <template #extra v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC'))">
       <time-picker v-model="times" type="datetimerange" size="small" />
     </template>
     <div style="height: 200px">
-      <template v-if="detail.type && !detail.type.startsWith('NVIDIA')">
+      <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
         <el-empty description="该设备厂商暂不支持任务维度监控" :image-size="60" />
       </template>
       <template v-else>

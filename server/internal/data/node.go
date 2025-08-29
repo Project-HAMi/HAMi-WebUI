@@ -17,6 +17,7 @@ import (
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/hygon"
+	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/provider/nvidia"
 )
@@ -43,6 +44,7 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger)
 			mlu.NewCambricon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.CambriconGPUDevice]),
 			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice]),
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
+			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
 		},
 	}
 	nodeRepo.init()
