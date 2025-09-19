@@ -15,6 +15,7 @@ const (
 	NvidiaGPUDevice = "NVIDIA"
 	HygonGPUDevice  = "DCU"
 	AscendGPUDevice = "Ascend"
+	MetaxGPUDevice  = "Metax"
 
 	CambriconGPUDevice = "MLU"
 

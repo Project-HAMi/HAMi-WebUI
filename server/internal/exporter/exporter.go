@@ -10,6 +10,7 @@ import (
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
+	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/service"
 
@@ -179,7 +180,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			HamiContainerVmemoryAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(memory))
 			HamiContainerVcoreAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(core))
 			// 查询任务在当前设备下的算力利用率
-			taskCoreUsed, err := s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id)
+			taskCoreUsed, err := s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			if err == nil {
 				used := float64(0)
 				util := float64(0)
@@ -193,6 +194,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				case biz.HygonGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+				case metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
+					used = float64(taskCoreUsed)
+					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
 				default:
 				}
 				cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
@@ -203,11 +207,13 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				HamiContainerCoreUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(used)
 				HamiContainerCoreUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(util)
 			}
-			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id)
+			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			if err == nil {
 				switch provider {
 				case biz.CambriconGPUDevice:
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
+				case metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
+					taskMemoryUsed = float32(taskMemoryUsed) * 1024 // KB->Byte
 				default:
 				}
 				HamiContainerMemoryUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(float64(taskMemoryUsed / 1024 / 1024))
@@ -243,6 +249,8 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 		query = fmt.Sprintf("avg(npu_chip_info_hbm_used_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
+	case biz.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -254,6 +262,8 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 		val = val / mlu.CambriconMemUnit
 	} else if provider == biz.HygonGPUDevice {
 		val = val / 1024 / 1024
+	} else if provider == biz.MetaxGPUDevice {
+		val = val / 1024
 	}
 	return val, err
 }
@@ -270,6 +280,8 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(npu_chip_info_hbm_total_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
+	case biz.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -277,7 +289,7 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	if err != nil {
 		return val, err
 	}
-	if provider == biz.CambriconGPUDevice {
+	if provider == biz.CambriconGPUDevice || provider == biz.MetaxGPUDevice {
 		val = val / 1024
 	} else if provider == biz.HygonGPUDevice {
 		val = val / 1024 / 1024
@@ -299,6 +311,8 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(npu_chip_info_utilization{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
+	case biz.MetaxGPUDevice, metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
+		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -306,7 +320,7 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 }
 
 // 任务算力利用率
-func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID string) (float32, error) {
+func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -324,6 +338,11 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 		return 0, nil
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_percent{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
+	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})", deviceUUID, namespace, pod, container)
+	case metax.MetaxSGPUDevice:
+		query = fmt.Sprintf("avg(mx_sgpu_usage{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
+			hostname, deviceIndex, namespace, pod, container)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -331,7 +350,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 }
 
 // 任务显存使用量
-func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID string) (float32, error) {
+func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -342,6 +361,11 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 		return 0, nil
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_usage_memory_size{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
+	case metax.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_memory_usage{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})", deviceUUID, namespace, pod, container)
+	case metax.MetaxSGPUDevice:
+		query = fmt.Sprintf("avg(mx_sgpu_used_memory{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
+			hostname, deviceIndex, namespace, pod, container)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -360,6 +384,8 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(npu_chip_info_temperature{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_temp{device_id=\"%s\"})", deviceUUID)
+	case biz.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_chip_hotspot_temp{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -394,10 +420,17 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 		query = fmt.Sprintf("avg(npu_chip_info_power{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_power_usage{device_id=\"%s\"})", deviceUUID)
+	case biz.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_board_power{uuid=\"%s\"})", deviceUUID) // mW
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+
+	power, err := s.queryInstantVal(ctx, query)
+	if err == nil && provider == biz.MetaxGPUDevice {
+		power = power / 1000 // mW -> W
+	}
+	return power, err
 }
 
 // 硬件健康
@@ -445,6 +478,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		query = fmt.Sprintf("mlu_power_usage{uuid=\"%s\"}", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("dcu_power_usage{device_id=\"%s\"}", deviceUUID)
+	case biz.MetaxGPUDevice:
+		query = fmt.Sprintf("mx_board_power{uuid=\"%s\"}", deviceUUID)
 	default:
 		return nil, errors.New("provider not exists")
 	}
@@ -471,6 +506,9 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		case biz.HygonGPUDevice:
 			info.DriverVersion = "暂无"
 			info.DeviceNo = "dcu-" + metric["minor_number"]
+		case biz.MetaxGPUDevice:
+			info.DriverVersion = metric["driver_version"]
+			info.DeviceNo = metric["deviceId"]
 		}
 		return info, nil
 	}

@@ -9,6 +9,7 @@ vendorNodeSelectors:
   Ascend: ascend=on
   DCU: dcu=on
   MLU: mlu=on
+  Metax: metax-tech.com/gpu.installed=true
 
 image:
   frontend:
