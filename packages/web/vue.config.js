@@ -58,6 +58,7 @@ module.exports = defineConfig({
   },
   devServer: {
     port: port,
+    historyApiFallback: true,
     client: {
       overlay: false,
       logging: 'info',
