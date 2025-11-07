@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"strings"
-	"sync"
-	"time"
+
 	"vgpu/internal/biz"
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
@@ -79,7 +81,7 @@ func (r *nodeRepo) updateLocalNodes() {
 					continue
 				}
 				for _, device := range devices {
-					n[node.UID].Devices = append(bizNode.Devices, &biz.DeviceInfo{
+					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
 						Index:    int(device.Index),
 						Id:       device.ID,
 						AliasId:  device.AliasId,
