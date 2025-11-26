@@ -566,3 +566,48 @@ export const clearEdges = (items) =>
     ...item,
     children: clearEdges(item.edges.children),
   }));
+
+/**
+ * Calculate Prometheus query step based on time range to avoid exceeding 11,000 data points limit
+ */
+export const calculatePrometheusStep = (startTime, endTime, maxPoints = 11000) => {
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  const durationMs = end.getTime() - start.getTime();
+  
+  if (durationMs <= 0) {
+    return '1m';
+  }
+  
+  const durationMinutes = durationMs / (1000 * 60);
+  const minStepMinutes = Math.ceil(durationMinutes / maxPoints);
+  
+  if (durationMinutes <= 15) {
+    // ≤ 15 minutes: second-level precision
+    const points15s = Math.ceil(durationMinutes / 0.25);
+    const points30s = Math.ceil(durationMinutes / 0.5);
+    if (points15s <= maxPoints) return '15s';
+    if (points30s <= maxPoints) return '30s';
+    return '1m';
+  } else if (durationMinutes <= 60) {
+    return minStepMinutes <= 1 ? '1m' : '5m';
+  } else if (durationMinutes <= 360) {
+    return minStepMinutes <= 5 ? '5m' : '15m';
+  } else if (durationMinutes <= 1440) {
+    return minStepMinutes <= 15 ? '15m' : '30m';
+  } else if (durationMinutes <= 10080) {
+    return minStepMinutes <= 30 ? '30m' : '1h';
+  } else if (durationMinutes <= 43200) {
+    return minStepMinutes <= 60 ? '1h' : '6h';
+  } else {
+    const durationHours = durationMinutes / 60;
+    const dataPointsWith24h = Math.ceil(durationHours / 24);
+    
+    if (dataPointsWith24h <= maxPoints) {
+      return '24h';
+    }
+    
+    const minStepDays = Math.ceil(dataPointsWith24h / maxPoints);
+    return `${minStepDays * 24}h`;
+  }
+};
