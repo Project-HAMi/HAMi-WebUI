@@ -106,7 +106,7 @@ import {
 } from './getOptions';
 import Block from './Block.vue';
 import './style.scss';
-import { timeParse, getDaysInRange, getRandom } from '@/utils';
+import { timeParse, getDaysInRange, getRandom, calculatePrometheusStep } from '@/utils';
 import { useRouter } from 'vue-router';
 import UserCard from '@/components/UserCard.vue';
 import nodeApi from '~/vgpu/api/node';
@@ -378,12 +378,19 @@ const nodeTotalTop = {
 const rangeConfig = ref(rangeConfigInit);
 
 const fetchRangeData = () => {
+  // Calculate dynamic step based on time range to avoid exceeding Prometheus 11,000 data points limit
+  const step = calculatePrometheusStep(times.value[0], times.value[1]);
+  console.log('[Prometheus Step]', {
+    start: times.value[0],
+    end: times.value[1],
+    calculatedStep: step,
+  });
 
   const params = {
     range: {
       start: timeParse(times.value[0]),
       end: timeParse(times.value[1]),
-      step: '1m',
+      step: step,
     },
   };
 
