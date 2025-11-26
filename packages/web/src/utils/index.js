@@ -573,15 +573,20 @@ export const clearEdges = (items) =>
 export const calculatePrometheusStep = (startTime, endTime, maxPoints = 11000) => {
   const start = new Date(startTime);
   const end = new Date(endTime);
-  const durationMs = end.getTime() - start.getTime();
-  
-  if (durationMs <= 0) {
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
     return '1m';
   }
-  
+
+  const durationMs = end.getTime() - start.getTime();
+
+  if (durationMs <= 0 || !isFinite(durationMs)) {
+    return '1m';
+  }
+
   const durationMinutes = durationMs / (1000 * 60);
   const minStepMinutes = Math.ceil(durationMinutes / maxPoints);
-  
+
   if (durationMinutes <= 15) {
     // ≤ 15 minutes: second-level precision
     const points15s = Math.ceil(durationMinutes / 0.25);
@@ -606,8 +611,13 @@ export const calculatePrometheusStep = (startTime, endTime, maxPoints = 11000) =
     if (dataPointsWith24h <= maxPoints) {
       return '24h';
     }
-    
+
     const minStepDays = Math.ceil(dataPointsWith24h / maxPoints);
+
+    if (!isFinite(minStepDays) || isNaN(minStepDays) || minStepDays <= 0) {
+      return '24h';
+    }
+
     return `${minStepDays * 24}h`;
   }
 };

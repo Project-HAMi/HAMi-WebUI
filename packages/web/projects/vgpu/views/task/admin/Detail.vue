@@ -64,7 +64,7 @@ import { onMounted, ref, watch, watchEffect } from 'vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import cardApi from '~/vgpu/api/card';
 import { QuestionFilled } from '@element-plus/icons-vue';
-import { roundToDecimal, timeParse, calculateDuration } from '@/utils';
+import { roundToDecimal, timeParse, calculateDuration, calculatePrometheusStep } from '@/utils';
 import taskApi from '~/vgpu/api/task';
 import BlockBox from '@/components/BlockBox.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
@@ -246,7 +246,7 @@ const fetchLineData = async () => {
         range: {
           start: timeParse(times.value[0]),
           end: timeParse(times.value[1]),
-          step: '1m',
+          step: calculatePrometheusStep(times.value[0], times.value[1]),
         },
         query: item.query
           .replaceAll(`$container`, detail.value.name)

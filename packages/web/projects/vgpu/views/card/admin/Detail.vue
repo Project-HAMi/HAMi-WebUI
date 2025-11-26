@@ -99,7 +99,7 @@ import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import { QuestionFilled } from '@element-plus/icons-vue';
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import cardApi from '~/vgpu/api/card';
-import { timeParse } from '@/utils';
+import { timeParse, calculatePrometheusStep } from '@/utils';
 import { getLineOptions } from '~/vgpu/views/monitor/overview/getOptions';
 import { getLineOptions as getLineOptions2 } from '~/vgpu/components/config';
 import TimeSelect from '~/vgpu/components/timeSelect.vue';
@@ -304,7 +304,7 @@ const fetchLineData = async () => {
         range: {
           start: timeParse(times.value[0]),
           end: timeParse(times.value[1]),
-          step: '1m',
+          step: calculatePrometheusStep(times.value[0], times.value[1]),
         },
         query: item.query.replaceAll(`$deviceuuid`, route.params.uuid),
       })
