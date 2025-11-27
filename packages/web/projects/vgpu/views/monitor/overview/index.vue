@@ -395,7 +395,7 @@ const fetchRangeData = () => {
           query: v.query,
         })
         .then((res) => {
-          v.data = res.data[0].values;
+          v.data = res.data?.[0]?.values || [];
         });
     }
   }
@@ -407,7 +407,7 @@ const fetchRangeData = () => {
         query: `sum({__name__=~"alert:.*:count"})`,
       })
       .then((res) => {
-        alarmData.value = res.data[0].values;
+        alarmData.value = res.data?.[0]?.values || [];
       });
 
 };

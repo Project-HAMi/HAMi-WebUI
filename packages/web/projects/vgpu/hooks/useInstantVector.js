@@ -42,7 +42,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             },
           });
 
-          data.value[index].data = percentData.data[0]?.values;
+          data.value[index].data = percentData.data[0]?.values || [];
         }
       },
     );
@@ -67,7 +67,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             },
           });
 
-          data.value[index].data = percentData.data[0]?.values;
+          data.value[index].data = percentData.data[0]?.values || [];
         }
       },
     );
@@ -79,13 +79,17 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
     fetchInstantData();
   });
 
-  watch(
-    times,
-    () => {
-      fetchRangeData();
-    },
-    // { immediate: true },
-  );
+  if (times) {
+    watch(
+      () => times.value,
+      () => {
+        // Only fetch data when both start and end times are available
+        if (times?.value?.[0] && times?.value?.[1]) {
+          fetchRangeData();
+        }
+      },
+    );
+  }
 
   return data;
 };
