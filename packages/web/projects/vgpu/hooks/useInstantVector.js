@@ -32,13 +32,13 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
         if (data.value[index].total !== 0) {
             data.value[index].percent = data.value[index].used / data.value[index].total * 100;
         }
-        if (percentQuery) {
+        if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
           const percentData = await cardApi.getRangeVector({
             query: parseQuery(percentQuery),
             range: {
-                start: timeParse(times?.value[0]),
-                end: timeParse(times?.value[1]),
-              step: calculatePrometheusStep(times?.value[0], times?.value[1]),
+                start: timeParse(times.value[0]),
+                end: timeParse(times.value[1]),
+              step: calculatePrometheusStep(times.value[0], times.value[1]),
             },
           });
 
