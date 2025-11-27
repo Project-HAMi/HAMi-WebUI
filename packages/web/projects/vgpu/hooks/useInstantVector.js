@@ -1,6 +1,6 @@
 import cardApi from '~/vgpu/api/card';
 import { onMounted, ref, watch, watchEffect } from 'vue';
-import { timeParse } from '@/utils';
+import { timeParse, calculatePrometheusStep } from '@/utils';
 
 const useInstantVector = (configs, parseQuery = (query) => query, times) => {
   const data = ref(configs);
@@ -38,7 +38,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             range: {
                 start: timeParse(times?.value[0]),
                 end: timeParse(times?.value[1]),
-              step: '1m',
+              step: calculatePrometheusStep(times?.value[0], times?.value[1]),
             },
           });
 
@@ -63,7 +63,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             range: {
                 start: timeParse(times.value[0]),
                 end: timeParse(times.value[1]),
-              step: '1m',
+              step: calculatePrometheusStep(times.value[0], times.value[1]),
             },
           });
 
