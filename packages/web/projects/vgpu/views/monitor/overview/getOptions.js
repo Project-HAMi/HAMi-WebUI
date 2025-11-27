@@ -477,6 +477,12 @@ export const getLineOptions = ({
 };
 
 export const getRangeOptions = (data) => {
+  if (!data || !data[0] || !data[0].data) {
+    return {
+      series: [],
+    };
+  }
+
   return {
     legend: {
       // data: [],
@@ -487,6 +493,7 @@ export const getRangeOptions = (data) => {
         type: 'cross',
       },
       formatter: function (params) {
+        if (!params || params.length === 0) return '';
         var res = params[0].name + '<br/>';
         for (var i = 0; i < params.length; i++) {
           res +=
