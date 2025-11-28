@@ -8,7 +8,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
   const fetchInstantData = async () => {
     const reqs = configs.map(
       async ({ query, totalQuery, percentQuery, cntQuery }, index) => {
-        if (parseQuery(query).includes('undefined')) {
+        if (!query || parseQuery(query).includes('undefined')) {
           return;
         }
         if (query) {
@@ -47,17 +47,17 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
       },
     );
 
-    Promise.all(reqs);
+    await Promise.all(reqs);
   };
 
   const fetchRangeData = async () => {
     const reqs = configs.map(
       async ({ query, totalQuery, percentQuery }, index) => {
-        if (parseQuery(query).includes('undefined')) {
+        if (!query || parseQuery(query).includes('undefined')) {
           return;
         }
 
-        if (percentQuery) {
+        if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
           const percentData = await cardApi.getRangeVector({
             query: parseQuery(percentQuery),
             range: {
@@ -72,7 +72,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
       },
     );
 
-    Promise.all(reqs);
+    await Promise.all(reqs);
   };
 
   watchEffect(() => {

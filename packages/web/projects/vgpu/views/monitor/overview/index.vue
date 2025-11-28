@@ -396,6 +396,9 @@ const fetchRangeData = () => {
         })
         .then((res) => {
           v.data = res.data?.[0]?.values || [];
+        })
+        .catch((err) => {
+          console.error('Failed to fetch range data:', err);
         });
     }
   }
@@ -408,6 +411,9 @@ const fetchRangeData = () => {
       })
       .then((res) => {
         alarmData.value = res.data?.[0]?.values || [];
+      })
+      .catch((err) => {
+        console.error('Failed to fetch alarm data:', err);
       });
 
 };
