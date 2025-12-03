@@ -1,12 +1,16 @@
-FROM node:21.6.2 AS builder
+FROM --platform=$BUILDPLATFORM node:21.6.2 AS builder
 
 WORKDIR /src
 
-RUN npm install -g pnpm
+# Cache dependencies
+COPY package.json yarn.lock ./
+COPY packages/web/package.json packages/web/
+RUN yarn install --frozen-lockfile
 
 COPY . .
 
-RUN make build-all
+# Build
+RUN make build-bff build-web
 
 FROM node:21.6.2-slim
 

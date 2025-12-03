@@ -12,7 +12,7 @@
   </template>
 
   <script setup>
-  import { onMounted, computed, toRefs, defineProps } from 'vue';
+  import { onMounted, computed, toRefs } from 'vue';
   import iframeResize from "iframe-resizer/js/iframeResizer"
 
   const props = defineProps({

@@ -24,7 +24,7 @@
 </template>
 
 <script setup>
-import { defineProps, ref } from 'vue';
+import { ref } from 'vue';
 import { useRoute } from 'vue-router';
 
 const props = defineProps({

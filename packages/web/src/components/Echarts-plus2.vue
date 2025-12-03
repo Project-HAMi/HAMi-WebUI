@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { defineProps, ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import * as echarts from 'echarts';
 
 const props = defineProps({

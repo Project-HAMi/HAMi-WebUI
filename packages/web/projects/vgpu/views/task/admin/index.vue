@@ -33,7 +33,7 @@ import {calculateDuration, roundToDecimal, timeParse} from '@/utils';
 import { QuestionFilled } from '@element-plus/icons-vue';
 import api from '~/vgpu/api/task';
 import {ElMessage, ElMessageBox, ElPopover} from 'element-plus';
-import { reactive, ref, defineProps } from 'vue';
+import { reactive, ref } from 'vue';
 import editSchema from './editSchema';
 import { mapValues, isNumber, pick } from 'lodash';
 import { useRouter } from 'vue-router';

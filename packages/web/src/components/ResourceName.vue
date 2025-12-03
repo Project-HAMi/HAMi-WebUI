@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="jsx">
-import { defineProps } from 'vue';
+
 
 const props = defineProps({
   name: String,

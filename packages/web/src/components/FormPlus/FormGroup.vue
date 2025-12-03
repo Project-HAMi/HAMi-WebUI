@@ -35,7 +35,7 @@
 </template>
 
 <script setup>
-import { defineProps } from 'vue';
+
 import { InfoFilled } from '@element-plus/icons-vue';
 const props = defineProps({
   component: String,

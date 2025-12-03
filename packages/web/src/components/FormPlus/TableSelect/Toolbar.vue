@@ -55,7 +55,7 @@
 </template>
 
 <script setup lang="jsx">
-import { defineProps, inject, computed, defineEmits } from 'vue';
+import { inject, computed } from 'vue';
 import { Refresh, CaretBottom } from '@element-plus/icons-vue';
 import { renderProps } from '@/utils';
 

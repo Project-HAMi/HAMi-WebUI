@@ -12,7 +12,7 @@
 
 <script setup>
 import { isExternal as external } from '@/utils/validate';
-import { defineProps, computed } from 'vue';
+import { computed } from 'vue';
 const props = defineProps({
   // icon 图标
   icon: {

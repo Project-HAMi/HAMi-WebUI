@@ -28,7 +28,7 @@
 <script setup>
 import Block from '~/vgpu/views/monitor/overview/Block.vue';
 import monitorApi from '~/vgpu/api/monitor';
-import { onMounted, ref, defineProps} from 'vue';
+import { onMounted, ref } from 'vue';
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import getOptions from './config';
 import { getDataByPath } from '@/utils';

@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="jsx">
-import { defineProps, isVNode } from 'vue';
+import { isVNode } from 'vue';
 
 defineProps({
   data: Object,

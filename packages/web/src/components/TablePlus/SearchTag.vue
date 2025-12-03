@@ -6,7 +6,7 @@
 </template>
 
 <script setup lang="jsx">
-import { computed, defineProps, isVNode } from 'vue';
+import { computed, isVNode } from 'vue';
 import { isArray } from 'lodash';
 import { ElPopover, ElTag } from 'element-plus';
 

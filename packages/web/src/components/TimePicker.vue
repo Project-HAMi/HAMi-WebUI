@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="jsx">
-import { computed, defineProps, defineEmits } from 'vue';
+import { computed } from 'vue';
 import { ElDatePicker } from 'element-plus';
 
 const props = defineProps({
