@@ -46,7 +46,7 @@
 </template>
 
 <script setup>
-import { defineProps, ref, computed, defineEmits } from 'vue';
+import { ref, computed } from 'vue';
 import { ElMessage } from 'element-plus';
 import { omit } from 'lodash';
 

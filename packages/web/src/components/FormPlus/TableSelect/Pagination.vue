@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="jsx">
-import { defineProps, inject } from 'vue';
+import { inject } from 'vue';
 
 const props = defineProps({
   total: {

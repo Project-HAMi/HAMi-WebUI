@@ -31,7 +31,7 @@ import cardApi from '~/vgpu/api/card';
 import { useRouter } from 'vue-router';
 import searchSchema from '~/vgpu/views/card/admin/searchSchema';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
-import { defineProps, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { roundToDecimal } from '@/utils';
 
 const props = defineProps(['hideTitle', 'filters']);

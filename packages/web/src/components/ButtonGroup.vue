@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="jsx">
-import { defineProps, computed } from 'vue';
+import { computed } from 'vue';
 import { renderProps } from '@/utils';
 
 const props = defineProps({

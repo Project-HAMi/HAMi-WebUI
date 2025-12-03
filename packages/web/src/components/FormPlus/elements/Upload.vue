@@ -23,7 +23,7 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, computed, watchEffect, ref } from 'vue';
+import { computed, watchEffect, ref } from 'vue';
 import { UploadFilled } from '@element-plus/icons-vue';
 
 const props = defineProps({

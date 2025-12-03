@@ -1,5 +1,5 @@
 <script setup>
-import { ref, defineModel } from 'vue';
+import { ref } from 'vue';
 
 const time = defineModel();
 

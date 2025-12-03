@@ -29,7 +29,7 @@
 </template>
 
 <script setup lang="jsx">
-import { ref, defineProps, isVNode } from 'vue';
+import { ref, isVNode } from 'vue';
 
 const props = defineProps({
   content: {

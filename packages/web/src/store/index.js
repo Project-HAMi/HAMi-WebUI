@@ -3,17 +3,29 @@ import createPersistedState from 'vuex-persistedstate';
 import getters from './getters';
 
 // https://webpack.js.org/guides/dependency-management/#requirecontext
-const modulesFiles = require.context('./modules', true, /\.js$/);
+let modules = {};
 
-// you do not need `import app from './modules/app'`
-// it will auto require all vuex module from modules file
-const modules = modulesFiles.keys().reduce((modules, modulePath) => {
-  // set './app.js' => 'app'
-  const moduleName = modulePath.replace(/^\.\/(.*)\.\w+$/, '$1');
-  const value = modulesFiles(modulePath);
-  modules[moduleName] = value.default;
-  return modules;
-}, {});
+// Vite support
+// import.meta.glob is replaced during build time by Vite
+const viteModules = import.meta.glob('./modules/*.js', { eager: true });
+
+if (Object.keys(viteModules).length > 0) {
+  Object.keys(viteModules).forEach((key) => {
+    const moduleName = key.replace(/^\.\/modules\/(.*)\.\w+$/, '$1');
+    modules[moduleName] = viteModules[key].default;
+  });
+} else {
+  // Webpack support
+  if (typeof require.context !== 'undefined') {
+    const modulesFiles = require.context('./modules', true, /\.js$/);
+    modules = modulesFiles.keys().reduce((modules, modulePath) => {
+      const moduleName = modulePath.replace(/^\.\/(.*)\.\w+$/, '$1');
+      const value = modulesFiles(modulePath);
+      modules[moduleName] = value.default;
+      return modules;
+    }, {});
+  }
+}
 
 const global = createPersistedState({
   key: 'global',

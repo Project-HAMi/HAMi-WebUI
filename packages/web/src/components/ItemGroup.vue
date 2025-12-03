@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="jsx">
-import { defineProps, computed, defineEmits } from 'vue';
+import { computed } from 'vue';
 
 const props = defineProps({
   labelWidth: String,

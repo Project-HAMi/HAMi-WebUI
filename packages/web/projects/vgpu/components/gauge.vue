@@ -14,7 +14,7 @@
 <script setup>
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import getOptions from './config';
-import { defineProps } from 'vue';
+
 
 const props = defineProps([
   'title',

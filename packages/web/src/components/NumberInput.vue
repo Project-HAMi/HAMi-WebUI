@@ -9,7 +9,7 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, computed, watchEffect } from 'vue';
+import { computed, watchEffect } from 'vue';
 
 const props = defineProps({
   modelValue: Number,

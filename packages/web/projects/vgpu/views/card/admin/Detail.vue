@@ -91,7 +91,7 @@
 import BackHeader from '@/components/BackHeader.vue';
 import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import { onMounted, ref, watch, defineProps } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import TaskList from '~/vgpu/views/task/admin/index.vue';
 import {ElPopover} from 'element-plus';
 import Gauge from '~/vgpu/components/gauge.vue';

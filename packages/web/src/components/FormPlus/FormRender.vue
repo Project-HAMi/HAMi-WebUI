@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, computed } from 'vue';
+import { computed } from 'vue';
 import FormItem from './FormItem.vue';
 import FormGroup from './FormGroup.vue';
 
