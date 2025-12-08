@@ -1,6 +1,6 @@
 <template>
   <div class="text-plus">
-    <span :class="{ link: !!to }" @click="handleClick"> {{ text }}</span>
+    <span :class="{ link: !!to }" @click="handleClick">{{ text }}</span>
     <div v-if="copy && text" class="copy-ico" @click="handleCopy">
       <svg-icon icon="copy" />
     </div>
@@ -42,6 +42,13 @@ const handleClick = () => {
   display: inline-flex;
   gap: 10px;
   // width: 100%;
+  max-width: 100%;
+  
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
   .link {
     color: var(--el-color-primary);
     cursor: pointer;
