@@ -67,6 +67,7 @@
               dataIndex,
               render,
               width,
+              minWidth,
               fixed,
               sort,
               filters,
@@ -79,6 +80,7 @@
             :label="title"
             :formatter="render"
             :width="width"
+            :min-width="minWidth"
             :fixed="fixed"
             :sortable="sort && 'custom'"
             :filters="isFunction(filters) ? filters(state.list) : filters"
@@ -94,7 +96,7 @@
 
           <el-table-column
             fixed="right"
-            :min-width="180"
+            :min-width="120"
             label="操作"
             v-if="rowAction.length"
           >

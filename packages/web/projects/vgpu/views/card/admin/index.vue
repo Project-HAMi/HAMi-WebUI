@@ -92,6 +92,7 @@ const columns = [
   {
     title: '算力(已分配/总量)',
     dataIndex: 'used',
+    minWidth: 100,
     render: ({ coreTotal, coreUsed, isExternal }) => (
         <span>
       {isExternal ? '--' : coreUsed}/{coreTotal}
@@ -101,6 +102,7 @@ const columns = [
   {
     title: '显存(已分配/总量)',
     dataIndex: 'w',
+    minWidth: 100,
     render: ({ memoryTotal, memoryUsed, isExternal }) => (
         <span>
       {isExternal ? '--' : roundToDecimal(memoryUsed / 1024, 1)}/
