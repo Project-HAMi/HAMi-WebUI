@@ -120,12 +120,9 @@
 <script setup>
 import {
   computed,
-  defineProps,
-  defineEmits,
   onMounted,
   h,
   ref,
-  defineExpose,
 } from 'vue';
 import { Plus, Minus } from '@element-plus/icons-vue';
 import { deepParse } from '@/utils/form';
@@ -248,9 +245,6 @@ defineExpose({ removeData });
   }
   .list-btn {
     margin-left: 10px;
-  }
-
-  .addBtn {
   }
 
   .list-card {

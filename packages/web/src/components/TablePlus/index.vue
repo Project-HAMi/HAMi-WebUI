@@ -12,7 +12,7 @@
           :columns="columns"
           :searchSchema="searchSchema"
           v-model:eyeColumnKeys="eyeColumnKeys"
-          v-if="!static"
+          v-if="!isStatic"
           ref="toolbarRef"
           :hideTag="hideTag"
         />
@@ -160,9 +160,6 @@
 
 <script setup lang="jsx">
 import {
-  defineProps,
-  defineExpose,
-  defineEmits,
   watch,
   reactive,
   onMounted,
@@ -336,6 +333,8 @@ const mode = computed(() => {
 
   return 'remote';
 });
+
+const isStatic = computed(() => props.static);
 
 const fetchData = async () => {
   const { url, method, dataPath = 'list' } = props.api;
