@@ -16,6 +16,7 @@
         <ul class="nodeCard-legend">
           <li
             v-for="{ name, value, color } in pieData"
+            :key="name"
             :style="{
               fontWeight: currentName === name ? 'bold' : 'normal',
             }"
@@ -226,9 +227,6 @@ ul {
     & > :nth-child(2) {
       flex: 1;
       max-height: 280px;
-    }
-    .node-top-echarts {
-      //flex: 1;
     }
   }
 }

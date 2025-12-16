@@ -5,7 +5,7 @@ defineProps(['config']);
 <template>
   <div class="tabs-container">
     <div class="tabs">
-      <template v-for="({ tab }, index) in config">
+      <template v-for="({ tab }, index) in config" :key="index">
         <input type="radio" :id="`radio-${index + 1}`" name="tabs" checked="" />
         <label class="tab" :for="`radio-${index + 1}`">{{ tab }}</label>
       </template>

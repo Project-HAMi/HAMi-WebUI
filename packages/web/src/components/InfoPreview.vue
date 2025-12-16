@@ -2,9 +2,9 @@
   <div class="info-preview">
     <el-descriptions :title="title" :column="column" style="padding: 20px">
       <el-descriptions-item
-        :label="label"
-        :key="value"
         v-for="{ label, value, render } in columns"
+        :key="value"
+        :label="label"
       >
         <span v-if="render">
           <component

@@ -5,10 +5,10 @@
         <el-space>
           <form-item
             v-for="field in fields"
+            :key="field.label"
             v-model="item[field.name]"
             v-bind="field"
             :componentProps="field.props"
-            :key="field.label"
           />
         </el-space>
         <el-button

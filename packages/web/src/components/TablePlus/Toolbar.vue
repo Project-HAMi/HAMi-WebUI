@@ -59,10 +59,10 @@
           <el-button
             :type="type"
             :icon="icon"
-            @click="onClick"
-            :key="name"
             v-for="{ name, type, icon, disabled, onClick } in toolbarAction"
+            :key="name"
             :disabled="renderProps(disabled)"
+            @click="onClick"
             >{{ name }}</el-button
           >
         </div>
@@ -101,10 +101,10 @@
               <el-checkbox-group style="padding: 10px" v-model="eyeKeys">
                 <el-space direction="vertical" alignment="flex-start">
                   <el-checkbox
+                    v-for="{ title } in columns"
                     :key="title"
                     :label="title"
                     :value="title"
-                    v-for="{ title } in columns"
                   />
                 </el-space>
               </el-checkbox-group>

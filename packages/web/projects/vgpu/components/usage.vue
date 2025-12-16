@@ -5,6 +5,7 @@
         <div
           class="alarm-left-item"
           v-for="{ title, bg, count, color, icon } in alarmConfig"
+          :key="title"
           :style="{ background: bg }"
         >
           <div class="title">
@@ -17,7 +18,7 @@
         </div>
       </div>
       <ul class="usage">
-        <li v-for="item in config">
+        <li v-for="item in config" :key="item.title">
           <echarts-plus :options="getOptions(item)" />
         </li>
       </ul>

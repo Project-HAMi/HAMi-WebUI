@@ -12,7 +12,7 @@
           :columns="columns"
           :searchSchema="searchSchema"
           v-model:eyeColumnKeys="eyeColumnKeys"
-          v-if="!static"
+          v-if="!isStatic"
           ref="toolbarRef"
           :hideTag="hideTag"
         />
@@ -127,10 +127,10 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item
-                        :key="title"
                         v-for="{ title, onClick, disabled } in currentRowAction(
                           record,
                         ).slice(2)"
+                        :key="title"
                       >
                         <el-button
                           size="small"
@@ -336,6 +336,8 @@ const mode = computed(() => {
 
   return 'remote';
 });
+
+const isStatic = computed(() => props.static);
 
 const fetchData = async () => {
   const { url, method, dataPath = 'list' } = props.api;

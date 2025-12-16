@@ -4,6 +4,7 @@
       <el-radio-group v-model="tabActive" size="small" @change="handleTabChange">
         <el-radio-button
           v-for="{ tab, key } in config"
+          :key="key"
           :label="tab"
           :value="key"
         />
@@ -31,7 +32,7 @@ import { cloneDeep } from 'lodash';
 
 const props = defineProps({
   title: String,
-  key: String,
+  itemKey: String,
   config: Array,
   onClick: Function,
 });

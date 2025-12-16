@@ -2,11 +2,11 @@
   <div id="itemGroup">
     <form-item
       v-for="item in items"
+      :key="item.label"
       v-model="formValues[item.name]"
       v-bind="item"
       :label-width="labelWidth"
       :componentProps="item.props"
-      :key="item.label"
       class="itemGroup-item"
     ></form-item>
   </div>
