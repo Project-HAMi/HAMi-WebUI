@@ -5,8 +5,8 @@
       class="gauge-box-echarts"
     />
     <div class="gauge-info" v-if="!hideInfo">
-      <span>{{ title.includes('使用') ? '使用' : '分配' }}</span>
-      <span v-if="!title.includes('算力')">({{ unit }})</span> :
+      <span>{{ title.includes('使用') || title.includes('Usage') ? $t('dashboard.usage') : $t('dashboard.allocation') }}</span>
+      <span v-if="!title.includes('算力') && !title.includes('Compute')">({{ unit }})</span> :
       <b>{{ used.toFixed(1) }}/{{ total.toFixed() }}</b>
     </div>
   </div>
@@ -14,6 +14,9 @@
 <script setup>
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import getOptions from './config';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 
 const props = defineProps([

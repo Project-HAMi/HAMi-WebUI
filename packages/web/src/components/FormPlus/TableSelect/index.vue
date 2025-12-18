@@ -9,17 +9,17 @@
       :columns="currentColumns"
     />
 
-    <el-table
-      :data="state.list"
-      v-loading="state.isLoading"
-      height="100%"
-      :default-sort="defaultSort"
-      @sort-change="handleSortChange"
-      @selection-change="handleSelectionChange"
-      @current-change="handleCurrentChange"
-      row-key="id"
-      empty-text="暂无数据"
-      ref="tableRef"
+      <el-table
+        :data="state.list"
+        v-loading="state.isLoading"
+        height="100%"
+        :default-sort="defaultSort"
+        @sort-change="handleSortChange"
+        @selection-change="handleSelectionChange"
+        @current-change="handleCurrentChange"
+        row-key="id"
+        :empty-text="t('common.noData')"
+        ref="tableRef"
       :highlight-current-row="!multiple"
       show-overflow-tooltip
       :border="border"
@@ -74,7 +74,7 @@
       <el-table-column
         fixed="right"
         :min-width="150"
-        label="操作"
+        :label="t('common.operation')"
         v-if="rowAction.length"
       >
         <template #default="record">
@@ -133,9 +133,6 @@
 
 <script setup lang="jsx">
 import {
-  defineProps,
-  defineExpose,
-  defineEmits,
   watch,
   reactive,
   onMounted,
@@ -158,6 +155,7 @@ import {
 import Toolbar from './Toolbar.vue';
 import Pagination from './Pagination.vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps({
   api: {
@@ -239,6 +237,7 @@ const emit = defineEmits(['update:modelValue']);
 const tableRef = ref(null);
 
 const tableRadio = ref(null);
+const { t } = useI18n();
 
 const state = reactive({
   isLoading: false,

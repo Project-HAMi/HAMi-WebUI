@@ -1,9 +1,9 @@
-export const rangeConfigInit = [
+export const getRangeConfigInit = (t) => [
   {
-    title: '资源分配趋势',
+    title: t('dashboard.resourceAllocTrendTitle'),
     dataSource: [
       {
-        name: 'vGPU',
+        name: t('dashboard.vgpu'),
         query: `sum(hami_container_vgpu_allocated) / sum(hami_vgpu_count) * 100`,
         data: [],
         type: 'line',
@@ -37,7 +37,7 @@ export const rangeConfigInit = [
         },
       },
       {
-        name: '算力',
+        name: t('dashboard.compute'),
         query: `sum(hami_container_vcore_allocated) / sum(hami_core_size) * 100`,
         data: [],
         type: 'line',
@@ -71,7 +71,7 @@ export const rangeConfigInit = [
         },
       },
       {
-        name: '显存',
+        name: t('dashboard.memory'),
         query: `sum(hami_container_vmemory_allocated) / sum(hami_memory_size) * 100`,
         data: [],
         areaStyle: {
@@ -106,10 +106,10 @@ export const rangeConfigInit = [
     ],
   },
   {
-    title: '资源使用趋势',
+    title: t('dashboard.resourceUsageTrendTitle'),
     dataSource: [
       {
-        name: '算力',
+        name: t('dashboard.compute'),
         query: `avg(hami_core_util_avg)`,
         data: [],
         areaStyle: {
@@ -142,7 +142,7 @@ export const rangeConfigInit = [
         },
       },
       {
-        name: '显存',
+        name: t('dashboard.memory'),
         query: `sum(hami_memory_used) / sum(hami_memory_size) * 100`,
         data: [],
         areaStyle: {

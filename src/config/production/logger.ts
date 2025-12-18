@@ -10,7 +10,7 @@ export default {
       pattern: 'yyyy-MM-dd.log',
       alwaysIncludePattern: true,
       fileNameSep: '-',
-      level: 'INFO',
-    },
-  },
-};
+      level: 'INFO'
+    }
+  }
+}

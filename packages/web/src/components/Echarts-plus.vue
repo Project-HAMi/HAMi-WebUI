@@ -4,8 +4,6 @@
 
 <script setup>
 import {
-  defineProps,
-  defineExpose,
   watchEffect,
   ref,
   onMounted,

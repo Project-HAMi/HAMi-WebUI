@@ -24,7 +24,7 @@
 
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import cardApi from '~/vgpu/api/card';
 import { cloneDeep } from 'lodash';
@@ -103,19 +103,33 @@ const getTopOptions = () => {
   };
 };
 
-onMounted(async () => {
-  tabActive.value = currentConfig.value[0].key;
-  currentConfig.value.forEach((v, i) => {
+const fetchData = (configList) => {
+  if (!configList?.length) return;
+  tabActive.value = configList[0].key;
+  configList.forEach((v, i) => {
     cardApi
       .getInstantVector({
         query: v.query,
       })
       .then((res) => {
-        currentConfig.value[i].data = res.data.map((item) => ({
+        configList[i].data = res.data.map((item) => ({
           name: item.metric[v.nameKey],
           value: item.value,
         }));
       });
   });
+};
+
+onMounted(() => {
+  fetchData(currentConfig.value);
 });
+
+watch(
+  () => props.config,
+  (val) => {
+    currentConfig.value = cloneDeep(val);
+    fetchData(currentConfig.value);
+  },
+  { deep: true },
+);
 </script>

@@ -13,7 +13,10 @@ import Confirm from '@/components/Confirm/index.js';
 import components from '@/components';
 import '@/styles/element/index.scss';
 
+import i18n from '@/locales';
+
 const app = createApp(App);
+app.use(i18n);
 installElementPlus(app);
 installIcons(app);
 

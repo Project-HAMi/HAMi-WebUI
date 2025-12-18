@@ -10,18 +10,18 @@ DISABLED_PROJECTS?=""
 
 .PHONY: install-modules
 install-modules:
-	yarn install
+	pnpm install
 
 .PHONY: build-all
 build-all: install-modules build-bff build-web
 
 .PHONY: build-bff
 build-bff:
-	yarn run build
+	pnpm run build
 
 .PHONY: build-web
 build-web:
-	yarn workspace hami-webui-web run build
+	pnpm --filter hami-webui-web run build
 
 .PHONY: start-dev
 start-dev: install-modules start-bff start-web
@@ -29,15 +29,15 @@ start-dev: install-modules start-bff start-web
 
 .PHONY: start-bff
 start-bff:
-	yarn run start:dev &
+	pnpm run start:dev &
 
 .PHONY: start-web
 start-web:
-	yarn workspace hami-webui-web run start:dev
+	pnpm --filter hami-webui-web run start:dev
 
 .PHONY: start-prod
 start-prod:
-	yarn run start:prod
+	pnpm run start:prod
 
 .PHONY: build-image
 build-image:

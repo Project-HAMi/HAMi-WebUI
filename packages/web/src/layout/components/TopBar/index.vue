@@ -5,6 +5,9 @@
         <Logo />
       </div>
     </div>
+    <div class="right">
+      <LangSelect />
+    </div>
   </div>
 </template>
 
@@ -13,6 +16,7 @@ import { computed, ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useStore } from 'vuex';
 import Logo from './logo.vue';
+import LangSelect from '@/components/LangSelect/index.vue';
 
 import './style.scss';
 const menus = ref([]);

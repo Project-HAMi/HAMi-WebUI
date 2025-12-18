@@ -1,0 +1,71 @@
+# Dependencies
+node_modules
+packages/*/node_modules
+.pnpm-store
+
+# Build outputs
+dist
+packages/*/dist
+coverage
+.nyc_output
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Development files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+test
+*.spec.ts
+*.test.ts
+jest.config.*
+.eslintrc.*
+.prettierrc.*
+
+# Server (backend is built separately)
+server
+
+# Charts
+charts
+
+# Scripts (not needed in production)
+scripts
+
+# Temporary files
+tmp
+*.tmp
+*.temp
+
+# Environment files (should be provided at runtime)
+.env
+.env.*
+!.env.example
+
