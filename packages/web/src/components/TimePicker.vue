@@ -2,9 +2,9 @@
   <el-date-picker
     v-model="value"
     :type="type"
-    range-separator="至"
-    start-placeholder="开始时间"
-    end-placeholder="结束时间"
+    :range-separator="t('common.to')"
+    :start-placeholder="t('common.startTime')"
+    :end-placeholder="t('common.endTime')"
     unlink-panels
     :shortcuts="type.includes('range') && shortcuts"
     class="date-picker"
@@ -16,6 +16,7 @@
 <script setup lang="jsx">
 import { computed } from 'vue';
 import { ElDatePicker } from 'element-plus';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps({
   modelValue: {},
@@ -34,9 +35,10 @@ const value = computed({
   },
 });
 
-const shortcuts = [
+const { t } = useI18n();
+const shortcuts = computed(() => [
   {
-    text: '前 1 小时',
+    text: t('timeShortcut.last1h'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -45,7 +47,7 @@ const shortcuts = [
     },
   },
   {
-    text: '前 6 小时',
+    text: t('timeShortcut.last6h'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -54,7 +56,7 @@ const shortcuts = [
     },
   },
   {
-    text: '前 12 小时',
+    text: t('timeShortcut.last12h'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -63,7 +65,7 @@ const shortcuts = [
     },
   },
   {
-    text: '前 1 天',
+    text: t('timeShortcut.last1d'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -72,7 +74,7 @@ const shortcuts = [
     },
   },
   {
-    text: '前 2 天',
+    text: t('timeShortcut.last2d'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -81,7 +83,7 @@ const shortcuts = [
     },
   },
   {
-    text: '前 3 天',
+    text: t('timeShortcut.last3d'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -90,7 +92,7 @@ const shortcuts = [
     },
   },
   {
-    text: '前 1 周',
+    text: t('timeShortcut.last1w'),
     value: () => {
       const end = new Date();
       const start = new Date();
@@ -98,35 +100,7 @@ const shortcuts = [
       return [start, end];
     },
   },
-  // {
-  //   text: '前两周',
-  //   value: () => {
-  //     const end = new Date();
-  //     const start = new Date();
-  //     start.setTime(start.getTime() - 3600 * 1000 * 24 * 14);
-  //     return [start, end];
-  //   },
-  // },
-  // {
-  //   text: '前一个月',
-  //   value: () => {
-  //     const end = new Date();
-  //     const start = new Date();
-  //     start.setTime(start.getTime() - 3600 * 1000 * 24 * 30);
-  //     return [start, end];
-  //   },
-  // },
-  // {
-  //   text: '前三个月',
-  //   value: () => {
-  //     const end = new Date();
-  //     const start = new Date();
-  //     start.setTime(start.getTime() - 3600 * 1000 * 24 * 90);
-  //     return [start, end];
-  //   },
-  // },
-];
-
+]);
 const disabledDate = (time) => {
   return time.getTime() >= Date.now();
 };

@@ -1,26 +1,26 @@
 import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 
-export default {
+export default (t) => ({
   items: [
     {
-      label: '显卡 ID',
+      label: t('card.id'),
       name: 'uid',
       component: 'input',
     },
     {
-      label: '所属节点',
+      label: t('card.node'),
       name: 'nodeName',
       component: 'select',
       props: {
         mode: 'remote',
-        api: nodeApi.getNodeList({filters:{}}),
+        api: nodeApi.getNodeList({ filters: {} }),
         labelKey: 'name',
         valueKey: 'name',
       },
     },
     {
-      label: '显卡型号',
+      label: t('card.model'),
       name: 'type',
       component: 'select',
       props: {
@@ -31,4 +31,4 @@ export default {
       },
     },
   ],
-};
+});

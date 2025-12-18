@@ -9,8 +9,6 @@
 
 <script setup>
 import {
-  defineProps,
-  defineEmits,
   ref,
   reactive,
   computed,

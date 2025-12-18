@@ -87,7 +87,7 @@
               <template #icon>
                 <svg-icon icon="highSearch" />
               </template>
-              高级
+              {{ t('common.advanced') }}
             </el-button>
           </div>
 
@@ -101,11 +101,13 @@
               <el-checkbox-group style="padding: 10px" v-model="eyeKeys">
                 <el-space direction="vertical" alignment="flex-start">
                   <el-checkbox
-                    :key="title"
-                    :label="title"
-                    :value="title"
-                    v-for="{ title } in columns"
-                  />
+                    v-for="col in columns"
+                    :key="getColKey(col)"
+                    :label="getColKey(col)"
+                    :value="getColKey(col)"
+                  >
+                    {{ col.title }}
+                  </el-checkbox>
                 </el-space>
               </el-checkbox-group>
             </template>
@@ -124,15 +126,12 @@
 
 <script setup lang="jsx">
 import {
-  defineProps,
   inject,
   computed,
-  defineEmits,
   ref,
   watchEffect,
   onMounted,
-  defineExpose,
-  watch
+  watch,
 } from 'vue';
 import { Refresh } from '@element-plus/icons-vue';
 import { renderProps } from '@/utils';
@@ -140,6 +139,7 @@ import { pick, pickBy, isArray } from 'lodash';
 import getFields from '@/utils/getFields';
 import { deepParse } from '@/utils/form';
 import SearchTag from './SearchTag.vue';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps({
   mode: String,
@@ -190,6 +190,8 @@ const searchFormRef = ref(null);
 const searchFormVisible = ref(props.defaultVisibleSearchForm);
 
 const searchNameVal = ref('');
+const { t } = useI18n();
+const getColKey = (col) => col.dataIndex || col.title;
 const eyeKeys = computed({
   get() {
     return props.eyeColumnKeys;

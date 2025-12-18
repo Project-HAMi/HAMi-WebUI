@@ -48,8 +48,6 @@
 
 <script setup>
 import {
-  defineProps,
-  defineEmits,
   ref,
   reactive,
   computed,
@@ -59,6 +57,7 @@ import {
 } from 'vue';
 import { isEqual, isPlainObject, debounce, isFunction, isArray } from 'lodash';
 import request from '@/utils/request';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps({
   modelValue: {},
@@ -68,7 +67,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: '请选择',
+    default: '',
   },
   clearable: {
     type: Boolean,
@@ -120,6 +119,8 @@ const props = defineProps({
 });
 
 const emits = defineEmits(['update:modelValue', 'onChangeSelect']);
+const { t } = useI18n();
+const placeholder = computed(() => props.placeholder || t('common.pleaseSelect'));
 
 const selectOptions = ref([]);
 

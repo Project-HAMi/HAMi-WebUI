@@ -2,10 +2,10 @@ import {
   Injectable,
   NestInterceptor,
   ExecutionContext,
-  CallHandler,
-} from '@nestjs/common';
-import { Observable } from 'rxjs';
-import { map } from 'rxjs/operators';
+  CallHandler
+} from '@nestjs/common'
+import { Observable } from 'rxjs'
+import { map } from 'rxjs/operators'
 
 type CustomResponse<T> = {
   code: number;
@@ -15,20 +15,19 @@ type CustomResponse<T> = {
 
 @Injectable()
 export class TransformInterceptor<T>
-  implements NestInterceptor<T, CustomResponse<T>>
-{
+implements NestInterceptor<T, CustomResponse<T>> {
   intercept(
     context: ExecutionContext,
-    next: CallHandler,
+    next: CallHandler
   ): Observable<CustomResponse<T>> {
     return next.handle().pipe(
       map((data) => {
         return {
           code: 0,
           msg: 'success',
-          data,
-        };
-      }),
-    );
+          data
+        }
+      })
+    )
   }
 }

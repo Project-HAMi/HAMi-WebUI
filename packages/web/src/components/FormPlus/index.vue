@@ -17,9 +17,6 @@
 <script setup>
 import {
   ref,
-  defineProps,
-  defineExpose,
-  defineEmits,
   computed,
   reactive,
   provide,

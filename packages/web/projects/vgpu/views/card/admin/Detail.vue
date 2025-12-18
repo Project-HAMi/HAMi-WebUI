@@ -1,10 +1,10 @@
 <template>
   <div>
-    <back-header> 显卡管理 > {{ detail.uuid }} </back-header>
+    <back-header> {{ $t('card.detail.title') }} > {{ detail.uuid }} </back-header>
     <block-box class="node-block">
       <div class="card-detail">
         <div class="card-detail-left">
-          <div class="title">详细信息</div>
+          <div class="title">{{ $t('card.detail.detailInfo') }}</div>
           <ul class="card-detail-info">
             <li v-for="{ label, value, render } in columns" :key="label">
               <span class="label">{{ label }}</span>
@@ -23,7 +23,7 @@
             <Gauge v-bind="item" />
           </template>
           <template v-else-if="detail.isExternal && index < 2">
-            <el-empty description="暂无资源分配数据" :image-size="90" />
+            <el-empty :description="$t('card.detail.noAllocData')" :image-size="90" />
           </template>
         </li>
         <li v-for="(item, index) in lineTools" :key="index">
@@ -34,7 +34,7 @@
 
 
     <div class="line-box">
-      <block-box title="资源分配趋势（%）">
+      <block-box :title="$t('card.detail.resourceAllocTrend')">
         <template #extra>
           <time-picker v-model="times" type="datetimerange" size="small" />
         </template>
@@ -49,7 +49,7 @@
           />
         </div>
       </block-box>
-      <block-box title="资源使用趋势（%）">
+      <block-box :title="$t('card.detail.resourceUsageTrend')">
         <template #extra>
           <time-picker v-model="times" type="datetimerange" size="small" />
         </template>
@@ -75,10 +75,10 @@
       </block-box>
     </div>
 
-    <block-box title="任务列表">
+    <block-box :title="$t('card.detail.taskList')">
       <template v-if="detail.isExternal">
-        <el-alert title="由于显卡未纳管，无法获取到任务数据" show-icon type="warning" :closable="false" />
-        <el-empty description="暂无任务数据" :image-size="100" />
+        <el-alert :title="$t('card.detail.unmanagedNoTask')" show-icon type="warning" :closable="false" />
+        <el-empty :description="$t('card.detail.noTaskData')" :image-size="100" />
       </template>
       <template v-else>
         <TaskList :hideTitle="true" :filters="{ deviceId: detail.uuid }" />
@@ -91,7 +91,7 @@
 import BackHeader from '@/components/BackHeader.vue';
 import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, ref, watch, computed } from 'vue';
 import TaskList from '~/vgpu/views/task/admin/index.vue';
 import {ElPopover} from 'element-plus';
 import Gauge from '~/vgpu/components/gauge.vue';
@@ -104,6 +104,7 @@ import { getLineOptions } from '~/vgpu/views/monitor/overview/getOptions';
 import { getLineOptions as getLineOptions2 } from '~/vgpu/components/config';
 import TimeSelect from '~/vgpu/components/timeSelect.vue';
 import { getRangeOptions } from './getOptions';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps([
   'title',
@@ -116,6 +117,7 @@ const props = defineProps([
 ]);
 
 const route = useRoute();
+const { t } = useI18n();
 
 const detail = ref({});
 
@@ -125,13 +127,12 @@ start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
 
-const columns = [
+const columns = computed(() => [
   {
-    label: '显卡状态',
+    label: t('card.status'),
     value: 'health',
     render: ({ health, isExternal }) => {
       if (detail.value && detail.value.health !== undefined) {
-        const text = health ? '健康' : '硬件错误';
         const color = health ? '#2563eb' : '#EF4444';
         return (
             <div
@@ -145,7 +146,7 @@ const columns = [
                 }}
             >
               <el-tag disable-transitions type={isExternal ? 'warning' : (health ? 'success' : 'danger')}>
-                {isExternal ? '未纳管' : (health ? '健康' : '硬件错误')}
+                {isExternal ? t('card.unmanaged') : (health ? t('card.healthy') : t('card.hardwareError'))}
               </el-tag>
               {!health && (
                   <ElPopover trigger="hover" popper-style={{ width: '190px' }}>
@@ -157,7 +158,7 @@ const columns = [
                       ),
                       default: () => (
                           <span style={{ marginLeft: '5px' }}>
-                  请排查该 GPU 硬件问题
+                  {t('card.detail.checkHardware')}
                 </span>
                       ),
                     }}
@@ -166,38 +167,33 @@ const columns = [
             </div>
         );
       } else {
-        return <el-tag disable-transitions size="small" type="info">加载中...</el-tag>;
+        return <el-tag disable-transitions size="small" type="info">{t('card.detail.loading')}</el-tag>;
       }
     },
   },
-  // {
-  //   label: '显卡厂商',
-  //   value: 'uuid',
-  //   render: ({ type }) => <span>{type?.split('-')[0]}</span>,
-  // },
   {
-    label: '显卡 ID',
+    label: t('card.detail.cardId'),
     value: 'uuid',
     render: ({ uuid }) => <text-plus text={uuid} copy />,
   },
   {
-    label: '所属节点',
+    label: t('card.node'),
     value: 'nodeName',
   },
   {
-    label: '显卡型号',
+    label: t('card.model'),
     value: 'type',
   },
   {
-    label: '设备号',
+    label: t('card.detail.deviceNo'),
     value: 'device_no',
   },
   {
-    label: '驱动版本',
+    label: t('card.detail.driverVersion'),
     value: 'driver_version',
   },
   {
-    label: '使用模式',
+    label: t('card.mode'),
     value: 'mode',
     render: ({ mode, type }) => (
         <el-tag disable-transitions>
@@ -205,7 +201,7 @@ const columns = [
         </el-tag>
     )
   }
-];
+]);
 
 const cp = useInstantVector(
   [
@@ -228,55 +224,57 @@ const cp = useInstantVector(
   (query) => query.replaceAll('$node', props.detail.name),
 );
 
+const _gaugeConfigBase = [
+  {
+    titleKey: 'dashboard.computeAllocRate',
+    percent: 0,
+    query: `avg(sum(hami_container_vcore_allocated{deviceuuid=~"$deviceuuid"}) by (instance))`,
+    totalQuery: `avg(sum(hami_core_size{deviceuuid=~"$deviceuuid"}) by (instance))`,
+    percentQuery: `avg(sum(hami_container_vcore_allocated{deviceuuid=~"$deviceuuid"}) by (instance))/avg(sum(hami_core_size{deviceuuid=~"$deviceuuid"}) by (instance)) *100`,
+    total: 0,
+    used: 0,
+    unit: ' ',
+  },
+  {
+    titleKey: 'dashboard.memAllocRate',
+    percent: 0,
+    query: `avg(sum(hami_container_vmemory_allocated{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
+    totalQuery: `avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
+    percentQuery: `(avg(sum(hami_container_vmemory_allocated{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024 )/(avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024) *100 `,
+    total: 0,
+    used: 0,
+    unit: 'GiB',
+  },
+  {
+    titleKey: 'dashboard.computeUsageRate',
+    percent: 0,
+    query: `avg(sum(hami_core_util{deviceuuid=~"$deviceuuid"}) by (instance))`,
+    percentQuery: `avg(sum(hami_core_util_avg{deviceuuid=~"$deviceuuid"}) by (instance))`,
+    total: 100,
+    used: 0,
+    unit: ' ',
+  },
+  {
+    titleKey: 'dashboard.memUsageRate',
+    percent: 0,
+    query: `avg(sum(hami_memory_used{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
+    totalQuery: `avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance))/1024`,
+    percentQuery: `(avg(sum(hami_memory_used{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance))/1024)*100`,
+    total: 0,
+    used: 0,
+    unit: 'GiB',
+  },
+];
+
 const gaugeConfig = useInstantVector(
-  [
-    {
-      title: '算力分配率',
-      percent: 0,
-      query: `avg(sum(hami_container_vcore_allocated{deviceuuid=~"$deviceuuid"}) by (instance))`,
-      totalQuery: `avg(sum(hami_core_size{deviceuuid=~"$deviceuuid"}) by (instance))`,
-      percentQuery: `avg(sum(hami_container_vcore_allocated{deviceuuid=~"$deviceuuid"}) by (instance))/avg(sum(hami_core_size{deviceuuid=~"$deviceuuid"}) by (instance)) *100`,
-      total: 0,
-      used: 0,
-      unit: ' ',
-    },
-    {
-      title: '显存分配率',
-      percent: 0,
-      query: `avg(sum(hami_container_vmemory_allocated{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
-      totalQuery: `avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
-      percentQuery: `(avg(sum(hami_container_vmemory_allocated{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024 )/(avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024) *100 `,
-      total: 0,
-      used: 0,
-      unit: 'GiB',
-    },
-    {
-      title: '算力使用率',
-      percent: 0,
-      query: `avg(sum(hami_core_util{deviceuuid=~"$deviceuuid"}) by (instance))`,
-      percentQuery: `avg(sum(hami_core_util_avg{deviceuuid=~"$deviceuuid"}) by (instance))`,
-      total: 100,
-      used: 0,
-      unit: ' ',
-    },
-    {
-      title: '显存使用率',
-      percent: 0,
-      query: `avg(sum(hami_memory_used{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
-      totalQuery: `avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance))/1024`,
-      percentQuery: `(avg(sum(hami_memory_used{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance))/1024)*100`,
-      total: 0,
-      used: 0,
-      unit: 'GiB',
-    },
-  ],
+  _gaugeConfigBase.map(item => ({...item, title: t(item.titleKey)})),
   (query) => query.replaceAll(`$deviceuuid`, route.params.uuid),
   times,
 );
 
 const lineTools = ref([
   {
-    title: 'GPU功率 (W)',
+    title: t('card.detail.gpuPower'),
     query: `avg by (device_no,driver_version) (hami_device_power{deviceuuid=~"$deviceuuid"})`,
     data: [],
     unit: 'W',
@@ -286,7 +284,7 @@ const lineTools = ref([
     hideInfo: true,
   },
   {
-    title: 'GPU 温度（℃）',
+    title: t('card.detail.gpuTemperature'),
     query: `avg by (device_no,driver_version) (hami_device_temperature{deviceuuid=~"$deviceuuid"})`,
     data: [],
     unit: '℃',

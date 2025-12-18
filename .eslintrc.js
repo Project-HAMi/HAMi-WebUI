@@ -1,7 +1,8 @@
 module.exports = {
   root: true,
   parserOptions: {
-    parser: 'babel-eslint',
+    // Use TypeScript-aware parser; replaces deprecated babel-eslint.
+    parser: '@typescript-eslint/parser',
     sourceType: 'module'
   },
   env: {
@@ -9,6 +10,7 @@ module.exports = {
     node: true,
     es6: true
   },
+  plugins: ['@typescript-eslint'],
   extends: ['plugin:vue/recommended', 'eslint:recommended'],
 
   // add your custom rules here
@@ -16,10 +18,8 @@ module.exports = {
   rules: {
     'vue/max-attributes-per-line': [2, {
       'singleline': 10,
-      'multiline': {
-        'max': 1,
-        'allowFirstLine': false
-      }
+      // eslint-plugin-vue >=8 expects multiline to be a number or an object with only `max`
+      'multiline': 1
     }],
     'vue/singleline-html-element-content-newline': 'off',
     'vue/multiline-html-element-content-newline': 'off',
@@ -148,7 +148,9 @@ module.exports = {
     }],
     'no-useless-call': 2,
     'no-useless-computed-key': 2,
-    'no-useless-constructor': 2,
+    // Use TS-aware version to allow parameter properties
+    'no-useless-constructor': 'off',
+    '@typescript-eslint/no-useless-constructor': 2,
     'no-useless-escape': 0,
     'no-whitespace-before-property': 2,
     'no-with': 2,
@@ -194,5 +196,11 @@ module.exports = {
       objectsInObjects: false
     }],
     'array-bracket-spacing': [2, 'never']
-  }
+  },
+  overrides: [
+    {
+      files: ['**/*.spec.ts', 'test/**/*.ts'],
+      env: { jest: true }
+    }
+  ]
 }

@@ -1,19 +1,20 @@
 <template>
   <list-header
     v-if="!hideTitle"
-    description="显卡管理用于监控物理显卡的状态。它用于监控物理显卡的分配使用情况，以及查看物理显卡上运行的所有任务。"
+    :description="$t('card.description')"
   />
 
   <preview-bar
     v-if="!hideTitle"
-    title="显卡"
+    :title="$t('dashboard.card')"
     type="deviceuuid"
     :handle-click="handleClick"
     :handle-pie-click="handlePieClick"
-    :currentName="tableRef.currentParams?.filters?.type"
+    :currentName="currentType"
   />
 
   <table-plus
+    :key="`${locale}-card-table`"
     :api="cardApi.getCardList({ filters })"
     :columns="columns"
     :rowAction="rowAction"
@@ -29,16 +30,20 @@
 <script setup lang="jsx">
 import cardApi from '~/vgpu/api/card';
 import { useRouter } from 'vue-router';
-import searchSchema from '~/vgpu/views/card/admin/searchSchema';
+import createSearchSchema from '~/vgpu/views/card/admin/searchSchema';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { roundToDecimal } from '@/utils';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps(['hideTitle', 'filters']);
 
 const router = useRouter();
+const { t, locale } = useI18n();
 
-const tableRef = ref({});
+const tableRef = ref(null);
+const currentType = computed(() => tableRef.value?.currentParams?.filters?.type || '');
+const searchSchema = computed(() => createSearchSchema(t));
 
 const handleClick = (params) => {
   router.push({
@@ -46,25 +51,25 @@ const handleClick = (params) => {
   });
 };
 
-const columns = [
+const columns = computed(() => [
   {
-    title: '显卡 ID',
+    title: t('card.id'),
     dataIndex: 'uuid',
     render: ({ uuid }) => (
       <text-plus text={uuid} to={`/admin/vgpu/card/admin/${uuid}`} />
     ),
   },
   {
-    title: '显卡状态',
+    title: t('card.status'),
     dataIndex: 'health',
     render: ({ health, isExternal }) => (
         <el-tag disable-transitions type={isExternal ? 'warning' : (health ? 'success' : 'danger')}>
-          {isExternal ? '未纳管' : (health ? '健康' : '硬件错误')}
+          {isExternal ? t('card.unmanaged') : (health ? t('card.healthy') : t('card.hardwareError'))}
         </el-tag>
     )
   },
   {
-    title: '使用模式',
+    title: t('card.mode'),
     dataIndex: 'mode',
     render: ({ mode, type }) => (
         <el-tag disable-transitions>
@@ -73,15 +78,15 @@ const columns = [
     )
   },
   {
-    title: '所属节点',
+    title: t('card.node'),
     dataIndex: 'nodeName',
   },
   {
-    title: '显卡型号',
+    title: t('card.model'),
     dataIndex: 'type',
   },
   {
-    title: 'vGPU',
+    title: t('card.vgpu'),
     dataIndex: 'used',
     render: ({ vgpuTotal, vgpuUsed, isExternal }) => (
         <span>
@@ -90,7 +95,7 @@ const columns = [
     ),
   },
   {
-    title: '算力(已分配/总量)',
+    title: t('card.computeAllocTotal'),
     dataIndex: 'used',
     minWidth: 100,
     render: ({ coreTotal, coreUsed, isExternal }) => (
@@ -100,7 +105,7 @@ const columns = [
     ),
   },
   {
-    title: '显存(已分配/总量)',
+    title: t('card.memoryAllocTotal'),
     dataIndex: 'w',
     minWidth: 100,
     render: ({ memoryTotal, memoryUsed, isExternal }) => (
@@ -110,25 +115,25 @@ const columns = [
     </span>
     ),
   },
-];
+]);
 
-const rowAction = [
+const rowAction = computed(() => [
   {
-    title: '查看详情',
+    title: t('card.viewDetails'),
     onClick: (row) => {
       router.push({
         path: `/admin/vgpu/card/admin/${row.uuid}`,
       });
     },
   },
-];
+]);
 
 const PieRef = ref();
 
 const handlePieClick = (params, echarts) => {
   PieRef.value = echarts;
   const name = params.data.name;
-  if (tableRef.value.currentParams.filters.type === name) {
+  if (tableRef.value?.currentParams?.filters?.type === name) {
     echarts.dispatchAction({
       type: 'downplay',
       seriesIndex: 0,
@@ -150,7 +155,7 @@ const handlePieClick = (params, echarts) => {
 };
 
 watch(
-  () => tableRef.value.currentParams?.filters?.type,
+  () => tableRef.value?.currentParams?.filters?.type,
   (newVal) => {
     if (!PieRef.value) return;
     const data = PieRef.value.getOption().series[0].data;

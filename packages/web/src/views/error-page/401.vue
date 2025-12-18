@@ -1,21 +1,21 @@
 <template>
   <div class="errPage-container">
     <el-button icon="el-icon-arrow-left" class="pan-back-btn" @click="back">
-      返回
+      {{ $t('error.401.back') }}
     </el-button>
     <el-row>
       <el-col :span="12">
-        <h1 class="text-jumbo text-ginormous">Oops!</h1>
+        <h1 class="text-jumbo text-ginormous">{{ $t('error.401.oops') }}</h1>
         gif来源<a href="https://zh.airbnb.com/" target="_blank">airbnb</a> 页面
-        <h2>你没有权限去该页面</h2>
-        <h6>如有不满请联系你领导</h6>
+        <h2>{{ $t('error.401.noPermission') }}</h2>
+        <h6>{{ $t('error.401.contactLeader') }}</h6>
         <ul class="list-unstyled">
-          <li>或者你可以去:</li>
+          <li>{{ $t('error.401.or') }}</li>
           <li class="link-type">
-            <router-link to="/"> 回首页 </router-link>
+            <router-link to="/"> {{ $t('error.401.backHome') }} </router-link>
           </li>
           <li class="link-type">
-            <a href="javascript:window.history.back();">返回上一个页面</a>
+            <a href="javascript:window.history.back();">{{ $t('error.401.backPrevious') }}</a>
           </li>
         </ul>
       </el-col>

@@ -1,6 +1,6 @@
 <template>
   <back-header>
-    任务管理 > {{ detail.name }}
+    {{ $t('task.detail.title') }} > {{ detail.name }}
   </back-header>
 
   <block-box>
@@ -15,7 +15,7 @@
         <!--            <span v-else class="value">{{ detail[value] || '&#45;&#45;' }}</span>-->
         <!--          </el-descriptions-item>-->
         <!--        </el-descriptions>-->
-        <div class="title">详细信息</div>
+        <div class="title">{{ $t('task.detail.detailInfo') }}</div>
         <ul class="node-detail-info">
           <li v-for="{ label, value, render } in columns" :key="label">
             <span class="label">{{ label }}</span>
@@ -28,7 +28,7 @@
             <span v-for="{ label, count } in cp" :key="label">
               <span class="label">{{ label }}</span>
 
-              <span class="value">{{ count }} 倍</span>
+              <span class="value">{{ count }} {{ $t('task.times') }}</span>
             </span>
           </li>
         </ul>
@@ -47,7 +47,7 @@
     </template>
     <div style="height: 200px">
       <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
-        <el-empty description="该设备厂商暂不支持任务维度监控" :image-size="60" />
+        <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
       </template>
       <template v-else>
         <echarts-plus :options="getLineOptions({ data })" />
@@ -59,11 +59,12 @@
 <script setup lang="jsx">
 import BackHeader from '@/components/BackHeader.vue';
 import {useRoute, useRouter} from 'vue-router';
-import { onMounted, ref, watch, watchEffect } from 'vue';
+import { onMounted, ref, watch, watchEffect, computed } from 'vue';
 
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import cardApi from '~/vgpu/api/card';
 import { QuestionFilled } from '@element-plus/icons-vue';
+import { ElPopover } from 'element-plus';
 import { roundToDecimal, timeParse, calculateDuration, calculatePrometheusStep } from '@/utils';
 import taskApi from '~/vgpu/api/task';
 import BlockBox from '@/components/BlockBox.vue';
@@ -71,9 +72,11 @@ import Gauge from '~/vgpu/components/gauge.vue';
 import { getLineOptions } from '~/vgpu/components/config';
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import TimeSelect from '~/vgpu/components/timeSelect.vue';
+import { useI18n } from 'vue-i18n';
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 const detail = ref({});
 
@@ -83,16 +86,16 @@ start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
 
-const columns = [
+const columns = computed(() => [
   {
-    label: '任务状态',
+    label: t('task.status'),
     value: 'status',
     render: ({ status }) => {
       const enums = {
-        closed: { text: '已完成', color: '#999' },
-        success: { text: '运行中', color: '#2563eb' },
-        unknown: { text: '未知', color: '#FACC15' },
-        failed: { text: '错误', color: '#EF4444' },
+        closed: { text: t('task.statusCompleted'), color: '#999' },
+        success: { text: t('task.statusRunning'), color: '#2563eb' },
+        unknown: { text: t('task.statusUnknown'), color: '#FACC15' },
+        failed: { text: t('task.statusFailed'), color: '#EF4444' },
       };
       const { text, color } = enums[status] || {};
       return (
@@ -122,7 +125,7 @@ const columns = [
                   reference: () => <el-icon color="#939EA9" size="14"><QuestionFilled /></el-icon>,
                   default: () => (
                       <span style={{ marginLeft: '5px', }}>
-                      请跳转云平台查看详情
+                      {t('task.checkCloudPlatform')}
                     </span>
                   ),
                 }}
@@ -133,7 +136,7 @@ const columns = [
     },
   },
   {
-    label: '所属显卡',
+    label: t('task.card'),
     value: 'deviceIds',
     render: ({ deviceIds }) => {
       if (!deviceIds || !Array.isArray(deviceIds) || deviceIds.length === 0) {
@@ -155,20 +158,20 @@ const columns = [
     },
   },
   {
-    label: '所属节点',
+    label: t('task.node'),
     value: 'nodeName',
     render: ({ nodeName }) => <text-plus text={nodeName} copy />,
   },
   {
-    label: '显卡类型',
+    label: t('task.cardType'),
     value: 'type',
   },
   {
-    label: '可分配算力',
+    label: t('task.allocatedCompute'),
     value: 'allocatedCores',
   },
   {
-    label: '可分配显存',
+    label: t('task.allocatedMemory'),
     value: 'allocatedMem',
     render: ({ allocatedMem }) =>
       allocatedMem ? (
@@ -178,11 +181,11 @@ const columns = [
       ),
   },
   {
-    label: '应用名称',
+    label: t('task.appName'),
     value: 'appName',
   },
   {
-    label: '任务创建时间',
+    label: t('task.createTime'),
     value: 'createTime',
     render: ({ createTime }) => <span>{timeParse(createTime)}</span>,
   },
@@ -192,32 +195,34 @@ const columns = [
   //   render: ({ createTime, status }) =>
   //       status === 'success' ? <span>{calculateDuration(createTime)}</span> : null,
   // },
+]);
+const _gaugeConfigBase = [
+  {
+    titleKey: 'dashboard.computeUsageRate',
+    percent: 0,
+    query: `avg(sum(hami_container_core_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
+    totalQuery: `avg(sum(hami_container_vcore_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
+    percentQuery: `avg(sum(hami_container_core_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance)) / avg(sum(hami_container_vcore_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance)) *100`,
+    total: 0,
+    used: 0,
+    unit: '%',
+    data: [],
+  },
+  {
+    titleKey: 'dashboard.memUsageRate',
+    percent: 0,
+    query: `avg(sum(hami_container_memory_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))/ 1024`,
+    totalQuery: `avg(sum(hami_container_vmemory_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))/1024`,
+    percentQuery: `(avg(sum(hami_container_memory_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"})/ 1024)/(avg(sum(hami_container_vmemory_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))/1024) *100)`,
+    total: 0,
+    used: 0,
+    unit: 'GiB',
+    data: [],
+  },
 ];
+
 const gaugeConfig = useInstantVector(
-  [
-    {
-      title: '算力使用率',
-      percent: 0,
-      query: `avg(sum(hami_container_core_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
-      totalQuery: `avg(sum(hami_container_vcore_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
-      percentQuery: `avg(sum(hami_container_core_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance)) / avg(sum(hami_container_vcore_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance)) *100`,
-      total: 0,
-      used: 0,
-      unit: '%',
-      data: [],
-    },
-    {
-      title: '显存使用率',
-      percent: 0,
-      query: `avg(sum(hami_container_memory_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))/ 1024`,
-      totalQuery: `avg(sum(hami_container_vmemory_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))/1024`,
-      percentQuery: `(avg(sum(hami_container_memory_used{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"})/ 1024)/(avg(sum(hami_container_vmemory_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))/1024) *100)`,
-      total: 0,
-      used: 0,
-      unit: 'GiB',
-      data: [],
-    },
-  ],
+  _gaugeConfigBase.map(item => ({...item, title: t(item.titleKey)})),
   (query) =>
     query
       .replaceAll(`$container`, detail.value.name)
@@ -227,12 +232,12 @@ const gaugeConfig = useInstantVector(
 
 const lineConfig = ref([
   {
-    title: '算力使用趋势（%）',
+    title: t('task.computeUsageTrend'),
     query: `avg(sum(hami_container_core_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
     data: [],
   },
   {
-    title: '显存使用趋势（%）',
+    title: t('task.memUsageTrend'),
     query: `avg(sum(hami_container_memory_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
     data: [],
   },

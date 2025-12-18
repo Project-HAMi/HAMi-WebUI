@@ -5,9 +5,9 @@
     </div>
 
     <div class="info">
-      <h3 class="title">{{ title || route.meta.title }}</h3>
+      <h3 class="title">{{ title ? $t(title) : $t(route.meta.title) }}</h3>
       <p v-if="!isExpand" class="desc">
-        <span v-if="description"> {{ description || route.meta.title }}</span>
+        <span v-if="description"> {{ $t(description) }}</span>
         <slot v-else name="description" />
       </p>
     </div>

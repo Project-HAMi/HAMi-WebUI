@@ -3,7 +3,7 @@ import { NestExpressApplication } from '@nestjs/platform-express'
 import { AppModule } from './app.module'
 import { join } from 'path'
 import { TransformInterceptor } from './interceptors/transform.interceptor'
-import * as cookieParser from 'cookie-parser';
+import * as cookieParser from 'cookie-parser'
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -17,7 +17,7 @@ async function bootstrap() {
   app.setViewEngine('hbs')
 
   // 注入cookie
-  app.use(cookieParser());
+  app.use(cookieParser())
 
   // 统一后端bff层接口返回的格式
   app.useGlobalInterceptors(new TransformInterceptor())

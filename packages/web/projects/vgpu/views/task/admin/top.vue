@@ -9,20 +9,23 @@ import TabTop from '~/vgpu/components/TabTop.vue';
 import { useRouter } from 'vue-router';
 import nodeApi from '~/vgpu/api/node';
 import { ElMessage } from 'element-plus';
+import { useI18n } from 'vue-i18n';
+import { computed } from 'vue';
 
 const router = useRouter();
+const { t } = useI18n();
 
 const handleChartClick = async (params) => {
   const name = params.data.name;
   const activeTabKey = params.tabActive;
   if (activeTabKey === 'node') {
     const { list } = await nodeApi.getNodes({ filters: {} });
-    const node = list.find(node => node.name === name);
+    const node = list.find((node) => node.name === name);
     if (node) {
       const uuid = node.uid;
       router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
     } else {
-      ElMessage.error('节点未找到');
+      ElMessage.error(t('node.nodeNotFound'));
     }
   } else if (activeTabKey === 'deviceuuid') {
     router.push({
@@ -40,13 +43,13 @@ const handleChartClick = async (params) => {
   }
 };
 
-const topConfig = [
+const topConfig = computed(() => [
   {
-    title: '任务数量分布 Top5',
+    title: t('task.topCount'),
     key: 'total',
     config: [
       {
-        tab: '节点',
+        tab: t('dashboard.node'),
         key: 'node',
         nameKey: 'node',
         data: [],
@@ -55,7 +58,7 @@ const topConfig = [
           'topk(5, count by (node) (sum by (container_pod_uuid, node) (hami_container_vcore_allocated)))',
       },
       {
-        tab: '显卡',
+        tab: t('dashboard.card'),
         key: 'deviceuuid',
         data: [],
         nameKey: 'deviceuuid',
@@ -66,11 +69,11 @@ const topConfig = [
     ],
   },
   {
-    title: '任务资源申请 Top5',
+    title: t('task.topApply'),
     key: 'apply',
     config: [
       {
-        tab: '算力',
+        tab: t('dashboard.compute'),
         key: 'core',
         data: [],
         nameKey: 'container_pod_uuid',
@@ -78,7 +81,7 @@ const topConfig = [
         query: 'topk(5, avg by (container_pod_uuid) (hami_container_vcore_allocated))',
       },
       {
-        tab: '显存',
+        tab: t('dashboard.memory'),
         key: 'memory',
         data: [],
         unit: 'GiB',
@@ -96,7 +99,7 @@ const topConfig = [
       },
     ],
   },
-];
+]);
 </script>
 
 <style scoped lang="scss">

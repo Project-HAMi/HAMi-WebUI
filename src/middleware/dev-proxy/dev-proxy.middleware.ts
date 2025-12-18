@@ -1,18 +1,18 @@
-import { Injectable, NestMiddleware } from '@nestjs/common';
-import { Request, Response, NextFunction } from 'express';
+import { Injectable, NestMiddleware } from '@nestjs/common'
+import { Request, Response, NextFunction } from 'express'
 
-const address = require('address');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+const address = require('address')
+const { createProxyMiddleware } = require('http-proxy-middleware')
 
 @Injectable()
 export class DevProxyMiddleware implements NestMiddleware {
-  private proxy: any;
+  private proxy: any
 
   use(req: Request, res: Response, next: NextFunction) {
     if (!this.proxy) {
-      let localIP = address.ip();
+      let localIP = address.ip()
       if (!localIP) {
-        localIP = '127.0.0.1';
+        localIP = '127.0.0.1'
       }
 
       /** @type {import('http-proxy-middleware/dist/types').Options} */
@@ -20,37 +20,40 @@ export class DevProxyMiddleware implements NestMiddleware {
         target: `http://${localIP}:8080`,
         changeOrigin: true,
         pathRewrite: (path) => {
-          return path;
+          return path
         },
         router: {},
         secure: false,
-        onError: function (err, _req, res) {
+        onError: function(err, _req, res) {
+          // log the original error to satisfy lint handle-callback-err
+          // eslint-disable-next-line no-console
+          console.error(err)
           res.writeHead(500, {
-            'Content-Type': 'text/plain',
-          });
+            'Content-Type': 'text/plain'
+          })
           res.end(
-            'Something went wrong. And we are reporting a custom error message.',
-          );
+            'Something went wrong. And we are reporting a custom error message.'
+          )
         },
         onProxyRes: () => {},
         onProxyReq: (proxyReq, req, res) => {
           // 如果没有特殊的Content-Type，则默认为application/json
           const contentType =
-            proxyReq.getHeader('Content-Type') || 'application/json';
-          proxyReq.setHeader('Content-Type', contentType);
+            proxyReq.getHeader('Content-Type') || 'application/json'
+          proxyReq.setHeader('Content-Type', contentType)
         },
-        logLevel: 'error',
-      };
+        logLevel: 'error'
+      }
 
       // 转发所有的静态资源及前端路由，api走api-proxy,health_check和bff层走node本身服务
-      const filter = function (pathname) {
-        return !/^\/api|health_check|bff\//.test(pathname);
-      };
+      const filter = function(pathname) {
+        return !/^\/api|health_check|bff\//.test(pathname)
+      }
 
       // create the proxy (with context) and cache it
-      this.proxy = createProxyMiddleware(filter, options);
+      this.proxy = createProxyMiddleware(filter, options)
     }
 
-    this.proxy(req, res, next);
+    this.proxy(req, res, next)
   }
 }
