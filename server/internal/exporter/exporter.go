@@ -148,6 +148,62 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	return nil
 }
 
+func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Container) {
+	for _, c := range containers {
+		if len(c.ContainerDevices) == 0 {
+			continue
+		}
+		if c.ContainerDevices[0].Type != metax.MetaxGPUDevice {
+			continue
+		}
+		// 从containerDevice获取的device uuid暂时无法和真正的device uuid对应上，这里计算任务总的分配率和使用率
+		var core []int32
+		var memory []int32
+		for _, cd := range c.ContainerDevices {
+			core = append(core, cd.Usedcores)
+			memory = append(memory, cd.Usedmem)
+		}
+
+		query := fmt.Sprintf("mx_memory_used{exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"}",
+			c.Namespace, c.PodName, c.Name)
+
+		res, err := s.monitorService.QueryInstant(context.TODO(), &pb.QueryInstantRequest{
+			Query: query,
+		})
+		if err != nil {
+			continue
+		}
+		reportLen := min(len(res.Data), len(c.ContainerDevices))
+		// 一条metric对应一张卡
+		for i := range reportLen {
+			deviceUUID := res.Data[i].Metric["uuid"]
+			deviceType := res.Data[i].Metric["modelName"]
+			nodeName := res.Data[i].Metric["Hostname"]
+
+			HamiContainerVgpuAllocated.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(1))
+			HamiContainerVmemoryAllocated.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(memory[i]))
+			HamiContainerVcoreAllocated.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(core[i]))
+
+			taskMemoryUsed := float32(res.Data[i].Value) // KB
+			HamiContainerMemoryUsed.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(float64(taskMemoryUsed / 1024))
+			HamiContainerMemoryUtil.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(roundToOneDecimal(100 * float64(taskMemoryUsed/1024) / float64(memory[i])))
+
+			taskCoreUsed, err := s.taskCoreUsed(context.TODO(), metax.MetaxGPUDevice, c.Namespace, c.PodName, c.Name, c.PodUID, deviceUUID, nodeName, -1)
+			if err == nil {
+				used := float64(taskCoreUsed)
+				util := roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core[0]))
+				cardCoreUtil, err := s.deviceCoreUtil(context.TODO(), metax.MetaxGPUDevice, deviceUUID)
+				if err == nil && used != 0 && cardCoreUtil > 95 {
+					used = float64(cardCoreUtil) / 100 * float64(core[i])
+					util = float64(cardCoreUtil)
+				}
+				HamiContainerCoreUsed.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(used)
+				HamiContainerCoreUtil.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(util)
+			}
+		}
+	}
+}
+
 // 任务维度指标
 func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 	deviceInfos, err := s.nodeUsecase.ListAllDevices(ctx)
@@ -158,6 +214,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	s.generateMetricsForMetaxGPU(containers)
 	for _, device := range deviceInfos {
 		for _, c := range containers {
 			var vGPU int32 = 0
@@ -173,7 +231,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				memory = memory + cd.Usedmem
 				provider = cd.Type
 			}
-			if provider == "" {
+			if provider == "" || provider == metax.MetaxGPUDevice {
 				continue
 			}
 			HamiContainerVgpuAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(vGPU))
@@ -194,7 +252,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				case biz.HygonGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
+				case metax.MetaxSGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
 				default:
@@ -212,7 +270,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				switch provider {
 				case biz.CambriconGPUDevice:
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
-				case metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
+				case metax.MetaxSGPUDevice:
 					taskMemoryUsed = float32(taskMemoryUsed) * 1024 // KB->Byte
 				default:
 				}
@@ -362,7 +420,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_usage_memory_size{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
 	case metax.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_memory_usage{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})", deviceUUID, namespace, pod, container)
+		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"})", deviceUUID, namespace, pod, container)
 	case metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_sgpu_used_memory{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
 			hostname, deviceIndex, namespace, pod, container)
