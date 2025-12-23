@@ -11,20 +11,20 @@
       <el-tooltip
         placement="right"
         effect="dark"
-        :content="route.matched[0].meta.title"
+        :content="$t(route.matched[0].meta.title)"
         :disabled="!isExpand"
         :show-after="500"
       >
         <div class="side-title">
           <svg-icon :icon="route.matched[0].meta.icon" />
-          <span v-if="sideWidth >= 200">{{ route.matched[0].meta.title }}</span>
+          <span v-if="sideWidth >= 200">{{ $t(route.matched[0].meta.title) }}</span>
         </div>
       </el-tooltip>
 
       <ul class="side-menus">
         <li class="side-menus-item" v-for="{ meta, children } in menus" :key="meta?.path || meta?.title">
           <div v-if="sideWidth >= 200" class="side-menus-item-title">
-            {{ meta.title }}
+            {{ $t(meta.title) }}
           </div>
 
           <ul class="side-menus-item-children">
@@ -33,7 +33,7 @@
               :key="child.path"
               placement="right"
               effect="dark"
-              :content="child.meta?.title"
+              :content="$t(child.meta?.title)"
               :disabled="!isExpand"
               :show-after="500"
             >
@@ -45,7 +45,7 @@
                 @click="router.push(child.path)"
               >
                 <svg-icon :icon="child.meta?.icon" />
-                <span v-if="sideWidth >= 200"> {{ child.meta?.title }}</span>
+                <span v-if="sideWidth >= 200"> {{ $t(child.meta?.title) }}</span>
               </li>
             </el-tooltip>
           </ul>

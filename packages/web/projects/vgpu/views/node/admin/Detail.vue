@@ -1,7 +1,7 @@
 <template>
   <div>
     <back-header>
-      节点管理 > {{ detail.name }}
+      {{ $t('node.detail.title') }} > {{ detail.name }}
 <!--      <template #extra>-->
 <!--        <el-form-item-->
 <!--          label="节点调度"-->
@@ -23,7 +23,7 @@
     <block-box class="node-block">
       <div class="node-detail">
         <div class="node-detail-left">
-          <div class="title">详细信息</div>
+          <div class="title">{{ $t('node.detail.detailInfo') }}</div>
           <ul class="node-detail-info">
             <li v-for="{ label, value, render } in detailColumns" :key="label">
               <span class="label">{{ label }}</span>
@@ -44,14 +44,14 @@
             <Gauge v-bind="item" />
           </template>
           <template v-else-if="detail.isExternal && index < 2">
-            <el-empty description="暂无资源分配数据" :image-size="90" />
+            <el-empty :description="$t('node.detail.noAllocData')" :image-size="90" />
           </template>
         </li>
       </ul>
     </block-box>
 
     <div class="line-box">
-      <block-box title="资源分配趋势（%）">
+      <block-box :title="$t('node.detail.resourceAllocTrend')">
         <template #extra>
           <time-picker v-model="times" type="datetimerange" size="small" />
         </template>
@@ -61,12 +61,12 @@
               getRangeOptions({
                 core: gaugeConfig[0].data,
                 memory: gaugeConfig[1].data,
-              })
+              }, t)
             "
           />
         </div>
       </block-box>
-      <block-box title="资源使用趋势（%）">
+      <block-box :title="$t('node.detail.resourceUsageTrend')">
         <template #extra>
           <time-picker v-model="times" type="datetimerange" size="small" />
         </template>
@@ -76,24 +76,24 @@
               getRangeOptions({
                 core: gaugeConfig[2].data,
                 memory: gaugeConfig[3].data,
-              })
+              }, t)
             "
           />
         </div>
       </block-box>
     </div>
 
-    <block-box title="显卡列表">
-      <CardList :hideTitle="true" :filters="{ nodeUid: detail.uid }" />
+    <block-box :title="$t('node.detail.cardList')">
+      <CardList :key="locale" :hideTitle="true" :filters="{ nodeUid: detail.uid }" />
     </block-box>
 
-    <block-box title="任务列表">
+    <block-box :title="$t('node.detail.taskList')">
       <template v-if="detail.isExternal">
-        <el-alert title="由于节点未纳管，无法获取到任务数据" show-icon type="warning" :closable="false" />
-        <el-empty description="暂无任务数据" :image-size="100" />
+        <el-alert :title="$t('node.detail.unmanagedNoTask')" show-icon type="warning" :closable="false" />
+        <el-empty :description="$t('node.detail.noTaskData')" :image-size="100" />
       </template>
       <template v-else>
-        <TaskList :hideTitle="true" :filters="{ nodeUid: detail.uid }" />
+        <TaskList :key="locale" :hideTitle="true" :filters="{ nodeUid: detail.uid }" />
       </template>
     </block-box>
   </div>
@@ -103,7 +103,7 @@
 import BackHeader from '@/components/BackHeader.vue';
 import { useRoute, useRouter } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import {computed, onMounted, ref, watch} from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Tools } from '@element-plus/icons-vue';
 import CardList from '~/vgpu/views/card/admin/index.vue';
 import TaskList from '~/vgpu/views/task/admin/index.vue';
@@ -117,9 +117,11 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '~/vgpu/api/task';
 import { getRangeOptions } from './getOptions';
 import {getDaysInRange} from "@/utils";
+import { useI18n } from 'vue-i18n';
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 const detail = ref({});
 
@@ -132,102 +134,106 @@ const times = ref([start, end]);
 const isSchedulable = ref(true);
 const tempSchedulable = ref(isSchedulable.value);
 
+const _cpConfig = [
+  {
+    labelKey: 'node.detail.vgpuOvercommit',
+    count: '0',
+    query: `avg(hami_vgpu_count{node=~"$node"})`,
+  },
+  {
+    labelKey: 'node.detail.computeOvercommit',
+    count: '0',
+    query: `avg(hami_vcore_scaling{node=~"$node"})`,
+  },
+  {
+    labelKey: 'node.detail.memoryOvercommit',
+    count: '1.5',
+    query: `avg(hami_vmemory_scaling{node=~"$node"})`,
+  },
+];
+
 const cp = useInstantVector(
-  [
-    {
-      label: 'vGPU 超配',
-      count: '0',
-      query: `avg(hami_vgpu_count{node=~"$node"})`,
-    },
-    {
-      label: '算力超配',
-      count: '0',
-      query: `avg(hami_vcore_scaling{node=~"$node"})`,
-    },
-    {
-      label: '显存超配',
-      count: '1.5',
-      query: `avg(hami_vmemory_scaling{node=~"$node"})`,
-    },
-  ],
+  _cpConfig.map(item => ({...item, label: t(item.labelKey)})),
   (query) => query.replaceAll('$node', detail.value.name),
 );
 
+const _gaugeConfigBase = [
+  {
+    titleKey: 'dashboard.computeAllocRate',
+    percent: 0,
+    query: `avg(sum(hami_container_vcore_allocated{node=~"$node"}) by (instance))`,
+    totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
+    percentQuery: `avg(sum(hami_container_vcore_allocated{node=~"$node"}) by (instance)) / avg(sum(hami_core_size{node=~"$node"}) by (instance)) *100`,
+    total: 0,
+    used: 0,
+    unit: ' ',
+  },
+  {
+    titleKey: 'dashboard.memAllocRate',
+    percent: 0,
+    query: `avg(sum(hami_container_vmemory_allocated{node=~"$node"}) by (instance)) / 1024`,
+    totalQuery: `avg(sum(hami_memory_size{node=~"$node"}) by (instance)) / 1024`,
+    percentQuery: `(avg(sum(hami_container_vmemory_allocated{node=~"$node"}) by (instance)) / 1024) /(avg(sum(hami_memory_size{node=~"$node"}) by (instance)) / 1024) *100`,
+    total: 0,
+    used: 0,
+    unit: 'GiB',
+  },
+  {
+    titleKey: 'dashboard.computeUsageRate',
+    percent: 0,
+    query: `avg(sum(hami_core_util{node=~"$node"}) by (instance))`,
+    percentQuery: `avg(sum(hami_core_util_avg{node=~"$node"}) by (instance))`,
+    totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
+    total: 100,
+    used: 0,
+    unit: ' ',
+  },
+  {
+    titleKey: 'dashboard.memUsageRate',
+    percent: 0,
+    query: `avg(sum(hami_memory_used{node=~"$node"}) by (instance)) / 1024`,
+    totalQuery: `avg(sum(hami_memory_size{node=~"$node"}) by (instance))/1024`,
+    percentQuery: `(avg(sum(hami_memory_used{node=~"$node"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{node=~"$node"}) by (instance))/1024)*100`,
+    total: 0,
+    used: 0,
+    unit: 'GiB',
+  },
+];
+
 const gaugeConfig = useInstantVector(
-  [
-    {
-      title: '算力分配率',
-      percent: 0,
-      query: `avg(sum(hami_container_vcore_allocated{node=~"$node"}) by (instance))`,
-      totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
-      percentQuery: `avg(sum(hami_container_vcore_allocated{node=~"$node"}) by (instance)) / avg(sum(hami_core_size{node=~"$node"}) by (instance)) *100`,
-      total: 0,
-      used: 0,
-      unit: ' ',
-    },
-    {
-      title: '显存分配率',
-      percent: 0,
-      query: `avg(sum(hami_container_vmemory_allocated{node=~"$node"}) by (instance)) / 1024`,
-      totalQuery: `avg(sum(hami_memory_size{node=~"$node"}) by (instance)) / 1024`,
-      percentQuery: `(avg(sum(hami_container_vmemory_allocated{node=~"$node"}) by (instance)) / 1024) /(avg(sum(hami_memory_size{node=~"$node"}) by (instance)) / 1024) *100`,
-      total: 0,
-      used: 0,
-      unit: 'GiB',
-    },
-    {
-      title: '算力使用率',
-      percent: 0,
-      query: `avg(sum(hami_core_util{node=~"$node"}) by (instance))`,
-      percentQuery: `avg(sum(hami_core_util_avg{node=~"$node"}) by (instance))`,
-      totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
-      total: 100,
-      used: 0,
-      unit: ' ',
-    },
-    {
-      title: '显存使用率',
-      percent: 0,
-      query: `avg(sum(hami_memory_used{node=~"$node"}) by (instance)) / 1024`,
-      totalQuery: `avg(sum(hami_memory_size{node=~"$node"}) by (instance))/1024`,
-      percentQuery: `(avg(sum(hami_memory_used{node=~"$node"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{node=~"$node"}) by (instance))/1024)*100`,
-      total: 0,
-      used: 0,
-      unit: 'GiB',
-    },
-  ],
+  _gaugeConfigBase.map(item => ({...item, title: t(item.titleKey)})),
   (query) => query.replaceAll(`$node`, detail.value.name),
   times,
 );
 
-const detailColumns = [
+const detailColumns = computed(() => [
   {
-    label: '节点状态',
+    label: t('node.status'),
     value: 'status',
     render: ({ isSchedulable, isExternal }) => {
       if (detail.value && detail.value.isSchedulable !== undefined) {
         return (
             <el-tag disable-transitions type={isExternal ? 'warning' : (isSchedulable ? 'success' : 'danger')}>
-              {isExternal ? '未纳管' : (isSchedulable ? '可调度' : '禁止调度')}
+              {isExternal ? t('node.unmanaged') : (isSchedulable ? t('dashboard.schedulable') : t('dashboard.unschedulable'))}
             </el-tag>
         );
       } else {
-        return <el-tag disable-transitions size="small" type="info">加载中...</el-tag>;
+        return <el-tag disable-transitions size="small" type="info">{t('node.detail.loading')}</el-tag>;
       }
     },
   },
   {
-    label: '节点 IP 地址',
+    label: t('node.detail.nodeIpAddress'),
     value: 'ip',
     render: ({ ip }) => <text-plus text={ip} copy />,
   },
   {
-    label: '节点 UUID',
+    label: t('node.detail.nodeUuid'),
     value: 'uid',
     render: ({ uid }) => <text-plus text={uid} copy />,
   },
   {
-    label: '操作系统类型',
+    label: t('node.detail.osType'),
     value: 'operatingSystem',
     render: ({ operatingSystem }) => (
         <span>
@@ -236,7 +242,7 @@ const detailColumns = [
     ),
   },
   {
-    label: '系统架构',
+    label: t('node.detail.architecture'),
     value: 'architecture',
     render: ({ architecture }) => (
         <span>
@@ -245,7 +251,7 @@ const detailColumns = [
     ),
   },
   {
-    label: 'kubelet 版本',
+    label: t('node.detail.kubeletVersion'),
     value: 'kubeletVersion',
     render: ({ kubeletVersion }) => (
         <span>
@@ -254,7 +260,7 @@ const detailColumns = [
     ),
   },
   {
-    label: '操作系统版本',
+    label: t('node.detail.osVersion'),
     value: 'osImage',
     render: ({ osImage }) => (
         <span>
@@ -263,7 +269,7 @@ const detailColumns = [
     ),
   },
   {
-    label: '内核版本',
+    label: t('node.detail.kernelVersion'),
     value: 'kernelVersion',
     render: ({ kernelVersion }) => (
         <span>
@@ -272,7 +278,7 @@ const detailColumns = [
     ),
   },
   {
-    label: 'kube-proxy 版本',
+    label: t('node.detail.kubeProxyVersion'),
     value: 'kubeProxyVersion',
     render: ({ kubeProxyVersion }) => (
         <span>
@@ -281,7 +287,7 @@ const detailColumns = [
     ),
   },
   {
-    label: '容器运行时',
+    label: t('node.detail.containerRuntime'),
     value: 'containerRuntimeVersion',
     render: ({ containerRuntimeVersion }) => (
         <span>
@@ -290,7 +296,7 @@ const detailColumns = [
     ),
   },
   {
-    label: '显卡数量',
+    label: t('node.cardCount'),
     value: 'cardCnt',
     render: ({ cardCnt }) => (
         <span>
@@ -299,7 +305,7 @@ const detailColumns = [
     ),
   },
   {
-    label: '创建时间',
+    label: t('node.detail.creationTime'),
     value: 'creationTimestamp',
     render: ({ creationTimestamp }) => (
         <span>
@@ -307,7 +313,7 @@ const detailColumns = [
         </span>
     ),
   },
-];
+]);
 
 const onChangeSchedulable = (val) => {
   ElMessageBox.confirm(

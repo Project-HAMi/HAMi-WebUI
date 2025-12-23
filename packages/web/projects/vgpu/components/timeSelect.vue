@@ -1,33 +1,18 @@
 <script setup>
-import { ref } from 'vue';
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 const time = defineModel();
 
-const timeOptions = ref([
-  {
-    label: '近7天',
-    value: 7,
-  },
-  {
-    label: '近5天',
-    value: 5,
-  },
-  {
-    label: '近3天',
-    value: 3,
-  },
-  {
-    label: '24小时内',
-    value: 1,
-  },
-  {
-    label: '12小时内',
-    value: 0.5,
-  },
-  {
-    label: '1小时内',
-    value: 0.5 / 12,
-  },
+const { t } = useI18n();
+
+const timeOptions = computed(() => [
+  { label: t('timeRange.last7d'), value: 7 },
+  { label: t('timeRange.last5d'), value: 5 },
+  { label: t('timeRange.last3d'), value: 3 },
+  { label: t('timeRange.last24h'), value: 1 },
+  { label: t('timeRange.last12h'), value: 0.5 },
+  { label: t('timeRange.last1h'), value: 0.5 / 12 },
 ]);
 </script>
 

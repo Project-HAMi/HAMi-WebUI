@@ -9,17 +9,17 @@
       :columns="currentColumns"
     />
 
-    <el-table
-      :data="state.list"
-      v-loading="state.isLoading"
-      height="100%"
-      :default-sort="defaultSort"
-      @sort-change="handleSortChange"
-      @selection-change="handleSelectionChange"
-      @current-change="handleCurrentChange"
-      row-key="id"
-      empty-text="暂无数据"
-      ref="tableRef"
+      <el-table
+        :data="state.list"
+        v-loading="state.isLoading"
+        height="100%"
+        :default-sort="defaultSort"
+        @sort-change="handleSortChange"
+        @selection-change="handleSelectionChange"
+        @current-change="handleCurrentChange"
+        row-key="id"
+        :empty-text="t('common.noData')"
+        ref="tableRef"
       :highlight-current-row="!multiple"
       show-overflow-tooltip
       :border="border"
@@ -74,7 +74,7 @@
       <el-table-column
         fixed="right"
         :min-width="150"
-        label="操作"
+        :label="t('common.operation')"
         v-if="rowAction.length"
       >
         <template #default="record">
@@ -133,9 +133,6 @@
 
 <script setup lang="jsx">
 import {
-  defineProps,
-  defineExpose,
-  defineEmits,
   watch,
   reactive,
   onMounted,
@@ -158,6 +155,7 @@ import {
 import Toolbar from './Toolbar.vue';
 import Pagination from './Pagination.vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps({
   api: {
@@ -239,6 +237,7 @@ const emit = defineEmits(['update:modelValue']);
 const tableRef = ref(null);
 
 const tableRadio = ref(null);
+const { t } = useI18n();
 
 const state = reactive({
   isLoading: false,
@@ -267,7 +266,7 @@ const currentParams = reactive(
 
 provide('currentParams', currentParams);
 
-const asyncColumns = computed(async () => {
+const updateAsyncColumns = async () => {
   const columns = props.columns.map(async (item) => {
     //获取列枚举值
     const filters = isFunction(item.filters)
@@ -286,8 +285,8 @@ const asyncColumns = computed(async () => {
   });
 
   const newColumns = await Promise.all(columns);
-  return newColumns;
-});
+  currentColumns.value = newColumns;
+};
 
 const currentRowAction = computed(() => {
   const getRowAction = (record) => {
@@ -407,6 +406,15 @@ const handleSelectionChange = (rows) => {
   selectChange(rows);
 };
 
+// Watch columns and filterKey changes to update async column data
+watch(
+  () => [props.columns, currentParams[props.filterKey]],
+  () => {
+    updateAsyncColumns();
+  },
+  { immediate: true, deep: true },
+);
+
 watchEffect(() => {
   const { autoSelectedFirst, dataSource } = props;
 
@@ -417,12 +425,8 @@ watchEffect(() => {
   if (autoSelectedFirst && state.list.length && !state.selected.length) {
     const first = state.list[0];
 
-    tableRef.value.setCurrentRow(first);
+    tableRef.value?.setCurrentRow(first);
   }
-
-  asyncColumns.value.then((data) => {
-    currentColumns.value = data;
-  });
 });
 
 onMounted(() => {

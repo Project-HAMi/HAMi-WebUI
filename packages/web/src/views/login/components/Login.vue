@@ -7,13 +7,13 @@
     label-width="auto"
     class="login-ruleForm"
   >
-    <el-form-item><h2 class="login-title">账号登录</h2></el-form-item>
+    <el-form-item><h2 class="login-title">{{ $t('login.title') }}</h2></el-form-item>
     <el-form-item label="" prop="userName" class="login-input">
       <el-input
         class="input"
         :prefix-icon="User"
         v-model="ruleForm.userName"
-        placeholder="请输入账号"
+        :placeholder="$t('login.username')"
         @keyup.enter="login(ruleFormRef)"
       >
       </el-input>
@@ -22,7 +22,7 @@
       <el-input
         v-model="ruleForm.password"
         :type="addPassFlag ? 'text' : 'password'"
-        placeholder="请输入密码"
+        :placeholder="$t('login.password')"
         :prefix-icon="Lock"
         @keyup.enter="login(ruleFormRef)"
       >
@@ -35,7 +35,7 @@
       </el-input>
     </el-form-item>
     <el-form-item>
-      <span class="reset" @click="resetForm()">忘记密码？</span>
+      <span class="reset" @click="resetForm()">{{ $t('login.forgotPassword') }}</span>
     </el-form-item>
     <el-form-item>
       <el-button
@@ -43,21 +43,25 @@
         type="primary"
         @click="login(ruleFormRef)"
       >
-        登录
+        {{ $t('login.loginButton') }}
       </el-button>
     </el-form-item>
   </el-form>
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref, watch, computed } from 'vue';
 import { useStore } from 'vuex'
 import { useRouter, useRoute } from 'vue-router';
 import { User, Lock, View, Hide } from '@element-plus/icons-vue';
 import { ElLoading } from 'element-plus';
+import { useI18n } from 'vue-i18n';
+
 const store = useStore()
 const router = useRouter();
 const route = useRoute();
+const { t } = useI18n();
+
 const ruleFormRef = ref();
 const addPassFlag = ref(false); //图标显示标识
 const redirect = ref(undefined);
@@ -66,10 +70,10 @@ const ruleForm = reactive({
   userName: '',
   password: '',
 });
-const rules = reactive({
-  userName: [{ required: true, message: '请输入账号', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-});
+const rules = computed(() => ({
+  userName: [{ required: true, message: t('login.usernameRequired'), trigger: 'blur' }],
+  password: [{ required: true, message: t('login.passwordRequired'), trigger: 'blur' }],
+}));
 const getOtherQuery = (query) => {
       return Object.keys(query).reduce((acc, cur) => {
         if (cur !== 'redirect') {
@@ -95,7 +99,7 @@ const login = async (ruleFormRef) => {
     if (valid) {
       const loading = ElLoading.service({
         lock: true,
-        text: 'Loading',
+        text: t('login.loading'),
         background: 'rgba(0, 0, 0, 0.7)',
       });
       const { userName, password } = ruleForm;

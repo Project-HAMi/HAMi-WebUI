@@ -2,7 +2,7 @@
   <ul class="preview">
     <li class="preview-item" style="width: 20%; flex: none" v-if="!hidePie">
       <block-box
-        :title="`${type === 'node' ? '节点显卡厂商分布' : '显卡类型分布'}`"
+        :title="type === 'node' ? t('chart.nodeVendorDist') : t('chart.cardTypeDist')"
         class="nodeCard"
       >
         <div class="pie">
@@ -49,13 +49,13 @@
 import BlockBox from '@/components/BlockBox.vue';
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import { getPreviewBarPie, getTopOptions } from '~/vgpu/components/config';
-import { onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref, computed } from 'vue';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
 
 const props = defineProps({
   title: {
-    default: '节点',
+    default: '',
   },
   type: {
     default: 'node',
@@ -67,53 +67,57 @@ const props = defineProps({
 });
 
 const echartsRef = ref();
+import { useI18n } from 'vue-i18n';
+const { t } = useI18n();
 
-const totalTop = {
-  title: `${props.title}资源分配率 Top5`,
+const baseTitle = computed(() => props.title || t('dashboard.node'));
+
+const totalTop = computed(() => ({
+  title: t('chart.resourceAllocTop', { name: baseTitle.value }),
   config: [
     {
-      tab: 'vGPU',
+      tab: t('dashboard.vgpu'),
       key: 'vgpu',
       nameKey: props.type,
       data: [],
       query: `topk(5, sum(hami_container_vgpu_allocated{}) by (${props.type}) / sum(hami_vgpu_count{}) by (${props.type}) * 100)`,
     },
     {
-      tab: '算力',
+      tab: t('dashboard.compute'),
       key: 'core',
       nameKey: props.type,
       data: [],
       query: `topk(5, sum(hami_container_vcore_allocated{}) by (${props.type}) / sum(hami_core_size{}) by (${props.type}) * 100)`,
     },
     {
-      tab: '显存',
+      tab: t('dashboard.memory'),
       key: 'memory',
       data: [],
       nameKey: props.type,
-      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
+      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size) by (${props.type}) * 100)`,
     },
   ],
-};
+}));
 
-const usedTop = {
-  title: `${props.title}资源使用率 Top5`,
+const usedTop = computed(() => ({
+  title: t('chart.resourceUsageTop', { name: baseTitle.value }),
   config: [
     {
-      tab: '算力',
+      tab: t('dashboard.compute'),
       key: 'core',
       nameKey: props.type,
       data: [],
       query: `topk(5, avg(hami_core_util_avg) by (${props.type}))`,
     },
     {
-      tab: '显存',
+      tab: t('dashboard.memory'),
       key: 'memory',
       data: [],
       nameKey: props.type,
       query: `topk(5, sum(hami_memory_used) by (${props.type}) / sum(hami_memory_size) by (${props.type}) * 100)`,
     },
   ],
-};
+}));
 
 const pieConfig = {
   deviceuuid: {

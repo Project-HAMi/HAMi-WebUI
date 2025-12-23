@@ -169,8 +169,6 @@
 import { InfoFilled } from '@element-plus/icons-vue';
 import {
   computed,
-  defineProps,
-  defineEmits,
   onMounted,
   inject,
   watchEffect,

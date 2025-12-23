@@ -1,6 +1,6 @@
 import { timeParse } from '@/utils';
 
-export const getRangeOptions = ({ core = [], memory = [] }) => {
+export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
   return {
     legend: {
       // data: [],
@@ -50,7 +50,7 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
     },
     series: [
       {
-        name: '算力',
+        name: t('dashboard.compute'),
         data: core,
         type: 'line',
         areaStyle: {
@@ -83,7 +83,7 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
         },
       },
       {
-        name: '显存',
+        name: t('dashboard.memory'),
         data: memory,
         type: 'line',
         areaStyle: {

@@ -1,52 +1,52 @@
 import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 
-export default {
+export default (t) => ({
   items: [
     {
-      label: '任务名称',
+      label: t('task.name'),
       name: 'name',
       component: 'input',
     },
     {
-      label: '节点名称',
+      label: t('task.node'),
       name: 'nodeName',
       component: 'select',
       props: {
         mode: 'remote',
-        api: nodeApi.getNodeList({filters:{}}),
+        api: nodeApi.getNodeList({ filters: {} }),
         labelKey: 'name',
         valueKey: 'name',
       },
     },
     {
-      label: '任务状态',
+      label: t('task.status'),
       name: 'status',
       component: 'select',
       props: {
         mode: 'static',
         options: [
           {
-            label: '已完成',
+            label: t('task.statusCompleted'),
             value: 'closed',
           },
           {
-            label: '运行中',
+            label: t('task.statusRunning'),
             value: 'success',
           },
           {
-            label: '错误',
+            label: t('task.statusFailed'),
             value: 'failed',
           },
           {
-            label: '未知',
+            label: t('task.statusUnknown'),
             value: 'unknown',
           },
         ],
       },
     },
     {
-      label: '显卡ID',
+      label: t('task.card'),
       name: 'deviceId',
       component: 'select',
       props: {
@@ -57,4 +57,4 @@ export default {
       },
     },
   ],
-};
+});

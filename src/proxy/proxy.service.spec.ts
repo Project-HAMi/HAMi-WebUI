@@ -1,18 +1,18 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { ProxyService } from './proxy.service';
+import { Test, TestingModule } from '@nestjs/testing'
+import { ProxyService } from './proxy.service'
 
 describe('ProyService', () => {
-  let service: ProxyService;
+  let service: ProxyService
 
-  beforeEach(async () => {
+  beforeEach(async() => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ProxyService],
-    }).compile();
+      providers: [ProxyService]
+    }).compile()
 
-    service = module.get<ProxyService>(ProxyService);
-  });
+    service = module.get<ProxyService>(ProxyService)
+  })
 
   it('should be defined', () => {
-    expect(service).toBeDefined();
-  });
-});
+    expect(service).toBeDefined()
+  })
+})

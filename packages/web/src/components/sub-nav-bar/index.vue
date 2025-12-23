@@ -1,7 +1,7 @@
 <template>
   <div class="navbar">
     <el-menu mode="horizontal" :default-active="$route.fullPath" :router="true">
-      <el-menu-item v-for="item in items" :key="item.path" :index="item.path"><i :class="item.meta.icon" />{{ item.meta.title }}</el-menu-item>
+      <el-menu-item v-for="item in items" :key="item.path" :index="item.path"><i :class="item.meta.icon" />{{ $t(item.meta.title) }}</el-menu-item>
     </el-menu>
   </div>
 </template>

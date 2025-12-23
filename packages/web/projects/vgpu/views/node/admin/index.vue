@@ -1,11 +1,12 @@
 <template>
     <list-header
-      description="节点管理用于管理和监控计算节点的状态。它可以启用或禁用节点，查看节点上的物理GPU卡，以及监控节点上运行的所有任务。"
+      :description="$t('node.description')"
     />
 
     <preview-bar :handle-click=handleClick />
 
     <table-plus
+      :key="locale"
       :api="nodeApi.getNodeList()"
       :columns="columns"
       :rowAction="rowAction"
@@ -22,16 +23,20 @@
 
 <script setup lang="jsx">
 import nodeApi from '~/vgpu/api/node';
-import searchSchema from '~/vgpu/views/node/admin/searchSchema';
+import createSearchSchema from '~/vgpu/views/node/admin/searchSchema';
 import { useRouter } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import { roundToDecimal } from '@/utils';
 import {ElMessage, ElMessageBox} from 'element-plus';
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 const router = useRouter();
+const { t, locale } = useI18n();
 
 const table = ref();
+
+const searchSchema = computed(() => createSearchSchema(t));
 
 const handleClick = async (params) => {
   const name = params.data.name;
@@ -41,58 +46,41 @@ const handleClick = async (params) => {
     const uuid = node.uid;
     router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
   } else {
-    ElMessage.error('节点未找到');
+    ElMessage.error(t('node.nodeNotFound'));
   }
 };
 
-const columns = [
+const columns = computed(() => [
   {
-    title: '节点名称',
+    title: t('node.name'),
     dataIndex: 'name',
     render: ({ uid, name }) => (
       <text-plus text={name} to={`/admin/vgpu/node/admin/${uid}?nodeName=${name}`} />
     ),
   },
   {
-    title: '节点 IP',
+    title: t('node.ip'),
     dataIndex: 'ip',
   },
   {
-    title: '节点状态',
+    title: t('node.status'),
     dataIndex: 'isSchedulable',
     render: ({ isSchedulable, isExternal }) => (
         <el-tag disable-transitions type={isExternal ? 'warning' : (isSchedulable ? 'success' : 'danger')}>
-          {isExternal ? '未纳管' : (isSchedulable ? '可调度' : '禁止调度')}
+          {isExternal ? t('node.unmanaged') : (isSchedulable ? t('dashboard.schedulable') : t('dashboard.unschedulable'))}
         </el-tag>
     )
-    // filters: [
-    //   {
-    //     text: '可调度',
-    //     value: 'true',
-    //   },
-    //   {
-    //     text: '禁止调度',
-    //     value: 'false',
-    //   },
-    // ],
   },
   {
-    title: '显卡型号',
+    title: t('node.cardModel'),
     dataIndex: 'type',
-    // filters: (data) => {
-    //   const r = data.reduce((all, item) => {
-    //     return uniq([...all, ...item.type]);
-    //   }, []);
-    //
-    //   return r.map((item) => ({ text: item, value: item }));
-    // },
   },
   {
-    title: '显卡数量',
+    title: t('node.cardCount'),
     dataIndex: 'cardCnt',
   },
   {
-    title: 'vGPU',
+    title: t('node.vgpu'),
     dataIndex: 'used',
     render: ({ vgpuTotal, vgpuUsed, isExternal }) => (
         <span>
@@ -101,7 +89,7 @@ const columns = [
     ),
   },
   {
-    title: '算力(已分配/总量)',
+    title: t('node.computeAllocTotal'),
     dataIndex: 'used',
     minWidth: 100,
     render: ({ coreTotal, coreUsed, isExternal }) => (
@@ -111,7 +99,7 @@ const columns = [
     ),
   },
   {
-    title: '显存(已分配/总量)',
+    title: t('node.memoryAllocTotal'),
     dataIndex: 'w',
     minWidth: 100,
     render: ({ memoryTotal, memoryUsed, isExternal }) => (
@@ -121,22 +109,22 @@ const columns = [
     </span>
     ),
   },
-];
+]);
 
-const rowAction = [
+const rowAction = computed(() => [
   {
-    title: '查看详情',
+    title: t('node.viewDetails'),
     onClick: (row) => {
       router.push(`/admin/vgpu/node/admin/${row.uid}?nodeName=${row.name}`);
     },
   },
   // {
-  //   title: '禁用',
+  //   title: t('node.disable'),
   //   hidden: (row) => !row.isSchedulable,
   //   onClick: async (row) => {
-  //     ElMessageBox.confirm(`确认对该节点进行禁用操作？`, '操作确认', {
-  //       confirmButtonText: '确定',
-  //       cancelButtonText: '取消',
+  //     ElMessageBox.confirm(t('node.confirmDisable'), t('node.operationConfirm'), {
+  //       confirmButtonText: t('common.confirm'),
+  //       cancelButtonText: t('common.cancel'),
   //       type: 'warning',
   //     })
   //         .then(async () => {
@@ -149,7 +137,7 @@ const rowAction = [
   //             ).then(
   //                 () => {
   //                   setTimeout(() => {
-  //                     ElMessage.success('节点禁用成功');
+  //                     ElMessage.success(t('node.disableSuccess'));
   //                     table.value.fetchData();
   //                   }, 500);
   //                 }
@@ -162,13 +150,13 @@ const rowAction = [
   //   },
   // },
   // {
-  //   title: '开启',
+  //   title: t('node.enable'),
   //   hidden: (row) => row.isSchedulable,
   //   disabled: (row) => row.isExternal,
   //   onClick: async (row) => {
-  //     ElMessageBox.confirm(`确认对该节点进行开启调度操作？`, '操作确认', {
-  //       confirmButtonText: '确定',
-  //       cancelButtonText: '取消',
+  //     ElMessageBox.confirm(t('node.confirmEnable'), t('node.operationConfirm'), {
+  //       confirmButtonText: t('common.confirm'),
+  //       cancelButtonText: t('common.cancel'),
   //       type: 'warning',
   //     })
   //         .then(async () => {
@@ -181,7 +169,7 @@ const rowAction = [
   //             ).then(
   //                 () => {
   //                   setTimeout(() => {
-  //                     ElMessage.success('节点开启调度成功');
+  //                     ElMessage.success(t('node.enableSuccess'));
   //                     table.value.fetchData();
   //                   }, 500);
   //                 }
@@ -193,7 +181,7 @@ const rowAction = [
   //         .catch(() => {});
   //   },
   // },
-];
+]);
 </script>
 
 <style></style>

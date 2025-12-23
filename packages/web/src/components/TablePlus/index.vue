@@ -18,6 +18,7 @@
         />
 
         <el-table
+          :key="locale"
           class="table-main"
           :data="state.list"
           v-loading="state.isLoading"
@@ -25,7 +26,7 @@
           @selection-change="handleSelectionChange"
           @current-change="handleCurrentChange"
           row-key="id"
-          empty-text="暂无数据"
+          :empty-text="t('common.noData')"
           ref="tableRef"
           :highlight-current-row="!multiple"
           :border="border"
@@ -74,7 +75,7 @@
               hideTooltip,
               filteredValue,
               renderHeader,
-            } in columns.filter((item) => eyeColumnKeys.includes(item.title))"
+            } in visibleColumns"
             :key="dataIndex"
             :prop="dataIndex"
             :label="title"
@@ -97,7 +98,7 @@
           <el-table-column
             fixed="right"
             :min-width="120"
-            label="操作"
+            :label="t('common.operation')"
             v-if="rowAction.length"
           >
             <template #default="record">
@@ -160,9 +161,6 @@
 
 <script setup lang="jsx">
 import {
-  defineProps,
-  defineExpose,
-  defineEmits,
   watch,
   reactive,
   onMounted,
@@ -188,6 +186,7 @@ import Pagination from './Pagination.vue';
 import { useRoute } from 'vue-router';
 import Sortable from 'sortablejs';
 import './style.scss';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps({
   api: {
@@ -286,8 +285,21 @@ const tableRef = ref(null);
 const toolbarRef = ref();
 
 const tableRadio = ref(null);
+const { t, locale } = useI18n();
 
 const eyeColumnKeys = ref([]);
+const getColKey = (col) => col.dataIndex || col.title;
+
+// 为避免因标题/i18n变化导致列被意外过滤，这里直接使用传入的列集合
+const visibleColumns = computed(() => props.columns);
+
+watch(
+  () => props.columns,
+  (val) => {
+    eyeColumnKeys.value = (val || []).map(getColKey);
+  },
+  { deep: true, immediate: true },
+);
 
 const state = reactive({
   isLoading: false,
@@ -496,12 +508,24 @@ onMounted(() => {
 
   eyeColumnKeys.value = props.columns
     .filter((item) => !item.hidden)
-    .map((item) => item.title);
+    .map(getColKey);
 
   if (props.drag) {
     initSort();
   }
 });
+
+watch(
+  () => locale.value,
+  () => {
+    eyeColumnKeys.value = props.columns.map(getColKey);
+    if (mode.value === 'remote') {
+      fetchData();
+    } else {
+      state.list = props.dataSource;
+    }
+  },
+);
 
 //  抛出方法
 defineExpose({ fetchData, currentParams, getData: () => state.list });
