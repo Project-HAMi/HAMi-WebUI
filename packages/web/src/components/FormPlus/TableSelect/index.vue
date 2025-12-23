@@ -266,7 +266,7 @@ const currentParams = reactive(
 
 provide('currentParams', currentParams);
 
-const asyncColumns = computed(async () => {
+const updateAsyncColumns = async () => {
   const columns = props.columns.map(async (item) => {
     //获取列枚举值
     const filters = isFunction(item.filters)
@@ -285,8 +285,8 @@ const asyncColumns = computed(async () => {
   });
 
   const newColumns = await Promise.all(columns);
-  return newColumns;
-});
+  currentColumns.value = newColumns;
+};
 
 const currentRowAction = computed(() => {
   const getRowAction = (record) => {
@@ -406,6 +406,15 @@ const handleSelectionChange = (rows) => {
   selectChange(rows);
 };
 
+// Watch columns and filterKey changes to update async column data
+watch(
+  () => [props.columns, currentParams[props.filterKey]],
+  () => {
+    updateAsyncColumns();
+  },
+  { immediate: true, deep: true },
+);
+
 watchEffect(() => {
   const { autoSelectedFirst, dataSource } = props;
 
@@ -416,12 +425,8 @@ watchEffect(() => {
   if (autoSelectedFirst && state.list.length && !state.selected.length) {
     const first = state.list[0];
 
-    tableRef.value.setCurrentRow(first);
+    tableRef.value?.setCurrentRow(first);
   }
-
-  asyncColumns.value.then((data) => {
-    currentColumns.value = data;
-  });
 });
 
 onMounted(() => {

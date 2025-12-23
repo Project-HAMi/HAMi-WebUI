@@ -247,9 +247,6 @@ defineExpose({ removeData });
     margin-left: 10px;
   }
 
-  .addBtn {
-  }
-
   .list-card {
     margin-bottom: 10px;
     .card-header {
