@@ -1,7 +1,7 @@
 <template>
   <el-radio-group
     v-model="selectVal"
-    :placeholder="placeholder"
+    :placeholder="placeholder || t('common.pleaseSelect')"
     :disabled="disabled"
     @change="selectChange"
     :class="{ 'radio-plus': true, renderLabelIcon }"
@@ -65,6 +65,9 @@ import {
 } from 'vue';
 import { isString, isEqual, debounce } from 'lodash';
 import request from '@/utils/request';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({
   modelValue: {},
@@ -74,7 +77,7 @@ const props = defineProps({
   },
   placeholder: {
     type: String,
-    default: '请选择',
+    default: '',
   },
   disabled: {
     type: Boolean,

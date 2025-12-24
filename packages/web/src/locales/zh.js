@@ -2,7 +2,6 @@ export default {
   common: {
     language: '中文',
     lang: { zh: '中文', en: 'English' },
-    lang: { zh: '中文', en: 'English' },
     switchLanguage: '切换语言',
     profile: '个人中心',
     logout: '退出登录',
@@ -26,6 +25,22 @@ export default {
     advanced: '高级',
     operation: '操作',
     details: '详情',
+    formValidationFailed: '表单填写校验不通过！',
+    requestError: '请求异常',
+    tip: '提示',
+    copySuccess: '复制成功',
+    inputInvalid: '输入不合法',
+    operationSuccess: '操作成功',
+    messageTip: '消息提示',
+    operationWarning: '操作警告',
+    operationFailed: '操作失败',
+    fieldRequired: '该字段是必填字段',
+    yes: '是',
+    no: '否',
+    unitCount: '个',
+    unitSheet: '张',
+    artPrefixTip: '以 art. 为前缀的属性不支持修改和删除',
+    searchKeyword: '搜索关键词',
   },
   routes: {
     gpuAdmin: 'GPU 管理',
@@ -215,6 +230,7 @@ export default {
       backHome: '回首页',
       backPrevious: '返回上一个页面',
       back: '返回',
+      dialogTitle: '随便看',
     }
   },
   timeRange: {

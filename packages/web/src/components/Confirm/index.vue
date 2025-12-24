@@ -65,6 +65,7 @@
 
 <script>
 import { Modal } from 'bootstrap';
+import i18n from '@/locales';
 
 export default {
   //   props: {
@@ -92,8 +93,8 @@ export default {
       removeModal: null,
       fn: null,
       confirmObj: {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
+        confirmButtonText: i18n.global.t('common.confirm'),
+        cancelButtonText: i18n.global.t('common.cancel'),
         type: '',
       },
       confirmText: '',

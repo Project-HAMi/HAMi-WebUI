@@ -9,6 +9,9 @@
 
 <script setup>
 import { ElMessage } from 'element-plus';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({
   value: String,
@@ -22,7 +25,7 @@ const handleCopy = () => {
   document.execCommand('copy');
   document.body.removeChild(textarea);
 
-  ElMessage.success('复制成功');
+  ElMessage.success(t('common.copySuccess'));
 };
 </script>
 

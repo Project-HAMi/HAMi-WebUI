@@ -1,5 +1,6 @@
 import { isFunction } from 'lodash';
 import { ElMessage } from 'element-plus';
+import i18n from '@/locales';
 /**
  * Created by PanJiaChen on 16/11/18.
  */
@@ -538,7 +539,7 @@ export function copy(str) {
   document.execCommand('copy');
   document.body.removeChild(textarea);
 
-  ElMessage.success('复制成功');
+  ElMessage.success(i18n.global.t('common.copySuccess'));
 }
 
 export function roundToDecimal(num, decimalPlaces) {
