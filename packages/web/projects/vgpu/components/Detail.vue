@@ -6,14 +6,14 @@
         <div class="node-detail-left">
           <div class="title">详细信息</div>
           <ul class="node-detail-info">
-            <li v-for="{ label, value, render } in detailColumns">
+            <li v-for="{ label, value, render } in detailColumns" :key="label">
               <span class="label">{{ label }}</span>
               <component v-if="render" :is="render(detail)" />
               <span v-else class="value">{{ detail[value] }}</span>
             </li>
 
             <li class="cp" v-if="!hideCp">
-              <span v-for="{ label, count } in cp">
+              <span v-for="{ label, count } in cp" :key="label">
                 <span class="label">{{ label }}</span>
 
                 <span class="value">{{ count }} 倍</span>
@@ -23,7 +23,7 @@
         </div>
 
         <ul class="gauges">
-          <li v-for="item in gaugeConfig">
+          <li v-for="item in gaugeConfig" :key="item.title">
             <Gauge v-bind="item" />
           </li>
         </ul>
@@ -34,6 +34,7 @@
       <block-box
         :title="title.replace('率', '趋势（%）')"
         v-for="{ title, data } in gaugeConfig"
+        :key="title"
       >
         <template #extra>
           <TimeSelect v-model="time" />

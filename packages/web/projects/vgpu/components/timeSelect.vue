@@ -20,6 +20,7 @@ const timeOptions = computed(() => [
   <el-select v-model="time" style="width: 150px">
     <el-option
       v-for="{ label, value } in timeOptions"
+      :key="value"
       :label="label"
       :value="value"
     ></el-option>

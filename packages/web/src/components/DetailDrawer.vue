@@ -12,11 +12,11 @@
     :with-header="false"
   >
     <ul class="content">
-      <li :key="title" class="item" v-for="{ title, children } in content">
+      <li v-for="{ title, children } in content" :key="title" class="item">
         <el-descriptions :title="title" :column="1">
           <el-descriptions-item
-            :key="v.label"
             v-for="v in children"
+            :key="v.label"
             :label="v.label"
           >
             <component v-if="isVNode(v.value)" :is="v.value"></component>

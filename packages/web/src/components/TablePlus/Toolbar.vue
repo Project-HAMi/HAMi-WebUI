@@ -59,10 +59,10 @@
           <el-button
             :type="type"
             :icon="icon"
-            @click="onClick"
-            :key="name"
             v-for="{ name, type, icon, disabled, onClick } in toolbarAction"
+            :key="name"
             :disabled="renderProps(disabled)"
+            @click="onClick"
             >{{ name }}</el-button
           >
         </div>

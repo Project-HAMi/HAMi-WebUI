@@ -33,9 +33,9 @@
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item
+              v-for="item in filterOptions"
               :key="item.value"
               @click="handleSelectSearchType(item)"
-              v-for="item in filterOptions"
               >{{ item.text }}</el-dropdown-item
             >
           </el-dropdown-menu>

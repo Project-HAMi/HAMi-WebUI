@@ -22,7 +22,7 @@
       </el-tooltip>
 
       <ul class="side-menus">
-        <li class="side-menus-item" v-for="{ meta, children } in menus">
+        <li class="side-menus-item" v-for="{ meta, children } in menus" :key="meta?.path || meta?.title">
           <div v-if="sideWidth >= 200" class="side-menus-item-title">
             {{ $t(meta.title) }}
           </div>
@@ -30,6 +30,7 @@
           <ul class="side-menus-item-children">
             <el-tooltip
               v-for="child in children.filter((v) => v.meta)"
+              :key="child.path"
               placement="right"
               effect="dark"
               :content="$t(child.meta?.title)"

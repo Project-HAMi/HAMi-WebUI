@@ -1,5 +1,5 @@
 <template>
-  <template v-for="item in formItems">
+  <template v-for="item in formItems" :key="item.name || item.label">
     <form-group
       v-if="item.children"
       v-bind="item"
@@ -7,15 +7,13 @@
       :component="item.component"
       :label-width="labelWidth"
       :componentProps="item.props"
-      :key="item.name"
     >
-      <template v-for="c in item.children">
+      <template v-for="c in item.children" :key="c.name || c.label">
         <form-group
           v-if="c.children"
           :label="c.label"
           :component="c.component"
           :label-width="labelWidth"
-          :key="c.name"
           :componentProps="c.props"
           :help="c.help"
         >
@@ -23,7 +21,6 @@
             :labelWidth="labelWidth"
             v-model="form"
             :formItems="c.children"
-            :key="c.label"
           />
         </form-group>
 
@@ -33,7 +30,6 @@
           v-bind="c"
           :label-width="labelWidth"
           :componentProps="c.props"
-          :key="c.label"
         />
       </template>
     </form-group>
@@ -44,7 +40,6 @@
       v-bind="item"
       :label-width="labelWidth"
       :componentProps="item.props"
-      :key="item.label"
     />
   </template>
 </template>

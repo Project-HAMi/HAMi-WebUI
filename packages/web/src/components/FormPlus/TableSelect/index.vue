@@ -104,10 +104,10 @@
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item
-                    :key="title"
                     v-for="{ title, onClick, disabled } in currentRowAction(
                       record,
                     ).slice(2)"
+                    :key="title"
                   >
                     <el-button
                       size="small"
