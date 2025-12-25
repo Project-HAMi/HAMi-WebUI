@@ -25,6 +25,7 @@ export default {
     advanced: 'Advanced',
     operation: 'Operation',
     details: 'Details',
+    copyFailed: 'Copy failed',
   },
   routes: {
     gpuAdmin: 'GPU',

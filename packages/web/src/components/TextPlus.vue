@@ -8,8 +8,8 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
+import { copy } from '@/utils';
 
 const router = useRouter();
 
@@ -20,14 +20,7 @@ const props = defineProps({
 });
 
 const handleCopy = () => {
-  const textarea = document.createElement('textarea');
-  textarea.value = props.text;
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-
-  ElMessage.success('复制成功');
+  copy(props.text);
 };
 
 const handleClick = () => {

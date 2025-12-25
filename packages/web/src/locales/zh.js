@@ -26,6 +26,7 @@ export default {
     advanced: '高级',
     operation: '操作',
     details: '详情',
+    copyFailed: '复制失败',
   },
   routes: {
     gpuAdmin: 'GPU 管理',

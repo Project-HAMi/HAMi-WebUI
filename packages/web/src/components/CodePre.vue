@@ -8,21 +8,14 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus';
+import { copy } from '@/utils';
 
 const props = defineProps({
   value: String,
 });
 
 const handleCopy = () => {
-  const textarea = document.createElement('textarea');
-  textarea.value = props.value;
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-
-  ElMessage.success('复制成功');
+  copy(props.value);
 };
 </script>
 
