@@ -28,7 +28,7 @@
     <el-input
       v-model="value"
       autocomplete="off"
-      placeholder="请输入"
+      :placeholder="t('common.pleaseInput')"
       v-if="component === 'input'"
       v-bind="componentProps"
       class="form-item-input"
@@ -173,6 +173,7 @@ import {
   inject,
   watchEffect,
 } from 'vue';
+import { useI18n } from 'vue-i18n';
 import FormList from './FormList.vue';
 import TableSelect from './TableSelect';
 import Cascader from './elements/Cascader.vue';
@@ -278,6 +279,7 @@ const value = computed({
 });
 
 const schema = inject('$schema', {});
+const { t } = useI18n();
 
 const computeRules = computed(() => {
   const { rules, required } = props;
@@ -287,7 +289,7 @@ const computeRules = computed(() => {
   if (required) {
     ruleData.push({
       required: true,
-      message: '该字段是必填字段',
+      message: t('common.fieldRequired'),
       trigger: 'blur',
     });
   }

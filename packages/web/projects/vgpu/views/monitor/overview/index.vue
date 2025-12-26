@@ -158,7 +158,7 @@ const _cardGaugeConfig = useInstantVector([
     percentQuery: `avg(sum (hami_container_vgpu_allocated) by (instance))/avg(sum (hami_vgpu_count) by (instance)) *100`,
     total: 0,
     used: 0,
-    unit: '个',
+    unit: t('common.unitCount'),
   },
   {
     title: 'computeAllocRate',
@@ -224,19 +224,19 @@ const resourceOverview = computed(() => [
     title: t('dashboard.node'),
     count: resourceCounts.node,
     icon: 'vgpu-node',
-    unit: '个',
+    unit: t('common.unitCount'),
   },
   {
     title: t('dashboard.card'),
     count: resourceCounts.card,
     icon: 'vgpu-gpu-d',
-    unit: '张',
+    unit: t('common.unitSheet'),
   },
   {
     title: t('dashboard.vgpu'),
     count: resourceCounts.vgpu,
     icon: 'vgpu-card',
-    unit: '个',
+    unit: t('common.unitCount'),
   },
   {
     title: t('dashboard.compute'),
@@ -286,7 +286,7 @@ const cardDetail = useInstantVector([
     title: 'vGPU',
     count: 0,
     query: 'avg(hami_vgpu_count)',
-    unit: '个',
+    unit: t('common.unitCount'),
     icon: 'gpu2',
   },
   {

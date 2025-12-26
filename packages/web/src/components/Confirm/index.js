@@ -1,5 +1,6 @@
 import ConfirmComponent from './index.vue'
 import { createVNode, render } from 'vue'
+import i18n from '@/locales'
 
 const Confirm = {
     install(app) {
@@ -8,8 +9,8 @@ const Confirm = {
         app.config.globalProperties.$Confirm = (confirmText, confirmObj, fn) => {
             if(JSON.stringify(confirmObj) === '{}') {
                 confirmObj = {
-                    confirmButtonText: '确定',
-                    cancelButtonText: '取消',
+                    confirmButtonText: i18n.global.t('common.confirm'),
+                    cancelButtonText: i18n.global.t('common.cancel'),
                     type: '',
                 }
             }

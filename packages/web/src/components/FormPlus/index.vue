@@ -27,12 +27,14 @@ import {
 import { ElMessage } from 'element-plus';
 import { timeParse, parseMemory } from '@/utils';
 import { useStore } from 'vuex';
+import { useI18n } from 'vue-i18n';
 import { parseFormItems, handleLinkages } from './utils';
 import FormRender from './FormRender.vue';
 
 const formRef = ref(null);
 
 const store = useStore();
+const { t } = useI18n();
 
 const props = defineProps({
   // 表单数据源，双向绑定
@@ -88,7 +90,7 @@ const submit = async () => {
     //转化成普通对象，便于阅读
     return { ...form.value };
   } catch (e) {
-    ElMessage.error('表单填写校验不通过！');
+    ElMessage.error(t('common.formValidationFailed'));
     return Promise.reject(e);
   }
 };

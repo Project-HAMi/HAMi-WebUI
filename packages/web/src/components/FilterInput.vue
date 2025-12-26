@@ -24,7 +24,7 @@
       >
         <el-input
           v-model="searchVal"
-          placeholder="请输入搜索关键词"
+          :placeholder="t('common.searchKeyword')"
           @keyup.enter="handleSearch"
           clearable
           @focus="openSearchDropdown"
@@ -49,6 +49,9 @@
 import { ref, computed } from 'vue';
 import { ElMessage } from 'element-plus';
 import { omit } from 'lodash';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({
   modelValue: Object, //数据源，双向绑定
@@ -111,7 +114,7 @@ const handleSearch = () => {
       source.filters?.find((item) => item.text === textQ)?.value || textQ;
     emit('update:modelValue', { ...props.modelValue, [type]: value });
   } else {
-    ElMessage.error('输入不合法');
+    ElMessage.error(t('common.inputInvalid'));
   }
 
   searchVal.value = '';

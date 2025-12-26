@@ -10,8 +10,10 @@
 <script setup>
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 
 const router = useRouter();
+const { t } = useI18n();
 
 const props = defineProps({
   text: String,
@@ -27,7 +29,7 @@ const handleCopy = () => {
   document.execCommand('copy');
   document.body.removeChild(textarea);
 
-  ElMessage.success('复制成功');
+  ElMessage.success(t('common.copySuccess'));
 };
 
 const handleClick = () => {

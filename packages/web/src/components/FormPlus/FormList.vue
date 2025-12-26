@@ -71,7 +71,7 @@
           {{ item.label }}
           <el-tooltip
             effect="dark"
-            content="以 art. 为前缀的属性不支持修改和删除"
+            :content="t('common.artPrefixTip')"
             placement="top"
             v-if="item.tip"
           >
@@ -97,7 +97,7 @@
       <template #append>
         <div class="table-append">
           <el-button v-if="allowAdd && !isMax" @click="add" :icon="Plus"
-            >增加</el-button
+            >{{ addTitle || t('common.add') }}</el-button
           >
         </div>
       </template>
@@ -127,6 +127,9 @@ import {
 import { Plus, Minus } from '@element-plus/icons-vue';
 import { deepParse } from '@/utils/form';
 import FormItem from './FormItem.vue';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({
   modelValue: Array,
@@ -169,7 +172,7 @@ const props = defineProps({
   },
   addTitle: {
     type: String,
-    default: '增加',
+    default: '',
   },
   or: Boolean,
 });

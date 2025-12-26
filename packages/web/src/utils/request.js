@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
+import i18n from '@/locales';
 
 const service = axios.create({
   baseURL: process.env.VUE_APP_BASE_API, // url = base url + request url
@@ -36,11 +37,11 @@ service.interceptors.response.use(
   async (response) => {
     const res = response.data;
     // if the custom code is not 0, it is judged as an error.
-    if (res.code != null && res.code > 0 && res.code != 200) {
+    if (res.code !== null && res.code > 0 && res.code !== 200) {
       // 50008: Illegal token; 50012: Other clients logged in; 50014: Token expired;
       if (res.code === 50008 || res.code === 50012 || res.code === 50014) {
         // to re-login
-        await ElMessageBox.alert('请求异常', '提示');
+        await ElMessageBox.alert(i18n.global.t('common.requestError'), i18n.global.t('common.tip'));
       } else {
         ElNotification({
           title: res.reason,

@@ -2,6 +2,7 @@ import { timeParse } from '@/utils';
 import { cloneDeep } from 'lodash';
 import nodeApi from '~/vgpu/api/node';
 import { ElMessage } from 'element-plus';
+import i18n from '@/locales';
 
 export const getResourceStatus = (statusConfig) => {
   return {
@@ -280,7 +281,7 @@ export const handleChartClick = async (params, router) => {
     const uuid = node.uid;
     router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
   } else {
-    ElMessage.error('节点未找到');
+    ElMessage.error(i18n.global.t('node.nodeNotFound'));
   }
 };
 

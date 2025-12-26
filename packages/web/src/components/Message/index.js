@@ -1,12 +1,14 @@
 import MessageComponent from './index.vue'
 import { createVNode, render } from 'vue'
+import i18n from '@/locales'
+
 const Message = {
     install(app) {
       const Vnode = createVNode(MessageComponent)
   		render(Vnode, document.body)
       app.config.globalProperties.$Message = (type, msg, duration) => {
         if(!msg){
-            msg = type==='success'?'操作成功':type==='info'?'消息提示':type==='warning'?'操作警告':type==='danger'?'操作失败':''
+            msg = type==='success'?i18n.global.t('common.operationSuccess'):type==='info'?i18n.global.t('common.messageTip'):type==='warning'?i18n.global.t('common.operationWarning'):type==='danger'?i18n.global.t('common.operationFailed'):''
         }
         duration = duration || 2000
 				Vnode.component.ctx.showMessage(type, msg, duration)

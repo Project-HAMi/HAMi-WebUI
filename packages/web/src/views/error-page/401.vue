@@ -28,7 +28,7 @@
         />
       </el-col>
     </el-row>
-    <el-dialog v-model:visible="dialogVisible" title="随便看">
+    <el-dialog v-model:visible="dialogVisible" :title="$t('error.401.dialogTitle')">
       <img :src="ewizardClap" class="pan-img" />
     </el-dialog>
   </div>
