@@ -21,7 +21,9 @@ const props = defineProps({
 const echartsRef = ref(null);
 const myChart = ref(null);
 
-const refresh = debounce(() => {
+const initChart = () => {
+  if (!echartsRef.value) return;
+
   if (myChart.value) {
     myChart.value.dispose();
   }
@@ -30,38 +32,23 @@ const refresh = debounce(() => {
     myChart.value.setOption(props.options);
   }
   if (props.onClick) {
+    myChart.value.off('click');
     myChart.value.on('click', (params) => {
       props.onClick(params, myChart.value);
     });
   }
-}, 10);
+};
 
-const resizeObserver = new ResizeObserver(() => {
-  requestAnimationFrame(() => {
-    refresh();
-  });
-});
+const refresh = debounce(initChart, 10);
+
+const resizeObserver = new ResizeObserver(refresh);
 
 const currentName = ref();
 
 watchEffect(() => {
-  const options = props.options;
-  nextTick(() => {
-    if (myChart.value) {
-      myChart.value.dispose();
-    }
-    myChart.value = echarts.init(echartsRef.value);
-    if (props.options) {
-      myChart.value.setOption(props.options);
-    }
-
-    if (props.onClick) {
-      myChart.value.off('click');
-      myChart.value.on('click', (params) => {
-        props.onClick(params, myChart.value);
-      });
-    }
-  });
+  props.options;
+  props.onClick;
+  nextTick(initChart);
 });
 
 onMounted(() => {
