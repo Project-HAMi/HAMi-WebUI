@@ -531,15 +531,34 @@ export function daysSince(dateString) {
   return daysDifference;
 }
 
-export function copy(str) {
-  const textarea = document.createElement('textarea');
-  textarea.value = str;
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-
-  ElMessage.success(i18n.global.t('common.copySuccess'));
+export async function copy(str) {
+  try {
+    // 优先使用现代 Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(str);
+      ElMessage.success(i18n.global.t('common.copySuccess'));
+      return;
+    }
+    
+    // 降级方案：使用 document.execCommand
+    const textarea = document.createElement('textarea');
+    textarea.value = str;
+    textarea.style.cssText = 'position:fixed;opacity:0;left:-9999px;';
+    document.body.appendChild(textarea);
+    textarea.select();
+    
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    
+    if (successful) {
+      ElMessage.success(i18n.global.t('common.copySuccess'));
+    } else {
+      ElMessage.error(i18n.global.t('common.copyFailed') || '复制失败');
+    }
+  } catch (err) {
+    console.error('复制失败:', err);
+    ElMessage.error(i18n.global.t('common.copyFailed') || '复制失败');
+  }
 }
 
 export function roundToDecimal(num, decimalPlaces) {

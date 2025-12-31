@@ -29,6 +29,7 @@ export default {
     requestError: '请求异常',
     tip: '提示',
     copySuccess: '复制成功',
+    copyFailed: '复制失败',
     inputInvalid: '输入不合法',
     operationSuccess: '操作成功',
     messageTip: '消息提示',

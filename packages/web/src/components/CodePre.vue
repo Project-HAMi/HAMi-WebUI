@@ -8,24 +8,14 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus';
-import { useI18n } from 'vue-i18n';
-
-const { t } = useI18n();
+import { copy } from '@/utils';
 
 const props = defineProps({
   value: String,
 });
 
 const handleCopy = () => {
-  const textarea = document.createElement('textarea');
-  textarea.value = props.value;
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-
-  ElMessage.success(t('common.copySuccess'));
+  copy(props.value);
 };
 </script>
 
