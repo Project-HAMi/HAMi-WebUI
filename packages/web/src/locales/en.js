@@ -29,6 +29,7 @@ export default {
     requestError: 'Request error',
     tip: 'Tip',
     copySuccess: 'Copy successful',
+    copyFailed: 'Copy failed',
     inputInvalid: 'Invalid input',
     operationSuccess: 'Operation successful',
     messageTip: 'Message',

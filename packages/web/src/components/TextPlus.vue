@@ -8,12 +8,10 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
-import { useI18n } from 'vue-i18n';
+import { copy } from '@/utils';
 
 const router = useRouter();
-const { t } = useI18n();
 
 const props = defineProps({
   text: String,
@@ -22,14 +20,7 @@ const props = defineProps({
 });
 
 const handleCopy = () => {
-  const textarea = document.createElement('textarea');
-  textarea.value = props.text;
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-
-  ElMessage.success(t('common.copySuccess'));
+  copy(props.text);
 };
 
 const handleClick = () => {
