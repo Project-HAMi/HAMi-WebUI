@@ -25,6 +25,9 @@ const (
 	CambriconGPUDevice  = "MLU"
 	MetaxGPUDevice      = "Metax-GPU"
 	MetaxSGPUDevice     = "Metax-SGPU"
+	IluvatarBI150Device = "Iluvatar-BI-V150"
+	IluvatarBI100Device = "Iluvatar-BI-V100"
+	IluvatarMR100Device = "Iluvatar-MR-V100"
 
 	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
 
@@ -383,6 +386,24 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 					continue
 				}
 				cd, err := DecodeMetaxContainerDevices(s)
+				if err != nil {
+					return PodDevices{}, nil
+				}
+				if len(cd) == 0 {
+					continue
+				}
+				pd[devType] = append(pd[devType], cd)
+			}
+		case IluvatarBI100Device, IluvatarBI150Device, IluvatarMR100Device:
+			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+				if i >= len(pod.Spec.Containers) {
+					break
+				}
+				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
+					continue
+				}
+				cd, err := DecodeContainerDevices(s, priorities[i])
 				if err != nil {
 					return PodDevices{}, nil
 				}
