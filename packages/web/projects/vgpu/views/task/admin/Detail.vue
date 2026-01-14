@@ -42,11 +42,11 @@
   </block-box>
 
   <block-box v-for="{ title, data } in lineConfig" :key="title" :title="title">
-    <template #extra v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC'))">
+    <template #extra v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC') || detail.type.startsWith('BI-') || detail.type.startsWith('MR-'))">
       <time-picker v-model="times" type="datetimerange" size="small" />
     </template>
     <div style="height: 200px">
-      <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
+      <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC') && !detail.type.startsWith('BI-') && !detail.type.startsWith('MR-')">
         <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
       </template>
       <template v-else>
