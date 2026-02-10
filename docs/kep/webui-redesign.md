@@ -81,6 +81,8 @@ As a user, I manage many clusters and today need the CLI or multiple WebUIs to i
 
 The current WebUI has issues in build system, front-end architecture, UI consistency, maintainability, and metric presentation. This KEP brings these into scope for refactoring and addresses them by priority, with high priority (stability, build unification, metric completeness) addressed first.
 
+Until the new WebUI is implemented and replaces the current interface, the existing WebUI is treated as a **legacy WebUI** in maintenance mode: only important bugs will be fixed, and no new features will be added on top of the legacy UI.
+
 ### Risks and Mitigations
 
 | Risk | Mitigation |
