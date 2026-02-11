@@ -30,6 +30,8 @@ This section states the motivation, goals, and non-goals of this KEP. It explain
 
 The current HAMi-WebUI has architecture and implementation issues: dual build systems, inconsistent environment variables, route/sidebar null-safety risks, mixed UI frameworks, and lack of TypeScript, leading to high maintenance cost and limited stability and extensibility. On monitoring and observability, there are missing key metrics (including GPU, CPU, memory, and task-related metrics), unclear presentation (e.g. high data density, lack of charts and visualizations, key information buried in tables), and insufficient interaction (e.g. no way to jump from task details to the node and GPU where it runs), which affect observation and troubleshooting of resource and task status.
 
+Also, the current WebUI dosen't keep up with the development of HAMi (e.g. The `DeviceInfo` structure has never been updated to reflect the latest changes in HAMi since last year), which makes it difficult to maintain and update.
+
 In addition, as more users deploy HAMi across multiple clusters, demand for unified multi-cluster observation is growing; a single-cluster WebUI cannot meet that need.
 
 Therefore, "addressing existing WebUI issues", "improving metric completeness and clarity", and "adding multi-cluster capability" are brought together into one evolution direction: first address build unification and high-priority stability, then complete metrics and interaction, and on that basis extend to multi-cluster observation—improving HAMi-WebUI's long-term value through refactoring and new capabilities.
@@ -41,11 +43,12 @@ List the concrete goals of this KEP. What should be achieved? How is success mea
 -->
 
 1. **Unify build system and fix high-priority stability issues**: Single build system (Vite only), consistent env and port documentation, fix sidebar `route.matched[0]` null-safety and similar stability issues.
-2. **Improve completeness and clarity of metric presentation**:
+2. **Promote the release process**: Follow the version and release process of HAMi to ensure the compatibility of the WebUI with HAMi (e.g. data structure and metrics compatibility).
+3. **Improve completeness and clarity of metric presentation**:
    - Add missing key metrics (including GPU, CPU, memory, and task-related metrics).
    - Improve presentation: add charts and visualizations (e.g. time series, heatmaps, status distribution), optimize list density and highlight key information, and provide clearer data hierarchy and interaction.
    - Improve task-detail interaction: support jumping from a task to its node and GPU detail pages, and viewing related task lists from node/GPU details.
-3. **Add multi-cluster capability**:
+4. **Add multi-cluster capability**:
    - Support connecting to and observing multiple clusters in the WebUI.
    - Support viewing nodes, GPUs, tasks, and related resources by cluster; support multi-cluster aggregate views.
 
@@ -118,6 +121,10 @@ This section contains the concrete design details for implementation and review.
   - **CPU/memory-related**: Node CPU/memory usage and quota, per-task CPU/memory usage and allocation, etc.
   - **Task-related**: Task distribution across nodes/GPUs, per-task GPU memory/compute and CPU/memory usage and quota, task history trends, resource quota utilization, etc.
   - **Cluster level**: GPU total and utilization, node count, active task count (concrete metrics to be exposed as backend supports them).
+
+- **New Controller to maintain multi-cluster resources**
+  - **Cluster CRD**: A Cluster CRD to store cluster-specific metadata (e.g. name, labels, version, node count, access info).
+  - **Cluster controller**: Automatically discover and maintain Cluster CRDs for all clusters and configure multiple clusters monitoring.
 
 - **Interaction improvements**
   - In task detail, show the node and GPU where the task runs and provide one-click jump to node/GPU detail.
