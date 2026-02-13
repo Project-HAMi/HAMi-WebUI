@@ -2,10 +2,8 @@
 title: HAMi-WebUI Refactoring and Multi-Cluster Capability
 authors:
 - "@Shenhan11"
-reviewers:
-- ""
 approvers:
-- ""
+- "@Nimbus318"
 creation-date: 2025-02-09
 
 ---
@@ -65,16 +63,16 @@ This section describes the proposal so reviewers understand the gist and expecte
 
 ### User Stories (Optional)
 
-**Story 1: Complete metric presentation**
+**Story 1: Complete metric presentation**  
 As a user, I only see partial basic metrics on the resource overview and node/GPU detail pages. Due to missing CPU/memory-related metrics and task distribution across nodes/GPUs, I expect to see more complete metrics and quickly understand resource status through charts and visualizations.
 
-**Story 2: Clear information presentation**
+**Story 2: Clear information presentation**  
 As a user, when I view node or GPU lists, key information is buried in dense tables. Due to high data density and lack of visualization, I expect key information to be clearly highlighted and to use charts (e.g. time series, heatmaps, status distribution) to quickly understand overall status.
 
-**Story 3: Multi-cluster Dashboard summary**
+**Story 3: Multi-cluster Dashboard summary**  
 As a user, I deploy HAMi in multiple Kubernetes clusters and have to open each cluster’s WebUI to see its overall status. Because this is fragmented and inefficient, I expect a multi-cluster Dashboard that shows each cluster’s summary (e.g. GPU total and utilization, node count, task count) in one page and allows switching the currently viewed cluster to see that cluster’s overview summary and quickly compare status across clusters.
 
-**Story 4: Cluster list and detail view**
+**Story 4: Cluster list and detail view**  
 As a user, I manage many clusters and today need the CLI or multiple WebUIs to inspect each cluster. For easier management, I expect a cluster list page that shows basic info (name, labels, version, node count, status) per cluster and allows clicking into a cluster’s detail page to see overview, nodes, compute, and tasks for that cluster.
 
 ### Notes/Constraints/Caveats (Optional)
@@ -137,3 +135,4 @@ This section contains the concrete design details for implementation and review.
 
 - **Only fix bugs in current codebase, no refactor**: Would improve stability somewhat but would not unify build and architecture or extend to multi-cluster at low cost; therefore the “refactor + multi-cluster” evolution is adopted.
 - **Multi-cluster via multiple browser tabs, one per cluster**: Poor UX and no aggregate view; supporting cluster switching and optional aggregation inside the WebUI better fits operator workflows.
+
