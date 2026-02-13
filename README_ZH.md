@@ -1,6 +1,6 @@
 <img src="docs/logo-horizontal.png" alt="HAMi-WebUI Logo (Light)" width="50%">
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [日本語](README_JA.md)
 
 基于 HAMi 项目的开源 GPU 资源管理与监控平台
 
