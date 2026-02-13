@@ -1,12 +1,14 @@
 package nvidia
 
 import (
-	"github.com/go-kratos/kratos/v2/log"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
+	"encoding/json"
 	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/util"
+
+	"github.com/go-kratos/kratos/v2/log"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type Nvidia struct {
@@ -42,5 +44,15 @@ func (n *Nvidia) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 		return deviceInfos, nil
 	}
 	deviceInfos, err = util.DecodeNodeDevices(deviceEncode, n.log)
+	if err != nil {
+		var newDeviceInfos []*util.NewDeviceInfo
+		err = json.Unmarshal([]byte(deviceEncode), &newDeviceInfos)
+		if err != nil {
+			return deviceInfos, err
+		}
+		for _, newDeviceInfo := range newDeviceInfos {
+			deviceInfos = append(deviceInfos, util.MapNewDeviceInfoToDeviceInfo(newDeviceInfo))
+		}
+	}
 	return deviceInfos, err
 }
