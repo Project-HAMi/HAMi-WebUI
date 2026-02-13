@@ -10,6 +10,7 @@ vendorNodeSelectors:
   DCU: dcu=on
   MLU: mlu=on
   Metax: metax-tech.com/gpu.installed=true
+  Iluvatar: iluvatar.com/gpu.present=true
 
 image:
   frontend:

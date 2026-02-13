@@ -4,12 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/go-kratos/kratos/v2/log"
-	corev1 "k8s.io/api/core/v1"
-	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/informers"
-	listerscorev1 "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +11,17 @@ import (
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/hygon"
+	"vgpu/internal/provider/iluvatar"
 	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/provider/nvidia"
+
+	"github.com/go-kratos/kratos/v2/log"
+	corev1 "k8s.io/api/core/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/informers"
+	listerscorev1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
 type nodeRepo struct {
@@ -45,6 +47,7 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger)
 			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice]),
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
 			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
+			iluvatar.NewIluvatar(data.promCl, log.NewHelper(logger), nodeSelectors[biz.IluvatarGPUDevice]),
 		},
 	}
 	nodeRepo.init()
@@ -79,7 +82,7 @@ func (r *nodeRepo) updateLocalNodes() {
 					continue
 				}
 				for _, device := range devices {
-					n[node.UID].Devices = append(bizNode.Devices, &biz.DeviceInfo{
+					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
 						Index:    int(device.Index),
 						Id:       device.ID,
 						AliasId:  device.AliasId,
