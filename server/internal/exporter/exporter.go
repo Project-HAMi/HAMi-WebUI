@@ -10,6 +10,7 @@ import (
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
+	"vgpu/internal/provider/iluvatar"
 	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/service"
@@ -234,6 +235,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			if provider == "" || provider == metax.MetaxGPUDevice {
 				continue
 			}
+			if mapped, ok := iluvatar.IluvatarProviders[provider]; ok {
+				provider = mapped
+			}
 			HamiContainerVgpuAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(vGPU))
 			HamiContainerVmemoryAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(memory))
 			HamiContainerVcoreAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(core))
@@ -255,6 +259,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				case metax.MetaxSGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+				case biz.IluvatarGPUDevice:
+					used = float64(taskCoreUsed)
+					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
 				default:
 				}
 				cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
@@ -272,6 +279,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
 				case metax.MetaxSGPUDevice:
 					taskMemoryUsed = float32(taskMemoryUsed) * 1024 // KB->Byte
+				case biz.IluvatarGPUDevice:
+					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
 				default:
 				}
 				HamiContainerMemoryUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(float64(taskMemoryUsed / 1024 / 1024))
@@ -309,6 +318,8 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(ix_mem_used{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -340,6 +351,8 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(dcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(ix_mem_total{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -371,6 +384,8 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(dcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(ix_gpu_utilization{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -401,6 +416,8 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	case metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_sgpu_usage{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
 			hostname, deviceIndex, namespace, pod, container)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(container_gpu_utilization{pod_name=\"%s\", container_name=\"%s\"})", pod, container)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -424,6 +441,9 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_sgpu_used_memory{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
 			hostname, deviceIndex, namespace, pod, container)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(container_gpu_memory_total{container_name=\"%s\", pod_name=\"%s\"})",
+			container, pod)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -444,6 +464,8 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(dcu_temp{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_chip_hotspot_temp{uuid=\"%s\"})", deviceUUID)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(ix_temperature{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -480,6 +502,8 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 		query = fmt.Sprintf("avg(dcu_power_usage{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_board_power{uuid=\"%s\"})", deviceUUID) // mW
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("avg(ix_power_usage{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -538,6 +562,9 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		query = fmt.Sprintf("dcu_power_usage{device_id=\"%s\"}", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("mx_board_power{uuid=\"%s\"}", deviceUUID)
+	case biz.IluvatarGPUDevice:
+		query = fmt.Sprintf("ix_power_usage{uuid=\"%s\"}", deviceUUID)
+
 	default:
 		return nil, errors.New("provider not exists")
 	}
@@ -567,6 +594,10 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		case biz.MetaxGPUDevice:
 			info.DriverVersion = metric["driver_version"]
 			info.DeviceNo = metric["deviceId"]
+		case biz.IluvatarGPUDevice:
+			info.DriverVersion = metric["driver"]
+			info.DeviceNo = metric["serial"]
+
 		}
 		return info, nil
 	}
