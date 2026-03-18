@@ -58,7 +58,7 @@ const userInfo = computed(() => {
       margin-left: 16px;
       .username {
         color: #1d2b3a;
-        font-family: Roboto;
+        font-family: var(--td-font-family);
         font-size: 16px;
         font-style: normal;
         font-weight: 500;
@@ -108,7 +108,7 @@ const userInfo = computed(() => {
           cursor: pointer;
         }
         .count {
-          font-family: Roboto;
+          font-family: var(--td-font-family);
           font-size: 20px;
           font-style: normal;
           font-weight: 700;

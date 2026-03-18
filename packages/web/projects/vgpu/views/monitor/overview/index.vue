@@ -1,104 +1,130 @@
 <template>
   <div class="home">
-    <div class="home-left">
-      <Block :title="$t('dashboard.cardResource')">
-        <template #extra>
-          <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
-            {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-          </div>
-        </template>
-        <div class="card-overview">
-          <div v-for="item in cardGaugeConfig" :key="item.title">
-            <Gauge v-bind="item" />
-          </div>
-        </div>
-      </Block>
-      <Block :title="$t('dashboard.resourceOverview')">
-        <template #extra>
-          <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
-            {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-          </div>
-        </template>
-        <ul class="resourceOverview">
-          <li
-            v-for="{ title, count, icon, to, unit } in resourceOverview"
-            :key="title"
-            @click="router.push(to)"
-          >
-            <div class="avatar">
-              <svg-icon :icon="icon" />
-            </div>
-            <div class="main">
-              <div>
-                {{ title }}
-              </div>
-              <div class="count">
-                {{ count }} <span style="font-size: 12px">{{ unit }}</span>
-              </div>
-            </div>
-          </li>
-        </ul>
-      </Block>
+    <div class="home-page-title">{{ $t('dashboard.overview') }}</div>
 
-      <Block v-for="{ title, dataSource } in rangeConfig" :title="title" :key="title">
-        <template #extra>
-          <time-picker v-model="times" type="datetimerange" size="small" />
-        </template>
-        <echarts-plus
-          :options="getRangeOptions(dataSource)"
-          style="height: 250px"
-        />
-      </Block>
-    </div>
-
-    <div class="home-right">
-      <Block :title="$t('dashboard.nodeOverview')" style="margin-bottom: 16px">
-        <template #extra>
-          <div class="all-btn" @click="router.push('/admin/vgpu/node/admin')">
-            {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
+    <div class="home-top">
+      <div class="home-top-left">
+        <Block :title="$t('dashboard.cardResource')">
+          <template #extra>
+            <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
+              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
+            </div>
+          </template>
+          <div class="card-overview">
+            <div v-for="item in cardGaugeConfig" :key="item.title">
+              <Gauge v-bind="item" />
+            </div>
           </div>
-        </template>
-        <ul class="node-all">
-          <li
+        </Block>
+
+        <Block :title="$t('dashboard.resourceOverview')">
+          <template #extra>
+            <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
+              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
+            </div>
+          </template>
+          <ul class="resourceOverview">
+            <li
+              v-for="{ title, count, icon, to, unit } in resourceOverview"
+              :key="title"
+              @click="router.push(to)"
+            >
+              <div class="avatar">
+                <svg-icon :icon="icon" />
+              </div>
+              <div class="main">
+                <div class="count">
+                  {{ count }}
+                  <span v-if="unit" class="count-unit">{{ unit }}</span>
+                </div>
+                <div class="title">
+                  {{ title }}
+                </div>
+              </div>
+            </li>
+          </ul>
+        </Block>
+      </div>
+
+      <div class="home-top-right">
+        <Block :title="$t('dashboard.nodeOverview')" class="home-top-right-card">
+          <template #extra>
+            <div class="all-btn" @click="router.push('/admin/vgpu/node/admin')">
+              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
+            </div>
+          </template>
+          <ul class="node-all">
+            <li
               v-for="{ title, status, count, color } in nodes"
               :key="title"
-              @click="
-                router.push(`/admin/vgpu/node/admin?isSchedulable=${status}`)
-              "
-          >
-            <div class="title">{{ title }}</div>
-            <div class="count" :style="{ color }">
-              {{ count }}
+              @click="router.push({ path: '/admin/vgpu/node/admin', query: { isSchedulable: status } })"
+            >
+              <div class="title">{{ title }}</div>
+              <div class="count" :style="{ color }">
+                {{ count }}
+              </div>
+            </li>
+          </ul>
+        </Block>
+        <Block :title="$t('dashboard.cardTypeDist')" class="home-top-right-card">
+          <template #extra>
+            <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
+              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
             </div>
-          </li>
-        </ul>
-      </Block>
-      <Block :title="$t('dashboard.cardTypeDist')" style="margin-bottom: 16px">
-        <template #extra>
-          <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
-            {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
+          </template>
+          <div class="card-type-chart">
+            <echarts-plus
+              :options="getCardOptions(cardData, chartWidth)"
+              :onClick="handlePieClick"
+            />
           </div>
-        </template>
-        <div style="height: 218px">
-          <echarts-plus :options="getCardOptions(cardData, chartWidth)" :onClick="handlePieClick" />
-        </div>
-      </Block>
+        </Block>
+      </div>
+    </div>
 
-      <TabTop
-        v-bind="nodeTotalTop"
-        :onClick="(params) => handleChartClick(params, router)"
-        style="margin-bottom: 16px"
-      />
-      <TabTop
-        v-bind="nodeUsedTop"
-        :onClick="(params) => handleChartClick(params, router)"
-      />
+    <div class="home-bottom">
+      <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
+        <trend-time-filter v-model="times" />
+      </div>
+      <div class="home-bottom-row" v-if="rangeConfig[0] || rangeConfig[1]">
+        <div class="home-bottom-col" v-if="rangeConfig[0]">
+          <Block :title="rangeConfig[0].title">
+            <echarts-plus
+              :options="getRangeOptions(rangeConfig[0].dataSource)"
+              style="height: 250px"
+            />
+          </Block>
+        </div>
+        <div class="home-bottom-col" v-if="rangeConfig[1]">
+          <Block :title="rangeConfig[1].title">
+            <echarts-plus
+              :options="getRangeOptions(rangeConfig[1].dataSource)"
+              style="height: 250px"
+            />
+          </Block>
+        </div>
+      </div>
+
+      <div class="home-bottom-row home-bottom-top5-row">
+        <div class="home-bottom-col">
+          <TabTop
+            v-bind="nodeComputeTop5"
+            :onClick="(params) => handleChartClick(params, router)"
+          />
+        </div>
+        <div class="home-bottom-col">
+          <TabTop
+            v-bind="nodeMemoryTop5"
+            :onClick="(params) => handleChartClick(params, router)"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref, computed, reactive, watch, watchEffect } from 'vue';
+import { ref, computed, reactive, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   getCardOptions,
@@ -107,19 +133,14 @@ import {
 } from './getOptions';
 import Block from './Block.vue';
 import './style.scss';
-import { timeParse, getDaysInRange, getRandom, calculatePrometheusStep } from '@/utils';
+import { timeParse, calculatePrometheusStep } from '@/utils';
 import { useRouter } from 'vue-router';
-import UserCard from '@/components/UserCard.vue';
 import nodeApi from '~/vgpu/api/node';
-import taskApi from '~/vgpu/api/task';
-import monitorApi from '~/vgpu/api/monitor';
 import cardApi from '~/vgpu/api/card';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useFetchList from '@/hooks/useFetchList';
-import { getTopOptions } from '~/vgpu/components/config';
 import EchartsPlus from '@/components/Echarts-plus.vue';
 import TabTop from '~/vgpu/components/TabTop.vue';
-import TimeSelect from '~/vgpu/components/timeSelect.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
 
@@ -133,11 +154,12 @@ start.setTime(start.getTime() - 3600 * 1000);
 const times = ref([start, end]);
 
 const handlePieClick = (params) => {
-  router.push(`/admin/vgpu/card/admin?type=${params.data.name}`);
+  router.push({
+    path: '/admin/vgpu/card/admin',
+    query: { type: params.data.name },
+  });
 };
 
-
-const alarmData = ref([])
 const chartWidth = ref(200);
 
 // Use a base config object for non-reactive parts or keep useInstantVector
@@ -221,22 +243,22 @@ const resourceCounts = reactive({
 
 const resourceOverview = computed(() => [
   {
-    title: t('dashboard.node'),
+    title: t('dashboard.nodeTotal'),
     count: resourceCounts.node,
     icon: 'vgpu-node',
-    unit: t('common.unitCount'),
+    unit: '',
   },
   {
-    title: t('dashboard.card'),
+    title: t('dashboard.gpuCardCount'),
     count: resourceCounts.card,
     icon: 'vgpu-gpu-d',
-    unit: t('common.unitSheet'),
+    unit: '',
   },
   {
     title: t('dashboard.vgpu'),
     count: resourceCounts.vgpu,
     icon: 'vgpu-card',
-    unit: t('common.unitCount'),
+    unit: '',
   },
   {
     title: t('dashboard.compute'),
@@ -245,7 +267,7 @@ const resourceOverview = computed(() => [
     unit: ' ',
   },
   {
-    title: t('dashboard.memory'),
+    title: t('dashboard.memoryTotal'),
     count: resourceCounts.memory,
     icon: 'vgpu-mem',
     unit: 'GiB',
@@ -257,12 +279,6 @@ const resourceOverview = computed(() => [
 // The titles are static.
 // Let's just translate them when we use them? No, they are iterated.
 // We can make the definitions computed.
-const nodeDataValues = reactive({
-  instance: { yes: 0, no: 0 },
-  core: { used: 0, free: 0, percent: 0 },
-  memory: { used: 0, free: 0, percent: 0 }
-});
-
 // Use a computed to generate the array for the template
 // Note: The original code modified a reactive 'nodeConfig' in onMounted.
 // We will simulate that by updating 'nodeDataValues' and computing the display object.
@@ -279,31 +295,6 @@ const nodeDataValues = reactive({
 const nodeData = useFetchList(nodeApi.getNodeListReq({ filters: {} }));
 
 const cardData = useFetchList(cardApi.getCardListReq({ filters: {} }));
-
-// cardDetail seems unused in template but used for calculations
-const cardDetail = useInstantVector([
-  {
-    title: 'vGPU',
-    count: 0,
-    query: 'avg(hami_vgpu_count)',
-    unit: t('common.unitCount'),
-    icon: 'gpu2',
-  },
-  {
-    title: '算力',
-    count: 0,
-    unit: ' ',
-    icon: 'account',
-    query: 'avg(hami_core_size)',
-  },
-  {
-    title: '显存',
-    count: 0,
-    unit: 'GiB',
-    icon: 'volume',
-    query: 'avg(hami_memory_size) / 1024',
-  },
-]);
 
 const nodes = computed(() => [
 
@@ -325,71 +316,46 @@ const nodes = computed(() => [
   },
 ]);
 
-// exceed seems unused in template
-const exceed = useInstantVector([
-  { title: 'vGPU 超配', count: 0, type: 'vgpu', query: 'avg(hami_vgpu_count)' },
-  {
-    title: '算力超配',
-    count: 0,
-    type: 'core',
-    query: 'avg(hami_vcore_scaling)',
-  },
-  {
-    title: '显存超配',
-    count: 0,
-    type: 'memory',
-    query: 'avg(hami_vmemory_scaling)',
-  },
-]);
-
-const nodeUsedTop = computed(() => ({
-  title: t('dashboard.nodeResourceUsageTop5'),
-  key: 'used',
+const nodeComputeTop5 = computed(() => ({
+  title: t('dashboard.nodeComputeTop5'),
+  key: 'compute',
   config: [
     {
-      tab: t('dashboard.compute'),
-      key: 'core',
-      nameKey: 'node',
-      data: [],
-      query: 'topk(5, avg(hami_core_util_avg) by (node))',
-    },
-    {
-      tab: t('dashboard.memory'),
-      key: 'memory',
-      data: [],
-      nameKey: 'node',
-      query:
-        'topk(5, avg(hami_memory_used) by (node) / avg(hami_memory_size) by (node) * 100)',
-    },
-  ],
-}));
-
-const nodeTotalTop = computed(() => ({
-  title: t('dashboard.nodeResourceAllocTop5'),
-  key: 'used',
-  config: [
-    {
-      tab: t('dashboard.vgpu'),
-      key: 'vgpu',
-      nameKey: 'node',
-      data: [],
-      query: `topk(5, avg(hami_container_vgpu_allocated{}) by (node) / avg(hami_vgpu_count{}) by (node) * 100)`,
-    },
-    {
-      tab: t('dashboard.compute'),
-      key: 'core',
+      tab: t('dashboard.allocRate'),
+      key: 'alloc',
       nameKey: 'node',
       data: [],
       query:
         'topk(5, avg(hami_container_vcore_allocated{}) by (node) / avg(hami_core_size{}) by (node) * 100)',
     },
     {
-      tab: t('dashboard.memory'),
-      key: 'memory',
+      tab: t('dashboard.usageRateLegend'),
+      key: 'usage',
       data: [],
       nameKey: 'node',
+      query: 'topk(5, avg(hami_core_util_avg) by (node))',
+    },
+  ],
+}));
+
+const nodeMemoryTop5 = computed(() => ({
+  title: t('dashboard.nodeMemoryTop5'),
+  key: 'memory',
+  config: [
+    {
+      tab: t('dashboard.allocRate'),
+      key: 'alloc',
+      nameKey: 'node',
+      data: [],
       query:
         'topk(5, avg(hami_container_vmemory_allocated{}) by (node) / avg(hami_memory_size{}) by (node) * 100)',
+    },
+    {
+      tab: t('dashboard.usageRateLegend'),
+      key: 'usage',
+      nameKey: 'node',
+      data: [],
+      query: 'topk(5, avg(hami_memory_used) by (node) / avg(hami_memory_size) by (node) * 100)',
     },
   ],
 }));
@@ -421,20 +387,6 @@ const fetchRangeData = () => {
         });
     }
   }
-
-
-  cardApi
-      .getRangeVector({
-        ...params,
-        query: `sum({__name__=~"alert:.*:count"})`,
-      })
-      .then((res) => {
-        alarmData.value = res.data?.[0]?.values || [];
-      })
-      .catch((err) => {
-        console.error('Failed to fetch alarm data:', err);
-      });
-
 };
 
 watchEffect(() => {
@@ -443,22 +395,6 @@ watchEffect(() => {
   resourceCounts.vgpu = _cardGaugeConfig.value[0].total;
   resourceCounts.compute = _cardGaugeConfig.value[1].total;
   resourceCounts.memory = _cardGaugeConfig.value[2].total.toFixed(0);
-});
-
-onMounted(async () => {
-  // Logic regarding nodeConfig removed or simplified as it seemed unused in template?
-  // Wait, if I remove logic that populates nodeConfig, and it IS used somewhere unseen, it will break.
-  // But looking at the template, I only see 'nodes', 'cardGaugeConfig', 'resourceOverview', 'rangeConfig', 'nodeTotalTop', 'nodeUsedTop', 'cardData'.
-  // 'nodeConfig' variable was defined but not used in the provided <template>.
-  // I will comment it out to be safe or leave it as is but not reactive to translation if it's not displayed.
-  // Actually, to be safe and clean, I'll leave the calculation logic for nodeDataRes but targeting a non-displayed object?
-  // Re-reading template: No usage of 'nodeConfig'.
-  
-  const summary = await monitorApi.summary({
-    filters: {},
-  });
-
-  // ... (logic that updated nodeConfig removed for brevity as nodeConfig is unused in template)
 });
 
 watch(
@@ -488,17 +424,11 @@ watch(
 </script>
 
 <style>
-.el-progress-bar__outer {
-  background-color: #b6c2cd;
-}
-
 .card-overview {
   padding-bottom: 10px;
-  height: 190px;
+  min-height: 140px;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  .gauge-info {
-    margin-top: 10px;
-  }
+  gap: 12px;
 }
 </style>

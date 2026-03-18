@@ -5,15 +5,25 @@ import { timeParse, calculatePrometheusStep } from '@/utils';
 const useInstantVector = (configs, parseQuery = (query) => query, times) => {
   const data = ref(configs);
 
+  const safeParseQuery = (q) => {
+    try {
+      const parsed = parseQuery(q);
+      return typeof parsed === 'string' ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const fetchInstantData = async () => {
     const reqs = configs.map(
       async ({ query, totalQuery, percentQuery, cntQuery }, index) => {
-        if (!query || parseQuery(query).includes('undefined')) {
+        const parsedQuery = query ? safeParseQuery(query) : undefined;
+        if (!parsedQuery || parsedQuery.includes('undefined')) {
           return;
         }
         if (query) {
           const usedData = await cardApi.getInstantVector({
-            query: parseQuery(query),
+            query: parsedQuery,
           });
 
           const used = usedData.data.length ? usedData.data[0]?.value : 0;
@@ -22,8 +32,12 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
         }
 
         if (totalQuery) {
+          const parsedTotalQuery = safeParseQuery(totalQuery);
+          if (!parsedTotalQuery || parsedTotalQuery.includes('undefined')) {
+            return;
+          }
           const totalData = await cardApi.getInstantVector({
-            query: parseQuery(totalQuery),
+            query: parsedTotalQuery,
           });
           if (totalData.data[0]) {
             data.value[index].total = totalData.data[0].value;
@@ -33,8 +47,12 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             data.value[index].percent = data.value[index].used / data.value[index].total * 100;
         }
         if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
+          const parsedPercentQuery = safeParseQuery(percentQuery);
+          if (!parsedPercentQuery || parsedPercentQuery.includes('undefined')) {
+            return;
+          }
           const percentData = await cardApi.getRangeVector({
-            query: parseQuery(percentQuery),
+            query: parsedPercentQuery,
             range: {
                 start: timeParse(times.value[0]),
                 end: timeParse(times.value[1]),
@@ -53,13 +71,18 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
   const fetchRangeData = async () => {
     const reqs = configs.map(
       async ({ query, totalQuery, percentQuery }, index) => {
-        if (!query || parseQuery(query).includes('undefined')) {
+        const parsedQuery = query ? safeParseQuery(query) : undefined;
+        if (!parsedQuery || parsedQuery.includes('undefined')) {
           return;
         }
 
         if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
+          const parsedPercentQuery = safeParseQuery(percentQuery);
+          if (!parsedPercentQuery || parsedPercentQuery.includes('undefined')) {
+            return;
+          }
           const percentData = await cardApi.getRangeVector({
-            query: parseQuery(percentQuery),
+            query: parsedPercentQuery,
             range: {
                 start: timeParse(times.value[0]),
                 end: timeParse(times.value[1]),

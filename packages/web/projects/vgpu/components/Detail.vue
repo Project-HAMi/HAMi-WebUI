@@ -57,16 +57,13 @@
 
 <script setup lang="jsx">
 import BackHeader from '@/components/BackHeader.vue';
-import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import { onMounted, ref, watch } from 'vue';
+import { ref } from 'vue';
 import CardList from '~/vgpu/views/card/admin/index.vue';
 import TaskList from '~/vgpu/views/task/admin/index.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import EchartsPlus from '@/components/Echarts-plus.vue';
-import cardApi from '~/vgpu/api/card';
-import { timeParse } from '@/utils';
 import { getLineOptions } from '~/vgpu/components/config';
 import TimeSelect from '~/vgpu/components/timeSelect.vue';
 
@@ -79,8 +76,6 @@ const props = defineProps([
   'filters',
   'hideCp',
 ]);
-
-const route = useRoute();
 
 const time = ref(1 / 24);
 
@@ -152,42 +147,9 @@ const gaugeConfig = useInstantVector(
   time,
 );
 
-// const fetchLineData = async () => {
-//   const start = new Date();
-//   start.setTime(start.getTime() - 3600 * 1000 * 24 * time.value);
-//
-//   const lineReqs = gaugeConfig.value.map((item) =>
-//     cardApi.getRangeVector({
-//       range: {
-//         start: timeParse(start),
-//         end: timeParse(new Date()),
-//         step: '1m',
-//       },
-//       query: item.percentQuery.replaceAll(`$${props.type}`, props.name),
-//     }),
-//   );
-//
-//   const res = await Promise.all(lineReqs);
-//
-//   gaugeConfig.value = gaugeConfig.value.map((item, index) => ({
-//     ...item,
-//     data: res[index].data[0]?.values || [],
-//   }));
-// };
-
-// watch(
-//   () => props.detail,
-//   async () => {
-//     fetchLineData();
-//   },
-// );
-
-// watch(time, () => {
-//   fetchLineData();
-// });
 </script>
 
-<style lang="scss">
+<style scoped lang="scss">
 .node-detail {
   display: flex;
   height: 100%;
@@ -202,10 +164,9 @@ const gaugeConfig = useInstantVector(
   .title {
     color: #1d2b3a;
     font-family: 'PingFang SC';
-    font-size: 14px;
+    font-size: 16px;
     font-style: normal;
     font-weight: 500;
-    //line-height: 20px;
     margin-bottom: 20px;
   }
   .node-detail-left {

@@ -1,61 +1,141 @@
 <template>
   <div>
     <back-header>
-      {{ $t('node.detail.title') }} > {{ detail.name }}
-<!--      <template #extra>-->
-<!--        <el-form-item-->
-<!--          label="节点调度"-->
-<!--          style="margin-bottom: 0; margin-right: 20px"-->
-<!--        >-->
-<!--          <el-radio-group-->
-<!--            :disabled="detail.isExternal"-->
-<!--            v-model="tempSchedulable"-->
-<!--            size="small"-->
-<!--            @change="onChangeSchedulable"-->
-<!--          >-->
-<!--            <el-radio-button label="启用" :value="true" />-->
-<!--            <el-radio-button label="禁用" :value="false" />-->
-<!--          </el-radio-group>-->
-<!--        </el-form-item>-->
-<!--      </template>-->
+      {{ $t('node.detail.title') }} : {{ detail.name }}
     </back-header>
 
     <block-box class="node-block">
-      <div class="node-detail">
+      <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
         <div class="node-detail-left">
           <div class="title">{{ $t('node.detail.detailInfo') }}</div>
           <ul class="node-detail-info">
             <li v-for="{ label, value, render } in detailColumns" :key="label">
-              <span class="label">{{ label }}</span>
-              <component v-if="render" :is="render(detail)" />
+              <span class="label">{{ label }}：</span>
+              <span v-if="render" class="value">
+                <component :is="render(detail)" />
+              </span>
               <span v-else class="value">{{ detail[value] }}</span>
             </li>
           </ul>
         </div>
-
-
       </div>
     </block-box>
 
-    <block-box>
-      <ul class="card-gauges">
-        <li v-for="(item, index) in gaugeConfig" :key="index">
-          <template v-if="!detail.isExternal || index >= 2">
-            <Gauge v-bind="item" />
-          </template>
-          <template v-else-if="detail.isExternal && index < 2">
-            <el-empty :description="$t('node.detail.noAllocData')" :image-size="90" />
-          </template>
+    <block-box :title="$t('node.detail.resourceOverview')">
+      <ul class="resource-overview-cards">
+        <li class="resource-overview-card">
+          <div class="resource-card">
+            <div class="resource-card-header">
+              <div class="resource-card-icon">
+                <svg-icon icon="vgpu-core" />
+              </div>
+              <div class="resource-card-header-info">
+                <div class="resource-card-value resource-card-value--compute">
+                  {{ computePowerTotalText }}
+                </div>
+                <div class="resource-card-sub-title">
+                  {{ $t('dashboard.computePowerTotal') }}
+                </div>
+              </div>
+            </div>
+
+            <div class="resource-card-footer">
+              <div class="resource-card-rate-wrap">
+                <div class="resource-card-footer-item">
+                  <div class="resource-card-footer-title">{{ $t('dashboard.allocRateLegend') }}</div>
+                  <div class="resource-card-footer-value">
+                    <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
+                    <t-progress
+                      v-if="computeAllocPercentProgress !== undefined"
+                      theme="circle"
+                      :percentage="computeAllocPercentProgressRounded"
+                      size="24"
+                      :color="getResourceColor(computeAllocPercentProgress)"
+                      :label="false"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="resource-card-rate-wrap">
+                <div class="resource-card-footer-item">
+                  <div class="resource-card-footer-title">{{ $t('dashboard.usageRateLegend') }}</div>
+                  <div class="resource-card-footer-value">
+                    <span class="resource-card-footer-percent">{{ computeUsagePercentText }}</span>
+                    <t-progress
+                      v-if="computeUsagePercentProgress !== undefined"
+                      theme="circle"
+                      :percentage="computeUsagePercentProgressRounded"
+                      size="24"
+                      :color="getResourceColor(computeUsagePercentProgress)"
+                      :label="false"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </li>
+
+        <li class="resource-overview-card">
+          <div class="resource-card">
+            <div class="resource-card-header">
+              <div class="resource-card-icon">
+                <svg-icon icon="vgpu-mem" />
+              </div>
+              <div class="resource-card-header-info">
+                <div class="resource-card-value resource-card-value--compute">{{ gpuMemoryTotalText }}</div>
+                <div class="resource-card-sub-title">
+                  {{ $t('dashboard.memoryTotal') }}
+                </div>
+              </div>
+            </div>
+
+            <div class="resource-card-footer">
+              <div class="resource-card-rate-wrap">
+                <div class="resource-card-footer-item">
+                  <div class="resource-card-footer-title">{{ $t('dashboard.allocRateLegend') }}</div>
+                  <div class="resource-card-footer-value">
+                    <span class="resource-card-footer-percent">{{ memoryAllocPercentText }}</span>
+                    <t-progress
+                      v-if="memoryAllocPercentProgress !== undefined"
+                      theme="circle"
+                      :percentage="memoryAllocPercentProgressRounded"
+                      size="24"
+                      :color="getResourceColor(memoryAllocPercentProgress)"
+                      :label="false"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="resource-card-rate-wrap">
+                <div class="resource-card-footer-item">
+                  <div class="resource-card-footer-title">{{ $t('dashboard.usageRateLegend') }}</div>
+                  <div class="resource-card-footer-value">
+                    <span class="resource-card-footer-percent">{{ memoryUsagePercentText }}</span>
+                    <t-progress
+                      v-if="memoryUsagePercentProgress !== undefined"
+                      theme="circle"
+                      :percentage="memoryUsagePercentProgressRounded"
+                      size="24"
+                      :color="getResourceColor(memoryUsagePercentProgress)"
+                      :label="false"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </li>
       </ul>
     </block-box>
 
+    <trend-time-filter v-model="times" />
+
     <div class="line-box">
       <block-box :title="$t('node.detail.resourceAllocTrend')">
-        <template #extra>
-          <time-picker v-model="times" type="datetimerange" size="small" />
-        </template>
-        <div style="height: 200px">
+        <div class="trend-chart">
           <echarts-plus
               :options="
               getRangeOptions({
@@ -67,10 +147,7 @@
         </div>
       </block-box>
       <block-box :title="$t('node.detail.resourceUsageTrend')">
-        <template #extra>
-          <time-picker v-model="times" type="datetimerange" size="small" />
-        </template>
-        <div style="height: 200px">
+        <div class="trend-chart">
           <echarts-plus
             :options="
               getRangeOptions({
@@ -83,17 +160,27 @@
       </block-box>
     </div>
 
-    <block-box :title="$t('node.detail.cardList')">
-      <CardList :key="locale" :hideTitle="true" :filters="{ nodeUid: detail.uid }" />
+    <block-box :title="$t('routes.cards')">
+      <CardList
+        v-if="detail.uid && detail.name"
+        :key="`${locale}-${detail.uid}`"
+        :hideTitle="true"
+        :filters="{ nodeName: detail.name }"
+      />
     </block-box>
 
-    <block-box :title="$t('node.detail.taskList')">
+    <block-box :title="$t('routes.tasks')">
       <template v-if="detail.isExternal">
         <el-alert :title="$t('node.detail.unmanagedNoTask')" show-icon type="warning" :closable="false" />
         <el-empty :description="$t('node.detail.noTaskData')" :image-size="100" />
       </template>
       <template v-else>
-        <TaskList :key="locale" :hideTitle="true" :filters="{ nodeUid: detail.uid }" />
+        <TaskList
+          v-if="detail.uid"
+          :key="`${locale}-${detail.uid}`"
+          :hideTitle="true"
+          :filters="{ nodeUid: detail.uid, nodeName: detail.name }"
+        />
       </template>
     </block-box>
   </div>
@@ -101,27 +188,20 @@
 
 <script setup lang="jsx">
 import BackHeader from '@/components/BackHeader.vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import { computed, onMounted, ref, watch } from 'vue';
-import { Tools } from '@element-plus/icons-vue';
+import { computed, onMounted, ref } from 'vue';
 import CardList from '~/vgpu/views/card/admin/index.vue';
 import TaskList from '~/vgpu/views/task/admin/index.vue';
-import Gauge from '~/vgpu/components/gauge.vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import EchartsPlus from '@/components/Echarts-plus.vue';
-import TimeSelect from '~/vgpu/components/timeSelect.vue';
 import nodeApi from '~/vgpu/api/node';
-import { getLineOptions } from '~/vgpu/views/monitor/overview/getOptions';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import api from '~/vgpu/api/task';
 import { getRangeOptions } from './getOptions';
-import {getDaysInRange} from "@/utils";
 import { useI18n } from 'vue-i18n';
+import { getResourceColor, roundToDecimal } from '@/utils';
 
 const route = useRoute();
-const router = useRouter();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const detail = ref({});
 
@@ -130,32 +210,6 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-
-const isSchedulable = ref(true);
-const tempSchedulable = ref(isSchedulable.value);
-
-const _cpConfig = [
-  {
-    labelKey: 'node.detail.vgpuOvercommit',
-    count: '0',
-    query: `avg(hami_vgpu_count{node=~"$node"})`,
-  },
-  {
-    labelKey: 'node.detail.computeOvercommit',
-    count: '0',
-    query: `avg(hami_vcore_scaling{node=~"$node"})`,
-  },
-  {
-    labelKey: 'node.detail.memoryOvercommit',
-    count: '1.5',
-    query: `avg(hami_vmemory_scaling{node=~"$node"})`,
-  },
-];
-
-const cp = useInstantVector(
-  _cpConfig.map(item => ({...item, label: t(item.labelKey)})),
-  (query) => query.replaceAll('$node', detail.value.name),
-);
 
 const _gaugeConfigBase = [
   {
@@ -200,37 +254,142 @@ const _gaugeConfigBase = [
   },
 ];
 
-const gaugeConfig = useInstantVector(
-  _gaugeConfigBase.map(item => ({...item, title: t(item.titleKey)})),
+const gaugeData = useInstantVector(
+  _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
   (query) => query.replaceAll(`$node`, detail.value.name),
   times,
 );
+
+const gaugeConfig = computed(() =>
+  gaugeData.value.map((item) => ({
+    ...item,
+    title: item.titleKey ? t(item.titleKey) : item.title,
+  })),
+);
+
+const computePowerTotal = computed(() => {
+  const total = Number(gaugeConfig.value?.[0]?.total);
+  return Number.isFinite(total) ? roundToDecimal(total, 1) : undefined;
+});
+
+const gpuMemoryTotal = computed(() => {
+  const total = Number(gaugeConfig.value?.[1]?.total);
+  return Number.isFinite(total) ? roundToDecimal(total, 1) : undefined;
+});
+
+const computeAllocPercentRaw = computed(() => {
+  if (detail.value?.isExternal) return undefined;
+  const percent = Number(gaugeConfig.value?.[0]?.percent);
+  return Number.isFinite(percent) ? percent : undefined;
+});
+
+const computeUsagePercentRaw = computed(() => {
+  const percent = Number(gaugeConfig.value?.[2]?.percent);
+  return Number.isFinite(percent) ? percent : undefined;
+});
+
+const memoryAllocPercentRaw = computed(() => {
+  if (detail.value?.isExternal) return undefined;
+  const percent = Number(gaugeConfig.value?.[1]?.percent);
+  return Number.isFinite(percent) ? percent : undefined;
+});
+
+const memoryUsagePercentRaw = computed(() => {
+  const percent = Number(gaugeConfig.value?.[3]?.percent);
+  return Number.isFinite(percent) ? percent : undefined;
+});
+
+const clampPercent = (v) => Math.max(0, Math.min(100, v));
+const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
+
+const computeAllocPercentProgress = computed(() => {
+  const p = computeAllocPercentRaw.value;
+  return p === undefined ? undefined : clampPercent(p);
+});
+
+const computeUsagePercentProgress = computed(() => {
+  const p = computeUsagePercentRaw.value;
+  return p === undefined ? undefined : clampPercent(p);
+});
+
+const memoryAllocPercentProgress = computed(() => {
+  const p = memoryAllocPercentRaw.value;
+  return p === undefined ? undefined : clampPercent(p);
+});
+
+const memoryUsagePercentProgress = computed(() => {
+  const p = memoryUsagePercentRaw.value;
+  return p === undefined ? undefined : clampPercent(p);
+});
+
+const computeAllocPercentProgressRounded = computed(() => roundPercentForProgress(computeAllocPercentProgress.value));
+const computeUsagePercentProgressRounded = computed(() => roundPercentForProgress(computeUsagePercentProgress.value));
+const memoryAllocPercentProgressRounded = computed(() => roundPercentForProgress(memoryAllocPercentProgress.value));
+const memoryUsagePercentProgressRounded = computed(() => roundPercentForProgress(memoryUsagePercentProgress.value));
+
+const computePowerTotalText = computed(() => {
+  const v = computePowerTotal.value;
+  return v === undefined ? '--' : `${v}`;
+});
+
+const gpuMemoryTotalText = computed(() => {
+  const v = gpuMemoryTotal.value;
+  return v === undefined ? '--' : `${v} GiB`;
+});
+
+const computeAllocPercentText = computed(() => {
+  const p = computeAllocPercentRaw.value;
+  return p === undefined ? '--' : `${roundToDecimal(p, 2)}%`;
+});
+
+const computeUsagePercentText = computed(() => {
+  const p = computeUsagePercentRaw.value;
+  return p === undefined ? '--' : `${roundToDecimal(p, 2)}%`;
+});
+
+const memoryAllocPercentText = computed(() => {
+  const p = memoryAllocPercentRaw.value;
+  return p === undefined ? '--' : `${roundToDecimal(p, 2)}%`;
+});
+
+const memoryUsagePercentText = computed(() => {
+  const p = memoryUsagePercentRaw.value;
+  return p === undefined ? '--' : `${roundToDecimal(p, 2)}%`;
+});
 
 const detailColumns = computed(() => [
   {
     label: t('node.status'),
     value: 'status',
     render: ({ isSchedulable, isExternal }) => {
-      if (detail.value && detail.value.isSchedulable !== undefined) {
-        return (
-            <el-tag disable-transitions type={isExternal ? 'warning' : (isSchedulable ? 'success' : 'danger')}>
-              {isExternal ? t('node.unmanaged') : (isSchedulable ? t('dashboard.schedulable') : t('dashboard.unschedulable'))}
-            </el-tag>
-        );
-      } else {
+      if (!detail.value) {
         return <el-tag disable-transitions size="small" type="info">{t('node.detail.loading')}</el-tag>;
       }
+      const icon = isExternal || isSchedulable === undefined || isSchedulable === null
+        ? 'status-unmanaged'
+        : (isSchedulable ? 'status-schedulable' : 'status-unschedulable');
+      const text = isExternal || isSchedulable === undefined || isSchedulable === null
+        ? t('node.unknown')
+        : (isSchedulable ? t('node.normal') : t('node.abnormal'));
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          <svg-icon icon={icon} style={{ fontSize: '16px' }} />
+          <span>{text}</span>
+        </span>
+      );
     },
   },
   {
     label: t('node.detail.nodeIpAddress'),
     value: 'ip',
-    render: ({ ip }) => <text-plus text={ip} copy />,
+    render: ({ ip }) => <span>{ip || '--'}</span>,
   },
   {
     label: t('node.detail.nodeUuid'),
     value: 'uid',
-    render: ({ uid }) => <text-plus text={uid} copy />,
+    render: ({ uid }) => (
+      <ellipsis-text text={uid || '--'} mode="middle" tooltip="always" />
+    ),
   },
   {
     label: t('node.detail.osType'),
@@ -315,42 +474,8 @@ const detailColumns = computed(() => [
   },
 ]);
 
-const onChangeSchedulable = (val) => {
-  ElMessageBox.confirm(
-    `确认对该节点进行${val ? '启用' : '禁用'}操作？`,
-    '操作确认',
-    {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    },
-  )
-    .then(async () => {
-      try {
-        await nodeApi
-          .stop({
-            nodeName: detail.value.name,
-            switch: val ? 'off' : 'on',
-          })
-          .then(() => {
-            setTimeout(() => {
-              refresh();
-              ElMessage.success(`${val ? '启用' : '禁用'}成功`);
-            }, 500);
-          });
-      } catch (error) {
-        ElMessage.error(error.message);
-        tempSchedulable.value = isSchedulable.value;
-      }
-    })
-    .catch(() => {
-      tempSchedulable.value = isSchedulable.value;
-    });
-};
-
 const refresh = async () => {
   detail.value = await nodeApi.getNodeDetail({ uid: route.params.uid });
-  isSchedulable.value = detail.value.isSchedulable;
 };
 
 onMounted(async () => {
@@ -358,11 +483,11 @@ onMounted(async () => {
 });
 </script>
 
-<style lang="scss">
+<style scoped lang="scss">
 .node-detail {
   display: flex;
+  width: 100%;
   height: 100%;
-  //gap: 50px;
 
   ul {
     margin: 0;
@@ -373,70 +498,180 @@ onMounted(async () => {
   .title {
     color: #1d2b3a;
     font-family: 'PingFang SC';
-    font-size: 14px;
+    font-size: 16px;
     font-style: normal;
     font-weight: 500;
-    //line-height: 20px;
-    margin-bottom: 20px;
+    margin-bottom: 15px;
   }
-  //.node-detail-left {
-  //  min-width: 800px;
-  //}
+  .node-detail-left {
+    width: 100%;
+  }
+
   .node-detail-info {
-    gap: 15px;
-    font-size: 12px;
+    width: 100%;
+    column-gap: 15px;
+    row-gap: 15px;
     display: grid;
     grid-template-columns: repeat(3, 1fr);
 
+    li {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+
     .label {
       display: inline-block;
-      width: 100px;
+      width: 110px;
       height: 20px;
       color: #939ea9;
+      font-size: 12px;
+      line-height: 20px;
+      flex-shrink: 0;
     }
 
-    .set {
-      :hover {
-        cursor: pointer;
-        color: #324558;
-      }
-    }
-
-    .cp {
-      display: flex;
-      gap: 25px;
+    .value {
+      color: #324558;
+      font-size: 14px;
+      line-height: 22px;
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
     }
   }
 
-  .gauges {
-    flex: 1;
-    display: flex;
-    li {
-      flex: 1;
+  &.is-en {
+    .node-detail-info {
+      .label {
+        width: 145px;
+      }
     }
   }
 }
 
-.card-gauges {
-  margin: 0;
+.resource-overview-cards {
+  margin: 15px 0 0;
   padding: 0;
   list-style: none;
   display: flex;
+  gap: 15px;
+}
+
+.resource-overview-card {
+  flex: 1;
+}
+
+.resource-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 15px 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.resource-card-header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.resource-card-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 4px 10px rgba(2, 5, 8, 0.06);
+}
+
+.resource-card-header-info {
+  min-width: 0;
+}
+
+.resource-card-value {
+  font-size: 20px;
+  font-weight: 500;
+  color: #1d2b3a;
+  line-height: 28px;
+}
+
+.resource-card-value--compute {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.resource-card-sub-title {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #939ea9;
+  line-height: 20px;
+}
+
+.resource-card-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.resource-card-rate-wrap {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.resource-card-footer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resource-card-footer-title {
+  font-size: 12px;
+  color: #939ea9;
+  line-height: 20px;
+}
+
+.resource-card-footer-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.resource-card-footer-percent {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d2b3a;
+}
+
+.trend-chart {
   height: 200px;
-  li {
-    flex: 1;
-  }
+  margin-top: 15px;
+  min-width: 0;
 }
 
 .line-box {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  column-gap: 20px;
+  column-gap: 16px;
+
+  > .home-block {
+    min-width: 0;
+  }
 }
 
 .node-block {
   display: flex;
   flex-direction: column;
+  margin-bottom: 15px;
   .home-block-content {
     flex: 1;
   }

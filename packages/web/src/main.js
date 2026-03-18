@@ -3,6 +3,7 @@ import App from './App.vue';
 import router from './router';
 import store from './store';
 import installElementPlus from './plugins/element';
+import installTDesign from './plugins/tdesign';
 import 'normalize.css/normalize.css'; // a modern alternative to CSS resets
 import '@/styles/index.scss'; // global css
 
@@ -18,6 +19,7 @@ import i18n from '@/locales';
 const app = createApp(App);
 app.use(i18n);
 installElementPlus(app);
+installTDesign(app);
 installIcons(app);
 
 app.use(components);

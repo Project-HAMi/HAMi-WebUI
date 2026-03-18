@@ -205,6 +205,9 @@ export const getTopOptions = (dataSource) => {
         name: '',
         type: 'bar',
         data: data,
+        itemStyle: {
+          color: '#4F98CA',
+        },
       },
     ],
   };

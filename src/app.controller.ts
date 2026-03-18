@@ -1,6 +1,7 @@
 import { Controller, Get, Req, Res } from '@nestjs/common'
 import { AppService } from './app.service'
 import { Request, Response } from 'express'
+import { join } from 'path'
 
 @Controller()
 export class AppController {
@@ -14,6 +15,6 @@ export class AppController {
   // api 透传到后api-proxy，health_check, bff 被node接管，其他的直接打回前端vue路由
   @Get('*')
   index(@Req() req: Request, @Res() res: Response) {
-    return res.render('index')
+    return res.sendFile(join(__dirname, '..', 'public', 'index.html'))
   }
 }

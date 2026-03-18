@@ -3,7 +3,8 @@ import { timeParse } from '@/utils';
 export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
   return {
     legend: {
-      // data: [],
+      bottom: 0,
+      orient: 'horizontal',
     },
     tooltip: {
       trigger: 'axis',
@@ -25,9 +26,9 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
       },
     },
     grid: {
-      top: 37, // 上边距
-      bottom: 20, // 下边距
-      left: '7%', // 左边距
+      top: 20, // 上边距
+      bottom: 60, // 下边距
+      left: '8%', // 左边距
       right: 10, // 右边距
     },
     xAxis: {
@@ -41,7 +42,6 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
     },
     yAxis: {
       type: 'value',
-      // max: 100,
       axisLabel: {
         formatter: function (value) {
           return `${value} %`;
@@ -53,28 +53,6 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
         name: t('dashboard.compute'),
         data: core,
         type: 'line',
-        areaStyle: {
-          normal: {
-            color: {
-              type: 'linear',
-              x: 0, // 渐变起始点 0%
-              y: 0, // 渐变起始点 0%
-              x2: 0, // 渐变结束点 100%
-              y2: 1, // 渐变结束点 100%
-              colorStops: [
-                {
-                  offset: 0,
-                  color: 'rgba(84, 112, 198, 0.16)', // 渐变起始颜色
-                },
-                {
-                  offset: 1,
-                  color: 'rgba(84, 112, 198, 0.00)', // 渐变结束颜色
-                },
-              ],
-              global: false, // 缺省为 false
-            },
-          },
-        },
         itemStyle: {
           color: 'rgb(84, 112, 198)', // 设置线条颜色为橙色
         },
@@ -86,28 +64,6 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
         name: t('dashboard.memory'),
         data: memory,
         type: 'line',
-        areaStyle: {
-          normal: {
-            color: {
-              type: 'linear',
-              x: 0, // 渐变起始点 0%
-              y: 0, // 渐变起始点 0%
-              x2: 0, // 渐变结束点 100%
-              y2: 1, // 渐变结束点 100%
-              colorStops: [
-                {
-                  offset: 0,
-                  color: 'rgba(34, 139, 34, 0.16)', // 渐变起始颜色
-                },
-                {
-                  offset: 1,
-                  color: 'rgba(34, 139, 34, 0.00)', // 渐变结束颜色
-                },
-              ],
-              global: false, // 缺省为 false
-            },
-          },
-        },
         itemStyle: {
           color: 'rgb(145, 204, 117)', // 设置线条颜色为橙色
         },

@@ -1,84 +1,85 @@
 <template>
   <back-header>
-    {{ $t('task.detail.title') }} > {{ detail.name }}
+    {{ $t('task.detail.title') }} : {{ detail.name }}
   </back-header>
 
-  <block-box>
-    <div class="task-detail">
-      <div class="left">
-        <!--        <el-descriptions column="2" title="详细信息">-->
-        <!--          <el-descriptions-item-->
-        <!--            v-for="{ label, value, render } in columns"-->
-        <!--            :label="label"-->
-        <!--          >-->
-        <!--            <component v-if="render" :is="render(detail)" />-->
-        <!--            <span v-else class="value">{{ detail[value] || '&#45;&#45;' }}</span>-->
-        <!--          </el-descriptions-item>-->
-        <!--        </el-descriptions>-->
-        <div class="title">{{ $t('task.detail.detailInfo') }}</div>
-        <ul class="node-detail-info">
-          <li v-for="{ label, value, render } in columns" :key="label">
-            <span class="label">{{ label }}</span>
-            <component v-if="render" :is="render(detail)" />
-            <span v-else class="value">{{ detail[value] }}</span>
-          </li>
+  <div class="task-top">
+    <block-box>
+      <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
+        <div class="left">
+          <div class="title">{{ $t('task.detail.detailInfo') }}</div>
+          <ul class="node-detail-info">
+            <li v-for="{ label, value, render } in columns" :key="label">
+              <span class="label">{{ label }}：</span>
+              <span v-if="render" class="value">
+                <component :is="render(detail)" />
+              </span>
+              <span v-else class="value">{{ detail[value] }}</span>
+            </li>
 
-
-          <li class="cp">
-            <span v-for="{ label, count } in cp" :key="label">
-              <span class="label">{{ label }}</span>
-
-              <span class="value">{{ count }} {{ $t('task.times') }}</span>
-            </span>
-          </li>
-        </ul>
+            <li class="cp">
+              <span v-for="{ label, count } in cp" :key="label">
+                <span class="label">{{ label }}</span>
+                <span class="value">{{ count }} {{ $t('task.times') }}</span>
+              </span>
+            </li>
+          </ul>
+        </div>
       </div>
-      <div class="right">
+    </block-box>
+
+    <block-box :title="$t('task.detail.resourceOverview')">
+      <div class="task-gauges">
         <div v-for="item in gaugeConfig" :key="item.title">
           <Gauge v-bind="item" />
         </div>
       </div>
-    </div>
-  </block-box>
+    </block-box>
+  </div>
 
-  <block-box v-for="{ title, data } in lineConfig" :key="title" :title="title">
-    <template #extra v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC'))">
-      <time-picker v-model="times" type="datetimerange" size="small" />
-    </template>
-    <div style="height: 200px">
-      <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
-        <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
-      </template>
-      <template v-else>
-        <echarts-plus :options="getLineOptions({ data })" />
-      </template>
-    </div>
-  </block-box>
+  <trend-time-filter
+    v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC'))"
+    v-model="times"
+  />
+
+  <div class="task-trend-row">
+    <block-box v-for="{ title, data } in lineConfigView" :key="title" :title="title">
+      <div class="trend-chart">
+        <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
+          <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
+        </template>
+        <template v-else>
+          <echarts-plus :options="getLineOptions({ data })" />
+        </template>
+      </div>
+    </block-box>
+  </div>
 </template>
 
 <script setup lang="jsx">
 import BackHeader from '@/components/BackHeader.vue';
-import {useRoute, useRouter} from 'vue-router';
-import { onMounted, ref, watch, watchEffect, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { onMounted, ref, watch, computed } from 'vue';
 
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import cardApi from '~/vgpu/api/card';
+import nodeApi from '~/vgpu/api/node';
 import { QuestionFilled } from '@element-plus/icons-vue';
 import { ElPopover } from 'element-plus';
-import { roundToDecimal, timeParse, calculateDuration, calculatePrometheusStep } from '@/utils';
+import { roundToDecimal, timeParse, calculatePrometheusStep } from '@/utils';
 import taskApi from '~/vgpu/api/task';
 import BlockBox from '@/components/BlockBox.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getLineOptions } from '~/vgpu/components/config';
 import EchartsPlus from '@/components/Echarts-plus.vue';
-import TimeSelect from '~/vgpu/components/timeSelect.vue';
 import { useI18n } from 'vue-i18n';
 
 const route = useRoute();
 const router = useRouter();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const detail = ref({});
+const nodeUid = ref('');
 
 const end = new Date();
 const start = new Date();
@@ -92,37 +93,43 @@ const columns = computed(() => [
     value: 'status',
     render: ({ status }) => {
       const enums = {
-        closed: { text: t('task.statusCompleted'), color: '#999' },
-        success: { text: t('task.statusRunning'), color: '#2563eb' },
-        unknown: { text: t('task.statusUnknown'), color: '#FACC15' },
-        failed: { text: t('task.statusFailed'), color: '#EF4444' },
+        closed: {
+          text: t('task.statusCompleted'),
+          icon: 'status-schedulable',
+        },
+        success: {
+          text: t('task.statusRunning'),
+          icon: 'status-schedulable',
+        },
+        unknown: {
+          text: t('task.statusUnknown'),
+          icon: 'status-unmanaged',
+        },
+        failed: {
+          text: t('task.statusFailed'),
+          icon: 'status-unschedulable',
+        },
       };
-      const { text, color } = enums[status] || {};
+      const { text, icon } = enums[status] || enums.unknown;
       return (
-        <div
+        <span
           style={{
-            color,
-            position: 'relative',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '5px',
+            gap: '6px',
           }}
         >
-          <div
-            style={{
-              height: '7px',
-              width: '7px',
-              borderRadius: '50%',
-              backgroundColor: color,
-              display: 'inline-block',
-            }}
-          ></div>{' '}
-          {text}
+          <svg-icon icon={icon} style={{ fontSize: '16px' }} />
+          <span>{text}</span>
           {(status === 'unknown' || status === 'failed') && (
               <ElPopover placement="top" trigger="hover" popper-style={{ width: '180px' }}>
                 {{
-                  reference: () => <el-icon color="#939EA9" size="14"><QuestionFilled /></el-icon>,
+                  reference: () => (
+                    <el-icon color="#939EA9" size="14">
+                      <QuestionFilled />
+                    </el-icon>
+                  ),
                   default: () => (
                       <span style={{ marginLeft: '5px', }}>
                       {t('task.checkCloudPlatform')}
@@ -131,7 +138,7 @@ const columns = computed(() => [
                 }}
               </ElPopover>
           )}
-        </div>
+        </span>
       );
     },
   },
@@ -142,25 +149,34 @@ const columns = computed(() => [
       if (!deviceIds || !Array.isArray(deviceIds) || deviceIds.length === 0) {
         return <span>--</span>;
       }
-
-      const text = deviceIds.join(', ');
-      const maxLength = 25;
-      const isLongText = text.length > maxLength;
-      const displayText = isLongText ? `${text.slice(0, maxLength)}...` : text;
-
-      return isLongText ? (
-          <el-tooltip content={text} placement="top">
-            <span>{displayText}</span>
-          </el-tooltip>
-      ) : (
-          <span>{displayText}</span>
+      return (
+        <ellipsis-text
+          text={deviceIds.join(', ')}
+          mode="middle"
+          tooltip="always"
+        />
       );
     },
   },
   {
     label: t('task.node'),
     value: 'nodeName',
-    render: ({ nodeName }) => <text-plus text={nodeName} copy />,
+    render: ({ nodeName }) => {
+      return (
+        <div class="node-jump-cell">
+          <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
+          <span
+            class={['node-jump-icon', !nodeUid.value ? 'is-disabled' : ''].join(' ')}
+            onClick={() => {
+              if (!nodeUid.value) return;
+              router.push(`/admin/vgpu/node/admin/${nodeUid.value}?nodeName=${nodeName || ''}`);
+            }}
+          >
+            <svg-icon icon="jump" />
+          </span>
+        </div>
+      );
+    },
   },
   {
     label: t('task.cardType'),
@@ -183,18 +199,15 @@ const columns = computed(() => [
   {
     label: t('task.appName'),
     value: 'appName',
+    render: ({ appName }) => (
+      <ellipsis-text text={appName || '--'} mode="middle" tooltip="always" />
+    ),
   },
   {
     label: t('task.createTime'),
     value: 'createTime',
     render: ({ createTime }) => <span>{timeParse(createTime)}</span>,
   },
-  // {
-  //   label: '任务运行时长',
-  //   value: 'createTime',
-  //   render: ({ createTime, status }) =>
-  //       status === 'success' ? <span>{calculateDuration(createTime)}</span> : null,
-  // },
 ]);
 const _gaugeConfigBase = [
   {
@@ -221,8 +234,8 @@ const _gaugeConfigBase = [
   },
 ];
 
-const gaugeConfig = useInstantVector(
-  _gaugeConfigBase.map(item => ({...item, title: t(item.titleKey)})),
+const gaugeData = useInstantVector(
+  _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
   (query) =>
     query
       .replaceAll(`$container`, detail.value.name)
@@ -230,18 +243,32 @@ const gaugeConfig = useInstantVector(
       .replaceAll(`$pod`, detail.value.appName),
 );
 
+const gaugeConfig = computed(() =>
+  gaugeData.value.map((item) => ({
+    ...item,
+    title: item.titleKey ? t(item.titleKey) : item.title,
+  })),
+);
+
 const lineConfig = ref([
   {
-    title: t('task.computeUsageTrend'),
+    titleKey: 'task.computeUsageTrend',
     query: `avg(sum(hami_container_core_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
     data: [],
   },
   {
-    title: t('task.memUsageTrend'),
+    titleKey: 'task.memUsageTrend',
     query: `avg(sum(hami_container_memory_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
     data: [],
   },
 ]);
+
+const lineConfigView = computed(() =>
+  lineConfig.value.map((item) => ({
+    ...item,
+    title: t(item.titleKey),
+  })),
+);
 
 const fetchLineData = async () => {
 
@@ -281,39 +308,38 @@ onMounted(async () => {
     detail.value.type = foundCard.type;
   }
 
-  // const start = new Date();
-  // start.setTime(start.getTime() - 3600 * 1000 * 24 * 7);
-  // const lineReqs = gaugeConfig.value.map((item) =>
-  //   cardApi.getRangeVector({
-  //     range: {
-  //       start: timeParse(start),
-  //       end: timeParse(new Date()),
-  //       step: '1m',
-  //     },
-  //     query: item.query
-  //       .replaceAll(`$container`, detail.value.name)
-  //       .replaceAll(`$namespace`, detail.value.namespace)
-  //       .replaceAll(`$pod`, detail.value.appName),
-  //   }),
-  // );
-  //
-  // const res = await Promise.all(lineReqs);
-  //
-  // gaugeConfig.value = gaugeConfig.value.map((item, index) => ({
-  //   ...item,
-  //   data: res[index].data[0]?.values || [],
-  // }));
+  const initialNodeUid = detail.value.nodeUid || detail.value.node_uid || '';
+  nodeUid.value = initialNodeUid;
+
+  const nodeName = detail.value.nodeName || detail.value.node_name || '';
+  if (!nodeUid.value && nodeName) {
+    try {
+      const { list = [] } = await nodeApi.getNodes({ filters: {} });
+      const node = list.find((item) => item?.name === nodeName);
+      nodeUid.value = node?.uid || '';
+    } catch {
+      nodeUid.value = '';
+    }
+  }
 });
 </script>
 
-<style lang="scss">
-.task-detail {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  .right {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
+<style scoped lang="scss">
+.task-top {
+  display: flex;
+  gap: 16px;
+
+  > .home-block {
+    flex: 7;
   }
+
+  > .home-block:last-child {
+    flex: 3;
+  }
+}
+
+.task-detail {
+  width: 100%;
 
   ul {
     margin: 0;
@@ -324,24 +350,42 @@ onMounted(async () => {
   .title {
     color: #1d2b3a;
     font-family: 'PingFang SC';
-    font-size: 14px;
+    font-size: 16px;
     font-style: normal;
     font-weight: 500;
-    //line-height: 20px;
     margin-bottom: 20px;
   }
 
   .node-detail-info {
-    gap: 15px;
-    font-size: 12px;
+    width: 100%;
+    column-gap: 15px;
+    row-gap: 15px;
     display: grid;
     grid-template-columns: 1fr 1fr;
+
+    li {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
 
     .label {
       display: inline-block;
       width: 80px;
       height: 20px;
       color: #939ea9;
+      font-size: 12px;
+      line-height: 20px;
+      flex-shrink: 0;
+    }
+
+    .value {
+      color: #324558;
+      font-size: 14px;
+      line-height: 22px;
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
     }
 
     .cp {
@@ -349,5 +393,61 @@ onMounted(async () => {
       gap: 25px;
     }
   }
+
+  &.is-en {
+    .node-detail-info {
+      .label {
+        width: 100px;
+      }
+    }
+  }
 }
+
+.task-gauges {
+  margin-top: 15px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.task-trend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+
+  > .home-block {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 0;
+  }
+}
+
+.trend-chart {
+  height: 200px;
+  margin-top: 15px;
+}
+
+.node-jump-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.node-jump-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+}
+
+.node-jump-icon.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 </style>

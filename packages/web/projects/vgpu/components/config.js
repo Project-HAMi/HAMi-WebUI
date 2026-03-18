@@ -1,4 +1,5 @@
 import { timeParse } from '@/utils';
+import i18n from '@/locales';
 
 export default ({ percent, title, unit = '%' }) => {
   const value = percent.toFixed(1);
@@ -31,7 +32,7 @@ export default ({ percent, title, unit = '%' }) => {
         axisLine: {
           lineStyle: {
             width: 8,
-            backgroundColor: '#F5F7FA',
+            color: '#F5F7FA',
           },
         },
         axisTick: {
@@ -110,48 +111,51 @@ export default ({ percent, title, unit = '%' }) => {
 };
 
 export const getPreviewBarPie = (statusConfig, { title }) => {
+  const unit = i18n.global.t('common.unitSheet');
+  const suffix = unit ? ` ${unit}` : '';
+
+  const dataList = statusConfig.map((item) => ({
+    ...item,
+    value: Number(item.value || 0),
+    itemStyle: {
+      color: item.color,
+      borderRadius: 6,
+      borderColor: '#fff',
+      borderWidth: 2,
+    },
+  }));
+
   return {
     tooltip: {
-      show: false,
+      trigger: 'item',
+      confine: true,
+      formatter: (params) => {
+        return `${params.name}: ${params.value}${suffix}`;
+      },
     },
-    // legend: {
-    //   top: '5%',
-    //   left: 'center',
-    // },
-
     series: [
       {
-        name: 'Access From',
+        name: title,
         type: 'pie',
-        radius: ['50%', '65%'],
+        radius: ['48%', '72%'],
+        center: ['50%', '50%'],
         avoidLabelOverlap: false,
-        itemStyle: {
-          borderRadius: 3,
-          borderColor: '#fff',
-        },
         label: {
           show: false,
-          position: 'center',
-        },
-        emphasis: {
-          label: {
-            show: false,
-            fontSize: 40,
-            fontWeight: 'bold',
-          },
         },
         labelLine: {
           show: false,
         },
-        // data: [
-        //   { value: data.running, itemStyle: {color: '#ff0000'} },
-        //   { value: data.stopped , itemStyle: {color: '#ff0000'}},
-        //   { value: data.error , itemStyle: {color: '#ff0000'}},
-        // ],
-        data: statusConfig.map((item) => ({
-          ...item,
-          itemStyle: { color: item.color },
-        })),
+        emphasis: {
+          scale: true,
+          scaleSize: 4,
+          itemStyle: {
+            shadowBlur: 12,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.15)',
+          },
+        },
+        data: dataList,
       },
     ],
     grid: {
@@ -160,18 +164,6 @@ export const getPreviewBarPie = (statusConfig, { title }) => {
       left: 1, // 左边距
       right: 1, // 右边距
     },
-    graphic: [
-      {
-        type: 'text', // 添加文本标签
-        left: 'center', // 文本标签水平居中
-        top: 'center', // 文本标签垂直居中
-        style: {
-          text: title, // 设置文本内容
-          fill: '#333', // 文字颜色
-          fontSize: 12, // 文字大小
-        },
-      },
-    ],
   };
 };
 
@@ -211,11 +203,17 @@ export const getTopOptions = ({ core, memory }) => {
         name: '算力',
         type: 'bar',
         data: core.data,
+        itemStyle: {
+          color: '#4F98CA',
+        },
       },
       {
         name: '显存',
         type: 'bar',
         data: memory.data,
+        itemStyle: {
+          color: '#4F98CA',
+        },
       },
     ],
   };
@@ -261,28 +259,6 @@ export const getLineOptions = ({ data = [], unit = '%' }) => {
           return item.value.toFixed(1);
         }),
         type: 'line',
-        areaStyle: {
-          normal: {
-            color: {
-              type: 'linear',
-              x: 0, // 渐变起始点 0%
-              y: 0, // 渐变起始点 0%
-              x2: 0, // 渐变结束点 100%
-              y2: 1, // 渐变结束点 100%
-              colorStops: [
-                {
-                  offset: 0,
-                  color: 'rgba(84, 112, 198, 0.16)', // 渐变起始颜色
-                },
-                {
-                  offset: 1,
-                  color: 'rgba(84, 112, 198, 0.00)', // 渐变结束颜色
-                },
-              ],
-              global: false, // 缺省为 false
-            },
-          },
-        },
       },
     ],
   };

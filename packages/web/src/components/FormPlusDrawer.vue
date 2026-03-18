@@ -97,7 +97,7 @@ const handleOk = async () => {
     color: #1d2b3a;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: 'PingFang SC';
+    font-family: var(--td-font-family);
     font-size: 16px;
     font-style: normal;
     font-weight: 500;

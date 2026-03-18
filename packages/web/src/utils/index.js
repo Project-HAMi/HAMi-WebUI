@@ -581,6 +581,16 @@ export function toBoolean(str) {
   return str === 'true';
 }
 
+export const getResourceColor = (percentage) => {
+  if (percentage >= 80) {
+    return '#DC2626';
+  } else if (percentage >= 50) {
+    return '#2563EB';
+  } else {
+    return '#16A34A';
+  }
+};
+
 export const clearEdges = (items) =>
   items.map((item) => ({
     ...item,
