@@ -105,7 +105,7 @@ const topConfig = computed(() => [
 <style scoped lang="scss">
 .task-top-box {
   display: flex;
-  gap: 25px;
+  gap: 16px;
   .item {
     flex: 1;
   }

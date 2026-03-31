@@ -21,16 +21,20 @@ const goBack = () => {
 
 <style lang="scss">
 #BackHeader {
-  background: #fff;
-  padding: 15px 10px;
-  margin-bottom: 20px;
-  border-radius: 10px;
-  box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.12);
+  padding: 0 0 8px 0;
+  margin-bottom: 12px;
+
   .el-page-header__back {
     color: #999;
     &:hover {
       color: var(--el-color-primary);
     }
+  }
+
+  .el-page-header__content {
+    font-size: 18px;
+    font-weight: 500;
+    color: #1d2b3a;
   }
 }
 </style>

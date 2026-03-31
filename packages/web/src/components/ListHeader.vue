@@ -57,8 +57,7 @@ const route = useRoute();
     margin-right: auto;
     .title {
       color: #1d2b3a;
-
-      font-family: 'PingFang SC';
+      font-family: var(--td-font-family);
       font-size: 16px;
       font-style: normal;
       font-weight: 500;
@@ -66,8 +65,7 @@ const route = useRoute();
     }
     .desc {
       color: #939ea9;
-
-      font-family: 'PingFang SC';
+      font-family: var(--td-font-family);
       font-size: 12px;
       font-style: normal;
       font-weight: 400;

@@ -50,17 +50,17 @@ const handleSetLanguage = (lang) => {
   cursor: pointer;
   display: flex;
   align-items: center;
-  height: 32px;
-  padding: 0 12px;
+  height: 26px;
+  padding: 0 8px;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.9);
+  color: #1f2933;
   transition: all 0.3s ease;
-  border: 1px solid transparent;
+  border: none;
   margin-right: 16px;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--el-color-primary);
+    background: transparent;
   }
 
   .lang-icon {

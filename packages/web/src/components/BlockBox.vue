@@ -17,22 +17,24 @@ defineProps(['title']);
 <style lang="scss">
 .home-block {
   border-radius: 8px;
+  border: 1px solid #e4ebf1;
   background: #fff;
-  margin-bottom: 15px;
+  margin-bottom: 16px;
   box-shadow: 0px 1px 1px 0px rgba(2, 5, 8, 0.02),
     0px 1px 4px 0px rgba(2, 5, 8, 0.06);
   padding: 20px;
   &-header {
     display: flex;
+    align-items: center;
     justify-content: space-between;
     .title {
       color: #1d2b3a;
-      font-family: 'PingFang SC';
-      font-size: 14px;
+      font-family: var(--td-font-family);
+      font-size: 16px;
       font-style: normal;
       font-weight: 500;
       line-height: 20px; /* 142.857% */
-      margin-bottom: 20px;
+      margin-bottom: 0;
     }
   }
 }

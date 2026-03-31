@@ -1,9 +1,12 @@
 import { timeParse } from '@/utils';
+import i18n from '@/locales';
 
 export const getRangeOptions = ({ core = [], memory = [] }) => {
   return {
     legend: {
       // data: [],
+      bottom: 0,
+      left: 'center',
     },
     tooltip: {
       trigger: 'axis',
@@ -25,9 +28,9 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
       },
     },
     grid: {
-      top: 37, // 上边距
-      bottom: 20, // 下边距
-      left: '7%', // 左边距
+      top: 20, // 上边距
+      bottom: 60, // 下边距
+      left: '8%', // 左边距
       right: 10, // 右边距
     },
     xAxis: {
@@ -36,13 +39,7 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');
-          // return timeParse(value, 'MM-DD');
         },
-        // interval: function (index, value) {
-        //   var date = new Date(value);
-        //
-        //   return date.getHours() % 2 === 0 && date.getMinutes() === 0;
-        // },
       },
     },
     yAxis: {
@@ -56,31 +53,9 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
     },
     series: [
       {
-        name: '算力',
+        name: i18n.global.t('dashboard.compute'),
         data: core,
         type: 'line',
-        areaStyle: {
-          normal: {
-            color: {
-              type: 'linear',
-              x: 0, // 渐变起始点 0%
-              y: 0, // 渐变起始点 0%
-              x2: 0, // 渐变结束点 100%
-              y2: 1, // 渐变结束点 100%
-              colorStops: [
-                {
-                  offset: 0,
-                  color: 'rgba(84, 112, 198, 0.16)', // 渐变起始颜色
-                },
-                {
-                  offset: 1,
-                  color: 'rgba(84, 112, 198, 0.00)', // 渐变结束颜色
-                },
-              ],
-              global: false, // 缺省为 false
-            },
-          },
-        },
         itemStyle: {
           color: 'rgb(84, 112, 198)', // 设置线条颜色为橙色
         },
@@ -89,31 +64,9 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
         },
       },
       {
-        name: '显存',
+        name: i18n.global.t('dashboard.memory'),
         data: memory,
         type: 'line',
-        areaStyle: {
-          normal: {
-            color: {
-              type: 'linear',
-              x: 0, // 渐变起始点 0%
-              y: 0, // 渐变起始点 0%
-              x2: 0, // 渐变结束点 100%
-              y2: 1, // 渐变结束点 100%
-              colorStops: [
-                {
-                  offset: 0,
-                  color: 'rgba(34, 139, 34, 0.16)', // 渐变起始颜色
-                },
-                {
-                  offset: 1,
-                  color: 'rgba(34, 139, 34, 0.00)', // 渐变结束颜色
-                },
-              ],
-              global: false, // 缺省为 false
-            },
-          },
-        },
         itemStyle: {
           color: 'rgb(145, 204, 117)', // 设置线条颜色为橙色
         },

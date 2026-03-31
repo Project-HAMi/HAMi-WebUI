@@ -1,7 +1,7 @@
 import { timeParse } from '@/utils';
 import { cloneDeep } from 'lodash';
 import nodeApi from '~/vgpu/api/node';
-import { ElMessage } from 'element-plus';
+import { MessagePlugin } from 'tdesign-vue-next';
 import i18n from '@/locales';
 
 export const getResourceStatus = (statusConfig) => {
@@ -281,9 +281,11 @@ export const handleChartClick = async (params, router) => {
     const uuid = node.uid;
     router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
   } else {
-    ElMessage.error(i18n.global.t('node.nodeNotFound'));
+    MessagePlugin.error(i18n.global.t('node.nodeNotFound'));
   }
 };
+
+const CARD_PIE_COLORS = ['#5470c6', '#91cc75', '#2563EB', '#16A34A', '#7dd3fc', '#86efac'];
 
 export const getCardOptions = (list, chartWidth) => {
   const data = list.reduce((all, current) => {
@@ -297,51 +299,89 @@ export const getCardOptions = (list, chartWidth) => {
     return all;
   }, {});
 
-  const dataList = Object.entries(data);
+  const dataList = Object.entries(data).map(([key, value], index) => ({
+    name: key,
+    value,
+    itemStyle: {
+      color: CARD_PIE_COLORS[index % CARD_PIE_COLORS.length],
+    },
+  }));
 
   return {
     tooltip: {
-      show: false,
+      trigger: 'item',
+      confine: true,
+      formatter: (params) => {
+        const unit = i18n.global.t('common.unitSheet');
+        const suffix = unit ? ` ${unit}` : '';
+        return `${params.name}: ${params.value}${suffix}`;
+      },
     },
+    color: CARD_PIE_COLORS,
     series: [
       {
         type: 'pie',
-        radius: ['50%', '65%'],
-        avoidLabelOverlap: false,
+        radius: ['48%', '72%'],
+        center: ['50%', '50%'],
+        avoidLabelOverlap: true,
         itemStyle: {
-          borderRadius: 1,
+          borderRadius: 6,
           borderColor: '#fff',
+          borderWidth: 2,
         },
         label: {
           alignTo: 'edge',
-          formatter: '{name|{b}}\n{cnt|{c} 张}',
-          minMargin: 5,
-          edgeDistance: 10,
-          lineHeight: 15,
+          formatter: (params) => {
+            const unit = i18n.global.t('common.unitSheet');
+            const suffix = unit ? ` ${unit}` : '';
+            return `{name|${params.name}}\n{cnt|${params.value}${suffix}}`;
+          },
+          minMargin: 8,
+          edgeDistance: 8,
+          lineHeight: 18,
           rich: {
+            name: {
+              fontSize: 12,
+              color: '#324558',
+              fontWeight: 500,
+            },
             cnt: {
-              fontSize: 10,
-              color: '#999'
-            }
-          }
+              fontSize: 11,
+              color: '#697886',
+            },
+          },
+        },
+        labelLine: {
+          length: 12,
+          length2: 8,
+          smooth: true,
+          lineStyle: {
+            width: 1,
+            color: '#cbd5e1',
+          },
+        },
+        emphasis: {
+          scale: true,
+          scaleSize: 4,
+          itemStyle: {
+            shadowBlur: 12,
+            shadowOffsetX: 0,
+            shadowColor: 'rgba(0, 0, 0, 0.15)',
+          },
         },
         labelLayout: function (params) {
           const isLeft = params.labelRect.x < chartWidth / 2;
           const points = params.labelLinePoints;
           points[2][0] = isLeft
-              ? params.labelRect.x
-              : params.labelRect.x + params.labelRect.width;
+            ? params.labelRect.x
+            : params.labelRect.x + params.labelRect.width;
           return {
             labelLinePoints: points,
           };
         },
-        data: dataList.map(([key, value]) => ({
-          name: key,
-          value: value,
-        })),
+        data: dataList,
       },
     ],
-
   };
 };
 
@@ -487,6 +527,8 @@ export const getRangeOptions = (data) => {
   return {
     legend: {
       // data: [],
+      bottom: 10,
+      left: 'center',
     },
     tooltip: {
       trigger: 'axis',
@@ -502,15 +544,15 @@ export const getRangeOptions = (data) => {
             params[i].seriesName +
             ' : ' +
             (+params[i].value).toFixed(0) +
-            `%<br/>`;
+            '<br/>';
         }
 
         return res;
       },
     },
     grid: {
-      top: 37, // 上边距
-      bottom: 20, // 下边距
+      top: 20, // 上边距
+      bottom: 60, // 下边距
       left: '7%', // 左边距
       right: 10, // 右边距
     },
@@ -534,7 +576,7 @@ export const getRangeOptions = (data) => {
       // max: 100,
       axisLabel: {
         formatter: function (value) {
-          return `${value} %`;
+          return `${value}`;
         },
       },
     },

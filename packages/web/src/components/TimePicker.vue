@@ -108,6 +108,33 @@ const disabledDate = (time) => {
 
 <style>
 .date-picker {
-  max-width: 450px;
+  max-width: 380px;
+}
+.date-picker.el-date-editor {
+  border-radius: 8px;
+  border-color: #e5e7eb;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.date-picker.el-date-editor:hover {
+  border-color: #cbd5e1;
+}
+.date-picker.el-date-editor.is-active,
+.date-picker.el-date-editor:focus-within {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+.date-picker .el-input__wrapper {
+  border-radius: 6px;
+  box-shadow: none;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.date-picker .el-range-separator {
+  color: #64748b;
+  font-size: 12px;
+  padding: 0 4px;
+}
+.date-picker .el-input__inner {
+  font-size: 12px;
 }
 </style>

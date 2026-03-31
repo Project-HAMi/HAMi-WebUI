@@ -5,18 +5,15 @@
 @import './sidebar.scss';
 @import './btn.scss';
 @import './luck.scss';
-
-
-
+@import './table.scss';
 
 body {
   height: 100%;
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-family: Helvetica Neue, Helvetica, PingFang SC, Hiragino Sans GB,
-    Microsoft YaHei, Arial, sans-serif;
-  background-color: #e4ebf1;
+  font-family: -apple-system, BlinkMacSystemFont, var(--td-font-family);
+  background-color: #f5f7fa;
 
   .el-message-box{
     --el-messagebox-border-radius: 8px;
@@ -30,6 +27,10 @@ body {
       right: 10px;
     }
   }
+}
+
+pre {
+  font-family: var(--td-font-family);
 }
 
 label {
@@ -90,10 +91,6 @@ div:focus {
 
 .pl-5 {
   padding-left: 5px;
-}
-
-.block {
-  display: block;
 }
 
 .pointer {
@@ -223,6 +220,7 @@ aside {
 }
 
 .block {
+  display: block;
   background: #fff;
   padding: 15px 10px;
   margin-bottom: 20px;
@@ -240,4 +238,24 @@ aside {
   span {
     color: #fff!important;
   }
+}
+
+.t-radio-group.t-radio-group__outline {
+  .t-radio-button {
+    &:first-child {
+      border-radius: 6px 0 0 6px;
+    }
+
+    &:last-child {
+      border-radius: 0 6px 6px 0;
+    }
+
+    &:only-child {
+      border-radius: 6px;
+    }
+  }
+}
+
+.t-range-input {
+  border-radius: 6px;
 }

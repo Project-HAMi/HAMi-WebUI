@@ -1,4 +1,3 @@
-import TablePlus from './TablePlus/index.vue';
 import FormPlus from './FormPlus';
 import FormPlusDrawer from './FormPlusDrawer.vue';
 import ListHeader from './ListHeader.vue';
@@ -18,12 +17,14 @@ import DetailDrawer from './DetailDrawer.vue';
 import SliderPlus from './SliderPlus.vue';
 import EchartsPlus from './Echarts-plus.vue';
 import TimePicker from './TimePicker.vue';
+import TimeRangePicker from './TimeRangePicker.vue';
+import TrendTimeFilter from './TrendTimeFilter.vue';
 import TextPlus from './TextPlus.vue';
+import EllipsisText from './EllipsisText.vue';
 import CodePre from './CodePre.vue';
 import FormList from './FormPlus/FormList.vue';
 
 export default (app) => {
-  app.component('TablePlus', TablePlus);
   app.component('FormPlus', FormPlus);
   app.component('FormPlusDrawer', FormPlusDrawer);
   app.component('ListHeader', ListHeader);
@@ -43,7 +44,10 @@ export default (app) => {
   app.component('SliderPlus', SliderPlus);
   app.component('EchartsPlus', EchartsPlus);
   app.component('TimePicker', TimePicker);
+  app.component('TimeRangePicker', TimeRangePicker);
+  app.component('TrendTimeFilter', TrendTimeFilter);
   app.component('TextPlus', TextPlus);
+  app.component('EllipsisText', EllipsisText);
   app.component('CodePre', CodePre);
   app.component('FormList', FormList);
 };

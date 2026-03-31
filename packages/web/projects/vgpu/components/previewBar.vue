@@ -9,13 +9,12 @@
           <echarts-plus
             :options="getPreviewBarPie(pieData, props)"
             :onClick="handlePieClick"
-            ref="echartsRef"
           />
         </div>
 
         <ul class="nodeCard-legend">
           <li
-            v-for="{ name, value, color } in pieData"
+            v-for="{ name, value, color, percent } in pieDataWithPercent"
             :key="name"
             :style="{
               fontWeight: currentName === name ? 'bold' : 'normal',
@@ -31,16 +30,22 @@
               <span> {{ name }}</span>
             </div>
 
-            <span>{{ value }}</span>
+            <span>{{ value }} ({{ percent }}%)</span>
           </li>
         </ul>
       </block-box>
     </li>
-    <li class="preview-item">
-      <TabTop v-bind="totalTop" :onClick="handleClick" class="node-top" />
+    <li v-if="isNodeType" class="preview-item">
+      <TabTop v-bind="nodeComputeTop5" :onClick="handleClick" class="node-top" />
     </li>
-    <li class="preview-item">
-      <TabTop v-bind="usedTop" :onClick="handleClick" class="node-top" />
+    <li v-else class="preview-item">
+      <TabTop v-bind="gpuComputeTop5" :onClick="handleClick" class="node-top" />
+    </li>
+    <li v-if="isNodeType" class="preview-item">
+      <TabTop v-bind="nodeMemoryTop5" :onClick="handleClick" class="node-top" />
+    </li>
+    <li v-else class="preview-item">
+      <TabTop v-bind="gpuMemoryTop5" :onClick="handleClick" class="node-top" />
     </li>
   </ul>
 </template>
@@ -48,8 +53,8 @@
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
 import EchartsPlus from '@/components/Echarts-plus.vue';
-import { getPreviewBarPie, getTopOptions } from '~/vgpu/components/config';
-import { onMounted, reactive, ref, computed } from 'vue';
+import { getPreviewBarPie } from '~/vgpu/components/config';
+import { onMounted, ref, computed } from 'vue';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
 
@@ -65,56 +70,87 @@ const props = defineProps({
   handlePieClick: Function,
   currentName: String,
 });
-
-const echartsRef = ref();
 import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
 
-const baseTitle = computed(() => props.title || t('dashboard.node'));
+const isNodeType = computed(() => props.type === 'node');
 
-const totalTop = computed(() => ({
-  title: t('chart.resourceAllocTop', { name: baseTitle.value }),
+const nodeComputeTop5 = computed(() => ({
+  title: t('dashboard.nodeComputeTop5'),
   config: [
     {
-      tab: t('dashboard.vgpu'),
-      key: 'vgpu',
-      nameKey: props.type,
-      data: [],
-      query: `topk(5, sum(hami_container_vgpu_allocated{}) by (${props.type}) / sum(hami_vgpu_count{}) by (${props.type}) * 100)`,
-    },
-    {
-      tab: t('dashboard.compute'),
-      key: 'core',
+      tab: t('dashboard.allocRate'),
+      key: 'alloc',
       nameKey: props.type,
       data: [],
       query: `topk(5, sum(hami_container_vcore_allocated{}) by (${props.type}) / sum(hami_core_size{}) by (${props.type}) * 100)`,
     },
     {
-      tab: t('dashboard.memory'),
-      key: 'memory',
-      data: [],
-      nameKey: props.type,
-      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size) by (${props.type}) * 100)`,
-    },
-  ],
-}));
-
-const usedTop = computed(() => ({
-  title: t('chart.resourceUsageTop', { name: baseTitle.value }),
-  config: [
-    {
-      tab: t('dashboard.compute'),
-      key: 'core',
+      tab: t('dashboard.usageRateLegend'),
+      key: 'usage',
       nameKey: props.type,
       data: [],
       query: `topk(5, avg(hami_core_util_avg) by (${props.type}))`,
     },
+  ],
+}));
+
+const nodeMemoryTop5 = computed(() => ({
+  title: t('dashboard.nodeMemoryTop5'),
+  config: [
     {
-      tab: t('dashboard.memory'),
-      key: 'memory',
-      data: [],
+      tab: t('dashboard.allocRate'),
+      key: 'alloc',
       nameKey: props.type,
+      data: [],
+      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
+    },
+    {
+      tab: t('dashboard.usageRateLegend'),
+      key: 'usage',
+      nameKey: props.type,
+      data: [],
       query: `topk(5, sum(hami_memory_used) by (${props.type}) / sum(hami_memory_size) by (${props.type}) * 100)`,
+    },
+  ],
+}));
+
+const gpuComputeTop5 = computed(() => ({
+  title: t('dashboard.gpuComputeTop5'),
+  config: [
+    {
+      tab: t('dashboard.allocRate'),
+      key: 'alloc',
+      nameKey: props.type,
+      data: [],
+      query: `topk(5, sum(hami_container_vcore_allocated{}) by (${props.type}) / sum(hami_core_size{}) by (${props.type}) * 100)`,
+    },
+    {
+      tab: t('dashboard.usageRateLegend'),
+      key: 'usage',
+      nameKey: props.type,
+      data: [],
+      query: `topk(5, avg(hami_core_util_avg) by (${props.type}))`,
+    },
+  ],
+}));
+
+const gpuMemoryTop5 = computed(() => ({
+  title: t('dashboard.gpuMemoryTop5'),
+  config: [
+    {
+      tab: t('dashboard.allocRate'),
+      key: 'alloc',
+      nameKey: props.type,
+      data: [],
+      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
+    },
+    {
+      tab: t('dashboard.usageRateLegend'),
+      key: 'usage',
+      nameKey: props.type,
+      data: [],
+      query: `topk(5, sum(hami_memory_used) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
     },
   ],
 }));
@@ -133,6 +169,27 @@ const pieConfig = {
 
 const pieData = ref([]);
 
+const totalCount = computed(() =>
+  pieData.value.reduce((sum, item) => sum + Number(item.value || 0), 0),
+);
+
+const pieDataWithPercent = computed(() => {
+  const total = totalCount.value || 0;
+  if (!total) {
+    return pieData.value.map((item) => ({
+      ...item,
+      percent: 0,
+    }));
+  }
+  return pieData.value
+    .slice()
+    .sort((a, b) => Number(b.value || 0) - Number(a.value || 0))
+    .map((item) => ({
+      ...item,
+      percent: Math.round((Number(item.value || 0) * 100) / total),
+    }));
+});
+
 onMounted(async () => {
   const thisPieConfig = pieConfig[props.type];
 
@@ -140,21 +197,11 @@ onMounted(async () => {
     query: thisPieConfig.query,
   });
 
-  const colors = [
-    '#5470C6',
-    '#91CC75',
-    '#FAC858',
-    '#EE6666',
-    '#73C0DE',
-    '#3BA272',
-    '#FC8452',
-    '#9A60B4',
-    '#EA7CCC',
-  ];
+  const colors = ['#5470c6', '#91cc75', '#2563EB', '#16A34A', '#7dd3fc', '#86efac'];
   pieData.value = data.map((item, index) => {
     return {
       name: item.metric[thisPieConfig.key],
-      value: item.value,
+      value: Number(item.value),
       color: colors[index],
     };
   });
@@ -170,7 +217,7 @@ ul {
 .preview {
   width: 100%;
   display: flex;
-  gap: 20px;
+  gap: 16px;
   margin-bottom: 20px;
   .preview-item {
     flex: 1;
@@ -226,11 +273,11 @@ ul {
   .node-top {
     display: flex;
     flex-direction: column;
-    min-height: 350px;
+    min-height: 300px;
     height: 100%;
     & > :nth-child(2) {
       flex: 1;
-      max-height: 280px;
+      max-height: 240px;
     }
   }
 }

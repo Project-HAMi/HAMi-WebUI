@@ -32,7 +32,14 @@
       v-if="component === 'input'"
       v-bind="componentProps"
       class="form-item-input"
-    />
+    >
+      <template v-if="componentProps?.prefixSvgIcon" #prefix>
+        <svg-icon
+          :icon="componentProps.prefixSvgIcon"
+          style="font-size: 16px"
+        />
+      </template>
+    </el-input>
 
     <el-input
       v-model="value"
@@ -171,7 +178,6 @@ import {
   computed,
   onMounted,
   inject,
-  watchEffect,
 } from 'vue';
 import { useI18n } from 'vue-i18n';
 import FormList from './FormList.vue';
@@ -179,77 +185,6 @@ import TableSelect from './TableSelect';
 import Cascader from './elements/Cascader.vue';
 import Upload from './elements/Upload.vue';
 import Transfer from './elements/Transfer.vue';
-
-const data = [
-  {
-    value: '1',
-    label: 'Level one 1',
-    children: [
-      {
-        value: '1-1',
-        label: 'Level two 1-1',
-        children: [
-          {
-            value: '1-1-1',
-            label: 'Level three 1-1-1',
-          },
-        ],
-      },
-    ],
-  },
-  {
-    value: '2',
-    label: 'Level one 2',
-    children: [
-      {
-        value: '2-1',
-        label: 'Level two 2-1',
-        children: [
-          {
-            value: '2-1-1',
-            label: 'Level three 2-1-1',
-          },
-        ],
-      },
-      {
-        value: '2-2',
-        label: 'Level two 2-2',
-        children: [
-          {
-            value: '2-2-1',
-            label: 'Level three 2-2-1',
-          },
-        ],
-      },
-    ],
-  },
-  {
-    value: '3',
-    label: 'Level one 3',
-    children: [
-      {
-        value: '3-1',
-        label: 'Level two 3-1',
-        children: [
-          {
-            value: '3-1-1',
-            label: 'Level three 3-1-1',
-          },
-        ],
-      },
-      {
-        value: '3-2',
-        label: 'Level two 3-2',
-        children: [
-          {
-            value: '3-2-1',
-            label: 'Level three 3-2-1',
-          },
-        ],
-      },
-    ],
-  },
-];
 
 const props = defineProps({
   label: String,
@@ -350,6 +285,10 @@ onMounted(() => {
     max-width: 400px;
     min-width: 195px;
   }
+}
+
+.el-form--inline #form-item {
+  margin-right: 8px;
 }
 
 .help-info {

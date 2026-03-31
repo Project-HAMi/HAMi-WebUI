@@ -1,7 +1,7 @@
 <template>
   <div id="topBar">
     <div class="left">
-      <div class="logo" @click="router.push('/')">
+      <div class="logo">
         <Logo />
       </div>
     </div>

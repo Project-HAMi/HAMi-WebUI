@@ -1,27 +1,24 @@
 <template>
   <div class="text-plus">
-    <span :class="{ link: !!to }" @click="handleClick">{{ text }}</span>
-    <div v-if="copy && text" class="copy-ico" @click="handleCopy">
-      <svg-icon icon="copy" />
-    </div>
+    <span :class="{ link: !!to }" @click="handleClick">
+      <ellipsis-text
+        :text="text"
+        mode="middle"
+        tooltip="always"
+      />
+    </span>
   </div>
 </template>
 
 <script setup>
 import { useRouter } from 'vue-router';
-import { copy } from '@/utils';
 
 const router = useRouter();
 
 const props = defineProps({
   text: String,
-  copy: Boolean,
   to: null,
 });
-
-const handleCopy = () => {
-  copy(props.text);
-};
 
 const handleClick = () => {
   if (props.to) {
@@ -33,27 +30,29 @@ const handleClick = () => {
 <style lang="scss">
 .text-plus {
   display: inline-flex;
-  gap: 10px;
-  // width: 100%;
+  align-items: center;
   max-width: 100%;
+  min-width: 0;
   
-  span {
+  > span {
+    flex: 1;
+    min-width: 0;
+    color: #324558;
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
   }
   
   .link {
-    color: var(--el-color-primary);
     cursor: pointer;
     &:hover {
+      color: var(--el-color-primary);
       opacity: 0.8;
-    }
-  }
-  .copy-ico {
-    color: #939ea9;
-    &:hover {
-      cursor: pointer;
-      color: #324558;
+      text-decoration: underline;
+      text-underline-offset: 4px;
     }
   }
 }

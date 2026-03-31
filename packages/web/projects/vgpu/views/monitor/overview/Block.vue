@@ -14,25 +14,25 @@
 defineProps(['title']);
 </script>
 
-<style lang="scss">
+<style scoped lang="scss">
 .home-block {
   border-radius: 8px;
   background: #fff;
-
-  box-shadow: 0px 1px 1px 0px rgba(2, 5, 8, 0.02),
-    0px 1px 4px 0px rgba(2, 5, 8, 0.06);
+  border: 1px solid #e5e7eb;
   padding: 20px;
   &-header {
     display: flex;
+    align-items: center;
     justify-content: space-between;
+    padding-bottom: 15px;
     .title {
       color: #1d2b3a;
       font-family: 'PingFang SC';
-      font-size: 14px;
+      font-size: 16px;
       font-style: normal;
       font-weight: 500;
       line-height: 20px; /* 142.857% */
-      margin-bottom: 20px;
+      margin-bottom: 0;
     }
   }
 }

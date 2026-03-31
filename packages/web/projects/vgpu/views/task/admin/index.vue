@@ -1,53 +1,127 @@
 <template>
-  <list-header
-    v-if="!hideTitle"
-    :description="$t('task.description')"
-  />
+  <div class="task-admin-page vgpu-admin-page" :class="{ 'is-embedded': hideTitle }">
+    <div v-if="!hideTitle" class="vgpu-admin-page-title">{{ $t('task.title') }}</div>
 
-  <Top v-if="!hideTitle" />
+    <div class="task-admin-top-wrap" v-if="!hideTitle">
+      <Top />
+    </div>
 
-  <table-plus
-    :key="locale"
-    :api="taskApi.getTaskList({ filters })"
-    :columns="columns"
-    :rowAction="rowAction"
-    :searchSchema="searchSchema"
-    ref="table"
-    :style="style"
-    hideTag
-    staticPage
-  >
-  </table-plus>
+    <div class="task-admin-table-wrap">
+      <toolbar
+        v-model="eyeColumnKeys"
+        :column-options="columnOptions"
+        @refresh="refreshTable"
+      >
+        <t-space :size="8">
+          <t-select
+            v-model="filters.nodeName"
+            clearable
+            :placeholder="$t('task.allNodes')"
+            :options="nodeOptions"
+            @change="onNodeNameChange"
+          />
+          <t-select
+            v-model="filters.status"
+            clearable
+            :placeholder="$t('task.allStatus')"
+            :options="statusOptions"
+            @change="applyFilters"
+          />
+          <t-select
+            v-model="filters.deviceId"
+            clearable
+            :placeholder="$t('task.allCards')"
+            :options="cardOptions"
+            @change="applyFilters"
+          />
+          <t-input
+            v-model="filters.name"
+            clearable
+            :placeholder="$t('task.searchWorkloadName')"
+            @enter="applyFilters"
+            @blur="applyFilters"
+          >
+            <template #prefix-icon>
+              <search-icon :style="{ cursor: 'pointer' }" />
+            </template>
+          </t-input>
+        </t-space>
+      </toolbar>
+      <t-table
+        :key="locale"
+        row-key="podUid"
+        class="workload-table vgpu-table-skin"
+        :data="pagedTableData"
+        :columns="visibleColumns"
+        :loading="tableLoading"
+        table-layout="auto"
+        :style="style"
+      />
+      <table-pagination
+        :total="pagination.total"
+        :current="pagination.current"
+        :page-size="pagination.pageSize"
+        :page-sizes="pagination.pageSizeOptions"
+        :show-jumper="pagination.showJumper"
+        @update:current="(val) => (pagination.current = val)"
+        @update:pageSize="(val) => (pagination.pageSize = val)"
+      />
+    </div>
 
-  <form-plus-drawer
-    v-model="state.visible"
-    v-model:form="state.formValues"
-    :schema="state.schema"
-    :title="state.title"
-    @ok="state.ok"
-  />
+    <form-plus-drawer
+      v-model="state.visible"
+      v-model:form="state.formValues"
+      :schema="state.schema"
+      :title="state.title"
+      @ok="state.ok"
+    />
+  </div>
 </template>
 
 <script setup lang="jsx">
 import taskApi from '~/vgpu/api/task';
-import {calculateDuration, roundToDecimal, timeParse} from '@/utils';
-import { QuestionFilled } from '@element-plus/icons-vue';
-import api from '~/vgpu/api/task';
-import {ElMessage, ElMessageBox, ElPopover} from 'element-plus';
-import { reactive, ref, computed } from 'vue';
-import editSchema from './editSchema';
-import { mapValues, isNumber, pick } from 'lodash';
-import { useRouter } from 'vue-router';
-import createSearchSchema from './searchSchema';
+import nodeApi from '~/vgpu/api/node';
+import cardApi from '~/vgpu/api/card';
+import Toolbar from '@/components/TablePlus/Toolbar.vue';
+import TablePagination from '@/components/TablePlus/Pagination.vue';
+import { roundToDecimal, timeParse } from '@/utils';
+import request from '@/utils/request';
+import { SearchIcon, HelpCircleIcon } from 'tdesign-icons-vue-next';
+import { reactive, ref, computed, onMounted, watch } from 'vue';
 import Top from './top.vue';
 import { useI18n } from 'vue-i18n';
+import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
+import useTableFilters from '~/vgpu/hooks/useTableFilters';
+import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
-
-const table = ref();
-
-const router = useRouter();
 const { t, locale } = useI18n();
+const tableData = ref([]);
+const tableLoading = ref(false);
+const hasManualNodeScope = ref(false);
+const filters = reactive({
+  name: props.filters?.name || '',
+  nodeName: props.filters?.nodeName,
+  status: props.filters?.status,
+  deviceId: props.filters?.deviceId,
+});
+const rawNodeNames = ref([]);
+const rawCardUuids = ref([]);
+const nodeOptions = computed(() => [
+  { label: t('task.allNodes'), value: undefined },
+  ...rawNodeNames.value.map((name) => ({ label: name, value: name })),
+]);
+const cardOptions = computed(() => [
+  { label: t('task.allCards'), value: undefined },
+  ...rawCardUuids.value.map((uuid) => ({ label: uuid, value: uuid })),
+]);
+const statusOptions = computed(() => [
+  { label: t('task.allStatus'), value: undefined },
+  { label: t('task.statusCompleted'), value: 'closed' },
+  { label: t('task.statusRunning'), value: 'success' },
+  { label: t('task.statusFailed'), value: 'failed' },
+  { label: t('task.statusUnknown'), value: 'unknown' },
+]);
 
 const state = reactive({
   visible: false,
@@ -57,77 +131,115 @@ const state = reactive({
   ok: () => {},
 });
 
-const searchSchema = computed(() => createSearchSchema(t));
+const fetchFilterOptions = async () => {
+  try {
+    const [{ list: nodeList = [] }, { list: cardList = [] }] = await Promise.all([
+      request(nodeApi.getNodeList({ filters: {} })),
+      request(cardApi.getCardList({ filters: {} })),
+    ]);
+    rawNodeNames.value = nodeList
+      .map((item) => item?.name)
+      .filter(Boolean);
+    rawCardUuids.value = cardList
+      .map((item) => item?.uuid)
+      .filter(Boolean);
+  } catch {
+    rawNodeNames.value = [];
+    rawCardUuids.value = [];
+  }
+};
 
-const columns = computed(() => [
+const baseColumns = computed(() => [
   {
-    title: t('task.name'),
+    title: t('task.workload'),
     dataIndex: 'name',
-    render: ({ name,podUid }) => (
-        <text-plus text={name} to={`/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`} />
-    ),
+    hideTooltip: true,
+    render: ({ name, appName, podUid }) => {
+      const to = `/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`;
+      const workloadName = appName || name || '--';
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+          <span class="task-name-icon-card vgpu-table-name-icon-card">
+            <svg-icon icon="task-name" style={{ fontSize: '20px' }} />
+          </span>
+          <span class="task-name-text-wrap vgpu-table-name-text-wrap">
+            <text-plus text={workloadName} to={to} />
+          </span>
+        </span>
+      );
+    },
   },
   {
     title: t('task.status'),
     dataIndex: 'status',
-    render: ({ status, deviceIds }) => {
+    render: ({ status }) => {
       const enums = {
-        closed: { text: t('task.statusCompleted'), color: '#999' },
-        success: { text: t('task.statusRunning'), color: '#2563eb' },
-        unknown: { text: t('task.statusUnknown'), color: '#FACC15' },
-        failed: { text: t('task.statusFailed'), color: '#EF4444' },
+        closed: {
+          text: t('task.statusCompleted'),
+          icon: 'status-schedulable',
+        },
+        success: {
+          text: t('task.statusRunning'),
+          icon: 'status-schedulable',
+        },
+        unknown: {
+          text: t('task.statusUnknown'),
+          icon: 'status-unmanaged',
+        },
+        failed: {
+          text: t('task.statusFailed'),
+          icon: 'status-unschedulable',
+        },
       };
-      const { text, color } = enums[status];
+      const { text, icon } = enums[status] || enums.unknown;
       return (
-        <div
+        <span
           style={{
-            color,
-            position: 'relative',
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '5px',
+            gap: '6px',
           }}
         >
-          <div
-            style={{
-              height: '7px',
-              width: '7px',
-              borderRadius: '50%',
-              backgroundColor: color,
-              display: 'inline-block',
-            }}
-          ></div>{' '}
-          {text}
+          <svg-icon icon={icon} style={{ fontSize: '16px' }} />
+          <span>{text}</span>
           {(status === 'unknown' || status === 'failed') && (
-              <ElPopover trigger="hover" popper-style={{ width: '180px' }}>
-                {{
-                  reference: () => <el-icon color="#939EA9" size="14"><QuestionFilled /></el-icon>,
-                  default: () => (
-                    <span style={{ marginLeft: '5px', }}>
-                      {t('task.checkCloudPlatform')}
-                    </span>
-                  ),
-                }}
-              </ElPopover>
+            <t-popup
+              trigger="hover"
+              placement="top"
+              content={t('task.checkCloudPlatform')}
+              overlay-inner-style={{ maxWidth: '180px' }}
+            >
+              <help-circle-icon style={{ color: '#939EA9', fontSize: '14px', cursor: 'pointer' }} />
+            </t-popup>
           )}
-        </div>
+        </span>
       );
     },
   },
   {
     title: t('task.node'),
     dataIndex: 'nodeName',
+    hideTooltip: true,
+    render: ({ nodeName }) => (
+      <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
+    ),
   },
   {
     title: t('task.allocatedVgpu'),
     dataIndex: 'deviceIds',
     render: ({ deviceIds }) => {
+      const ids = Array.isArray(deviceIds) ? deviceIds : [];
+      if (!ids.length) return <span>--</span>;
       return (
-        <ElPopover trigger="hover" popper-style={{ width: '350px' }}>
+        <t-popup trigger="hover" placement="top" overlay-inner-style={{ width: '350px' }}>
           {{
-            reference: () => <el-tag disable-transitions>{deviceIds.length} {t('task.count')}</el-tag>,
             default: () => (
+              <t-tag theme="default" variant="light" style={{ cursor: 'pointer' }}>
+                {ids.length}
+              </t-tag>
+            ),
+            content: () => (
               <div
                 style={{
                   display: 'flex',
@@ -137,13 +249,13 @@ const columns = computed(() => [
                   justifyContent: 'center',
                 }}
               >
-                {deviceIds.map((item) => (
-                  <ElTag type="info">{item}</ElTag>
+                {ids.map((item) => (
+                  <t-tag theme="default" variant="light">{item}</t-tag>
                 ))}
               </div>
             ),
           }}
-        </ElPopover>
+        </t-popup>
       );
     },
   },
@@ -160,24 +272,106 @@ const columns = computed(() => [
   },
 
   {
-    title: t('task.startTime'),
+    title: t('task.createTime'),
     dataIndex: 'createTime',
     render: ({ createTime }) => timeParse(createTime),
   },
 
 ]);
+const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
+const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
 
-const rowAction = computed(() => [
-  {
-    title: t('task.viewDetails'),
-    onClick: (row) => {
-      router.push({
-        path: '/admin/vgpu/task/admin/detail',
-        query: pick(row, ['name', 'podUid']),
-      });
-    },
+const fetchTableData = async () => {
+  tableLoading.value = true;
+  try {
+    const baseFilters = { ...(props.filters || {}) };
+    delete baseFilters.nodeName;
+    delete baseFilters.nodeUid;
+    const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
+    const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
+    const payload = {
+      filters: {
+        ...baseFilters,
+        ...(getTrimValue(filters.name) ? { name: getTrimValue(filters.name) } : {}),
+        ...(nodeName ? { nodeName } : {}),
+        ...(nodeUid ? { nodeUid } : {}),
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
+      },
+    };
+    const { items = [] } = await taskApi.getTaskListReq(payload);
+    tableData.value = items;
+    syncTotalAndClamp();
+  } finally {
+    tableLoading.value = false;
+  }
+};
+const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
+  fetchTableData,
+  resetBeforeApply: resetToFirstPage,
+});
+const onNodeNameChange = () => {
+  hasManualNodeScope.value = true;
+  applyFilters();
+};
+
+onMounted(() => {
+  fetchFilterOptions();
+});
+
+watch(
+  () => [
+    props.filters?.name,
+    props.filters?.nodeName,
+    props.filters?.nodeUid,
+    props.filters?.status,
+    props.filters?.deviceId,
+  ],
+  () => {
+    hasManualNodeScope.value = false;
+    filters.name = props.filters?.name || '';
+    filters.nodeName = props.filters?.nodeName;
+    filters.status = props.filters?.status;
+    filters.deviceId = props.filters?.deviceId;
+    applyFilters();
   },
-]);
+  { immediate: true },
+);
 </script>
 
-<style lang="scss"></style>
+<style scoped lang="scss">
+.task-admin-page {
+  &.is-embedded {
+    .task-admin-table-wrap {
+      margin-top: 15px;
+    }
+  }
+}
+
+.task-admin-top-wrap {
+  display: flex;
+  flex-direction: column;
+
+  :deep(.home-block) {
+    margin-bottom: 0;
+  }
+}
+
+.task-admin-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  :deep(.workload-table) {
+    margin-top: 8px;
+  }
+}
+
+:deep(.task-name-icon-card) {
+  user-select: none;
+}
+
+:deep(.task-name-text-wrap) {
+  flex: 1;
+}
+</style>
