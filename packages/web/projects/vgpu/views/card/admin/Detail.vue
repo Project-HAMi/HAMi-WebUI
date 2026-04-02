@@ -597,7 +597,7 @@ watch(
 
     li {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       min-width: 0;
     }
 
@@ -616,7 +616,7 @@ watch(
       font-size: 14px;
       line-height: 22px;
       display: inline-flex;
-      align-items: flex-start;
+      align-items: center;
       min-width: 0;
     }
 
@@ -625,7 +625,7 @@ watch(
   &.is-en {
     .card-detail-info {
       .label {
-        width: 90px;
+        width: 110px;
       }
     }
   }

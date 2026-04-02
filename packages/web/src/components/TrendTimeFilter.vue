@@ -9,6 +9,7 @@
       <t-date-range-picker
         v-if="showCustomDateRangePicker"
         v-model="customDateRange"
+        :placeholder="[t('common.pleaseSelectDate'), t('common.pleaseSelectDate')]"
         :separator="t('common.to')"
         enable-time-picker
         allow-input

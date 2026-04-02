@@ -1,10 +1,11 @@
 import { timeParse } from '@/utils';
 
-export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
+export const getRangeOptions = ({ allocation = [], usage = [] }, t = (v) => v) => {
+  const xDataSource = allocation?.length ? allocation : usage;
   return {
     legend: {
-      bottom: 0,
-      orient: 'horizontal',
+      bottom: 10,
+      left: 'center',
     },
     tooltip: {
       trigger: 'axis',
@@ -12,6 +13,7 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
         type: 'cross',
       },
       formatter: function (params) {
+        if (!params || params.length === 0) return '';
         var res = params[0].name + '<br/>';
         for (var i = 0; i < params.length; i++) {
           res +=
@@ -19,7 +21,7 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
             params[i].seriesName +
             ' : ' +
             (+params[i].value).toFixed(0) +
-            `%<br/>`;
+            '<br/>';
         }
 
         return res;
@@ -28,12 +30,12 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
     grid: {
       top: 20, // 上边距
       bottom: 60, // 下边距
-      left: '8%', // 左边距
+      left: '7%', // 左边距
       right: 10, // 右边距
     },
     xAxis: {
       type: 'category',
-      data: core.map((item) => timeParse(+item.timestamp)),
+      data: xDataSource.map((item) => timeParse(+item.timestamp)),
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');
@@ -44,31 +46,31 @@ export const getRangeOptions = ({ core = [], memory = [] }, t = (v) => v) => {
       type: 'value',
       axisLabel: {
         formatter: function (value) {
-          return `${value} %`;
+          return `${value}`;
         },
       },
     },
     series: [
       {
-        name: t('dashboard.compute'),
-        data: core,
+        name: t('dashboard.allocRateLegend'),
+        data: allocation,
         type: 'line',
         itemStyle: {
-          color: 'rgb(84, 112, 198)', // 设置线条颜色为橙色
+          color: 'rgb(84, 112, 198)',
         },
         lineStyle: {
-          color: 'rgb(84, 112, 198)', // 设置线条颜色为橙色
+          color: 'rgb(84, 112, 198)',
         },
       },
       {
-        name: t('dashboard.memory'),
-        data: memory,
+        name: t('dashboard.usageRateLegend'),
+        data: usage,
         type: 'line',
         itemStyle: {
-          color: 'rgb(145, 204, 117)', // 设置线条颜色为橙色
+          color: 'rgb(145, 204, 117)',
         },
         lineStyle: {
-          color: 'rgb(145, 204, 117)', // 设置线条颜色为橙色
+          color: 'rgb(145, 204, 117)',
         },
       },
     ],

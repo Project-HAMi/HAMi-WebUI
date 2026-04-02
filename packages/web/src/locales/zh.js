@@ -21,6 +21,7 @@ export default {
     search: '搜索',
     reset: '重置',
     pleaseSelect: '请选择',
+    pleaseSelectDate: '请选择日期',
     pleaseInput: '请输入',
     advanced: '高级',
     operation: '操作',
