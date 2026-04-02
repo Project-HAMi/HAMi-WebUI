@@ -7,7 +7,7 @@
         class="navbar__icon"
       />
     </div>
-    <b class="navbar__title text--truncate">HAMi</b>
+    <b class="navbar__title text--truncate">HAMi WebUI</b>
   </a>
 </template>
 

@@ -134,25 +134,25 @@
     <trend-time-filter v-model="times" />
 
     <div class="line-box">
-      <block-box :title="$t('node.detail.resourceAllocTrend')">
+      <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
         <div class="trend-chart">
           <echarts-plus
               :options="
               getRangeOptions({
-                core: gaugeConfig[0].data,
-                memory: gaugeConfig[1].data,
+                allocation: gaugeConfig[0].data,
+                usage: gaugeConfig[2].data,
               }, t)
             "
           />
         </div>
       </block-box>
-      <block-box :title="$t('node.detail.resourceUsageTrend')">
+      <block-box :title="$t('dashboard.gpuMemAllocUsageTrend')">
         <div class="trend-chart">
           <echarts-plus
             :options="
               getRangeOptions({
-                core: gaugeConfig[2].data,
-                memory: gaugeConfig[3].data,
+                allocation: gaugeConfig[1].data,
+                usage: gaugeConfig[3].data,
               }, t)
             "
           />
