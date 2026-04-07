@@ -126,6 +126,9 @@ tolerations: []
 
 affinity: {}
 
+exporterConcurrencyLimit: 16
+metricsGenerateInterval: 15s
+
 dcgm-exporter:
   enabled: true
   serviceMonitor:
