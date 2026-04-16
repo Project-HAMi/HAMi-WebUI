@@ -8,13 +8,22 @@ The WebUI can only be accessed by your localhost, so you need to connect your lo
 
 The HAMi-WebUI open-source community offers Helm Charts for running it on Kubernetes. Please be aware that the code is provided without any warranties. If you encounter any problems, you can report them to the [Official GitHub repository](https://github.com/hami-webui/helm-charts/).
 
-## Prequisities
+## Prerequisites
 
 To install HAMi-WebUI using Helm, ensure you meet these requirements:
 
 1. Kubectl on your localhost
 
-2. [HAMi](https://github.com/Project-HAMi/HAMi?tab=readme-ov-file#quick-start) >= 2.4.0
+2. [HAMi](https://github.com/Project-HAMi/HAMi?tab=readme-ov-file#quick-start) (see version compatibility below)
+
+### Version compatibility
+
+> _**Important**_: HAMi-WebUI v1.1.1+ switches to the HAMi 2.9.0 metrics schema (renamed metrics/labels). If you upgrade HAMi-WebUI without upgrading HAMi, dashboards may break.
+
+| HAMi-WebUI version | Supported HAMi version | Metrics schema | Notes |
+| --- | --- | --- | --- |
+| <= v1.1.0 | >= 2.4.0, < 2.9.0 | old labels: `deviceuuid`, `devicetype`, `podnamespace`, `podname`, `ctrname` | For existing HAMi deployments before the metrics rename |
+| v1.1.1+ | >= 2.9.0 | new labels: `device_uuid`, `device_type`, `namespace`, `pod`, `container` | Required after the HAMi 2.9.0 metrics rename |
 
 3. Prometheus > 2.8.0
 

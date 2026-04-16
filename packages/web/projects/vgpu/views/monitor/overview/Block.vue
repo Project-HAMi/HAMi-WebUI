@@ -16,9 +16,9 @@ defineProps(['title']);
 
 <style scoped lang="scss">
 .home-block {
-  border-radius: 8px;
+  border-radius: 12px;
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e4ebf1;
   padding: 20px;
   &-header {
     display: flex;

@@ -58,11 +58,11 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 			gpu.CoreUsed = core
 			gpu.MemoryUsed = memory
 		}
-		resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_core_size{deviceuuid=~\"%s\"})", device.Id)})
+		resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_core_size{device_uuid=~\"%s\"})", device.Id)})
 		if err == nil && len(resp.Data) > 0 {
 			gpu.CoreTotal = int32(resp.Data[0].Value)
 		}
-		resp, err = s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_memory_size{deviceuuid=~\"%s\"})", device.Id)})
+		resp, err = s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_memory_size{device_uuid=~\"%s\"})", device.Id)})
 		if err == nil && len(resp.Data) > 0 {
 			gpu.MemoryTotal = int32(resp.Data[0].Value)
 		}

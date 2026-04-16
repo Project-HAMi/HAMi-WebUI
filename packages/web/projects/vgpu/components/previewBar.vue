@@ -156,10 +156,10 @@ const gpuMemoryTop5 = computed(() => ({
 }));
 
 const pieConfig = {
-  deviceuuid: {
+  device_uuid: {
     query:
-      'count by (devicetype) (sum by (deviceuuid, devicetype) (hami_vgpu_count))',
-    key: 'devicetype',
+      'count by (device_type) (sum by (device_uuid, device_type) (hami_vgpu_count))',
+    key: 'device_type',
   },
   node: {
     query: 'count by (provider) (sum by (node,provider) (hami_vgpu_count))',
@@ -197,7 +197,7 @@ onMounted(async () => {
     query: thisPieConfig.query,
   });
 
-  const colors = ['#5470c6', '#91cc75', '#2563EB', '#16A34A', '#7dd3fc', '#86efac'];
+  const colors = ['#76B900', '#9FCB98', '#F59E0B', '#4F8F87', '#14B8A6', '#6B7280'];
   pieData.value = data.map((item, index) => {
     return {
       name: item.metric[thisPieConfig.key],

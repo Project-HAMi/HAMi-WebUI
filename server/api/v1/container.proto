@@ -66,6 +66,7 @@ message ContainerReply {
   string priority = 16;
   string namespace = 17;
   repeated string device_ids = 18;
+  repeated string images = 19;
 }
 
 message ContainersReply {

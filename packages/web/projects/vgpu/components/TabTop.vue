@@ -192,7 +192,8 @@ watch(
   transition: background-color 0.15s ease;
 
   &:hover {
-    background-color: #f3f4f6;
+    background-color: transparent;
+    box-shadow: none;
   }
 }
 
