@@ -88,8 +88,7 @@ const props = defineProps(['hideTitle', 'filters']);
 
 const router = useRouter();
 const route = useRoute();
-const { t, locale } = useI18n();
-const isEnglish = computed(() => String(locale.value || '').startsWith('en'));
+const { t } = useI18n();
 const parseTypeFromQuery = (value) => {
   if (typeof value === 'string') return value || undefined;
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0] || undefined;
@@ -150,15 +149,16 @@ const getCardStatusDisplay = ({ health, isExternal }) => {
   return { icon: 'status-unschedulable', text: t('card.abnormal') };
 };
 
-const getRemainingTotalText = ({ total, used, unit = '' }) => {
+const getRemainingTotalText = ({ total, used, unit = '', divisor = 1 }) => {
   const totalNum = Number(total || 0);
   if (!totalNum) return null;
   const usedNum = Number(used || 0);
+  const normalizedDivisor = Number(divisor) > 0 ? Number(divisor) : 1;
   const remaining = Math.max(0, totalNum - usedNum);
   const unitText = unit ? ` ${unit}` : '';
   return {
-    remaining: roundToDecimal(remaining, 1),
-    total: roundToDecimal(totalNum, 1),
+    remaining: roundToDecimal(remaining / normalizedDivisor, 1),
+    total: roundToDecimal(totalNum / normalizedDivisor, 1),
     unitText,
   };
 };
@@ -190,7 +190,7 @@ const baseColumns = computed(() => [
   {
     title: t('task.status'),
     dataIndex: 'health',
-    width: 100,
+    width: 150,
     render: ({ health, isExternal }) => {
       const { icon, text } = getCardStatusDisplay({ health, isExternal });
       return (
@@ -202,43 +202,21 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: t('card.mode'),
-    dataIndex: 'mode',
-    width: 120,
-    render: ({ mode, type }) => (
-        <t-tag theme="default" variant="light">
-          {type?.split('-')[0] === "NVIDIA" ? mode : 'default'}
-        </t-tag>
-    )
-  },
-  {
     title: t('card.node'),
     dataIndex: 'nodeName',
-    width: 170,
+    width: 200,
     hideTooltip: true,
     render: ({ nodeName }) => (
       <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
     ),
   },
   {
-    title: t('card.vgpu'),
-    key: 'card-vgpu',
-    dataIndex: 'used',
-    width: 100,
-    render: ({ vgpuTotal, vgpuUsed, isExternal }) => (
-        <span>
-      {isExternal ? '--' : vgpuUsed}/{isExternal ? '--' : vgpuTotal}
-    </span>
-    ),
-  },
-  {
     title: t('card.computeRemainingTotal'),
     key: 'card-compute-remaining-total',
     dataIndex: 'used',
-    width: isEnglish.value ? 220 : 180,
     render: ({ coreTotal, coreUsed, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
-      const stats = getRemainingTotalText({ total: coreTotal, used: coreUsed });
+      const stats = getRemainingTotalText({ total: coreTotal, used: coreUsed, divisor: 100 });
       if (!stats) return <span>--</span>;
       return (
         <div class="card-remaining-statistics">
@@ -254,7 +232,6 @@ const baseColumns = computed(() => [
     title: t('card.computeAllocTotal'),
     key: 'card-compute-allocation',
     dataIndex: 'used',
-    width: isEnglish.value ? 170 : 140,
     render: ({ coreTotal, coreUsed, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
       const percent = Math.max(
@@ -281,7 +258,6 @@ const baseColumns = computed(() => [
     title: t('card.memoryRemainingTotal'),
     key: 'card-memory-remaining-total',
     dataIndex: 'used',
-    width: isEnglish.value ? 210 : 180,
     render: ({ memoryTotal, memoryUsed, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;
       const stats = getRemainingTotalText({
@@ -304,7 +280,6 @@ const baseColumns = computed(() => [
     title: t('card.memoryAllocTotal'),
     key: 'card-memory-allocation',
     dataIndex: 'w',
-    width: isEnglish.value ? 160 : 140,
     render: ({ memoryTotal, memoryUsed, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;
       const percent = Math.max(

@@ -140,6 +140,7 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			NodeName:         pod.Spec.NodeName,
 			PodName:          pod.Name,
 			PodUID:           string(pod.UID),
+			Image:            ctr.Image,
 			Status:           containerStat[ctr.Name],
 			NodeUID:          r.GetNodeUUID(pod),
 			Namespace:        pod.Namespace,

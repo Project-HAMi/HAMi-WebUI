@@ -285,7 +285,7 @@ export const handleChartClick = async (params, router) => {
   }
 };
 
-const CARD_PIE_COLORS = ['#5470c6', '#91cc75', '#2563EB', '#16A34A', '#7dd3fc', '#86efac'];
+const CARD_PIE_COLORS = ['#76B900', '#9FCB98', '#F59E0B', '#4F8F87', '#14B8A6', '#6B7280'];
 
 export const getCardOptions = (list, chartWidth) => {
   const data = list.reduce((all, current) => {
@@ -520,11 +520,13 @@ export const getLineOptions = ({
 export const getRangeOptions = (data) => {
   if (!data || !data[0] || !data[0].data) {
     return {
+      animation: true,
       series: [],
     };
   }
 
   return {
+    animation: true,
     legend: {
       // data: [],
       bottom: 10,
@@ -533,21 +535,26 @@ export const getRangeOptions = (data) => {
     tooltip: {
       trigger: 'axis',
       axisPointer: {
-        type: 'cross',
+        type: 'line',
       },
       formatter: function (params) {
-        if (!params || params.length === 0) return '';
-        var res = params[0].name + '<br/>';
-        for (var i = 0; i < params.length; i++) {
-          res +=
-            params[i].marker +
-            params[i].seriesName +
-            ' : ' +
-            (+params[i].value).toFixed(0) +
-            '<br/>';
-        }
+        if (!Array.isArray(params) || params.length === 0) return '';
 
-        return res;
+        let result = `<div style="margin-bottom:5px;">${params[0]?.name ?? ''}</div>`;
+        for (let i = 0; i < params.length; i++) {
+          const item = params[i];
+          const raw = Array.isArray(item?.value) ? item.value[item.value.length - 1] : item?.value;
+          const num = Number(raw);
+          const value = Number.isFinite(num) ? `${num.toFixed(3)}%` : '-';
+          result += `
+            <div style="display:flex;align-items:center;font-size:14px;line-height:22px;">
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${item?.color || '#5B8FF9'};margin-right:5px;"></span>
+              <span>${item?.seriesName || '-'}:&nbsp;</span>
+              <span style="font-weight:bold;">${value}</span>
+            </div>
+          `;
+        }
+        return result;
       },
     },
     grid: {
@@ -556,6 +563,13 @@ export const getRangeOptions = (data) => {
       left: '7%', // 左边距
       right: 10, // 右边距
     },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        filterMode: 'none',
+      },
+    ],
     xAxis: {
       type: 'category',
       data: data[0].data.map((item) => timeParse(+item.timestamp)),

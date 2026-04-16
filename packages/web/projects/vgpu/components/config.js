@@ -219,28 +219,51 @@ export const getTopOptions = ({ core, memory }) => {
   };
 };
 
-export const getLineOptions = ({ data = [], unit = '%' }) => {
+export const getLineOptions = ({ data = [], unit = '%', seriesName, animation = true }) => {
   return {
+    animation,
     tooltip: {
       trigger: 'axis',
       axisPointer: {
-        type: 'cross',
+        type: 'line',
+        lineStyle: {
+          type: 'dashed',
+          color: '#8A8A8A',
+        },
       },
       formatter: function (params) {
-        var res = params[0].name + '<br/>';
-        for (var i = 0; i < params.length; i++) {
-          res +=
-            params[i].marker + (+params[i].value).toFixed(0) + ` ${unit}<br/>`;
+        if (!Array.isArray(params) || params.length === 0) return '';
+
+        let result = `<div style="margin-bottom:5px;">${params[0]?.name ?? ''}</div>`;
+        for (let i = 0; i < params.length; i++) {
+          const item = params[i];
+          const raw = Array.isArray(item?.value) ? item.value[item.value.length - 1] : item?.value;
+          const num = Number(raw);
+          const value = Number.isFinite(num) ? `${num.toFixed(1)} ${unit}` : '-';
+          result += `
+            <div style="display:flex;align-items:center;font-size:14px;line-height:22px;">
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${item?.color || '#5B8FF9'};margin-right:5px;"></span>
+              <span>${item?.seriesName || '-'}:&nbsp;</span>
+              <span style="font-weight:bold;">${value}</span>
+            </div>
+          `;
         }
-        return res;
+        return result;
       },
     },
     grid: {
-      top: 7, // 上边距
-      bottom: 20, // 下边距
-      left: '7%', // 左边距
-      right: 10, // 右边距
+      top: 20, // 上边距
+      bottom: 30, // 下边距
+      left: 30, // 左边距
+      right: 30, // 右边距
     },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        filterMode: 'none',
+      },
+    ],
     xAxis: {
       type: 'category',
       data: data.map((item) => timeParse(+item.timestamp)),
@@ -255,10 +278,19 @@ export const getLineOptions = ({ data = [], unit = '%' }) => {
     },
     series: [
       {
+        name: seriesName || '',
         data: data.map((item) => {
           return item.value.toFixed(1);
         }),
         type: 'line',
+        lineStyle: {
+          width: 3,
+          color: '#5B8FF9',
+        },
+        itemStyle: {
+          color: '#5B8FF9',
+          borderColor: '#5B8FF9',
+        },
       },
     ],
   };

@@ -18,16 +18,12 @@
         </Block>
 
         <Block :title="$t('dashboard.resourceOverview')">
-          <template #extra>
-            <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
-              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </div>
-          </template>
           <ul class="resourceOverview">
             <li
               v-for="{ title, count, icon, to, unit } in resourceOverview"
               :key="title"
-              @click="router.push(to)"
+              :class="{ 'is-clickable': !!to }"
+              @click="to && router.push(to)"
             >
               <div class="avatar">
                 <svg-icon :icon="icon" />
@@ -73,9 +69,10 @@
             </div>
           </template>
           <div class="card-type-chart">
-            <echarts-plus
-              :options="getCardOptions(cardData, chartWidth)"
-              :onClick="handlePieClick"
+            <VChart
+              :option="getCardOptions(cardData, chartWidth)"
+              :autoresize="true"
+              @click="handlePieClick"
             />
           </div>
         </Block>
@@ -89,16 +86,18 @@
       <div class="home-bottom-row" v-if="rangeConfig[0] || rangeConfig[1]">
         <div class="home-bottom-col" v-if="rangeConfig[0]">
           <Block :title="rangeConfig[0].title">
-            <echarts-plus
-              :options="getRangeOptions(rangeConfig[0].dataSource)"
+            <VChart
+              :option="getRangeOptions(rangeConfig[0].dataSource)"
+              :autoresize="true"
               style="height: 250px"
             />
           </Block>
         </div>
         <div class="home-bottom-col" v-if="rangeConfig[1]">
           <Block :title="rangeConfig[1].title">
-            <echarts-plus
-              :options="getRangeOptions(rangeConfig[1].dataSource)"
+            <VChart
+              :option="getRangeOptions(rangeConfig[1].dataSource)"
+              :autoresize="true"
               style="height: 250px"
             />
           </Block>
@@ -126,6 +125,7 @@
 <script setup>
 import { ref, computed, reactive, watch, watchEffect } from 'vue';
 import { useI18n } from 'vue-i18n';
+import VChart from 'vue-echarts';
 import {
   getCardOptions,
   handleChartClick,
@@ -137,9 +137,9 @@ import { timeParse, calculatePrometheusStep } from '@/utils';
 import { useRouter } from 'vue-router';
 import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
+import taskApi from '~/vgpu/api/task';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useFetchList from '@/hooks/useFetchList';
-import EchartsPlus from '@/components/Echarts-plus.vue';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
@@ -224,6 +224,19 @@ const _cardGaugeConfig = useInstantVector([
   },
 ]);
 
+const clusterResourceConfig = useInstantVector([
+  {
+    query: 'sum(kube_node_status_allocatable{resource="cpu"})',
+    total: 0,
+    used: 0,
+  },
+  {
+    query: 'sum(kube_node_status_allocatable{resource="memory"})',
+    total: 0,
+    used: 0,
+  },
+]);
+
 const cardGaugeConfig = computed(() => {
   return _cardGaugeConfig.value.map(item => ({
     ...item,
@@ -236,9 +249,10 @@ const cardGaugeConfig = computed(() => {
 const resourceCounts = reactive({
   node: 0,
   card: 0,
-  vgpu: 0,
-  compute: 12,
-  memory: 31
+  workload: 0,
+  cpuTotal: 0,
+  memoryTotal: 0,
+  memory: 0,
 });
 
 const resourceOverview = computed(() => [
@@ -247,29 +261,38 @@ const resourceOverview = computed(() => [
     count: resourceCounts.node,
     icon: 'vgpu-node',
     unit: '',
+    to: '/admin/vgpu/node/admin',
   },
   {
     title: t('dashboard.gpuCardCount'),
     count: resourceCounts.card,
     icon: 'vgpu-gpu-d',
     unit: '',
+    to: '/admin/vgpu/card/admin',
   },
   {
-    title: t('dashboard.vgpu'),
-    count: resourceCounts.vgpu,
+    title: t('dashboard.cpuTotalCores'),
+    count: resourceCounts.cpuTotal,
     icon: 'vgpu-card',
-    unit: '',
+    unit: t('dashboard.cpuCoreUnit'),
   },
   {
-    title: t('dashboard.compute'),
-    count: resourceCounts.compute,
-    icon: 'vgpu-core',
-    unit: ' ',
+    title: t('dashboard.workloadCount'),
+    count: resourceCounts.workload,
+    icon: 'vgpu-workload',
+    unit: '',
+    to: '/admin/vgpu/task/admin',
   },
   {
     title: t('dashboard.memoryTotal'),
     count: resourceCounts.memory,
     icon: 'vgpu-mem',
+    unit: 'GiB',
+  },
+  {
+    title: t('dashboard.systemMemoryTotal'),
+    count: resourceCounts.memoryTotal,
+    icon: 'vgpu-core',
     unit: 'GiB',
   },
 ]);
@@ -295,6 +318,8 @@ const resourceOverview = computed(() => [
 const nodeData = useFetchList(nodeApi.getNodeListReq({ filters: {} }));
 
 const cardData = useFetchList(cardApi.getCardListReq({ filters: {} }));
+
+const taskData = useFetchList(taskApi.getTaskListReq({ filters: {} }), 'items');
 
 const nodes = computed(() => [
 
@@ -360,6 +385,7 @@ const nodeMemoryTop5 = computed(() => ({
   ],
 }));
 
+
 const rangeConfig = ref(getRangeConfigInit(t));
 
 const fetchRangeData = () => {
@@ -392,8 +418,9 @@ const fetchRangeData = () => {
 watchEffect(() => {
   resourceCounts.node = nodeData.value.length;
   resourceCounts.card = cardData.value.length;
-  resourceCounts.vgpu = _cardGaugeConfig.value[0].total;
-  resourceCounts.compute = _cardGaugeConfig.value[1].total;
+  resourceCounts.workload = taskData.value.length;
+  resourceCounts.cpuTotal = Number(clusterResourceConfig.value[0]?.used || 0).toFixed(0);
+  resourceCounts.memoryTotal = (Number(clusterResourceConfig.value[1]?.used || 0) / 1024 / 1024 / 1024).toFixed(0);
   resourceCounts.memory = _cardGaugeConfig.value[2].total.toFixed(0);
 });
 
@@ -421,6 +448,7 @@ watch(
     rangeConfig.value = next;
   },
 );
+
 </script>
 
 <style>

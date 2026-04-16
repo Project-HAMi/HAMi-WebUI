@@ -18,7 +18,7 @@
       <span>{{ title.includes('使用') || title.includes('Usage') ? $t('dashboard.usage') : $t('dashboard.allocation') }}</span>
       <span v-if="unit && !title.includes('算力') && !title.includes('Compute')"> ({{ unit }})</span>
       <span> : </span>
-      <b>{{ used.toFixed(1) }} / {{ total.toFixed() }}</b>
+      <b>{{ displayUsed.toFixed(1) }} / {{ displayTotal.toFixed() }}</b>
     </div>
   </div>
 </template>
@@ -38,6 +38,10 @@ const props = defineProps([
 ]);
 
 const showProgress = computed(() => props.showProgress !== false);
+const isComputeTitle = computed(() => props.title?.includes('算力') || props.title?.includes('Compute'));
+const displayDivisor = computed(() => (isComputeTitle.value ? 100 : 1));
+const displayUsed = computed(() => Number(props.used || 0) / displayDivisor.value);
+const displayTotal = computed(() => Number(props.total || 0) / displayDivisor.value);
 
 const progressColor = computed(() => {
   const value = Number(props.percent);

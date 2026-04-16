@@ -16,7 +16,7 @@ defineProps(['title']);
 
 <style lang="scss">
 .home-block {
-  border-radius: 8px;
+  border-radius: 12px;
   border: 1px solid #e4ebf1;
   background: #fff;
   margin-bottom: 16px;

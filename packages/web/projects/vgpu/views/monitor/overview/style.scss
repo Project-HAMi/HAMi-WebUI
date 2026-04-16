@@ -82,6 +82,19 @@
   &-bottom-top5-row {
     border-top: 1px dashed #d1d9e0;
     padding-top: 16px;
+    flex-wrap: wrap;
+
+    .home-bottom-col {
+      flex: 1 0 48%;
+      width: 48%;
+      min-width: 0;
+      display: flex;
+
+      > .home-block {
+        width: 100%;
+        height: 100%;
+      }
+    }
   }
 
   &-bottom-col {
@@ -115,7 +128,7 @@
 
   .resourceOverview {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
 
     li {
@@ -130,6 +143,10 @@
 
       &:hover {
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      }
+
+      &.is-clickable {
+        cursor: pointer;
       }
 
       .avatar {
@@ -147,6 +164,11 @@
         box-shadow: 0 2px 8px #0205080a, 0 6px 20px #02050814;
         margin-right: 14px;
         color: #64748b;
+
+        .svg-icon {
+          width: 14px;
+          height: 14px;
+        }
       }
 
       .main {
@@ -211,4 +233,72 @@
     }
   }
 
+  .workload-distribution-tip-icon {
+    width: 16px;
+    height: 16px;
+    color: #939ea9;
+    cursor: pointer;
+  }
+
+  .workload-distribution-block .home-block-header {
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .workload-trend-radio.t-radio-group__outline .t-radio-button {
+    padding: 12px;
+    height: 32px;
+    font-size: 12px;
+    box-sizing: border-box;
+  }
+
+  .top5-item-list-table .t-table {
+    border: none;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  .top5-item-list-table .t-table__header th {
+    padding: 10px 16px;
+    background: #f5f7fa;
+    color: #697886;
+    border-bottom: none;
+  }
+
+  .top5-item-list-table-row td {
+    padding: 12px 16px;
+    border-bottom: none;
+    background: transparent;
+  }
+
+  .top5-item-list-table .t-table__body tr:nth-child(even) td {
+    background: #f5f7fa;
+  }
+
+  .top5-item-list-table .t-table__body tr:nth-child(odd) td {
+    background: #fff;
+  }
+
+  .top5-item-list-table .t-table__header th:first-child,
+  .top5-item-list-table .t-table__body td:first-child {
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
+  }
+
+  .top5-item-list-table .t-table__header th:last-child,
+  .top5-item-list-table .t-table__body td:last-child {
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+  }
+
+  .top5-item-list-table-row .row-tag.t-tag {
+    font-size: 12px;
+    border-radius: 999px;
+    min-width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    padding: 0 8px;
+  }
 }
