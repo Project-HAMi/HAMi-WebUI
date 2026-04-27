@@ -27,7 +27,7 @@ const handleChartClick = async (params) => {
     } else {
       ElMessage.error(t('node.nodeNotFound'));
     }
-  } else if (activeTabKey === 'deviceuuid') {
+  } else if (activeTabKey === 'device_uuid') {
     router.push({
       path: `/admin/vgpu/card/admin/${name}`,
     });
@@ -59,12 +59,12 @@ const topConfig = computed(() => [
       },
       {
         tab: t('dashboard.card'),
-        key: 'deviceuuid',
+        key: 'device_uuid',
         data: [],
-        nameKey: 'deviceuuid',
+        nameKey: 'device_uuid',
         unit: ' ',
         query:
-          'topk(5, count by (deviceuuid) (sum by (container_pod_uuid, deviceuuid) (hami_container_vcore_allocated)))',
+          'topk(5, count by (device_uuid) (sum by (container_pod_uuid, device_uuid) (hami_container_vcore_allocated)))',
       },
     ],
   },

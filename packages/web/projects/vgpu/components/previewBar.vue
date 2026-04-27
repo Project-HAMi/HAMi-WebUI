@@ -156,10 +156,10 @@ const gpuMemoryTop5 = computed(() => ({
 }));
 
 const pieConfig = {
-  deviceuuid: {
+  device_uuid: {
     query:
-      'count by (devicetype) (sum by (deviceuuid, devicetype) (hami_vgpu_count))',
-    key: 'devicetype',
+      'count by (device_type) (sum by (device_uuid, device_type) (hami_vgpu_count))',
+    key: 'device_type',
   },
   node: {
     query: 'count by (provider) (sum by (node,provider) (hami_vgpu_count))',
