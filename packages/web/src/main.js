@@ -4,6 +4,7 @@ import router from './router';
 import store from './store';
 import installElementPlus from './plugins/element';
 import installTDesign from './plugins/tdesign';
+import installEcharts from './plugins/echarts';
 import 'normalize.css/normalize.css'; // a modern alternative to CSS resets
 import '@/styles/index.scss'; // global css
 
@@ -20,6 +21,7 @@ const app = createApp(App);
 app.use(i18n);
 installElementPlus(app);
 installTDesign(app);
+installEcharts();
 installIcons(app);
 
 app.use(components);

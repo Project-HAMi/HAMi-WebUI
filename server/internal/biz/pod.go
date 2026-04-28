@@ -15,6 +15,7 @@ type Container struct {
 	NodeName         string
 	PodUID           string
 	PodName          string
+	Image            string
 	ContainerDevices ContainerDevices
 	Status           string
 	CreateTime       time.Time

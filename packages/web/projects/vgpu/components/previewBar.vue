@@ -197,7 +197,7 @@ onMounted(async () => {
     query: thisPieConfig.query,
   });
 
-  const colors = ['#5470c6', '#91cc75', '#2563EB', '#16A34A', '#7dd3fc', '#86efac'];
+  const colors = ['#76B900', '#9FCB98', '#F59E0B', '#4F8F87', '#14B8A6', '#6B7280'];
   pieData.value = data.map((item, index) => {
     return {
       name: item.metric[thisPieConfig.key],

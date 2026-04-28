@@ -1,25 +1,67 @@
 <template>
   <div>
-    <back-header> {{ $t('card.detail.title') }} : {{ detail.uuid }} </back-header>
+    <page-header
+      :title="$t('card.detail.title')"
+      :name="detail.uuid"
+      :status="headerStatusDisplay.text"
+      :status-icon="headerStatusDisplay.icon"
+    />
     <block-box class="node-block">
-      <div class="card-detail" :class="{ 'is-en': locale.startsWith('en') }">
+      <div class="card-detail">
         <div class="card-detail-left">
           <div class="title">{{ $t('card.detail.detailInfo') }}</div>
-          <ul class="card-detail-info">
-            <li v-for="{ label, value, render } in columns" :key="label">
-              <span class="label">{{ label }}：</span>
-              <span v-if="render" class="value">
-                <component :is="render(detail)" />
-              </span>
-              <span v-else class="value">{{ detail[value] }}</span>
-            </li>
-          </ul>
+          <div class="basic-info-row">
+            <div class="basic-info-card">
+              <div class="basic-info-title" @click="handleToNodeDetail">
+                <span class="text">{{ detail.nodeName || '--' }}</span>
+                <span class="basic-info-share">
+                  <svg-icon icon="jump" />
+                </span>
+              </div>
+              <div class="basic-info-subtitle">{{ $t('card.node') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <div class="basic-info-title">
+                <svg-icon v-if="gpuTypeIcon && detail.type" :icon="gpuTypeIcon" class="gpu-type-icon" />
+                {{ detail.type || '--' }}
+              </div>
+              <div class="basic-info-subtitle">{{ $t('card.model') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <div class="basic-info-title">
+                {{ basicTemperatureText }}
+              </div>
+              <div class="basic-info-subtitle">{{ $t('card.detail.gpuTemperature') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <div class="basic-info-title">
+                {{ basicPowerText }}
+              </div>
+              <div class="basic-info-subtitle">{{ $t('card.detail.gpuPower') }}</div>
+            </div>
+          </div>
         </div>
       </div>
     </block-box>
 
-    <block-box :title="$t('card.detail.resourceOverview')">
+    <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')">
       <ul class="resource-overview-cards">
+        <li class="resource-overview-card">
+          <div class="progress-wrapper">
+            <workload-semi-progress :percent="workloadCountPercentProgress" />
+            <div class="workload-progress-summary">
+              <div class="workload-progress-value">
+                <b>{{ workloadCountUsedText }}</b> / {{ workloadCountTotalText }}
+              </div>
+              <div class="workload-progress-subtitle">
+                <span>{{ $t('card.detail.workloadCount') }}</span>
+                <t-tooltip :content="$t('card.detail.workloadCountTip')">
+                  <help-circle-icon class="resource-card-help-icon" />
+                </t-tooltip>
+              </div>
+            </div>
+          </div>
+        </li>
         <li class="resource-overview-card">
           <div class="resource-card">
             <div class="resource-card-header">
@@ -81,7 +123,6 @@
             </div>
           </div>
         </li>
-
         <li class="resource-overview-card">
           <div class="resource-card">
             <div class="resource-card-header">
@@ -148,94 +189,102 @@
     <div class="line-box">
       <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
         <div class="trend-chart">
-          <echarts-plus
-            :options="
-              getRangeOptions([
-                {
-                  name: t('dashboard.allocRateLegend'),
-                  data: gaugeConfig[0]?.data,
-                  itemStyle: {
-                    borderColor: 'rgb(84, 112, 198)',
+          <VChart
+            :option="
+              {
+                ...getRangeOptions([
+                  {
+                    name: t('dashboard.allocRateLegend'),
+                    data: gaugeConfig[0]?.data,
+                    itemStyle: {
+                      color: '#5B8FF9',
+                      borderColor: '#5B8FF9',
+                    },
+                    lineStyle: {
+                      width: 3,
+                      color: '#5B8FF9',
+                    },
                   },
-                  lineStyle: {
-                    color: 'rgb(84, 112, 198)',
+                  {
+                    name: t('dashboard.usageRateLegend'),
+                    data: gaugeConfig[2]?.data,
+                    itemStyle: {
+                      color: '#42C090',
+                      borderColor: '#42C090',
+                    },
+                    lineStyle: {
+                      width: 3,
+                      color: '#42C090',
+                    },
                   },
-                },
-                {
-                  name: t('dashboard.usageRateLegend'),
-                  data: gaugeConfig[2]?.data,
-                  itemStyle: {
-                    borderColor: 'rgb(145, 204, 117)',
-                  },
-                  lineStyle: {
-                    color: 'rgb(145, 204, 117)',
-                  },
-                },
-              ])
+                ]),
+                animation: false,
+              }
             "
+            :autoresize="true"
           />
         </div>
       </block-box>
       <block-box :title="$t('dashboard.gpuMemAllocUsageTrend')">
         <div class="trend-chart">
-          <echarts-plus
-            :options="
-              getRangeOptions([
-                {
-                  name: t('dashboard.allocRateLegend'),
-                  data: gaugeConfig[1]?.data,
-                  itemStyle: {
-                    borderColor: 'rgb(84, 112, 198)',
+          <VChart
+            :option="
+              {
+                ...getRangeOptions([
+                  {
+                    name: t('dashboard.allocRateLegend'),
+                    data: gaugeConfig[1]?.data,
+                    itemStyle: {
+                      color: '#5B8FF9',
+                      borderColor: '#5B8FF9',
+                    },
+                    lineStyle: {
+                      width: 3,
+                      color: '#5B8FF9',
+                    },
                   },
-                  lineStyle: {
-                    color: 'rgb(84, 112, 198)',
+                  {
+                    name: t('dashboard.usageRateLegend'),
+                    data: gaugeConfig[3]?.data,
+                    itemStyle: {
+                      color: '#42C090',
+                      borderColor: '#42C090',
+                    },
+                    lineStyle: {
+                      width: 3,
+                      color: '#42C090',
+                    },
                   },
-                },
-                {
-                  name: t('dashboard.usageRateLegend'),
-                  data: gaugeConfig[3]?.data,
-                  itemStyle: {
-                    borderColor: 'rgb(145, 204, 117)',
-                  },
-                  lineStyle: {
-                    color: 'rgb(145, 204, 117)',
-                  },
-                },
-              ])
+                ]),
+                animation: false,
+              }
             "
+            :autoresize="true"
           />
         </div>
       </block-box>
 
-      <block-box :title="title" v-for="{ title, data, unit } in lineToolsView" :key="title">
+      <block-box :title="title" v-for="{ title, data, unit, seriesNameKey } in lineToolsView" :key="title">
         <div class="trend-chart">
-          <echarts-plus :options="getLineOptions2({ data, unit })" />
+          <VChart :option="getLineOptions2({ data, unit, seriesName: t(seriesNameKey), animation: false })" :autoresize="true" />
         </div>
       </block-box>
     </div>
 
-    <block-box :title="$t('card.detail.taskList')">
-      <template v-if="detail.isExternal">
-        <el-alert :title="$t('card.detail.unmanagedNoTask')" show-icon type="warning" :closable="false" />
-        <el-empty :description="$t('card.detail.noTaskData')" :image-size="100" />
-      </template>
-      <template v-else>
-        <TaskList :hideTitle="true" :filters="{ deviceId: detail.uuid }" />
-      </template>
-    </block-box>
   </div>
 </template>
 
 <script setup lang="jsx">
-import BackHeader from '@/components/BackHeader.vue';
+import PageHeader from '@/components/PageHeader.vue';
 import { useRoute, useRouter } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import { onMounted, ref, watch, computed } from 'vue';
-import TaskList from '~/vgpu/views/task/admin/index.vue';
+import { HelpCircleIcon } from 'tdesign-icons-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
-import EchartsPlus from '@/components/Echarts-plus.vue';
+import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
+import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
 import { timeParse, calculatePrometheusStep, roundToDecimal, getResourceColor } from '@/utils';
 import { getLineOptions as getLineOptions2 } from '~/vgpu/components/config';
 import { getRangeOptions } from '../../monitor/overview/getOptions';
@@ -243,10 +292,41 @@ import { useI18n } from 'vue-i18n';
 
 const route = useRoute();
 const router = useRouter();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
 const detail = ref({});
 const nodeUid = ref('');
+const CARD_TYPE_ICON_MAP = {
+  NVIDIA: 'gpu-nvidia',
+  MXC: 'gpu-nvidia',
+  ASCEND: 'gpu-ascend',
+  METAX: 'gpu-metax',
+  AWS: 'gpu-aws',
+  AWSNEURON: 'gpu-aws',
+};
+
+const extractLetters = (value) => {
+  if (typeof value === 'string') {
+    return value.match(/[a-z]+/gi) || [];
+  }
+  return [];
+};
+
+const gpuTypeIcon = computed(() => {
+  const vendor = extractLetters(detail.value?.type)?.[0]?.toUpperCase();
+  if (!vendor) return '';
+  return CARD_TYPE_ICON_MAP[vendor] || 'GPU';
+});
+const getCardStatusDisplay = ({ health, isExternal }) => {
+  if (isExternal || health === undefined || health === null) {
+    return { icon: 'status-unmanaged', text: t('card.unknown') };
+  }
+  if (health) {
+    return { icon: 'status-schedulable', text: t('card.normal') };
+  }
+  return { icon: 'status-unschedulable', text: t('card.abnormal') };
+};
+const headerStatusDisplay = computed(() => getCardStatusDisplay(detail.value || {}));
 
 const end = new Date();
 const start = new Date();
@@ -254,111 +334,18 @@ start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
 
-const columns = computed(() => [
-  {
-    label: t('card.status'),
-    value: 'health',
-    render: ({ health, isExternal }) => {
-      if (detail.value && detail.value.health !== undefined) {
-        const icon = isExternal
-          ? 'status-unmanaged'
-          : (health ? 'status-schedulable' : 'status-unschedulable');
-        const text = isExternal
-          ? t('card.unknown')
-          : (health ? t('card.normal') : t('card.abnormal'));
-        return (
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-            }}
-          >
-            <svg-icon icon={icon} style={{ fontSize: '16px' }} />
-            <span>{text}</span>
-          </span>
-        );
-      } else {
-        return <el-tag disable-transitions size="small" type="info">{t('card.detail.loading')}</el-tag>;
-      }
-    },
-  },
-  {
-    label: t('card.uuid'),
-    value: 'uuid',
-    render: ({ uuid }) => (
-      <ellipsis-text text={uuid || '--'} mode="middle" tooltip="always" />
-    ),
-  },
-  {
-    label: t('card.node'),
-    value: 'nodeName',
-    render: ({ nodeName }) => (
-      <div class="node-jump-cell">
-        <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
-        <span
-          class={['node-jump-icon', !nodeUid.value ? 'is-disabled' : ''].join(' ')}
-          onClick={() => {
-            if (!nodeUid.value) return;
-            router.push(`/admin/vgpu/node/admin/${nodeUid.value}?nodeName=${nodeName || ''}`);
-          }}
-        >
-          <svg-icon icon="jump" />
-        </span>
-      </div>
-    ),
-  },
-  {
-    label: t('card.model'),
-    value: 'type',
-  },
-  {
-    label: t('card.detail.deviceNo'),
-    value: 'device_no',
-  },
-  {
-    label: t('card.detail.driverVersion'),
-    value: 'driver_version',
-  },
-  {
-    label: t('card.mode'),
-    value: 'mode',
-    render: ({ mode, type }) => (
-        <t-tag theme="default" variant="light">
-          {type?.split('-')[0] === "NVIDIA" ? mode : 'default'}
-        </t-tag>
-    )
-  },
-  {
-    label: t('card.detail.gpuPower'),
-    value: 'gpuPowerTrend',
-    render: () => {
-      const v = lineTools.value[0]?.percent;
-      const unit = lineTools.value[0]?.gaugeUnit || 'W';
-      if (v === undefined || v === null) return <span class="detail-trend-value">--</span>;
-      return (
-        <span class="detail-trend-value">
-          {Number(v).toFixed(1)} {unit}
-        </span>
-      );
-    },
-  },
-  {
-    label: t('card.detail.gpuTemperature'),
-    value: 'gpuTemperatureTrend',
-    render: () => {
-      const v = lineTools.value[1]?.percent;
-      const unit = lineTools.value[1]?.gaugeUnit || '℃';
-      if (v === undefined || v === null) return <span class="detail-trend-value">--</span>;
-      return (
-        <span class="detail-trend-value">
-          {Number(v).toFixed(1)} {unit}
-        </span>
-      );
-    },
-  },
-]);
+const basicPowerText = computed(() => {
+  const v = lineTools.value[1]?.percent;
+  const unit = lineTools.value[1]?.gaugeUnit || 'W';
+  if (v === undefined || v === null) return '--';
+  return `${Number(v)} ${unit}`;
+});
+const basicTemperatureText = computed(() => {
+  const v = lineTools.value[0]?.percent;
+  const unit = lineTools.value[0]?.gaugeUnit || '℃';
+  if (v === undefined || v === null) return '--';
+  return `${Number(v)} ${unit}`;
+});
 
 const _gaugeConfigBase = [
   {
@@ -417,7 +404,7 @@ const gaugeConfig = computed(() =>
 
 const computeTotalText = computed(() => {
   const total = Number(gaugeConfig.value?.[0]?.total);
-  return Number.isFinite(total) ? `${roundToDecimal(total, 1)}` : '--';
+  return Number.isFinite(total) ? `${roundToDecimal(total / 100, 1)}` : '--';
 });
 
 const memoryTotalText = computed(() => {
@@ -425,15 +412,16 @@ const memoryTotalText = computed(() => {
   return Number.isFinite(total) ? `${roundToDecimal(total, 1)} GiB` : '--';
 });
 
-const formatUsedValue = (v, unit) => {
+const formatUsedValue = (v, unit, divisor = 1) => {
   const n = Number(v);
   if (!Number.isFinite(n)) return '--';
-  const text = `${roundToDecimal(n, 1)}`;
+  const normalizedDivisor = Number(divisor) > 0 ? Number(divisor) : 1;
+  const text = `${roundToDecimal(n / normalizedDivisor, 1)}`;
   return unit && String(unit).trim() ? `${text} ${unit}` : text;
 };
 
-const computeAllocUsedText = computed(() => (detail.value?.isExternal ? '--' : formatUsedValue(gaugeConfig.value?.[0]?.used, gaugeConfig.value?.[0]?.unit)));
-const computeUsageUsedText = computed(() => formatUsedValue(gaugeConfig.value?.[2]?.used, gaugeConfig.value?.[2]?.unit));
+const computeAllocUsedText = computed(() => (detail.value?.isExternal ? '--' : formatUsedValue(gaugeConfig.value?.[0]?.used, gaugeConfig.value?.[0]?.unit, 100)));
+const computeUsageUsedText = computed(() => formatUsedValue(gaugeConfig.value?.[2]?.used, gaugeConfig.value?.[2]?.unit, 100));
 const memoryAllocUsedText = computed(() => (detail.value?.isExternal ? '--' : formatUsedValue(gaugeConfig.value?.[1]?.used, gaugeConfig.value?.[1]?.unit)));
 const memoryUsageUsedText = computed(() => formatUsedValue(gaugeConfig.value?.[3]?.used, gaugeConfig.value?.[3]?.unit));
 
@@ -473,25 +461,38 @@ const computeAllocPercentText = computed(() => (computeAllocPercentRaw.value ===
 const computeUsagePercentText = computed(() => (computeUsagePercentRaw.value === undefined ? '--' : `${roundToDecimal(computeUsagePercentRaw.value, 2)}%`));
 const memoryAllocPercentText = computed(() => (memoryAllocPercentRaw.value === undefined ? '--' : `${roundToDecimal(memoryAllocPercentRaw.value, 2)}%`));
 const memoryUsagePercentText = computed(() => (memoryUsagePercentRaw.value === undefined ? '--' : `${roundToDecimal(memoryUsagePercentRaw.value, 2)}%`));
+const workloadCountUsed = computed(() => Number(detail.value?.vgpuUsed));
+const workloadCountTotal = computed(() => Number(detail.value?.vgpuTotal));
+const workloadCountUsedText = computed(() => (Number.isFinite(workloadCountUsed.value) ? `${workloadCountUsed.value}` : '--'));
+const workloadCountTotalText = computed(() => (Number.isFinite(workloadCountTotal.value) ? `${workloadCountTotal.value}` : '--'));
+const workloadCountPercentRaw = computed(() => {
+  if (!Number.isFinite(workloadCountUsed.value) || !Number.isFinite(workloadCountTotal.value) || workloadCountTotal.value <= 0) {
+    return 0;
+  }
+  return (workloadCountUsed.value / workloadCountTotal.value) * 100;
+});
+const workloadCountPercentProgress = computed(() => clampPercent(workloadCountPercentRaw.value));
 
 const lineTools = ref([
   {
-    titleKey: 'card.detail.gpuPowerTrend',
-    query: `avg by (device_no,driver_version) (hami_device_power{deviceuuid=~"$deviceuuid"})`,
+    titleKey: 'card.detail.gpuTemperatureTrend',
+    seriesNameKey: 'card.detail.gpuTemperature',
+    query: `avg by (device_no,driver_version) (hami_device_temperature{deviceuuid=~"$deviceuuid"})`,
     data: [],
-    unit: 'W',
-    gaugeUnit: 'W',
+    unit: '℃',
+    gaugeUnit: '℃',
     percent: undefined,
     total: 0,
     hideInfo: true,
     showProgress: false,
   },
   {
-    titleKey: 'card.detail.gpuTemperatureTrend',
-    query: `avg by (device_no,driver_version) (hami_device_temperature{deviceuuid=~"$deviceuuid"})`,
+    titleKey: 'card.detail.gpuPowerTrend',
+    seriesNameKey: 'card.detail.gpuPower',
+    query: `avg by (device_no,driver_version) (hami_device_power{deviceuuid=~"$deviceuuid"})`,
     data: [],
-    unit: '℃',
-    gaugeUnit: '℃',
+    unit: 'W',
+    gaugeUnit: 'W',
     percent: undefined,
     total: 0,
     hideInfo: true,
@@ -537,6 +538,11 @@ const fetchLineData = async () => {
         lineTools.value[index].percent = res.data?.[0]?.value;
       });
   });
+};
+
+const handleToNodeDetail = () => {
+  if (!nodeUid.value) return;
+  router.push(`/admin/vgpu/node/admin/${nodeUid.value}?nodeName=${detail.value?.nodeName || ''}`);
 };
 
 onMounted(async () => {
@@ -588,75 +594,102 @@ watch(
     width: 100%;
   }
 
-  .card-detail-info {
-    width: 100%;
-    column-gap: 15px;
-    row-gap: 15px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-
-    li {
-      display: flex;
-      align-items: center;
-      min-width: 0;
-    }
-
-    .label {
-      display: inline-block;
-      width: 80px;
-      height: 20px;
-      color: #939ea9;
-      font-size: 12px;
-      line-height: 20px;
-      flex-shrink: 0;
-    }
-
-    .value {
-      color: #324558;
-      font-size: 14px;
-      line-height: 22px;
-      display: inline-flex;
-      align-items: center;
-      min-width: 0;
-    }
-
+  .basic-info-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
   }
 
-  &.is-en {
-    .card-detail-info {
-      .label {
-        width: 110px;
-      }
+  .basic-info-card {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    gap: 2px;
+    padding: 15px 20px;
+    border-radius: 8px;
+    background: #f5f7fa;
+    border: 0;
+    overflow-x: hidden;
+  }
+
+  .basic-info-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 500;
+    color: #324558;
+    line-height: 28px;
+    cursor: default;
+
+    .text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
+
+  .basic-info-share {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .basic-info-subtitle {
+    color: #939ea9;
+    font-size: 12px;
+    line-height: 20px;
+  }
+
+.gpu-type-icon {
+  width: 16px;
+  height: 16px;
+  color: #64748b;
+}
 }
 
 .resource-overview-cards {
-  margin: 15px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   list-style: none;
   display: flex;
-  gap: 15px;
+  gap: 8px;
 }
 
 .resource-overview-card {
   flex: 1;
+  display: flex;
+}
+
+.progress-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
 }
 
 .resource-card {
   display: flex;
   flex-direction: column;
+  align-items: center;
   height: 100%;
   min-height: 0;
+  width: 100%;
   padding: 15px 20px;
   background: #f5f7fa;
   border-radius: 8px;
+  border: 0;
+  overflow-x: hidden;
 }
 
 .resource-card-header {
   display: flex;
   align-items: center;
   gap: 20px;
+  width: 100%;
 }
 
 .resource-card-icon {
@@ -693,29 +726,66 @@ watch(
   line-height: 20px;
 }
 
+.workload-progress-summary {
+  margin-top: -76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #939ea9;
+}
+
+.workload-progress-value {
+  line-height: 28px;
+
+  b {
+    font-size: 20px;
+    color: #324558;
+  }
+}
+
+.workload-progress-subtitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resource-card-help-icon {
+  color: #939ea9;
+  font-size: 14px;
+  cursor: pointer;
+}
+
 .resource-card-footer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 16px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 15px;
+  width: 100%;
 }
 
 .resource-card-rate-wrap {
   width: 100%;
   background: #ffffff;
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 10px 12px;
   box-sizing: border-box;
+  box-shadow: 0 4px 10px rgba(2, 5, 8, 0.06);
 }
 
 .resource-card-footer-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .resource-card-footer-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: #939ea9;
   line-height: 20px;
@@ -751,8 +821,8 @@ watch(
 }
 
 .trend-chart {
-  height: 200px;
-  margin-top: 15px;
+  height: 100%;
+  margin-top: 0;
 }
 
 .line-box {
@@ -763,47 +833,29 @@ watch(
   > .home-block {
     flex: 1 1 calc(50% - 10px);
     min-width: 0;
+    height: 320px;
+    padding: 16px 20px;
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  > .home-block :deep(.home-block-content) {
+    flex: 1;
+    min-height: 0;
   }
 }
 
 .node-block {
   display: flex;
   flex-direction: column;
+  box-shadow: none;
   .home-block-content {
     flex: 1;
   }
 }
 
-.node-jump-cell {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-
-  .node-jump-icon {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    border-radius: 4px;
-    user-select: none;
-  }
-
-  .node-jump-icon.is-disabled {
-    cursor: not-allowed;
-    opacity: 0.7;
-  }
-}
-
-.detail-trend-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+.resource-overview-block {
+  box-shadow: none;
 }
 </style>

@@ -10,7 +10,6 @@ import FormItem from './FormPlus/FormItem.vue';
 import FormRender from './FormPlus/FormRender.vue';
 import FormGroup from './FormPlus/FormGroup.vue';
 import ItemGroup from './ItemGroup.vue';
-import BackHeader from './BackHeader.vue';
 import InfoPreview from './InfoPreview.vue';
 import ButtonGroup from './ButtonGroup.vue';
 import DetailDrawer from './DetailDrawer.vue';
@@ -37,7 +36,6 @@ export default (app) => {
   app.component('FormRender', FormRender);
   app.component('FormGroup', FormGroup);
   app.component('ItemGroup', ItemGroup);
-  app.component('BackHeader', BackHeader);
   app.component('InfoPreview', InfoPreview);
   app.component('ButtonGroup', ButtonGroup);
   app.component('DetailDrawer', DetailDrawer);

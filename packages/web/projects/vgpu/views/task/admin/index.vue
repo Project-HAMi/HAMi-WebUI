@@ -27,13 +27,6 @@
             :options="statusOptions"
             @change="applyFilters"
           />
-          <t-select
-            v-model="filters.deviceId"
-            clearable
-            :placeholder="$t('task.allCards')"
-            :options="cardOptions"
-            @change="applyFilters"
-          />
           <t-input
             v-model="filters.name"
             clearable
@@ -81,7 +74,6 @@
 <script setup lang="jsx">
 import taskApi from '~/vgpu/api/task';
 import nodeApi from '~/vgpu/api/node';
-import cardApi from '~/vgpu/api/card';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import { roundToDecimal, timeParse } from '@/utils';
@@ -103,17 +95,11 @@ const filters = reactive({
   name: props.filters?.name || '',
   nodeName: props.filters?.nodeName,
   status: props.filters?.status,
-  deviceId: props.filters?.deviceId,
 });
 const rawNodeNames = ref([]);
-const rawCardUuids = ref([]);
 const nodeOptions = computed(() => [
   { label: t('task.allNodes'), value: undefined },
   ...rawNodeNames.value.map((name) => ({ label: name, value: name })),
-]);
-const cardOptions = computed(() => [
-  { label: t('task.allCards'), value: undefined },
-  ...rawCardUuids.value.map((uuid) => ({ label: uuid, value: uuid })),
 ]);
 const statusOptions = computed(() => [
   { label: t('task.allStatus'), value: undefined },
@@ -133,19 +119,12 @@ const state = reactive({
 
 const fetchFilterOptions = async () => {
   try {
-    const [{ list: nodeList = [] }, { list: cardList = [] }] = await Promise.all([
-      request(nodeApi.getNodeList({ filters: {} })),
-      request(cardApi.getCardList({ filters: {} })),
-    ]);
+    const { list: nodeList = [] } = await request(nodeApi.getNodeList({ filters: {} }));
     rawNodeNames.value = nodeList
       .map((item) => item?.name)
       .filter(Boolean);
-    rawCardUuids.value = cardList
-      .map((item) => item?.uuid)
-      .filter(Boolean);
   } catch {
     rawNodeNames.value = [];
-    rawCardUuids.value = [];
   }
 };
 
@@ -154,16 +133,20 @@ const baseColumns = computed(() => [
     title: t('task.workload'),
     dataIndex: 'name',
     hideTooltip: true,
-    render: ({ name, appName, podUid }) => {
+    render: ({ name, appName, podUid, namespace, namespaceName }) => {
       const to = `/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`;
       const workloadName = appName || name || '--';
+      const workloadNamespace = namespace || namespaceName || '--';
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '10px' }}>
           <span class="task-name-icon-card vgpu-table-name-icon-card">
             <svg-icon icon="task-name" style={{ fontSize: '20px' }} />
           </span>
           <span class="task-name-text-wrap vgpu-table-name-text-wrap">
-            <text-plus text={workloadName} to={to} />
+            <span style={{ display: 'inline-flex', flexDirection: 'column', minWidth: 0 }}>
+              <text-plus text={workloadName} to={to} />
+              <span class="task-namespace-text">{workloadNamespace}</span>
+            </span>
           </span>
         </span>
       );
@@ -218,59 +201,31 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: t('task.node'),
-    dataIndex: 'nodeName',
-    hideTooltip: true,
-    render: ({ nodeName }) => (
-      <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
-    ),
-  },
-  {
-    title: t('task.allocatedVgpu'),
+    title: 'GPUs',
     dataIndex: 'deviceIds',
-    render: ({ deviceIds }) => {
+    render: ({ deviceIds, allocatedCores, allocatedMem }) => {
       const ids = Array.isArray(deviceIds) ? deviceIds : [];
-      if (!ids.length) return <span>--</span>;
+      const gpuCount = ids.length || '--';
+      const cores = allocatedCores === 0 || allocatedCores
+        ? roundToDecimal(allocatedCores / 100, 1)
+        : '--';
+      const memoryGiB = allocatedMem === 0 || allocatedMem
+        ? `${roundToDecimal(allocatedMem / 1024, 1)} GiB`
+        : '--';
       return (
-        <t-popup trigger="hover" placement="top" overlay-inner-style={{ width: '350px' }}>
-          {{
-            default: () => (
-              <t-tag theme="default" variant="light" style={{ cursor: 'pointer' }}>
-                {ids.length}
-              </t-tag>
-            ),
-            content: () => (
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '10px',
-                  width: '100%',
-                  justifyContent: 'center',
-                }}
-              >
-                {ids.map((item) => (
-                  <t-tag theme="default" variant="light">{item}</t-tag>
-                ))}
-              </div>
-            ),
-          }}
-        </t-popup>
+        <div class="task-gpu-cell">
+          <span class="task-gpu-cell-icon" aria-hidden="true">
+            <svg-icon icon="card-id" style={{ fontSize: '14px' }} />
+          </span>
+          <span class="task-gpu-cell-info">
+            <span>{gpuCount}</span>
+            <span class="task-gpu-cell-segment">{cores}</span>
+            <span class="task-gpu-cell-segment">{memoryGiB}</span>
+          </span>
+        </div>
       );
     },
   },
-  {
-    title: t('task.allocatedCompute'),
-    dataIndex: 'allocatedCores',
-    render: ({ allocatedCores }) => `${allocatedCores} `,
-  },
-  {
-    title: t('task.allocatedMemory'),
-    dataIndex: 'allocatedMem',
-    render: ({ allocatedMem }) =>
-      `${roundToDecimal(allocatedMem / 1024, 1)} GiB`,
-  },
-
   {
     title: t('task.createTime'),
     dataIndex: 'createTime',
@@ -296,7 +251,6 @@ const fetchTableData = async () => {
         ...(nodeName ? { nodeName } : {}),
         ...(nodeUid ? { nodeUid } : {}),
         ...(filters.status ? { status: filters.status } : {}),
-        ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
       },
     };
     const { items = [] } = await taskApi.getTaskListReq(payload);
@@ -325,14 +279,12 @@ watch(
     props.filters?.nodeName,
     props.filters?.nodeUid,
     props.filters?.status,
-    props.filters?.deviceId,
   ],
   () => {
     hasManualNodeScope.value = false;
     filters.name = props.filters?.name || '';
     filters.nodeName = props.filters?.nodeName;
     filters.status = props.filters?.status;
-    filters.deviceId = props.filters?.deviceId;
     applyFilters();
   },
   { immediate: true },
@@ -374,4 +326,49 @@ watch(
 :deep(.task-name-text-wrap) {
   flex: 1;
 }
+
+:deep(.task-namespace-text) {
+  color: #939ea9;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:deep(.task-gpu-cell) {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 6px;
+  background: #e4ebf1;
+  color: #324558;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+:deep(.task-gpu-cell-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow:
+    0 1px 1px 0 rgb(2 5 8 / 2%),
+    0 1px 4px 0 rgb(2 5 8 / 6%);
+  flex-shrink: 0;
+}
+
+:deep(.task-gpu-cell-info) {
+  display: inline-flex;
+  align-items: center;
+}
+
+:deep(.task-gpu-cell-segment) {
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid #d5dee7;
+}
+
 </style>
