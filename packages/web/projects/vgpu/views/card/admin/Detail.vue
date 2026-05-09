@@ -364,9 +364,9 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.computeAllocRate',
     percent: 0,
-    query: `avg(sum(hami_container_vcore_allocated{deviceuuid=~"$deviceuuid"}) by (instance))`,
-    totalQuery: `avg(sum(hami_core_size{deviceuuid=~"$deviceuuid"}) by (instance))`,
-    percentQuery: `avg(sum(hami_container_vcore_allocated{deviceuuid=~"$deviceuuid"}) by (instance))/avg(sum(hami_core_size{deviceuuid=~"$deviceuuid"}) by (instance)) *100`,
+    query: `avg(sum(hami_container_vcore_allocated{device_uuid=~"$device_uuid"}) by (instance))`,
+    totalQuery: `avg(sum(hami_core_size{device_uuid=~"$device_uuid"}) by (instance))`,
+    percentQuery: `avg(sum(hami_container_vcore_allocated{device_uuid=~"$device_uuid"}) by (instance))/avg(sum(hami_core_size{device_uuid=~"$device_uuid"}) by (instance)) *100`,
     total: 0,
     used: 0,
     unit: ' ',
@@ -374,9 +374,9 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.memAllocRate',
     percent: 0,
-    query: `avg(sum(hami_container_vmemory_allocated{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
-    totalQuery: `avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
-    percentQuery: `(avg(sum(hami_container_vmemory_allocated{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024 )/(avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024) *100 `,
+    query: `avg(sum(hami_container_vmemory_allocated{device_uuid=~"$device_uuid"}) by (instance)) / 1024`,
+    totalQuery: `avg(sum(hami_memory_size{device_uuid=~"$device_uuid"}) by (instance)) / 1024`,
+    percentQuery: `(avg(sum(hami_container_vmemory_allocated{device_uuid=~"$device_uuid"}) by (instance)) / 1024 )/(avg(sum(hami_memory_size{device_uuid=~"$device_uuid"}) by (instance)) / 1024) *100 `,
     total: 0,
     used: 0,
     unit: 'GiB',
@@ -384,8 +384,8 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.computeUsageRate',
     percent: 0,
-    query: `avg(sum(hami_core_util{deviceuuid=~"$deviceuuid"}) by (instance))`,
-    percentQuery: `avg(sum(hami_core_util_avg{deviceuuid=~"$deviceuuid"}) by (instance))`,
+    query: `avg(sum(hami_core_util{device_uuid=~"$device_uuid"}) by (instance))`,
+    percentQuery: `avg(sum(hami_core_util_avg{device_uuid=~"$device_uuid"}) by (instance))`,
     total: 100,
     used: 0,
     unit: ' ',
@@ -393,9 +393,9 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.memUsageRate',
     percent: 0,
-    query: `avg(sum(hami_memory_used{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024`,
-    totalQuery: `avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance))/1024`,
-    percentQuery: `(avg(sum(hami_memory_used{deviceuuid=~"$deviceuuid"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{deviceuuid=~"$deviceuuid"}) by (instance))/1024)*100`,
+    query: `avg(sum(hami_memory_used{device_uuid=~"$device_uuid"}) by (instance)) / 1024`,
+    totalQuery: `avg(sum(hami_memory_size{device_uuid=~"$device_uuid"}) by (instance))/1024`,
+    percentQuery: `(avg(sum(hami_memory_used{device_uuid=~"$device_uuid"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{device_uuid=~"$device_uuid"}) by (instance))/1024)*100`,
     total: 0,
     used: 0,
     unit: 'GiB',
@@ -404,7 +404,7 @@ const _gaugeConfigBase = [
 
 const gaugeData = useInstantVector(
   _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
-  (query) => query.replaceAll(`$deviceuuid`, route.params.uuid),
+  (query) => query.replaceAll(`$device_uuid`, route.params.uuid),
   times,
 );
 
@@ -477,7 +477,7 @@ const memoryUsagePercentText = computed(() => (memoryUsagePercentRaw.value === u
 const lineTools = ref([
   {
     titleKey: 'card.detail.gpuPowerTrend',
-    query: `avg by (device_no,driver_version) (hami_device_power{deviceuuid=~"$deviceuuid"})`,
+    query: `avg by (device_no,driver_version) (hami_device_power{device_uuid=~"$device_uuid"})`,
     data: [],
     unit: 'W',
     gaugeUnit: 'W',
@@ -488,7 +488,7 @@ const lineTools = ref([
   },
   {
     titleKey: 'card.detail.gpuTemperatureTrend',
-    query: `avg by (device_no,driver_version) (hami_device_temperature{deviceuuid=~"$deviceuuid"})`,
+    query: `avg by (device_no,driver_version) (hami_device_temperature{device_uuid=~"$device_uuid"})`,
     data: [],
     unit: '℃',
     gaugeUnit: '℃',
@@ -515,7 +515,7 @@ const fetchLineData = async () => {
           end: timeParse(times.value[1]),
           step: calculatePrometheusStep(times.value[0], times.value[1]),
         },
-        query: item.query.replaceAll(`$deviceuuid`, route.params.uuid),
+        query: item.query.replaceAll(`$device_uuid`, route.params.uuid),
       })
       .then((res) => {
         const first = res.data?.[0];
@@ -531,7 +531,7 @@ const fetchLineData = async () => {
 
     cardApi
       .getInstantVector({
-        query: item.query.replaceAll(`$deviceuuid`, route.params.uuid),
+        query: item.query.replaceAll(`$device_uuid`, route.params.uuid),
       })
       .then((res) => {
         lineTools.value[index].percent = res.data?.[0]?.value;

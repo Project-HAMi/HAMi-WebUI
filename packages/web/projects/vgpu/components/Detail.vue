@@ -45,7 +45,7 @@
       </block-box>
     </div>
 
-    <block-box title="显卡列表" v-if="type !== 'deviceuuid'">
+    <block-box title="显卡列表" v-if="type !== 'device_uuid'">
       <CardList :hideTitle="true" :filters="filters" />
     </block-box>
 

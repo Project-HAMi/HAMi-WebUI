@@ -5,7 +5,7 @@
     <div class="card-admin-top-wrap" v-if="!hideTitle">
       <preview-bar
         :title="$t('dashboard.card')"
-        type="deviceuuid"
+        type="device_uuid"
         :handle-click="handleClick"
         :handle-pie-click="handlePieClick"
         :currentName="currentType"

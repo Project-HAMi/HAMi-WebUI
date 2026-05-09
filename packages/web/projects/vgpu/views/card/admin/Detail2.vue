@@ -2,7 +2,7 @@
   <Detail
     title="显卡"
     :detailColumns="columns"
-    type="deviceuuid"
+    type="device_uuid"
     :detail="detail"
     :name="detail.uuid"
     :filters="{ deviceId: detail.uuid }"
