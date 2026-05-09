@@ -140,6 +140,7 @@ const getNodeStatusDisplay = ({ isSchedulable, isExternal }) => {
 const baseColumns = computed(() => [
   {
     title: t('node.name'),
+    minWidth: 200,
     dataIndex: 'name',
     render: ({ uid, name }) => {
       const to = `/admin/vgpu/node/admin/${uid}?nodeName=${name}`;
@@ -157,6 +158,7 @@ const baseColumns = computed(() => [
   },
   {
     title: t('task.status'),
+    minWidth: 150,
     dataIndex: 'isSchedulable',
     render: ({ isSchedulable, isExternal }) => {
       const { icon, text } = getNodeStatusDisplay({ isSchedulable, isExternal });
@@ -170,29 +172,13 @@ const baseColumns = computed(() => [
   },
   {
     title: t('node.ip'),
+    minWidth: 100,
     dataIndex: 'ip',
-  },
-  {
-    title: t('node.cardModel'),
-    dataIndex: 'type',
-  },
-  {
-    title: t('node.cardCount'),
-    dataIndex: 'cardCnt',
-  },
-  {
-    title: t('node.vgpu'),
-    key: 'node-vgpu',
-    dataIndex: 'used',
-    render: ({ vgpuTotal, vgpuUsed, isExternal }) => (
-        <span>
-      {isExternal ? '--' : vgpuUsed}/{isExternal ? '--' : vgpuTotal}
-    </span>
-    ),
   },
   {
     title: t('node.computeAllocTotal'),
     key: 'node-compute-allocation',
+    minWidth: 280,
     dataIndex: 'used',
     render: ({ coreTotal, coreUsed, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
@@ -218,6 +204,7 @@ const baseColumns = computed(() => [
   {
     title: t('node.memoryAllocTotal'),
     key: 'node-memory-allocation',
+    minWidth: 280,
     dataIndex: 'used',
     render: ({ memoryTotal, memoryUsed, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;

@@ -27,6 +27,23 @@ func NewContainerService(node *biz.NodeUsecase, pod *biz.PodUseCase) *ContainerS
 	return &ContainerService{node: node, pod: pod}
 }
 
+func uniqueNonEmpty(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		result = append(result, v)
+	}
+	return result
+}
+
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {
 	filters := req.Filters
 	containers, err := s.pod.ListAllContainers(ctx)
@@ -58,6 +75,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		containerReply.Name = container.Name
 		containerReply.Status = container.Status
 		containerReply.AppName = container.PodName
+		containerReply.Images = uniqueNonEmpty([]string{container.Image})
 		containerReply.NodeName = container.NodeName
 		containerReply.PodUid = container.PodUID
 		containerReply.NodeUid = container.NodeUID
@@ -109,6 +127,18 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	ctrReply.NodeUid = container.NodeUID
 	ctrReply.Namespace = container.Namespace
 	ctrReply.Priority = container.Priority
+	allContainers, err := s.pod.ListAllContainers(ctx)
+	if err == nil {
+		images := make([]string, 0)
+		for _, item := range allContainers {
+			if item.PodUID == container.PodUID {
+				images = append(images, item.Image)
+			}
+		}
+		ctrReply.Images = uniqueNonEmpty(images)
+	} else {
+		ctrReply.Images = uniqueNonEmpty([]string{container.Image})
+	}
 	for _, containerDevice := range container.ContainerDevices {
 		if req.DeviceId != "" && req.DeviceId != containerDevice.UUID {
 			continue

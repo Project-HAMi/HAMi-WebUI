@@ -1,8 +1,43 @@
 import { timeParse } from '@/utils';
 
+const normalizePoints = (points = []) => {
+  return points
+    .map((point) => {
+      if (Array.isArray(point)) {
+        return { timestamp: Number(point[0]), value: Number(point[1]) };
+      }
+      return {
+        timestamp: Number(point?.timestamp),
+        value: Number(point?.value),
+      };
+    })
+    .filter((item) => Number.isFinite(item.timestamp) && Number.isFinite(item.value));
+};
+
+const buildPercentTooltipFormatter = () => {
+  return (params) => {
+    if (!Array.isArray(params) || params.length === 0) return '';
+    let result = `<div style="margin-bottom:5px;">${params[0]?.axisValueLabel || params[0]?.name || ''}</div>`;
+    for (let i = 0; i < params.length; i++) {
+      const item = params[i];
+      const num = Number(item?.value);
+      const value = Number.isFinite(num) ? `${num.toFixed(3)}%` : '-';
+      result += `<div style="display:flex;align-items:center;font-size:14px;line-height:22px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${item?.color || '#5B8FF9'};margin-right:5px;"></span>
+          <span>${item?.seriesName || '-'}:&nbsp;</span>
+          <span style="font-weight:bold;">${value}</span>
+        </div>`;
+    }
+    return result;
+  };
+};
+
 export const getRangeOptions = ({ allocation = [], usage = [] }, t = (v) => v) => {
-  const xDataSource = allocation?.length ? allocation : usage;
+  const normalizedAllocation = normalizePoints(allocation);
+  const normalizedUsage = normalizePoints(usage);
+  const xDataSource = normalizedAllocation.length ? normalizedAllocation : normalizedUsage;
   return {
+    animation: false,
     legend: {
       bottom: 10,
       left: 'center',
@@ -12,20 +47,7 @@ export const getRangeOptions = ({ allocation = [], usage = [] }, t = (v) => v) =
       axisPointer: {
         type: 'cross',
       },
-      formatter: function (params) {
-        if (!params || params.length === 0) return '';
-        var res = params[0].name + '<br/>';
-        for (var i = 0; i < params.length; i++) {
-          res +=
-            params[i].marker +
-            params[i].seriesName +
-            ' : ' +
-            (+params[i].value).toFixed(0) +
-            '<br/>';
-        }
-
-        return res;
-      },
+      formatter: buildPercentTooltipFormatter(),
     },
     grid: {
       top: 20, // 上边距
@@ -33,9 +55,16 @@ export const getRangeOptions = ({ allocation = [], usage = [] }, t = (v) => v) =
       left: '7%', // 左边距
       right: 10, // 右边距
     },
+    dataZoom: [
+      {
+        type: 'inside',
+        xAxisIndex: 0,
+        filterMode: 'none',
+      },
+    ],
     xAxis: {
       type: 'category',
-      data: xDataSource.map((item) => timeParse(+item.timestamp)),
+      data: xDataSource.map((item) => timeParse(item.timestamp)),
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');
@@ -53,24 +82,26 @@ export const getRangeOptions = ({ allocation = [], usage = [] }, t = (v) => v) =
     series: [
       {
         name: t('dashboard.allocRateLegend'),
-        data: allocation,
+        data: normalizedAllocation.map((item) => item.value),
         type: 'line',
         itemStyle: {
-          color: 'rgb(84, 112, 198)',
+          color: '#5B8FF9',
         },
         lineStyle: {
-          color: 'rgb(84, 112, 198)',
+          width: 3,
+          color: '#5B8FF9',
         },
       },
       {
         name: t('dashboard.usageRateLegend'),
-        data: usage,
+        data: normalizedUsage.map((item) => item.value),
         type: 'line',
         itemStyle: {
-          color: 'rgb(145, 204, 117)',
+          color: '#42C090',
         },
         lineStyle: {
-          color: 'rgb(145, 204, 117)',
+          width: 3,
+          color: '#42C090',
         },
       },
     ],
