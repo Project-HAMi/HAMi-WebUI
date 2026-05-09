@@ -15,12 +15,12 @@ image:
   frontend:
     repository: projecthami/hami-webui-fe-oss
     pullPolicy: IfNotPresent
-    # Overrides the image tag whose default is the chart appVersion.
-    tag: "1.2.0"
+    # Overrides the image tag whose default is the chart appVersion (CI uses the git tag name).
+    tag: "v1.2.0"
   backend:
     repository: projecthami/hami-webui-be-oss
     pullPolicy: IfNotPresent
-    tag: "1.2.0"
+    tag: "v1.2.0"
 
 imagePullSecrets: []
 nameOverride: ""
