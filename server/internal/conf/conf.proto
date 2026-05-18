@@ -9,6 +9,8 @@ message Bootstrap {
   Server server = 1;
   Prometheus prometheus = 2;
   map<string, string> node_selectors = 3;
+  int32 exporter_concurrency_limit = 5;
+  string metrics_generate_interval = 6;
 }
 
 message Server {

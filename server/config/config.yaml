@@ -14,3 +14,5 @@ node_selectors:
   DCU: dcu=on
   MLU: mlu=on
   Metax: metax-tech.com/gpu.installed=true
+exporter_concurrency_limit: 16
+metrics_generate_interval: 15s
