@@ -16,8 +16,13 @@ limitations under the License.
 package util
 
 import (
-	"github.com/go-kratos/kratos/v2/log"
+	"os"
+	"reflect"
 	"testing"
+
+	"github.com/go-kratos/kratos/v2/log"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var inRequestDevices map[string]string
@@ -342,6 +347,166 @@ func Test_DecodePodDevices(t *testing.T) {
 			//got, gotErr := DecodePodDevices(test.args.checklist, test.args.annos, )
 			//assert.DeepEqual(t, test.wantErr, gotErr)
 			//assert.DeepEqual(t, test.want, got)
+		})
+	}
+}
+
+func Test_DecodePodDevices_Ascend(t *testing.T) {
+	// Ensure Ascend device keys are registered in SupportDevices.
+	SupportDevices["Ascend"] = "hami.io/Ascend910B-devices-allocated"
+	SupportDevices["Ascend310P"] = "hami.io/Ascend310P-devices-allocated"
+	t.Cleanup(func() {
+		delete(SupportDevices, "Ascend")
+		delete(SupportDevices, "Ascend310P")
+	})
+
+	logger := log.NewHelper(log.NewStdLogger(os.Stdout))
+
+	tests := []struct {
+		name        string
+		pod         *corev1.Pod
+		want        PodDevices
+		wantErr bool
+	}{
+		{
+			name: "Ascend310P single container single device",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"hami.io/Ascend310P-devices-allocated": "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019,Ascend310P,6144,100:",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "main"}},
+				},
+			},
+			want: PodDevices{
+				"Ascend310P": {
+					{
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Ascend310P two containers",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"hami.io/Ascend310P-devices-allocated": "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019,Ascend310P,6144,100:;D7E96E64-214123F1-E8E618E4-AED8030A-E3003039,Ascend310P,6144,100:",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "ctr1"},
+						{Name: "ctr2"},
+					},
+				},
+			},
+			want: PodDevices{
+				"Ascend310P": {
+					{
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+					},
+					{
+						{Idx: 0, UUID: "D7E96E64-214123F1-E8E618E4-AED8030A-E3003039", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Ascend310P annotation segments exceed container count - should truncate",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						// Two device segments but only one container in spec.
+						"hami.io/Ascend310P-devices-allocated": "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019,Ascend310P,6144,100:;D7E96E64-214123F1-E8E618E4-AED8030A-E3003039,Ascend310P,6144,100:",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "main"}},
+				},
+			},
+			want: PodDevices{
+				"Ascend310P": {
+					{
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Ascend310P empty segment in middle should produce empty ContainerDevices placeholder",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"hami.io/Ascend310P-devices-allocated": "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019,Ascend310P,6144,100:;;D7E96E64-214123F1-E8E618E4-AED8030A-E3003039,Ascend310P,6144,100:",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "ctr1"},
+						{Name: "ctr2"},
+						{Name: "ctr3"},
+					},
+				},
+			},
+			want: PodDevices{
+				"Ascend310P": {
+					{
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+					},
+					{}, // empty segment placeholder
+					{
+						{Idx: 0, UUID: "D7E96E64-214123F1-E8E618E4-AED8030A-E3003039", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Ascend310P malformed device should produce empty device set",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"hami.io/Ascend310P-devices-allocated": "bad-format-string",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "main"}},
+				},
+			},
+			want:    PodDevices{"Ascend310P": {}},
+			wantErr: false,
+		},
+		{
+			name: "empty annotations should return empty PodDevices",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "main"}},
+				},
+			},
+			want:    PodDevices{},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := DecodePodDevices(tt.pod, logger)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DecodePodDevices() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("DecodePodDevices() = %+v, want %+v", got, tt.want)
+			}
 		})
 	}
 }
