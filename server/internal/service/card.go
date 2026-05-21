@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 	pb "vgpu/api/v1"
@@ -27,6 +26,22 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 	if err != nil {
 		return nil, err
 	}
+
+	// Fetch the container list once. StatisticsByDeviceId re-lists all containers
+	// on every call, so calling it per device turned this into an O(devices)
+	// re-scan; at large scale (100+ cards) that alone was seconds of work.
+	containers, err := s.pod.ListAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Pull hami_core_size / hami_memory_size for ALL devices in two queries keyed
+	// by device_uuid, instead of two PromQL per device. The old per-device fanout
+	// meant ~2*N serial instant queries against Prometheus / VictoriaMetrics
+	// (300+ at large scale), which made the card list spin for several seconds.
+	coreSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_core_size) by (device_uuid)", "device_uuid")
+	memSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_memory_size) by (device_uuid)", "device_uuid")
+
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
 	for _, device := range deviceInfos {
 		gpu := &pb.GPUReply{}
@@ -52,19 +67,16 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.Health = device.Health
 		gpu.Mode = device.Mode
 
-		vGPU, core, memory, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
-		if err == nil {
-			gpu.VgpuUsed = vGPU
-			gpu.CoreUsed = core
-			gpu.MemoryUsed = memory
+		vGPU, core, memory := biz.ContainersStatisticsInfo(containers, device.AliasId)
+		gpu.VgpuUsed = vGPU
+		gpu.CoreUsed = core
+		gpu.MemoryUsed = memory
+
+		if v, ok := coreSizeByUUID[device.Id]; ok {
+			gpu.CoreTotal = v
 		}
-		resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_core_size{device_uuid=~\"%s\"})", device.Id)})
-		if err == nil && len(resp.Data) > 0 {
-			gpu.CoreTotal = int32(resp.Data[0].Value)
-		}
-		resp, err = s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(hami_memory_size{device_uuid=~\"%s\"})", device.Id)})
-		if err == nil && len(resp.Data) > 0 {
-			gpu.MemoryTotal = int32(resp.Data[0].Value)
+		if v, ok := memSizeByUUID[device.Id]; ok {
+			gpu.MemoryTotal = v
 		}
 		res.List = append(res.List, gpu)
 	}
@@ -73,6 +85,25 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		return res.List[i].Uuid < res.List[j].Uuid
 	})
 	return res, nil
+}
+
+// queryGaugeByLabel runs a single instant query and returns the result values
+// keyed by the given label, so callers can batch what used to be per-entity
+// lookups into one round-trip to Prometheus / VictoriaMetrics.
+func (s *CardService) queryGaugeByLabel(ctx context.Context, query, label string) map[string]int32 {
+	out := map[string]int32{}
+	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
+	if err != nil {
+		return out
+	}
+	for _, sample := range resp.Data {
+		key := sample.Metric[label]
+		if key == "" {
+			continue
+		}
+		out[key] = int32(sample.Value)
+	}
+	return out
 }
 
 func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq) (*pb.GPUsReply, error) {

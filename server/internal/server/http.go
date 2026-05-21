@@ -1,9 +1,9 @@
 package server
 
 import (
+	nethttp "net/http"
 	v1 "vgpu/api/v1"
 	"vgpu/internal/conf"
-	"vgpu/internal/exporter"
 	"vgpu/internal/service"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -15,12 +15,24 @@ import (
 )
 
 // NewHTTPServer new an HTTP server.
+//
+// The /metrics endpoint here only serializes the in-memory Prometheus registry.
+// The registry is refreshed in the background by exporter.MetricsGenerator, which
+// is registered as its own kratos transport.Server in main.go. This is what keeps
+// scrape latency O(1) and decouples /metrics from server.http.timeout — at customer
+// scale a single refresh can fan out ~1800 PromQL queries, which previously raced
+// the 1s request deadline and starved vmselect.
+//
+// /readyz answers 200 once this HTTP server is accepting requests. The backend only
+// starts listening after the k8s informer caches have synced (see data.NewNodeRepo /
+// NewPodRepo), so a readiness probe on /readyz keeps the pod out of Service endpoints
+// until the backend can actually serve — this is what prevents the frontend BFF from
+// getting "connection refused" against the not-yet-listening backend at startup.
 func NewHTTPServer(c *conf.Bootstrap,
 	node *service.NodeService,
 	card *service.CardService,
 	ctr *service.ContainerService,
 	monitor *service.MonitorService,
-	exporter *exporter.MetricsGenerator,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
 		http.Middleware(
@@ -43,10 +55,12 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterContainerHTTPServer(srv, ctr)
 	v1.RegisterMonitorHTTPServer(srv, monitor)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
-	srv.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		exporter.GenerateMetrics(r.Context())
-		//mock.MockMetrics(r.Context())
-		promhttp.Handler().ServeHTTP(w, r)
+	srv.Handle("/metrics", promhttp.Handler())
+	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		// Reaching this handler means the server is listening and the informer
+		// caches have already synced (the backend only starts serving after that).
+		w.WriteHeader(nethttp.StatusOK)
+		_, _ = w.Write([]byte("ok"))
 	})
 	return srv
 }

@@ -8,13 +8,16 @@ data:
     server:
       http:
         addr: 0.0.0.0:8000
-        timeout: 1s
+        timeout: {{ .Values.backend.http.timeout | default "60s" }}
       grpc:
         addr: 0.0.0.0:9000
-        timeout: 1s
+        timeout: {{ .Values.backend.grpc.timeout | default "60s" }}
     prometheus:
       address: {{ ternary .Values.externalPrometheus.address (printf "http://%s-kube-prometh-prometheus.%s.svc.cluster.local:9090" (include "hami-webui.fullname" .) (include "hami-webui.namespace" .)) .Values.externalPrometheus.enabled }}
-      timeout: 1m
+      timeout: {{ .Values.externalPrometheus.timeout | default "1m" }}
+    exporter:
+      interval: {{ .Values.metricsExporter.interval | default "30s" }}
+      timeout:  {{ .Values.metricsExporter.timeout  | default "60s" }}
     node_selectors:
     {{- range $key, $value := .Values.vendorNodeSelectors }}
       {{ $key }}: {{ $value }}

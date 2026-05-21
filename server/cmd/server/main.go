@@ -9,6 +9,7 @@ import (
 	"github.com/go-kratos/kratos/v2/transport/http"
 	"os"
 	"vgpu/internal/conf"
+	"vgpu/internal/exporter"
 
 	_ "go.uber.org/automaxprocs"
 )
@@ -44,7 +45,9 @@ func main() {
 	}
 }
 
-func newApp(ctx context.Context, logger log.Logger, gs *grpc.Server, hs *http.Server) *kratos.App {
+// newApp wires the background metrics collector in as a kratos transport.Server so
+// its goroutine is started and stopped by the app lifecycle, alongside HTTP and gRPC.
+func newApp(ctx context.Context, logger log.Logger, gs *grpc.Server, hs *http.Server, mc *exporter.MetricsGenerator) *kratos.App {
 	return kratos.New(
 		kratos.Context(ctx),
 		kratos.ID(id),
@@ -55,6 +58,7 @@ func newApp(ctx context.Context, logger log.Logger, gs *grpc.Server, hs *http.Se
 		kratos.Server(
 			gs,
 			hs,
+			mc,
 		),
 	)
 }

@@ -184,6 +184,8 @@ func (r *podRepo) GetStartTime(pod *corev1.Pod) time.Time {
 }
 
 func (r *podRepo) ListAll(context.Context) ([]*biz.Container, error) {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
 	var containerList []*biz.Container
 	for _, pod := range r.pods {
 		containerList = append(containerList, pod.Ctrs...)
@@ -196,7 +198,13 @@ func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.C
 		return nil, fmt.Errorf("podUID or name is empty")
 	}
 
-	for _, container := range r.pods[k8stypes.UID(podUID)].Ctrs {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	pod, ok := r.pods[k8stypes.UID(podUID)]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+	for _, container := range pod.Ctrs {
 		if container.Name == name {
 			return container, nil
 		}
