@@ -27,6 +27,13 @@
             :options="statusOptions"
             @change="applyFilters"
           />
+          <t-select
+            v-model="filters.deviceId"
+            clearable
+            :placeholder="$t('task.allCards')"
+            :options="cardOptions"
+            @change="applyFilters"
+          />
           <t-input
             v-model="filters.name"
             clearable
@@ -74,6 +81,7 @@
 <script setup lang="jsx">
 import taskApi from '~/vgpu/api/task';
 import nodeApi from '~/vgpu/api/node';
+import cardApi from '~/vgpu/api/card';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import { roundToDecimal, timeParse } from '@/utils';
@@ -95,12 +103,24 @@ const filters = reactive({
   name: props.filters?.name || '',
   nodeName: props.filters?.nodeName,
   status: props.filters?.status,
+  deviceId: props.filters?.deviceId,
 });
 const rawNodeNames = ref([]);
+const rawCards = ref([]);
 const nodeOptions = computed(() => [
   { label: t('task.allNodes'), value: undefined },
   ...rawNodeNames.value.map((name) => ({ label: name, value: name })),
 ]);
+const cardOptions = computed(() => {
+  // When a node is selected, only offer the cards that live on that node.
+  const cards = filters.nodeName
+    ? rawCards.value.filter((card) => card.nodeName === filters.nodeName)
+    : rawCards.value;
+  return [
+    { label: t('task.allCards'), value: undefined },
+    ...cards.map((card) => ({ label: card.uuid, value: card.uuid })),
+  ];
+});
 const statusOptions = computed(() => [
   { label: t('task.allStatus'), value: undefined },
   { label: t('task.statusCompleted'), value: 'closed' },
@@ -119,12 +139,19 @@ const state = reactive({
 
 const fetchFilterOptions = async () => {
   try {
-    const { list: nodeList = [] } = await request(nodeApi.getNodeList({ filters: {} }));
+    const [{ list: nodeList = [] }, { list: cardList = [] }] = await Promise.all([
+      request(nodeApi.getNodeList({ filters: {} })),
+      request(cardApi.getCardList({ filters: {} })),
+    ]);
     rawNodeNames.value = nodeList
       .map((item) => item?.name)
       .filter(Boolean);
+    rawCards.value = cardList
+      .filter((item) => item?.uuid)
+      .map((item) => ({ uuid: item.uuid, nodeName: item.nodeName }));
   } catch {
     rawNodeNames.value = [];
+    rawCards.value = [];
   }
 };
 
@@ -251,6 +278,7 @@ const fetchTableData = async () => {
         ...(nodeName ? { nodeName } : {}),
         ...(nodeUid ? { nodeUid } : {}),
         ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
       },
     };
     const { items = [] } = await taskApi.getTaskListReq(payload);
@@ -266,6 +294,17 @@ const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
 });
 const onNodeNameChange = () => {
   hasManualNodeScope.value = true;
+  // The card dropdown is scoped to the selected node; drop a previously chosen
+  // card if it doesn't belong to that node so the table isn't filtered by an
+  // out-of-scope device.
+  if (filters.nodeName && filters.deviceId) {
+    const stillValid = rawCards.value.some(
+      (card) => card.nodeName === filters.nodeName && card.uuid === filters.deviceId,
+    );
+    if (!stillValid) {
+      filters.deviceId = undefined;
+    }
+  }
   applyFilters();
 };
 
@@ -279,12 +318,14 @@ watch(
     props.filters?.nodeName,
     props.filters?.nodeUid,
     props.filters?.status,
+    props.filters?.deviceId,
   ],
   () => {
     hasManualNodeScope.value = false;
     filters.name = props.filters?.name || '';
     filters.nodeName = props.filters?.nodeName;
     filters.status = props.filters?.status;
+    filters.deviceId = props.filters?.deviceId;
     applyFilters();
   },
   { immediate: true },

@@ -24,7 +24,7 @@
             clearable
             :placeholder="$t('card.allCardTypes')"
             :options="cardTypeOptions"
-            @change="applyFilters"
+            @change="onTypeChange"
           />
           <t-select
             v-model="filters.nodeName"
@@ -104,12 +104,18 @@ const filters = reactive({
   nodeName: props.filters?.nodeName,
   type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
 });
-const rawNodeNames = ref([]);
+const rawNodes = ref([]);
 const rawCardTypes = ref([]);
-const nodeOptions = computed(() => [
-  { label: t('card.allNodes'), value: undefined },
-  ...rawNodeNames.value.map((name) => ({ label: name, value: name })),
-]);
+const nodeOptions = computed(() => {
+  // When a card type is selected, only offer nodes that actually carry that type.
+  const nodes = filters.type
+    ? rawNodes.value.filter((node) => node.types.includes(filters.type))
+    : rawNodes.value;
+  return [
+    { label: t('card.allNodes'), value: undefined },
+    ...nodes.map((node) => ({ label: node.name, value: node.name })),
+  ];
+});
 const cardTypeOptions = computed(() => [
   { label: t('card.allCardTypes'), value: undefined },
   ...rawCardTypes.value.map((type) => ({ label: type, value: type })),
@@ -121,16 +127,35 @@ const fetchFilterOptions = async () => {
       request(nodeApi.getNodeList({ filters: {} })),
       request(cardApi.getCardType()),
     ]);
-    rawNodeNames.value = nodeList
-      .map((item) => item?.name)
-      .filter(Boolean);
+    rawNodes.value = nodeList
+      .filter((item) => item?.name)
+      .map((item) => ({ name: item.name, types: Array.isArray(item.type) ? item.type : [] }));
     rawCardTypes.value = typeList
       .map((item) => item?.type)
       .filter(Boolean);
   } catch {
-    rawNodeNames.value = [];
+    rawNodes.value = [];
     rawCardTypes.value = [];
   }
+};
+
+// When the selected type no longer includes the chosen node, drop the node so
+// the table isn't filtered by an out-of-scope node. Call synchronously before
+// applyFilters at every type-mutation site to avoid querying with a stale node.
+const pruneNodeScopeByType = () => {
+  if (!filters.type || !filters.nodeName) {
+    return;
+  }
+  const node = rawNodes.value.find((item) => item.name === filters.nodeName);
+  if (!node || !node.types.includes(filters.type)) {
+    filters.nodeName = undefined;
+    hasManualNodeScope.value = true;
+  }
+};
+
+const onTypeChange = () => {
+  pruneNodeScopeByType();
+  applyFilters();
 };
 
 const handleClick = (params) => {
@@ -336,6 +361,7 @@ const handlePieClick = (params, echarts) => {
     dataIndex: params.dataIndex,
   });
   filters.type = name;
+  pruneNodeScopeByType();
   applyFilters();
 };
 
@@ -400,6 +426,7 @@ watch(
     const next = parseTypeFromQuery(value);
     if (filters.type === next) return;
     filters.type = next;
+    pruneNodeScopeByType();
     applyFilters();
   },
 );
