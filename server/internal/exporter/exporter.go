@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
+	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/service"
 
+	"github.com/go-kratos/kratos/v2/log"
 	"github.com/google/wire"
 )
 
@@ -22,12 +25,48 @@ var ProviderSet = wire.NewSet(
 	NewMetricsGenerator,
 )
 
+const (
+	defaultGenerateInterval = 30 * time.Second
+	defaultGenerateTimeout  = 60 * time.Second
+)
+
+// MetricsGenerator owns the lifecycle of the background /metrics collector.
+//
+// It satisfies kratos transport.Server: Start spins up a single refresh goroutine that
+// periodically re-fans out PromQL into the in-memory Prometheus registry; Stop waits
+// for the goroutine to drain.
+//
+// The HTTP /metrics handler does NOT call GenerateMetrics directly anymore: scrapes
+// only serialize whatever the registry currently holds, which is what makes the
+// endpoint scrape-timeout safe even at customer-scale fanout (~1800 PromQL/cycle).
 type MetricsGenerator struct {
 	promClient     *prom.Client
 	nodeUsecase    *biz.NodeUsecase
 	podUsecase     *biz.PodUseCase
 	monitorService *service.MonitorService
-	cacheTime      time.Time
+
+	interval time.Duration
+	timeout  time.Duration
+
+	log *log.Helper
+
+	startOnce sync.Once
+	stopOnce  sync.Once
+	cancel    context.CancelFunc
+	done      chan struct{}
+
+	runMu      sync.Mutex
+	generating bool
+
+	// Diff-based cell tracking. See cells.go for the full rationale.
+	// current holds tuples written during the in-progress cycle; prev holds the
+	// last successfully-committed cycle so we know which tuples to delete when a
+	// device or container disappears.
+	cellMu  sync.Mutex
+	current map[cellKey]cell
+	prev    map[cellKey]cell
+
+	cacheTime time.Time
 }
 
 // roundToTwoDecimal 将浮点数保留两位小数
@@ -41,38 +80,144 @@ func roundToOneDecimal(value float64) float64 {
 }
 
 func NewMetricsGenerator(
+	bc *conf.Bootstrap,
 	promClient *prom.Client,
 	nodeUsecase *biz.NodeUsecase,
 	podUsecase *biz.PodUseCase,
 	monitorService *service.MonitorService,
+	logger log.Logger,
 ) *MetricsGenerator {
+	interval, timeout := resolveCollectorIntervals(bc)
 	return &MetricsGenerator{
 		promClient:     promClient,
 		nodeUsecase:    nodeUsecase,
 		podUsecase:     podUsecase,
 		monitorService: monitorService,
+		interval:       interval,
+		timeout:        timeout,
+		log:            log.NewHelper(log.With(logger, "module", "exporter")),
 	}
 }
-func (s *MetricsGenerator) generatorCache() time.Time {
-	now := time.Now()
-	return time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute(), 0, 0, now.Location())
-}
 
-func (s *MetricsGenerator) cacheIsValidate() bool {
-	if s.cacheTime == s.generatorCache() {
-		return true
+func resolveCollectorIntervals(bc *conf.Bootstrap) (interval, timeout time.Duration) {
+	interval, timeout = defaultGenerateInterval, defaultGenerateTimeout
+	if bc == nil || bc.Exporter == nil {
+		return
 	}
-	return false
+	if d := bc.Exporter.Interval.AsDuration(); d > 0 {
+		interval = d
+	}
+	if d := bc.Exporter.Timeout.AsDuration(); d > 0 {
+		timeout = d
+	}
+	return
 }
 
+// Start launches the background collector loop. It is invoked once by the kratos
+// app lifecycle. The loop deliberately runs against context.Background() so a
+// graceful shutdown is the only thing that can cancel it; per-cycle ctx is bounded
+// by s.timeout.
+func (s *MetricsGenerator) Start(_ context.Context) error {
+	s.startOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.cancel = cancel
+		s.done = make(chan struct{})
+		s.log.Infow("msg", "starting metrics collector", "interval", s.interval, "timeout", s.timeout)
+		go s.loop(ctx)
+	})
+	return nil
+}
+
+// Stop signals the loop to exit and waits for it to drain or for the caller's
+// ctx to expire.
+func (s *MetricsGenerator) Stop(ctx context.Context) error {
+	s.stopOnce.Do(func() {
+		if s.cancel != nil {
+			s.cancel()
+		}
+		if s.done != nil {
+			select {
+			case <-s.done:
+			case <-ctx.Done():
+				s.log.Warn("msg", "metrics collector did not stop before shutdown deadline")
+			}
+		}
+	})
+	return nil
+}
+
+func (s *MetricsGenerator) loop(ctx context.Context) {
+	defer close(s.done)
+	s.runOnce(ctx)
+	t := time.NewTicker(s.interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.runOnce(ctx)
+		}
+	}
+}
+
+// runOnce executes a single refresh cycle with a bounded context. It refuses to
+// overlap cycles: a cycle that runs longer than s.interval simply skips the next
+// tick instead of piling up parallel PromQL fanouts onto vmselect.
+func (s *MetricsGenerator) runOnce(parent context.Context) {
+	s.runMu.Lock()
+	if s.generating {
+		s.runMu.Unlock()
+		s.log.Warnw("msg", "skip metrics refresh: previous cycle still running")
+		return
+	}
+	s.generating = true
+	s.runMu.Unlock()
+	defer func() {
+		s.runMu.Lock()
+		s.generating = false
+		s.runMu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(parent, s.timeout)
+	defer cancel()
+	start := time.Now()
+	if err := s.GenerateMetrics(ctx); err != nil {
+		// Partial cycle (ctx canceled, upstream error, etc.): keep last known good
+		// snapshot intact so the registry doesn't briefly lose cells that simply
+		// could not be re-queried this round.
+		s.dropCurrentCycle()
+		s.log.Errorw("msg", "metrics refresh failed (partial cycle, last-known cells retained)", "err", err, "elapsed", time.Since(start))
+		return
+	}
+	s.commitCycle()
+	s.log.Debugw("msg", "metrics refresh complete", "elapsed", time.Since(start))
+}
+
+// GenerateMetrics runs one full fanout cycle (device + container dimensions) into
+// the in-memory Prometheus registry. It is exported so it can be unit-tested and
+// triggered manually if needed, but on the request path it must never be called
+// synchronously: the registry is the only thing /metrics serves.
+//
+// The function intentionally does NOT clear existing gauges. Each Set goes
+// through s.set, which both writes the value and records the (gauge, labels)
+// tuple. runOnce decides whether to commit the new snapshot (delete tuples that
+// disappeared) or drop it (keep the previous snapshot intact). See cells.go.
 func (s *MetricsGenerator) GenerateMetrics(ctx context.Context) error {
-	//if s.cacheIsValidate() {
-	//	return nil
-	//}
-	reset()                         // 重置所有指标缓存值
-	s.GenerateDeviceMetrics(ctx)    // 卡维度指标
-	s.GenerateContainerMetrics(ctx) // 任务维度指标
-	s.cacheTime = s.generatorCache()
+	s.cellMu.Lock()
+	s.current = make(map[cellKey]cell)
+	s.cellMu.Unlock()
+
+	s.GenerateDeviceMetrics(ctx)
+	s.GenerateContainerMetrics(ctx)
+
+	// Surface ctx cancellation so runOnce treats this as a partial cycle and
+	// preserves the prior snapshot. Without this guard, a mid-cycle timeout
+	// would silently commit an incomplete map and erase real series.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.cacheTime = time.Now()
 	return nil
 }
 
@@ -93,56 +238,56 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		}
 
 		// 分配率指标
-		HamiVgpuCount.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(device.Count))
-		HamiVmemorySize.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(device.Devmem))
-		HamiVcoreSize.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(device.Devcore))
+		s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		// 超配比指标
-		HamiVCoreScaling.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(device.Devcore) / 100)
-		HamiCoreSize.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(100)
+		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		s.set(HamiCoreSize, 100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		deviceMemUsed, err := s.deviceMemUsed(ctx, provider, device.Id)
 		if err == nil {
-			HamiMemoryUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(deviceMemUsed))
+			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
-		HamiMemorySize.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(device.Devmem))
-		HamiMemoryUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(roundToOneDecimal(100 * float64(deviceMemUsed/float32(device.Devmem))))
+		s.set(HamiMemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/float32(device.Devmem))), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		deviceMemSize, err := s.deviceMemTotal(ctx, provider, device.Id)
 		if err == nil && deviceMemSize > 0 {
-			HamiVMemoryScaling.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(roundToOneDecimal(float64(float32(device.Devmem) / deviceMemSize)))
+			s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 		actualCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
 		if err == nil {
-			HamiCoreUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(actualCoreUtil))
-			HamiCoreUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(actualCoreUtil))
+			s.set(HamiCoreUsed, float64(actualCoreUtil), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiCoreUtil, float64(actualCoreUtil), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 		actualCoreUtilAvg, err := s.deviceCoreUtil(ctx, provider, device.Id)
 		if err == nil {
-			HamiCoreUsedAvg.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(actualCoreUtilAvg))
-			HamiCoreUtilAvg.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(actualCoreUtilAvg))
+			s.set(HamiCoreUsedAvg, float64(actualCoreUtilAvg), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiCoreUtilAvg, float64(actualCoreUtilAvg), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 		gpuTemperature, err := s.gpuTemperature(ctx, provider, device.Id)
 		if err == nil {
-			HamiDeviceTemperature.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(gpuTemperature))
+			s.set(HamiDeviceTemperature, float64(gpuTemperature), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 		memoryTemperature, err := s.memoryTemperature(ctx, provider, device.Id)
 		if err == nil {
-			HamiDeviceMemoryTemperature.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(memoryTemperature))
+			s.set(HamiDeviceMemoryTemperature, float64(memoryTemperature), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 		gpuPower, err := s.gpuPower(ctx, provider, device.Id)
 		if err == nil {
-			HamiDevicePower.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(gpuPower))
+			s.set(HamiDevicePower, float64(gpuPower), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 		fanSpeed, err := s.fanSpeed(ctx, provider, device.Id)
 		if err == nil {
 			switch provider {
 			case biz.NvidiaGPUDevice:
-				HamiDeviceFanSpeedP.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(fanSpeed))
+				s.set(HamiDeviceFanSpeedP, float64(fanSpeed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			case biz.CambriconGPUDevice:
-				HamiDeviceFanSpeedR.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(fanSpeed))
+				s.set(HamiDeviceFanSpeedR, float64(fanSpeed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			}
 		}
 		gpuHardwareHealth, err := s.gpuHardwareHealth(ctx, provider, device.Id)
 		if err == nil {
-			HamiDeviceHardwareHealth.WithLabelValues(device.NodeName, provider, device.Type, device.Id, driver, deviceNo).Set(float64(gpuHardwareHealth))
+			s.set(HamiDeviceHardwareHealth, float64(gpuHardwareHealth), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 	}
 	return nil
@@ -180,13 +325,14 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 			deviceType := res.Data[i].Metric["modelName"]
 			nodeName := res.Data[i].Metric["Hostname"]
 
-			HamiContainerVgpuAllocated.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(1))
-			HamiContainerVmemoryAllocated.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(memory[i]))
-			HamiContainerVcoreAllocated.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(core[i]))
+			podUIDLabel := fmt.Sprintf("%s:%s", c.Name, c.PodUID)
+			s.set(HamiContainerVgpuAllocated, float64(1), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, podUIDLabel)
+			s.set(HamiContainerVmemoryAllocated, float64(memory[i]), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, podUIDLabel)
+			s.set(HamiContainerVcoreAllocated, float64(core[i]), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, podUIDLabel)
 
 			taskMemoryUsed := float32(res.Data[i].Value) // KB
-			HamiContainerMemoryUsed.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(float64(taskMemoryUsed / 1024))
-			HamiContainerMemoryUtil.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(roundToOneDecimal(100 * float64(taskMemoryUsed/1024) / float64(memory[i])))
+			s.set(HamiContainerMemoryUsed, float64(taskMemoryUsed/1024), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+			s.set(HamiContainerMemoryUtil, roundToOneDecimal(100*float64(taskMemoryUsed/1024)/float64(memory[i])), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
 
 			taskCoreUsed, err := s.taskCoreUsed(context.TODO(), metax.MetaxGPUDevice, c.Namespace, c.PodName, c.Name, c.PodUID, deviceUUID, nodeName, -1)
 			if err == nil {
@@ -197,8 +343,8 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 					used = float64(cardCoreUtil) / 100 * float64(core[i])
 					util = float64(cardCoreUtil)
 				}
-				HamiContainerCoreUsed.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(used)
-				HamiContainerCoreUtil.WithLabelValues(nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace).Set(util)
+				s.set(HamiContainerCoreUsed, used, nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+				s.set(HamiContainerCoreUtil, util, nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
 			}
 		}
 	}
@@ -234,9 +380,10 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			if provider == "" || provider == metax.MetaxGPUDevice {
 				continue
 			}
-			HamiContainerVgpuAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(vGPU))
-			HamiContainerVmemoryAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(memory))
-			HamiContainerVcoreAllocated.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, fmt.Sprintf("%s:%s", c.Name, c.PodUID)).Set(float64(core))
+			podUIDLabel := fmt.Sprintf("%s:%s", c.Name, c.PodUID)
+			s.set(HamiContainerVgpuAllocated, float64(vGPU), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
+			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
+			s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			// 查询任务在当前设备下的算力利用率
 			taskCoreUsed, err := s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			if err == nil {
@@ -262,8 +409,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 					used = float64(cardCoreUtil) / 100 * float64(core)
 					util = float64(cardCoreUtil)
 				}
-				HamiContainerCoreUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(used)
-				HamiContainerCoreUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(util)
+				s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+				s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 			}
 			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			if err == nil {
@@ -274,8 +421,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 					taskMemoryUsed = float32(taskMemoryUsed) * 1024 // KB->Byte
 				default:
 				}
-				HamiContainerMemoryUsed.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(float64(taskMemoryUsed / 1024 / 1024))
-				HamiContainerMemoryUtil.WithLabelValues(device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace).Set(roundToOneDecimal(100 * float64(taskMemoryUsed/1024/1024) / float64(memory)))
+				s.set(HamiContainerMemoryUsed, float64(taskMemoryUsed/1024/1024), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+				s.set(HamiContainerMemoryUtil, roundToOneDecimal(100*float64(taskMemoryUsed/1024/1024)/float64(memory)), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 			}
 		}
 	}

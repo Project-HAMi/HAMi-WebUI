@@ -9,6 +9,7 @@ message Bootstrap {
   Server server = 1;
   Prometheus prometheus = 2;
   map<string, string> node_selectors = 3;
+  Exporter exporter = 4;
 }
 
 message Server {
@@ -30,4 +31,15 @@ message Prometheus {
   string address = 1;
   string timeout = 2;
   string auth = 3;
+}
+
+// Exporter controls the background /metrics collector that periodically refreshes the
+// in-memory Prometheus registry from upstream Prometheus / VictoriaMetrics. The /metrics
+// HTTP handler only serializes that registry, so it is no longer tied to the per-request
+// HTTP timeout and no longer fans out PromQL on every scrape.
+message Exporter {
+  // Interval between two refresh cycles. Defaults to 30s if unset.
+  google.protobuf.Duration interval = 1;
+  // Hard cap on a single refresh cycle. Defaults to 60s if unset.
+  google.protobuf.Duration timeout = 2;
 }

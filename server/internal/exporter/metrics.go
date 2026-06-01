@@ -43,38 +43,6 @@ func init() {
 	prometheus.MustRegister(HamiSystemComponentHealth) // 系统组件健康状态
 }
 
-func reset() {
-	HamiVCoreScaling.Reset()
-	HamiVMemoryScaling.Reset()
-	HamiVgpuCount.Reset()
-	HamiVmemorySize.Reset()
-	HamiVcoreSize.Reset()
-	HamiMemoryUsed.Reset()
-	HamiMemorySize.Reset()
-	HamiMemoryUtil.Reset()
-	HamiCoreSize.Reset()
-	HamiCoreUsed.Reset()
-	HamiCoreUtil.Reset()
-	HamiCoreUsedAvg.Reset()
-	HamiCoreUtilAvg.Reset()
-	HamiDeviceTemperature.Reset()
-	HamiDeviceMemoryTemperature.Reset()
-	HamiDevicePower.Reset()
-	HamiDeviceFanSpeedP.Reset()
-	HamiDeviceFanSpeedR.Reset()
-
-	HamiContainerVgpuAllocated.Reset()
-	HamiContainerVmemoryAllocated.Reset()
-	HamiContainerVcoreAllocated.Reset()
-	HamiContainerMemoryUsed.Reset()
-	HamiContainerMemoryUtil.Reset()
-	HamiContainerCoreUsed.Reset()
-	HamiContainerCoreUtil.Reset()
-
-	HamiPoolVgpuCount.Reset()
-	HamiPoolVmemorySize.Reset()
-	HamiPoolVcoreSize.Reset()
-}
 
 var (
 	HamiVCoreScaling = prometheus.NewGaugeVec(prometheus.GaugeOpts{

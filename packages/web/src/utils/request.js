@@ -3,9 +3,17 @@ import axios from 'axios';
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
 import i18n from '@/locales';
 
+// Default request timeout in ms. Override at build time via VUE_APP_REQUEST_TIMEOUT
+// (injected through .env.* or chart values.frontend.requestTimeout). 60s is large
+// enough for the slowest known page-side API (/v1/nodes can take a few seconds
+// against a large VictoriaMetrics cluster) while still bounding hung requests.
+const DEFAULT_REQUEST_TIMEOUT = 60000;
+const requestTimeout =
+  Number.parseInt(process.env.VUE_APP_REQUEST_TIMEOUT, 10) || DEFAULT_REQUEST_TIMEOUT;
+
 const service = axios.create({
   baseURL: process.env.VUE_APP_BASE_API, // url = base url + request url
-  timeout: 5000,
+  timeout: requestTimeout,
   validateStatus: function (status) {
     return (status >= 200 && status < 300) || status > 520;
   },

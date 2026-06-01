@@ -98,7 +98,9 @@ func (r *nodeRepo) updateLocalNodes() {
 				}
 			}
 		}
+		r.mutex.Lock()
 		r.nodes = n
+		r.mutex.Unlock()
 	}
 }
 
@@ -156,6 +158,8 @@ func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
 }
 
 func (r *nodeRepo) ListAll(context.Context) ([]*biz.Node, error) {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
 	var nodeList []*biz.Node
 	for _, node := range r.nodes {
 		nodeList = append(nodeList, node)
@@ -164,13 +168,18 @@ func (r *nodeRepo) ListAll(context.Context) ([]*biz.Node, error) {
 }
 
 func (r *nodeRepo) GetNode(_ context.Context, uid string) (*biz.Node, error) {
-	if _, ok := r.nodes[k8stypes.UID(uid)]; !ok {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	node, ok := r.nodes[k8stypes.UID(uid)]
+	if !ok {
 		return nil, errors.New("node not found")
 	}
-	return r.nodes[k8stypes.UID(uid)], nil
+	return node, nil
 }
 
 func (r *nodeRepo) ListAllDevices(context.Context) ([]*biz.DeviceInfo, error) {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
 	var deviceList []*biz.DeviceInfo
 	for _, node := range r.nodes {
 		deviceList = append(deviceList, node.Devices...)
@@ -179,6 +188,8 @@ func (r *nodeRepo) ListAllDevices(context.Context) ([]*biz.DeviceInfo, error) {
 }
 
 func (r *nodeRepo) FindDeviceByAliasId(aliasId string) (*biz.DeviceInfo, error) {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
 	for _, node := range r.nodes {
 		for _, d := range node.Devices {
 			if d.AliasId == aliasId {

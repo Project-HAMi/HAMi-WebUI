@@ -163,3 +163,43 @@ externalPrometheus:
   enabled: false
   # If externalPrometheus.enabled is true, this address will be used
   address: "http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"
+  # Single PromQL upstream timeout (sent to Prometheus / VictoriaMetrics as the &timeout= parameter).
+  timeout: "1m"
+
+# Kratos server timeouts. These bound the deadline placed on each incoming HTTP/gRPC
+# request context. They no longer affect /metrics generation (which runs in the background),
+# but they still gate the page-side APIs, some of which legitimately take a few seconds
+# against a large Prometheus / VictoriaMetrics cluster.
+backend:
+  http:
+    timeout: "60s"
+  grpc:
+    timeout: "60s"
+  # Readiness probe on the backend's /readyz. The backend only starts listening
+  # after its k8s informer caches have synced, so gating the pod on /readyz keeps
+  # it out of the Service until the backend can serve — this prevents the frontend
+  # BFF from hitting "connection refused" against the not-yet-listening backend
+  # during startup. failureThreshold * periodSeconds should comfortably exceed the
+  # worst-case informer sync time on a large cluster.
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 60
+
+# Background /metrics collector. The collector runs independently of Prometheus scrape;
+# scrapes only serialize the in-memory registry, so they are O(1) and immune to scrape
+# timeouts. Tune interval if you need fresher data or want to reduce upstream load further.
+metricsExporter:
+  # How often the collector refreshes hami_* metrics from the upstream Prometheus / VictoriaMetrics.
+  interval: "30s"
+  # Hard cap on a single refresh cycle. Should be >= externalPrometheus.timeout and < interval * 2.
+  timeout: "60s"
+
+# The frontend axios client timeout (default 60000ms) is compiled into the JS
+# bundle at image build time from the VUE_APP_REQUEST_TIMEOUT env var, as Vite
+# evaluates process.env at build, not at runtime. To change it for a deployed
+# cluster you need to rebuild packages/web with a different VUE_APP_REQUEST_TIMEOUT
+# (set in packages/web/.env.production or as a build-arg). It cannot be tuned
+# through this values.yaml.

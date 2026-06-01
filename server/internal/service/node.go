@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"vgpu/internal/biz"
@@ -42,17 +41,26 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 		return nil, err
 	}
 
+	// Fetch containers once (StatisticsByDeviceId used to re-list per device) and
+	// pull the per-node core/memory totals in two queries keyed by node, instead
+	// of two PromQL per node. This is what made /v1/nodes take 3-4s — and it is
+	// also called for the workload page's node filter dropdown.
+	containers, err := s.pod.ListAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	coreByNode := s.queryNodeGauge(ctx, "avg(sum(hami_core_size) by (node, instance)) by (node)")
+	memByNode := s.queryNodeGauge(ctx, "avg(sum(hami_memory_size) by (node, instance)) by (node)")
+
 	var res = &pb.NodesReply{List: []*pb.NodeReply{}}
 	for _, node := range nodes {
-		nodeReply, err := s.buildNodeReply(ctx, node)
-		if err != nil {
-			return nil, err
-		}
+		nodeReply := s.buildNodeReply(node, containers)
 
-		coreTotal, memoryTotal, err := s.queryNodeMetrics(ctx, node.Name)
-		if err == nil {
-			nodeReply.CoreTotal = coreTotal
-			nodeReply.MemoryTotal = memoryTotal
+		if v, ok := coreByNode[node.Name]; ok {
+			nodeReply.CoreTotal = v
+		}
+		if v, ok := memByNode[node.Name]; ok {
+			nodeReply.MemoryTotal = v
 		}
 
 		if filters.Ip != "" && filters.Ip != nodeReply.Ip {
@@ -85,10 +93,18 @@ func (s *NodeService) GetNode(ctx context.Context, req *pb.GetNodeReq) (*pb.Node
 		return nil, err
 	}
 
-	return s.buildNodeReply(ctx, node)
+	containers, err := s.pod.ListAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.buildNodeReply(node, containers), nil
 }
 
-func (s *NodeService) buildNodeReply(ctx context.Context, node *biz.Node) (*pb.NodeReply, error) {
+// buildNodeReply assembles a node reply from in-memory state only. The caller
+// passes a pre-fetched container list so per-device usage stats reuse one scan
+// rather than re-listing all containers for each device.
+func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container) *pb.NodeReply {
 	nodeReply := &pb.NodeReply{
 		Name:                    node.Name,
 		Uid:                     node.Uid,
@@ -110,32 +126,33 @@ func (s *NodeService) buildNodeReply(ctx context.Context, node *biz.Node) (*pb.N
 		nodeReply.VgpuTotal += device.Count
 		nodeReply.CoreTotal += device.Devcore
 		nodeReply.MemoryTotal += device.Devmem
-		vGPU, core, memory, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
-		if err == nil {
-			nodeReply.VgpuUsed += vGPU
-			nodeReply.CoreUsed += core
-			nodeReply.MemoryUsed += memory
-		}
+		vGPU, core, memory := biz.ContainersStatisticsInfo(containers, device.AliasId)
+		nodeReply.VgpuUsed += vGPU
+		nodeReply.CoreUsed += core
+		nodeReply.MemoryUsed += memory
 	}
 
 	nodeReply.Type = arrutil.Unique(nodeReply.Type)
 	nodeReply.CardCnt = int32(len(node.Devices))
 
-	return nodeReply, nil
+	return nodeReply
 }
 
-func (s *NodeService) queryNodeMetrics(ctx context.Context, nodeName string) (int32, int32, error) {
-	coreTotal, memoryTotal := int32(0), int32(0)
-
-	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(sum(hami_core_size{node=~\"%s\"}) by (instance))", nodeName)})
-	if err == nil && len(resp.Data) > 0 {
-		coreTotal = int32(resp.Data[0].Value)
+// queryNodeGauge runs a single instant query whose result is grouped by the
+// "node" label and returns value-by-node, batching what used to be two PromQL
+// per node into one round-trip.
+func (s *NodeService) queryNodeGauge(ctx context.Context, query string) map[string]int32 {
+	out := map[string]int32{}
+	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
+	if err != nil {
+		return out
 	}
-
-	resp, err = s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: fmt.Sprintf("avg(sum(hami_memory_size{node=~\"%s\"}) by (instance))", nodeName)})
-	if err == nil && len(resp.Data) > 0 {
-		memoryTotal = int32(resp.Data[0].Value)
+	for _, sample := range resp.Data {
+		node := sample.Metric["node"]
+		if node == "" {
+			continue
+		}
+		out[node] = int32(sample.Value)
 	}
-
-	return coreTotal, memoryTotal, nil
+	return out
 }
