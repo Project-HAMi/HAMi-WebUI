@@ -33,5 +33,10 @@ module.exports = {
   },
   globals: {
     globals: 'readonly',
+    // Vue 3.3+ compiler macros, not covered by the installed
+    // eslint-plugin-vue's `vue/setup-compiler-macros` env.
+    defineOptions: 'readonly',
+    defineModel: 'readonly',
+    defineSlots: 'readonly',
   },
 };
