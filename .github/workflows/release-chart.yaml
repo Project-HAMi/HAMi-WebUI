@@ -1,4 +1,4 @@
-name: Release helm
+name: Helm Release
 
 on:
   workflow_dispatch:
@@ -6,12 +6,22 @@ on:
     tags:
       - v*
 
+env:
+  HELM_VERSION: "v3.20.0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   helm-release:
+    permissions:
+      contents: write
+      packages: write
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -21,14 +31,19 @@ jobs:
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5.0.0
         with:
-          version: v3.7.1
+          version: ${{ env.HELM_VERSION }}
 
-      - name: Add repos
+      - name: Add Helm repos
         run: |
           helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
           helm repo add prometheus https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Build chart dependencies
+        run: |
+          helm dependency build charts/hami-webui
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
@@ -37,3 +52,25 @@ jobs:
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Package Helm chart for GHCR
+        run: |
+          mkdir -p dist
+          helm package charts/hami-webui -d dist
+
+      - name: Normalize GHCR owner
+        run: |
+          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Helm chart to GHCR
+        run: |
+          for f in dist/*.tgz; do
+            echo "$f"
+            helm push "$f" "oci://ghcr.io/${GHCR_OWNER}/charts"
+          done
