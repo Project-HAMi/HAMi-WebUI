@@ -29,13 +29,22 @@ jobs:
         id: branch-names
         uses: tj-actions/branch-names@v8
 
-      # ghcr.io requires a lowercase repository path (the org login may
-      # contain uppercase, e.g. "Project-HAMi"); compute the shared image tag
-      # once so the Docker Hub and GHCR references stay in sync.
-      - name: Prepare image refs
+      # Build the image tag list. ghcr.io requires a lowercase repository path
+      # (the org login may contain uppercase, e.g. "Project-HAMi"). On a push to
+      # the default branch we additionally publish a :latest tag to GHCR only.
+      - name: Prepare image tags
         run: |
-          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
-          echo "IMAGE_TAG=${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}" >> "$GITHUB_ENV"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          tag="${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}"
+          {
+            echo "IMAGE_TAGS<<EOF"
+            echo "projecthami/hami-webui-fe-oss:${tag}"
+            echo "ghcr.io/${owner}/hami-webui-fe-oss:${tag}"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "ghcr.io/${owner}/hami-webui-fe-oss:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -60,9 +69,7 @@ jobs:
         with:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            projecthami/hami-webui-fe-oss:${{ env.IMAGE_TAG }}
-            ghcr.io/${{ env.GHCR_OWNER }}/hami-webui-fe-oss:${{ env.IMAGE_TAG }}
+          tags: ${{ env.IMAGE_TAGS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -77,13 +84,22 @@ jobs:
         id: branch-names
         uses: tj-actions/branch-names@v8
 
-      # ghcr.io requires a lowercase repository path (the org login may
-      # contain uppercase, e.g. "Project-HAMi"); compute the shared image tag
-      # once so the Docker Hub and GHCR references stay in sync.
-      - name: Prepare image refs
+      # Build the image tag list. ghcr.io requires a lowercase repository path
+      # (the org login may contain uppercase, e.g. "Project-HAMi"). On a push to
+      # the default branch we additionally publish a :latest tag to GHCR only.
+      - name: Prepare image tags
         run: |
-          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
-          echo "IMAGE_TAG=${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}" >> "$GITHUB_ENV"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          tag="${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}"
+          {
+            echo "IMAGE_TAGS<<EOF"
+            echo "projecthami/hami-webui-be-oss:${tag}"
+            echo "ghcr.io/${owner}/hami-webui-be-oss:${tag}"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "ghcr.io/${owner}/hami-webui-be-oss:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -109,8 +125,6 @@ jobs:
           context: ./server
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            projecthami/hami-webui-be-oss:${{ env.IMAGE_TAG }}
-            ghcr.io/${{ env.GHCR_OWNER }}/hami-webui-be-oss:${{ env.IMAGE_TAG }}
+          tags: ${{ env.IMAGE_TAGS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
