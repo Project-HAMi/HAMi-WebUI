@@ -10,6 +10,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   GO_VERSION: "1.25.1"
 
@@ -25,8 +29,16 @@ jobs:
         id: branch-names
         uses: tj-actions/branch-names@v8
 
+      # ghcr.io requires a lowercase repository path (the org login may
+      # contain uppercase, e.g. "Project-HAMi"); compute the shared image tag
+      # once so the Docker Hub and GHCR references stay in sync.
+      - name: Prepare image refs
+        run: |
+          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}" >> "$GITHUB_ENV"
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to DockerHub
         if: ${{ github.event_name != 'pull_request' }}
@@ -35,12 +47,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_TOKEN }}
           password: ${{ secrets.DOCKERHUB_PASSWD }}
 
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: projecthami/hami-webui-fe-oss:${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}
+          tags: |
+            projecthami/hami-webui-fe-oss:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ env.GHCR_OWNER }}/hami-webui-fe-oss:${{ env.IMAGE_TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -49,15 +71,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
-
+        uses: actions/checkout@v4
 
       - name: Get branch names.
         id: branch-names
         uses: tj-actions/branch-names@v8
 
+      # ghcr.io requires a lowercase repository path (the org login may
+      # contain uppercase, e.g. "Project-HAMi"); compute the shared image tag
+      # once so the Docker Hub and GHCR references stay in sync.
+      - name: Prepare image refs
+        run: |
+          echo "GHCR_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}" >> "$GITHUB_ENV"
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to DockerHub
         if: ${{ github.event_name != 'pull_request' }}
@@ -66,12 +95,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_TOKEN }}
           password: ${{ secrets.DOCKERHUB_PASSWD }}
 
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
           context: ./server
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: projecthami/hami-webui-be-oss:${{ steps.branch-names.outputs.tag || steps.branch-names.outputs.current_branch == 'main' && 'main' || format('pr-{0}', github.run_number) }}
+          tags: |
+            projecthami/hami-webui-be-oss:${{ env.IMAGE_TAG }}
+            ghcr.io/${{ env.GHCR_OWNER }}/hami-webui-be-oss:${{ env.IMAGE_TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
