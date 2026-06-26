@@ -363,6 +363,33 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 
 	s.generateMetricsForMetaxGPU(containers)
 	for _, device := range deviceInfos {
+		// === Ascend pre-calculation: card-level metrics + total allocation ===
+		// ponytail: proportional split — npu-exporter doesn't support vnpu for 910B/A3 yet.
+		// Card-level metrics are divided across containers by Usedmem ratio.
+		var ascendCardUtil float32
+		var ascendCardMemUsedMB float32
+		var ascendTotalMemoryOnCard int32
+		var ascendCardQueriesOK bool
+		if strings.HasPrefix(device.Provider, biz.AscendGPUDevice) {
+			var cdMemBytes float32
+			var ascendCardUtilErr, ascendCardMemErr error
+			ascendCardUtil, ascendCardUtilErr = s.deviceCoreUtil(ctx, device.Provider, device.Id)
+			cdMemBytes, ascendCardMemErr = s.deviceMemUsed(ctx, device.Provider, device.Id)
+			ascendCardQueriesOK = ascendCardUtilErr == nil && ascendCardMemErr == nil
+			if ascendCardQueriesOK && cdMemBytes > 0 {
+				ascendCardMemUsedMB = cdMemBytes / 1024 / 1024
+			}
+			for _, c := range containers {
+				for _, cd := range c.ContainerDevices {
+					if device.AliasId != "" && !device.MatchAlias(cd.UUID) {
+						continue
+					}
+					if strings.HasPrefix(cd.Type, biz.AscendGPUDevice) {
+						ascendTotalMemoryOnCard += cd.Usedmem
+					}
+				}
+			}
+		}
 		for _, c := range containers {
 			var vGPU int32 = 0
 			var core int32 = 0
@@ -385,8 +412,15 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			// 查询任务在当前设备下的算力利用率
-			taskCoreUsed, err := s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
-			if err == nil {
+			var taskCoreUsed float32
+			var taskCoreUsedErr error
+			if provider == biz.AscendGPUDevice && ascendCardQueriesOK && ascendTotalMemoryOnCard > 0 {
+				ratio := float32(memory) / float32(ascendTotalMemoryOnCard)
+				taskCoreUsed = ascendCardUtil * ratio
+			} else {
+				taskCoreUsed, taskCoreUsedErr = s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
+			}
+			if taskCoreUsedErr == nil {
 				used := float64(0)
 				util := float64(0)
 				switch provider {
@@ -396,6 +430,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				case biz.CambriconGPUDevice:
 					used = float64(taskCoreUsed) / 100 * float64(core)
 					util = float64(taskCoreUsed)
+				case biz.AscendGPUDevice:
+					used = float64(taskCoreUsed)
+					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
 				case biz.HygonGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
@@ -412,8 +449,15 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 				s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 			}
-			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
-			if err == nil {
+			var taskMemoryUsed float32
+			var taskMemoryUsedErr error
+			if provider == biz.AscendGPUDevice && ascendCardQueriesOK && ascendTotalMemoryOnCard > 0 {
+				ratio := float32(memory) / float32(ascendTotalMemoryOnCard)
+				taskMemoryUsed = ascendCardMemUsedMB * ratio
+			} else {
+				taskMemoryUsed, taskMemoryUsedErr = s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
+			}
+			if taskMemoryUsedErr == nil {
 				switch provider {
 				case biz.CambriconGPUDevice:
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
