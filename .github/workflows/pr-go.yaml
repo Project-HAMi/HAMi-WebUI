@@ -1,0 +1,128 @@
+name: PR Go Checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  GO_VERSION: "1.25.1"
+  GOLANGCI_VERSION: "v2.12"
+  PROTOC_VERSION: "28.3"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Only run the Go jobs when the backend (server/) or this workflow changed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ github.event_name != 'pull_request' || steps.filter.outputs.go == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            go:
+              - 'server/**'
+              - '.github/workflows/pr-go.yaml'
+
+  # `make generate` (proto + wire) is mandatory before build/vet/test because
+  # the generated code is NOT committed (server/.gitignore ignores *.pb.go and
+  # *_gen.go).
+  build-test:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: server/go.sum
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: ${{ env.PROTOC_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install codegen tools (wire / kratos / protoc-gen-*)
+        run: make install-deps
+      - name: Generate proto + wire
+        run: make generate
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: server/go.sum
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: ${{ env.PROTOC_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install codegen tools (wire / kratos / protoc-gen-*)
+        run: make install-deps
+      - name: Generate proto + wire
+        run: make generate
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_VERSION }}
+          working-directory: server
+          # Only flag issues introduced by the PR so the legacy codebase does
+          # not block every PR. Generated files (DO NOT EDIT header) are skipped
+          # by golangci-lint automatically.
+          only-new-issues: true
+
+  # Single required status check: green only if every Go job passed (or there
+  # were no Go-relevant changes).
+  pr-go-required:
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - build-test
+      - lint
+    if: always()
+    steps:
+      - name: Aggregate Go check results
+        run: |
+          if [[ "${{ needs.changes.outputs.go }}" != "true" ]]; then
+            echo "No Go-relevant changes; skipping."
+            exit 0
+          fi
+          for result in \
+            "${{ needs.build-test.result }}" \
+            "${{ needs.lint.result }}"; do
+            if [[ "${result}" != "success" ]]; then
+              echo "Go checks did not complete successfully: ${result}"
+              exit 1
+            fi
+          done
+          echo "All Go checks passed."
