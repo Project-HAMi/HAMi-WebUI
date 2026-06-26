@@ -1,0 +1,107 @@
+name: PR Frontend Checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Only run the frontend jobs when frontend sources (the NestJS BFF in src/,
+  # the Vue app in packages/, the workspace manifests) or this workflow change.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ github.event_name != 'pull_request' || steps.filter.outputs.frontend == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            frontend:
+              - 'src/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig*.json'
+              - 'Makefile'
+              - '.github/workflows/pr-frontend.yaml'
+
+  build-test:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build BFF
+        run: pnpm run build
+      - name: Build web
+        run: pnpm --filter hami-webui-web run build
+      - name: Test BFF
+        run: pnpm test
+
+  lint:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # The package `lint` script auto-fixes (`--fix`) and `--require`s a
+      # structured-clone polyfill that is not committed to the repo; run ESLint
+      # directly in check mode (node 22 has structuredClone natively).
+      - name: Lint BFF
+        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts"
+      - name: Lint web
+        run: pnpm --filter hami-webui-web run lint
+
+  # Single required status check: green only if every frontend job passed (or
+  # there were no frontend-relevant changes).
+  pr-frontend-required:
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - build-test
+      - lint
+    if: always()
+    steps:
+      - name: Aggregate frontend check results
+        run: |
+          if [[ "${{ needs.changes.outputs.frontend }}" != "true" ]]; then
+            echo "No frontend-relevant changes; skipping."
+            exit 0
+          fi
+          for result in \
+            "${{ needs.build-test.result }}" \
+            "${{ needs.lint.result }}"; do
+            if [[ "${result}" != "success" ]]; then
+              echo "Frontend checks did not complete successfully: ${result}"
+              exit 1
+            fi
+          done
+          echo "All frontend checks passed."
