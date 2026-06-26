@@ -1,6 +1,6 @@
 <img src="docs/logo-horizontal.png" alt="HAMi-WebUI Logo (Light)" width="50%">
 
-English | [简体中文](README_ZH.md)
+English | [简体中文](README_ZH.md) | [日本語](README_JA.md)
 
 An open-source platform for managing and observing GPU resources, based on the HAMi project
 
