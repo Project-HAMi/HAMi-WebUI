@@ -281,21 +281,30 @@ func DecodeMetaxContainerDevices(str string) (ContainerDevices, error) {
 	return contdev, nil
 }
 
-func GetContainerPriorities(pod *corev1.Pod) []string {
-	var priorities []string
-
+func getContainerPriority(ctr corev1.Container) string {
 	nvidiaPriority := corev1.ResourceName(NVIDIAPriority)
-	for _, ctr := range pod.Spec.Containers {
-		priority := ""
-		if limitPriority, ok := ctr.Resources.Limits[nvidiaPriority]; ok {
-			priority = limitPriority.String()
-		} else if requestPriority, ok := ctr.Resources.Requests[nvidiaPriority]; ok {
-			priority = requestPriority.String()
-		}
-		priorities = append(priorities, priority)
+	if limitPriority, ok := ctr.Resources.Limits[nvidiaPriority]; ok {
+		return limitPriority.String()
 	}
+	if requestPriority, ok := ctr.Resources.Requests[nvidiaPriority]; ok {
+		return requestPriority.String()
+	}
+	return ""
+}
 
+func GetContainerPriorities(pod *corev1.Pod) []string {
+	priorities := make([]string, 0, len(pod.Spec.InitContainers)+len(pod.Spec.Containers))
+	for _, ctr := range pod.Spec.InitContainers {
+		priorities = append(priorities, getContainerPriority(ctr))
+	}
+	for _, ctr := range pod.Spec.Containers {
+		priorities = append(priorities, getContainerPriority(ctr))
+	}
 	return priorities
+}
+
+func podContainerCount(pod *corev1.Pod) int {
+	return len(pod.Spec.InitContainers) + len(pod.Spec.Containers)
 }
 
 func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
@@ -339,7 +348,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 			pd[devType] = append(pd[devType], cd)
 		case NvidiaGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				if i >= len(pod.Spec.Containers) {
+				if i >= podContainerCount(pod) {
 					break
 				}
 				if s == "" {
@@ -350,14 +359,11 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 				if err != nil {
 					return PodDevices{}, nil
 				}
-				if len(cd) == 0 {
-					continue
-				}
 				pd[devType] = append(pd[devType], cd)
 			}
 		case HygonGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				if i >= len(pod.Spec.Containers) {
+				if i >= podContainerCount(pod) {
 					break
 				}
 				if s == "" {
@@ -368,14 +374,11 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 				if err != nil {
 					return PodDevices{}, nil
 				}
-				if len(cd) == 0 {
-					continue
-				}
 				pd[devType] = append(pd[devType], cd)
 			}
 		case MetaxGPUDevice, MetaxSGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				if i >= len(pod.Spec.Containers) {
+				if i >= podContainerCount(pod) {
 					break
 				}
 				if s == "" {
@@ -385,9 +388,6 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 				cd, err := DecodeMetaxContainerDevices(s)
 				if err != nil {
 					return PodDevices{}, nil
-				}
-				if len(cd) == 0 {
-					continue
 				}
 				pd[devType] = append(pd[devType], cd)
 			}
