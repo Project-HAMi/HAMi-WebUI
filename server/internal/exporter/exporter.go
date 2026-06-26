@@ -383,6 +383,14 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			podUIDLabel := fmt.Sprintf("%s:%s", c.Name, c.PodUID)
 			s.set(HamiContainerVgpuAllocated, float64(vGPU), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
+			// For Ascend GPU, Usedcores is a 1-100 value that doesn't reflect actual core allocation.
+			// Recalculate core as the percentage of device memory allocated to this container.
+			if provider == biz.AscendGPUDevice {
+				if deviceMemSize, err := s.deviceMemTotal(ctx, provider, device.Id); err == nil && deviceMemSize > 0 {
+					perc := float32(memory) / deviceMemSize
+					core = int32(float32(100) * perc)
+				}
+			}
 			s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			// 查询任务在当前设备下的算力利用率
 			taskCoreUsed, err := s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
