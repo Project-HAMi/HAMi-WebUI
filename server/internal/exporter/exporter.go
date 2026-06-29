@@ -364,7 +364,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 	s.generateMetricsForMetaxGPU(containers)
 	for _, device := range deviceInfos {
 		// === Ascend pre-calculation: card-level metrics + total allocation ===
-		// ponytail: proportional split — npu-exporter doesn't support vnpu for 910B/A3 yet.
+		// npu-exporter doesn't support vnpu for 910B/A3 yet.
 		// Card-level metrics are divided across containers by Usedmem ratio.
 		var ascendCardUtil float32
 		var ascendCardMemUsedBytes float32
