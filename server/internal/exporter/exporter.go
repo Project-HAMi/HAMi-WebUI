@@ -367,7 +367,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 		// ponytail: proportional split — npu-exporter doesn't support vnpu for 910B/A3 yet.
 		// Card-level metrics are divided across containers by Usedmem ratio.
 		var ascendCardUtil float32
-		var ascendCardMemUsedMB float32
+		var ascendCardMemUsedBytes float32
 		var ascendTotalMemoryOnCard int32
 		var ascendCardQueriesOK bool
 		if strings.HasPrefix(device.Provider, biz.AscendGPUDevice) {
@@ -375,13 +375,19 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			var ascendCardUtilErr, ascendCardMemErr error
 			ascendCardUtil, ascendCardUtilErr = s.deviceCoreUtil(ctx, device.Provider, device.Id)
 			cdMemBytes, ascendCardMemErr = s.deviceMemUsed(ctx, device.Provider, device.Id)
+			if ascendCardUtilErr != nil {
+				s.log.Warnf("failed to query Ascend card util for device %s: %v", device.Id, ascendCardUtilErr)
+			}
+			if ascendCardMemErr != nil {
+				s.log.Warnf("failed to query Ascend card mem for device %s: %v", device.Id, ascendCardMemErr)
+			}
 			ascendCardQueriesOK = ascendCardUtilErr == nil && ascendCardMemErr == nil
 			if ascendCardQueriesOK && cdMemBytes > 0 {
-				ascendCardMemUsedMB = cdMemBytes / 1024 / 1024
+				ascendCardMemUsedBytes = cdMemBytes
 			}
 			for _, c := range containers {
 				for _, cd := range c.ContainerDevices {
-					if device.AliasId != "" && !device.MatchAlias(cd.UUID) {
+					if device.AliasId != "" && !strings.HasPrefix(cd.UUID, device.AliasId) {
 						continue
 					}
 					if strings.HasPrefix(cd.Type, biz.AscendGPUDevice) {
@@ -453,7 +459,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			var taskMemoryUsedErr error
 			if provider == biz.AscendGPUDevice && ascendCardQueriesOK && ascendTotalMemoryOnCard > 0 {
 				ratio := float32(memory) / float32(ascendTotalMemoryOnCard)
-				taskMemoryUsed = ascendCardMemUsedMB * ratio
+				taskMemoryUsed = ascendCardMemUsedBytes * ratio
 			} else {
 				taskMemoryUsed, taskMemoryUsedErr = s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			}
