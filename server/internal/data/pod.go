@@ -132,7 +132,13 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 		}
 	}
 
+	initContainerOffset := len(pod.Spec.InitContainers)
 	for i, ctr := range pod.Spec.Containers {
+		deviceIdx := initContainerOffset + i
+		var containerDevices biz.ContainerDevices
+		if deviceIdx < len(bizContainerDevices) {
+			containerDevices = bizContainerDevices[deviceIdx]
+		}
 		c := &biz.Container{
 			Name:             ctr.Name,
 			UUID:             ctrIdMaps[ctr.Name],
@@ -145,10 +151,10 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			NodeUID:          r.GetNodeUUID(pod),
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
-			ContainerDevices: bizContainerDevices[i],
+			ContainerDevices: containerDevices,
 		}
-		if len(bizContainerDevices[i]) > 0 {
-			c.Priority = bizContainerDevices[i][0].Priority
+		if len(containerDevices) > 0 {
+			c.Priority = containerDevices[0].Priority
 		}
 		containers = append(containers, c)
 	}
