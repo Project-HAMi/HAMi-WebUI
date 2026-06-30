@@ -112,11 +112,23 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 	if err != nil {
 		return containers
 	}
-	bizContainerDevices := []biz.ContainerDevices{}
+	// Merge devices from all device types per container index.
+	// pdevices: map[deviceType]PodSingleDevice([]ContainerDevices)
+	numContainers := len(pod.Spec.Containers)
+	bizContainerDevices := make([]biz.ContainerDevices, numContainers)
 	for _, pds := range pdevices {
-		copier.Copy(&bizContainerDevices, pds)
+		var bizPds biz.PodSingleDevice
+		if err := copier.Copy(&bizPds, pds); err != nil {
+			r.log.Warnf("failed to copy pod device info: %v", err)
+			continue
+		}
+		for i, cd := range bizPds {
+			if i < numContainers {
+				bizContainerDevices[i] = append(bizContainerDevices[i], cd...)
+			}
+		}
 	}
-	if len(bizContainerDevices) < 1 {
+	if len(pdevices) == 0 {
 		return containers
 	}
 
