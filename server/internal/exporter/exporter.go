@@ -370,7 +370,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 		var ascendCardMemUsedMB float32
 		var ascendTotalMemoryOnCard int32
 		var ascendCardQueriesOK bool
-		if strings.HasPrefix(device.Provider, biz.AscendGPUDevice) {
+		if device.Provider == biz.AscendGPUDevice {
 			var ascendCardUtilErr, ascendCardMemErr error
 			ascendCardUtil, ascendCardUtilErr = s.deviceCoreUtil(ctx, device.Provider, device.Id)
 			ascendCardMemUsedMB, ascendCardMemErr = s.deviceMemUsed(ctx, device.Provider, device.Id)
