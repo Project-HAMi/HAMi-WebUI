@@ -367,14 +367,13 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 		// npu-exporter doesn't support vnpu for 910B/A3 yet.
 		// Card-level metrics are divided across containers by Usedmem ratio.
 		var ascendCardUtil float32
-		var ascendCardMemUsedBytes float32
+		var ascendCardMemUsedMB float32
 		var ascendTotalMemoryOnCard int32
 		var ascendCardQueriesOK bool
 		if strings.HasPrefix(device.Provider, biz.AscendGPUDevice) {
-			var cdMemBytes float32
 			var ascendCardUtilErr, ascendCardMemErr error
 			ascendCardUtil, ascendCardUtilErr = s.deviceCoreUtil(ctx, device.Provider, device.Id)
-			cdMemBytes, ascendCardMemErr = s.deviceMemUsed(ctx, device.Provider, device.Id)
+			ascendCardMemUsedMB, ascendCardMemErr = s.deviceMemUsed(ctx, device.Provider, device.Id)
 			if ascendCardUtilErr != nil {
 				s.log.Warnf("failed to query Ascend card util for device %s: %v", device.Id, ascendCardUtilErr)
 			}
@@ -382,9 +381,6 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				s.log.Warnf("failed to query Ascend card mem for device %s: %v", device.Id, ascendCardMemErr)
 			}
 			ascendCardQueriesOK = ascendCardUtilErr == nil && ascendCardMemErr == nil
-			if ascendCardQueriesOK && cdMemBytes > 0 {
-				ascendCardMemUsedBytes = cdMemBytes
-			}
 			for _, c := range containers {
 				for _, cd := range c.ContainerDevices {
 					if device.AliasId != "" && !strings.HasPrefix(cd.UUID, device.AliasId) {
@@ -459,7 +455,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			var taskMemoryUsedErr error
 			if provider == biz.AscendGPUDevice && ascendCardQueriesOK && ascendTotalMemoryOnCard > 0 {
 				ratio := float32(memory) / float32(ascendTotalMemoryOnCard)
-				taskMemoryUsed = ascendCardMemUsedBytes * ratio
+				taskMemoryUsed = ascendCardMemUsedMB * ratio
 			} else {
 				taskMemoryUsed, taskMemoryUsedErr = s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			}
@@ -467,6 +463,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				switch provider {
 				case biz.CambriconGPUDevice:
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
+				case biz.AscendGPUDevice:
+					taskMemoryUsed = taskMemoryUsed * 1024 * 1024
 				case metax.MetaxSGPUDevice:
 					taskMemoryUsed = float32(taskMemoryUsed) * 1024 // KB->Byte
 				default:
