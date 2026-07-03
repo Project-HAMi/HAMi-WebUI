@@ -405,6 +405,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				core = core + cd.Usedcores
 				memory = memory + cd.Usedmem
 				provider = cd.Type
+				if strings.HasPrefix(provider, biz.AscendGPUDevice) {
+					provider = biz.AscendGPUDevice
+				}
 			}
 			if provider == "" || provider == metax.MetaxGPUDevice {
 				continue
