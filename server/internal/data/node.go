@@ -30,6 +30,7 @@ type nodeRepo struct {
 	log        *log.Helper
 	mutex      sync.RWMutex
 	providers  []provider.Provider
+	ready      bool
 }
 
 // NewNodeRepo .
@@ -100,6 +101,16 @@ func (r *nodeRepo) updateLocalNodes() {
 		}
 		r.mutex.Lock()
 		r.nodes = n
+		if !r.ready {
+			r.ready = true
+			r.log.Infof("node data initialized: %d nodes, %d devices", len(n), func() int {
+				count := 0
+				for _, node := range n {
+					count += len(node.Devices)
+				}
+				return count
+			}())
+		}
 		r.mutex.Unlock()
 	}
 }
@@ -116,7 +127,26 @@ func (r *nodeRepo) init() {
 	})
 	stopCh := make(chan struct{})
 	informerFactory.Start(stopCh)
-	informerFactory.WaitForCacheSync(stopCh)
+	synced := informerFactory.WaitForCacheSync(stopCh)
+	syncedOK := true
+	for _, ok := range synced {
+		if !ok {
+			syncedOK = false
+			break
+		}
+	}
+	if syncedOK {
+		r.log.Info("node informer synced successfully")
+	} else {
+		r.log.Warn("node informer failed to sync, data may be incomplete")
+	}
+}
+
+// Ready returns true if the node informer has successfully synced and populated data.
+func (r *nodeRepo) Ready() bool {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	return r.ready
 }
 
 func (r *nodeRepo) onAddNode(obj interface{}) {

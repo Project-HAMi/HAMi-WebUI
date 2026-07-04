@@ -51,6 +51,7 @@ type NodeRepo interface {
 	GetNode(context.Context, string) (*Node, error)
 	ListAllDevices(context.Context) ([]*DeviceInfo, error)
 	FindDeviceByAliasId(string) (*DeviceInfo, error)
+	Ready() bool
 }
 
 type NodeUsecase struct {
@@ -76,4 +77,8 @@ func (uc *NodeUsecase) ListAllDevices(ctx context.Context) ([]*DeviceInfo, error
 
 func (uc *NodeUsecase) FindDeviceByAliasId(aliasId string) (*DeviceInfo, error) {
 	return uc.repo.FindDeviceByAliasId(aliasId)
+}
+
+func (uc *NodeUsecase) Ready() bool {
+	return uc.repo.Ready()
 }

@@ -45,7 +45,13 @@ func uniqueNonEmpty(values []string) []string {
 }
 
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {
-	filters := req.Filters
+	var filters *pb.GetAllContainersReq_Filters
+	if req != nil {
+		filters = req.Filters
+	}
+	if filters == nil {
+		filters = &pb.GetAllContainersReq_Filters{}
+	}
 	containers, err := s.pod.ListAllContainers(ctx)
 	if err != nil {
 		return nil, err

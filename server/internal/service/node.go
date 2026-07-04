@@ -26,16 +26,33 @@ func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.Summa
 	return &NodeService{uc: uc, pod: pod, summary: summary, ms: ms}
 }
 
+// Ready returns true if both node and pod informers have synced.
+func (s *NodeService) Ready() bool {
+	return s.uc.Ready() && s.pod.Ready()
+}
+
 func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*pb.DeviceSummaryReply, error) {
-	filters := req.Filters
+	var filters *pb.GetSummaryReq_Filters
+	if req != nil {
+		filters = req.Filters
+	}
 	var res = &pb.DeviceSummaryReply{}
+	if filters == nil {
+		filters = &pb.GetSummaryReq_Filters{}
+	}
 	t, err := s.summary.GetGPUSummary(ctx, filters.DeviceId, filters.NodeUid, filters.Type)
 	copier.Copy(&res, &t)
 	return res, err
 }
 
 func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (*pb.NodesReply, error) {
-	filters := req.Filters
+	var filters *pb.GetAllNodesReq_Filters
+	if req != nil {
+		filters = req.Filters
+	}
+	if filters == nil {
+		filters = &pb.GetAllNodesReq_Filters{}
+	}
 	nodes, err := s.uc.ListAllNodes(ctx)
 	if err != nil {
 		return nil, err
@@ -88,6 +105,9 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 }
 
 func (s *NodeService) GetNode(ctx context.Context, req *pb.GetNodeReq) (*pb.NodeReply, error) {
+	if req == nil || req.Uid == "" {
+		return &pb.NodeReply{}, nil
+	}
 	node, err := s.uc.GetNode(ctx, req.Uid)
 	if err != nil {
 		return nil, err

@@ -37,6 +37,7 @@ type PodInfo struct {
 type PodRepo interface {
 	ListAll(context.Context) ([]*Container, error)
 	FindOne(context.Context, string, string) (*Container, error)
+	Ready() bool
 }
 
 type PodUseCase struct {
@@ -70,6 +71,10 @@ func (uc *PodUseCase) StatisticsByDeviceId(ctx context.Context, deviceId string)
 
 func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 	return uc.repo.ListAll(ctx)
+}
+
+func (uc *PodUseCase) Ready() bool {
+	return uc.repo.Ready()
 }
 
 func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32) {

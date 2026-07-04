@@ -24,6 +24,7 @@ type podRepo struct {
 	pods      map[k8stypes.UID]*biz.PodInfo
 	mutex     sync.RWMutex
 	log       *log.Helper
+	ready     bool
 }
 
 func NewPodRepo(data *Data, logger log.Logger) biz.PodRepo {
@@ -47,7 +48,29 @@ func (r *podRepo) init() {
 	})
 	stopCh := make(chan struct{})
 	informerFactory.Start(stopCh)
-	informerFactory.WaitForCacheSync(stopCh)
+	synced := informerFactory.WaitForCacheSync(stopCh)
+	syncedOK := true
+	for _, ok := range synced {
+		if !ok {
+			syncedOK = false
+			break
+		}
+	}
+	if syncedOK {
+		r.mutex.Lock()
+		r.ready = true
+		r.mutex.Unlock()
+		r.log.Info("pod informer synced successfully")
+	} else {
+		r.log.Warn("pod informer failed to sync, data may be incomplete")
+	}
+}
+
+// Ready returns true if the pod informer has successfully synced.
+func (r *podRepo) Ready() bool {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+	return r.ready
 }
 
 func (r *podRepo) onAddPod(obj interface{}) {

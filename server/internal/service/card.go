@@ -21,7 +21,13 @@ func NewCardService(node *biz.NodeUsecase, pod *biz.PodUseCase, ms *MonitorServi
 }
 
 func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*pb.GPUsReply, error) {
-	filters := req.Filters
+	var filters *pb.GetAllGpusReq_Filters
+	if req != nil {
+		filters = req.Filters
+	}
+	if filters == nil {
+		filters = &pb.GetAllGpusReq_Filters{}
+	}
 	deviceInfos, err := s.node.ListAllDevices(ctx)
 	if err != nil {
 		return nil, err
@@ -115,7 +121,13 @@ func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq)
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
 	seenTypes := make(map[string]struct{})
 
-	filters := req.Filters
+	var filters *pb.GetAllGpusReq_Filters
+	if req != nil {
+		filters = req.Filters
+	}
+	if filters == nil {
+		filters = &pb.GetAllGpusReq_Filters{}
+	}
 	provider := strings.Trim(filters.Provider, " ")
 	for _, device := range deviceInfos {
 		if provider != "" && provider != device.Provider {
@@ -134,6 +146,9 @@ func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq)
 }
 
 func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPUReply, error) {
+	if req == nil {
+		return &pb.GPUReply{}, nil
+	}
 	devices, err := s.node.ListAllDevices(ctx)
 	if err != nil {
 		return nil, err

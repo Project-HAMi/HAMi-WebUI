@@ -57,10 +57,13 @@ func NewHTTPServer(c *conf.Bootstrap,
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.Handler())
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		// Reaching this handler means the server is listening and the informer
-		// caches have already synced (the backend only starts serving after that).
-		w.WriteHeader(nethttp.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		if node.Ready() {
+			w.WriteHeader(nethttp.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		} else {
+			w.WriteHeader(nethttp.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("not ready"))
+		}
 	})
 	return srv
 }
