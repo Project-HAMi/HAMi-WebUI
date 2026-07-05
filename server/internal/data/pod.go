@@ -139,6 +139,10 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 		if deviceIdx < len(bizContainerDevices) {
 			containerDevices = bizContainerDevices[deviceIdx]
 		}
+		labels := make(map[string]string, len(pod.Labels))
+		for k, v := range pod.Labels {
+			labels[k] = v
+		}
 		c := &biz.Container{
 			Name:             ctr.Name,
 			UUID:             ctrIdMaps[ctr.Name],
@@ -152,7 +156,7 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
-			Labels:           pod.Labels,
+			Labels:           labels,
 		}
 		if len(containerDevices) > 0 {
 			c.Priority = containerDevices[0].Priority

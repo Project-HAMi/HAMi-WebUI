@@ -191,7 +191,7 @@ const baseColumns = computed(() => [
       return (
         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxWidth: '220px' }}>
           {visible.map(([k, v]) => (
-            <t-tag theme="default" variant="light" size="small" style={{ maxWidth: '100px' }}>
+            <t-tag key={k} theme="default" variant="light" size="small" style={{ maxWidth: '100px' }}>
               {k}={v}
             </t-tag>
           ))}
