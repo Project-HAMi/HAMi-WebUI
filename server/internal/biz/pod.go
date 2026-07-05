@@ -22,6 +22,7 @@ type Container struct {
 	Priority         string
 	NodeUID          string
 	Namespace        string
+	Labels           map[string]string
 }
 
 type PodInfo struct {

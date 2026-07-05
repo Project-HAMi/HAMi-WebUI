@@ -274,6 +274,7 @@ export default {
     priority: 'Priority',
     appName: 'App Name',
     createTime: 'Creation Time',
+    labels: 'Labels',
     times: 'x',
     computeUsageTrend: 'GPU Compute Utilization (%)',
     memUsageTrend: 'GPU Memory Utilization (%)',

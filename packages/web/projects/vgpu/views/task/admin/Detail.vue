@@ -93,6 +93,19 @@
               <span class="summary-item-label">{{ $t('task.createTime') }}</span>
               <span class="summary-item-value">{{ basicCreateTime }}</span>
             </div>
+            <div v-if="detail.labels && Object.keys(detail.labels).length" class="summary-item">
+              <span class="summary-item-label">{{ $t('task.labels') }}</span>
+              <span class="summary-item-value">
+                <t-tag
+                  v-for="(v, k) in detail.labels"
+                  :key="k"
+                  theme="default"
+                  variant="light"
+                  size="small"
+                  style="margin: 2px 4px 2px 0"
+                >{{ k }}={{ v }}</t-tag>
+              </span>
+            </div>
           </div>
         </div>
       </div>

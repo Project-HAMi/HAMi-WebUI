@@ -180,6 +180,29 @@ const baseColumns = computed(() => [
     },
   },
   {
+    title: t('task.labels'),
+    dataIndex: 'labels',
+    render: ({ labels }) => {
+      if (!labels || typeof labels !== 'object') return <span>--</span>;
+      const entries = Object.entries(labels);
+      if (entries.length === 0) return <span>--</span>;
+      const visible = entries.slice(0, 2);
+      const remaining = entries.length - 2;
+      return (
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', maxWidth: '220px' }}>
+          {visible.map(([k, v]) => (
+            <t-tag theme="default" variant="light" size="small" style={{ maxWidth: '100px' }}>
+              {k}={v}
+            </t-tag>
+          ))}
+          {remaining > 0 && (
+            <t-tag theme="warning" variant="light" size="small">+{remaining}</t-tag>
+          )}
+        </div>
+      );
+    },
+  },
+  {
     title: t('task.status'),
     dataIndex: 'status',
     render: ({ status }) => {

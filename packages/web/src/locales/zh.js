@@ -271,6 +271,7 @@ export default {
     priority: '优先级',
     appName: '应用名称',
     createTime: '创建时间',
+    labels: '标签',
     times: '倍',
     computeUsageTrend: 'GPU 算力使用率（%）',
     memUsageTrend: 'GPU 显存使用率（%）',

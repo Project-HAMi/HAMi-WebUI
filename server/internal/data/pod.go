@@ -152,6 +152,7 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
+			Labels:           pod.Labels,
 		}
 		if len(containerDevices) > 0 {
 			c.Priority = containerDevices[0].Priority

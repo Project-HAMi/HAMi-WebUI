@@ -67,6 +67,7 @@ message ContainerReply {
   string namespace = 17;
   repeated string device_ids = 18;
   repeated string images = 19;
+  map<string, string> labels = 20;
 }
 
 message ContainersReply {

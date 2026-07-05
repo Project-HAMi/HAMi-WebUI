@@ -81,6 +81,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		containerReply.NodeUid = container.NodeUID
 		containerReply.Namespace = container.Namespace
 		containerReply.Priority = container.Priority
+		containerReply.Labels = container.Labels
 		for _, containerDevice := range container.ContainerDevices {
 			deviceID := containerDevice.UUID
 			if device, err := s.node.FindDeviceByAliasId(containerDevice.UUID); err == nil {
@@ -127,6 +128,7 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	ctrReply.NodeUid = container.NodeUID
 	ctrReply.Namespace = container.Namespace
 	ctrReply.Priority = container.Priority
+	ctrReply.Labels = container.Labels
 	allContainers, err := s.pod.ListAllContainers(ctx)
 	if err == nil {
 		images := make([]string, 0)
