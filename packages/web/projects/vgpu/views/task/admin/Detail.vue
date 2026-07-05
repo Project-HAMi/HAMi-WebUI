@@ -150,23 +150,18 @@
   </block-box>
 
   <trend-time-filter
-    v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC'))"
+    v-if="detail.type"
     v-model="times"
   />
 
   <div class="task-trend-row">
     <block-box v-for="{ title, data } in lineConfigView" :key="title" :title="title">
       <div class="trend-chart">
-        <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
-          <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
-        </template>
-        <template v-else>
-          <VChart
-            :option="getLineOptions({ data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
-            :autoresize="true"
-            class="trend-vchart"
-          />
-        </template>
+        <VChart
+          :option="getLineOptions({ data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
+          :autoresize="true"
+          class="trend-vchart"
+        />
       </div>
     </block-box>
   </div>

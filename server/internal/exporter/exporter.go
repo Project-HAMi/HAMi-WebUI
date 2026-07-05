@@ -399,10 +399,13 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				case biz.HygonGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case metax.MetaxSGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				default:
+			case biz.AscendGPUDevice:
+				used = float64(taskCoreUsed) / 100 * float64(core)
+				util = float64(taskCoreUsed)
+			case metax.MetaxSGPUDevice:
+				used = float64(taskCoreUsed)
+				util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+			default:
 				}
 				cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
 				if err == nil && used != 0 && cardCoreUtil > 95 {
@@ -540,7 +543,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vcore\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
-		return 0, nil
+		query = fmt.Sprintf("avg(npu_chip_info_utilization{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_percent{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
@@ -563,7 +566,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vmemory\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
-		return 0, nil
+		query = fmt.Sprintf("avg(npu_chip_info_hbm_used_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_usage_memory_size{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
 	case metax.MetaxGPUDevice:
