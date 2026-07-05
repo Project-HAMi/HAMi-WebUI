@@ -74,15 +74,16 @@ func TestMetricsGenerator_taskCoreUsed_Ascend(t *testing.T) {
 }
 
 func TestMetricsGenerator_taskMemoryUsed_Ascend(t *testing.T) {
-	gen, cleanup := newTestGenerator(t, testPromHandler(t, "8589934592"))
+	// npu_chip_info_hbm_used_memory returns MB, e.g., 8192 for 8 GB HBM
+	gen, cleanup := newTestGenerator(t, testPromHandler(t, "8192"))
 	defer cleanup()
 
 	result, err := gen.taskMemoryUsed(context.Background(), biz.AscendGPUDevice, "ns", "pod", "ctr", "pod-uuid", "dev-uuid", "host", 0)
 	if err != nil {
 		t.Fatalf("taskMemoryUsed failed: %v", err)
 	}
-	if result != 8589934592 {
-		t.Errorf("expected 8589934592, got %v", result)
+	if result != 8192 {
+		t.Errorf("expected 8192 (MB), got %v", result)
 	}
 }
 

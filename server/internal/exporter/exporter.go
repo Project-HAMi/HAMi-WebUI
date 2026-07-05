@@ -418,6 +418,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			if err == nil {
 				switch provider {
+				case biz.AscendGPUDevice:
+					// npu_chip_info_hbm_used_memory returns MB (10^6 bytes), convert to bytes for downstream /1024/1024 → MiB
+					taskMemoryUsed = float32(float64(taskMemoryUsed) * 1000 * 1000)
 				case biz.CambriconGPUDevice:
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
 				case metax.MetaxSGPUDevice:
