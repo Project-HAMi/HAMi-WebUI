@@ -4,8 +4,13 @@
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
-    <link rel="icon" href="/favicon.svg">
-    <base href="/"/>
+    <!--
+      No hard-coded base-href tag here on purpose. The BFF injects one at request
+      time (see src/app.controller.ts) so the same build serves both the site
+      root and an arbitrary reverse-proxy sub-path. Asset/favicon refs are
+      relative (./…) so they resolve against that injected base.
+    -->
+    <link rel="icon" href="./favicon.svg">
     <title>HAMi</title>
   </head>
   <body>
@@ -14,6 +19,6 @@
     </noscript>
 
     <div id="app"></div>
-    <script type="module" src="/src/entry-vite.js"></script>
+    <script type="module" src="./src/entry-vite.js"></script>
   </body>
 </html>

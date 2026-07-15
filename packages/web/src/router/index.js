@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { pick, uniqBy } from 'lodash';
+import { getBasePath } from '@/utils/base-path';
 /* Layout */
 import Layout from '@/layout';
 /* Router Modules */
@@ -50,7 +51,9 @@ export const asyncRoutes = [
 ];
 
 const router = createRouter({
-  history: createWebHistory(),
+  // Base the HTML5 history on the runtime-injected sub-path so deep-link
+  // refreshes resolve under the prefix (defaults to "/" for root serving).
+  history: createWebHistory(getBasePath()),
   routes: constantRoutes,
 });
 

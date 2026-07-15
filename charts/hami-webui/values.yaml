@@ -49,6 +49,17 @@ securityContext: {}
   # runAsNonRoot: true
 # runAsUser: 1000
 
+# URL sub-path (base path) the WebUI is served under. "/" (default) serves at
+# the site root and preserves the historical behaviour exactly. Set to a prefix
+# such as "/gpu-ui/" to serve the WebUI behind a reverse proxy that passes the
+# full prefixed path through (i.e. does NOT strip it). It is injected into the
+# frontend BFF as the HAMI_WEBUI_BASE_PATH env var and resolved at request time,
+# so changing it does NOT require rebuilding the frontend image. A path-stripping
+# proxy that sets the X-Forwarded-Prefix header works without setting this.
+# If you set a non-root basePath, remember to update ingress.hosts[].paths[].path
+# to the same prefix.
+basePath: "/"
+
 service:
   type: ClusterIP
   port: 3000

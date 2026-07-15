@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
 import i18n from '@/locales';
+import { getBasePath } from '@/utils/base-path';
 
 // Default request timeout in ms. Override at build time via VUE_APP_REQUEST_TIMEOUT
 // (injected through .env.* or chart values.frontend.requestTimeout). 60s is large
@@ -11,8 +12,14 @@ const DEFAULT_REQUEST_TIMEOUT = 60000;
 const requestTimeout =
   Number.parseInt(process.env.VUE_APP_REQUEST_TIMEOUT, 10) || DEFAULT_REQUEST_TIMEOUT;
 
+// API request URLs are root-absolute ("/api/vgpu/..."). Using the runtime base
+// path as the axios baseURL makes them resolve under the sub-path (e.g.
+// "/gpu-ui/api/vgpu/...") without depending on the injected <base> tag. At the
+// site root — and in the Vite dev server, where window.__BASE_PATH__ is not
+// injected — getBasePath() returns "/", giving the historical "/api/vgpu/..."
+// exactly (superseding the build-time VUE_APP_BASE_API).
 const service = axios.create({
-  baseURL: process.env.VUE_APP_BASE_API, // url = base url + request url
+  baseURL: getBasePath(), // url = base url + request url
   timeout: requestTimeout,
   validateStatus: function (status) {
     return (status >= 200 && status < 300) || status > 520;

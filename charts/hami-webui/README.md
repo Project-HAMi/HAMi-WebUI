@@ -47,6 +47,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | Key | Type | Default                                                                            | Description |
 |-----|------|------------------------------------------------------------------------------------|-------------|
 | affinity | object | `{}`                                                                               |  |
+| basePath | string | `"/"`                                                                              | URL sub-path to serve the WebUI under, injected as `HAMI_WEBUI_BASE_PATH`. `"/"` = root (default). Set e.g. `"/gpu-ui/"` for a non-stripping reverse proxy. Resolved at request time (no image rebuild). A path-stripping proxy that sets `X-Forwarded-Prefix` works without this. |
 | dcgm-exporter.enabled | bool | `true`                                                                             |  |
 | dcgm-exporter.nodeSelector.gpu | string | `"on"`                                                                             |  |
 | dcgm-exporter.serviceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
@@ -163,7 +164,46 @@ kube-prometheus-stack:
 ```
 This allows you to reuse the existing Operator and CRDs while deploying a new Prometheus instance.
 
-### 3. About `jobRelease` Labels
+### 3. Serving under a URL sub-path (base path)
+
+By default the WebUI is served at the site root (`/`). To serve it behind a
+reverse-proxy prefix such as `https://host/gpu-ui/` — without rebuilding the
+frontend image — set the base path. It is resolved at **request time**, so the
+same image works at any path.
+
+There are two supported reverse-proxy modes:
+
+**Mode A — path-stripping proxy (recommended, zero chart config).**
+If your proxy strips the prefix before forwarding and sets the
+`X-Forwarded-Prefix` header (nginx `proxy_set_header X-Forwarded-Prefix /gpu-ui;`,
+Traefik `stripPrefix` + headers middleware, etc.), the WebUI picks the prefix up
+from the header automatically. Leave `basePath` at its default `/`.
+
+**Mode B — proxy passes the full prefixed path through (no stripping).**
+Set the chart value so the BFF knows its own prefix:
+
+```yaml
+basePath: "/gpu-ui/"
+# If you also expose it through this chart's ingress, point the path at the same prefix:
+ingress:
+  enabled: true
+  hosts:
+    - host: your-host
+      paths:
+        - path: /gpu-ui
+          pathType: Prefix
+```
+
+`basePath` is injected into the frontend BFF container as the
+`HAMI_WEBUI_BASE_PATH` environment variable. Values are normalized to a
+leading/trailing-slash form (`gpu-ui` → `/gpu-ui/`); `/` (the default) means
+root serving and preserves the historical behaviour exactly. The header (Mode A)
+takes precedence over the env var when both are present.
+
+No changes are needed on the Go API backend — it is always reached via the BFF's
+`/api/vgpu` proxy.
+
+### 4. About `jobRelease` Labels
 
 If deploying a completely new Prometheus, you can leave the default `jobRelease: hami-webui-prometheus` unchanged.
 
