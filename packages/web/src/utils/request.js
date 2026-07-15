@@ -9,10 +9,10 @@ import i18n from '@/locales';
 // against a large VictoriaMetrics cluster) while still bounding hung requests.
 const DEFAULT_REQUEST_TIMEOUT = 60000;
 const requestTimeout =
-  Number.parseInt(process.env.VUE_APP_REQUEST_TIMEOUT, 10) || DEFAULT_REQUEST_TIMEOUT;
+  Number.parseInt(import.meta.env.VITE_APP_REQUEST_TIMEOUT, 10) || Number.parseInt(process.env.VUE_APP_REQUEST_TIMEOUT, 10) || DEFAULT_REQUEST_TIMEOUT;
 
 const service = axios.create({
-  baseURL: process.env.VUE_APP_BASE_API, // url = base url + request url
+  baseURL: import.meta.env.VITE_APP_BASE_API || process.env.VUE_APP_BASE_API, // url = base url + request url
   timeout: requestTimeout,
   validateStatus: function (status) {
     return (status >= 200 && status < 300) || status > 520;
