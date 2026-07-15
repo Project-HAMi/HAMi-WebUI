@@ -24,6 +24,11 @@ export class AppController {
   @Get('*')
   index(@Req() req: Request, @Res() res: Response) {
     const basePath = resolveBasePath(req)
+    // The injected <base href>/window.__BASE_PATH__ depend on X-Forwarded-Prefix,
+    // so the response body varies by that header. Advertise it via Vary so any
+    // CDN/intermediate proxy caches responses per-prefix instead of serving one
+    // prefix's index.html to everyone (cache-poisoning / broken-routing risk).
+    res.setHeader('Vary', 'X-Forwarded-Prefix')
     res.type('html').send(this.renderIndex(basePath))
   }
 
