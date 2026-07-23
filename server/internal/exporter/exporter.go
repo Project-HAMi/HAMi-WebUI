@@ -534,7 +534,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 		//or
 		//last_over_time(hami_container_device_utilization_ratio{device_uuid="%s", namespace="%s", pod="%s", container="%s"}[1m:])`
 		//		query = fmt.Sprintf(queryTemplate, deviceUUID, namespace, pod, container, deviceUUID, namespace, pod, container)
-		queryTemplate := fmt.Sprintf("hami_container_device_utilization_ratio{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"}", deviceUUID, namespace, pod, container)
+		queryTemplate := fmt.Sprintf("hami_container_device_utilization_ratio{device_uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", container=\"%s\"}", deviceUUID, namespace, pod, container)
 		query = fmt.Sprintf("sum_over_time(%s[1m]) == 0 or (sum_over_time(%s[10m:]) / count_over_time(( %s !=0)[10m:])) ", queryTemplate, queryTemplate, queryTemplate)
 		//query = queryTemplate
 	case biz.CambriconGPUDevice:
@@ -559,7 +559,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
-		query = fmt.Sprintf("avg(hami_vgpu_memory_used_bytes{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"})", deviceUUID, namespace, pod, container)
+		query = fmt.Sprintf("avg(hami_vgpu_memory_used_bytes{device_uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", container=\"%s\"})", deviceUUID, namespace, pod, container)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vmemory\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
