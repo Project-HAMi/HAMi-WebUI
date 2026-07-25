@@ -399,13 +399,13 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				case biz.HygonGPUDevice:
 					used = float64(taskCoreUsed)
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-			case biz.AscendGPUDevice:
-				used = float64(taskCoreUsed) / 100 * float64(core)
-				util = float64(taskCoreUsed)
-			case metax.MetaxSGPUDevice:
-				used = float64(taskCoreUsed)
-				util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-			default:
+				case biz.AscendGPUDevice:
+					used = float64(taskCoreUsed) / 100 * float64(core)
+					util = float64(taskCoreUsed)
+				case metax.MetaxSGPUDevice:
+					used = float64(taskCoreUsed)
+					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+				default:
 				}
 				cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
 				if err == nil && used != 0 && cardCoreUtil > 95 {
@@ -419,8 +419,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			if err == nil {
 				switch provider {
 				case biz.AscendGPUDevice:
-					// npu_chip_info_hbm_used_memory returns MB (10^6 bytes), convert to bytes for downstream /1024/1024 → MiB
-					taskMemoryUsed = float32(float64(taskMemoryUsed) * 1000 * 1000)
+					// npu_chip_info_hbm_used_memory returns bytes; downstream /1024/1024 converts to MiB.
+					// No divisor needed — keep as bytes to match device-level semantics.
 				case biz.CambriconGPUDevice:
 					taskMemoryUsed = float32((taskMemoryUsed/100)*float32(memory)) * 1024 * 1024
 				case metax.MetaxSGPUDevice:
@@ -546,6 +546,8 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vcore\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
+		// LIMITATION: npu_chip_info_utilization is device-scoped, not container-scoped.
+		// When multiple tasks share one NPU, each task is attributed the full device utilization.
 		query = fmt.Sprintf("avg(npu_chip_info_utilization{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_percent{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
@@ -569,6 +571,8 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vmemory\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
+		// LIMITATION: npu_chip_info_hbm_used_memory is device-scoped, not container-scoped.
+		// When multiple tasks share one NPU, each task is attributed the full device HBM usage.
 		query = fmt.Sprintf("avg(npu_chip_info_hbm_used_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_usage_memory_size{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)

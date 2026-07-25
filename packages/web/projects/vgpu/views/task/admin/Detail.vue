@@ -157,11 +157,16 @@
   <div class="task-trend-row">
     <block-box v-for="{ title, data } in lineConfigView" :key="title" :title="title">
       <div class="trend-chart">
-        <VChart
-          :option="getLineOptions({ data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
-          :autoresize="true"
-          class="trend-vchart"
-        />
+        <template v-if="data && data.length > 0">
+          <VChart
+            :option="getLineOptions({ data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
+            :autoresize="true"
+            class="trend-vchart"
+          />
+        </template>
+        <template v-else>
+          <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
+        </template>
       </div>
     </block-box>
   </div>
@@ -384,6 +389,9 @@ const fetchLineData = async () => {
       })
       .then((res) => {
         lineConfig.value[index].data = res.data[0]?.values || [];
+      })
+      .catch(() => {
+        lineConfig.value[index].data = [];
       }),
   );
 };
