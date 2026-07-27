@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 	"vgpu/internal/biz"
 
 	"github.com/jinzhu/copier"
@@ -51,22 +52,36 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 	}
 	coreByNode := s.queryNodeGauge(ctx, "avg(sum(hami_core_size) by (node, instance)) by (node)")
 	memByNode := s.queryNodeGauge(ctx, "avg(sum(hami_memory_size) by (node, instance)) by (node)")
+	coreUsageByNode := s.queryNodeGauge(ctx, "avg(hami_core_util_avg) by (node)")
+	memUsageByNode := s.queryNodeGauge(ctx, "avg(sum(hami_memory_used) by (node, instance)) by (node)")
 
 	var res = &pb.NodesReply{List: []*pb.NodeReply{}}
 	for _, node := range nodes {
 		nodeReply := s.buildNodeReply(node, containers)
 
 		if v, ok := coreByNode[node.Name]; ok {
-			nodeReply.CoreTotal = v
+			nodeReply.CoreTotal = int32(v)
 		}
 		if v, ok := memByNode[node.Name]; ok {
-			nodeReply.MemoryTotal = v
+			nodeReply.MemoryTotal = int32(v)
+		}
+		if v, ok := coreUsageByNode[node.Name]; ok {
+			nodeReply.CoreUsage = v
+		}
+		if v, ok := memUsageByNode[node.Name]; ok {
+			nodeReply.MemoryUsage = int32(v)
 		}
 
-		if filters.Ip != "" && filters.Ip != nodeReply.Ip {
-			continue
+		if filters.Keyword != "" {
+			kw := filters.Keyword
+			if !strings.Contains(nodeReply.Ip, kw) && !strings.Contains(nodeReply.Name, kw) {
+				continue
+			}
 		}
 		if filters.Type != "" && !arrutil.InStrings(filters.Type, nodeReply.Type) {
+			continue
+		}
+		if filters.Role != "" && filters.Role != nodeReply.Role {
 			continue
 		}
 
@@ -109,6 +124,7 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 		Name:                    node.Name,
 		Uid:                     node.Uid,
 		Ip:                      node.IP,
+		Role:                    node.Role,
 		IsSchedulable:           node.IsSchedulable,
 		IsReady:                 node.IsReady,
 		OsImage:                 node.OSImage,
@@ -141,8 +157,8 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 // queryNodeGauge runs a single instant query whose result is grouped by the
 // "node" label and returns value-by-node, batching what used to be two PromQL
 // per node into one round-trip.
-func (s *NodeService) queryNodeGauge(ctx context.Context, query string) map[string]int32 {
-	out := map[string]int32{}
+func (s *NodeService) queryNodeGauge(ctx context.Context, query string) map[string]float32 {
+	out := map[string]float32{}
 	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
 	if err != nil {
 		return out
@@ -152,7 +168,7 @@ func (s *NodeService) queryNodeGauge(ctx context.Context, query string) map[stri
 		if node == "" {
 			continue
 		}
-		out[node] = int32(sample.Value)
+		out[node] = sample.Value
 	}
 	return out
 }

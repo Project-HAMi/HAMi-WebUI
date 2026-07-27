@@ -22,6 +22,8 @@ type Container struct {
 	Priority         string
 	NodeUID          string
 	Namespace        string
+	CpuLimit         float64
+	MemoryLimit      int64
 }
 
 type PodInfo struct {

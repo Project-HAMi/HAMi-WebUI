@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
@@ -35,12 +36,13 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		return nil, err
 	}
 
-	// Pull hami_core_size / hami_memory_size for ALL devices in two queries keyed
-	// by device_uuid, instead of two PromQL per device. The old per-device fanout
-	// meant ~2*N serial instant queries against Prometheus / VictoriaMetrics
-	// (300+ at large scale), which made the card list spin for several seconds.
+	// Pull size/usage gauges for ALL devices in a few queries keyed by
+	// device_uuid, instead of per-device PromQL fanout.
 	coreSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_core_size) by (device_uuid)", "device_uuid")
 	memSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_memory_size) by (device_uuid)", "device_uuid")
+	coreUsageByUUID := s.queryGaugeByLabel(ctx, "avg(hami_core_util_avg) by (device_uuid)", "device_uuid")
+	memUsageByUUID := s.queryGaugeByLabel(ctx, "avg(hami_memory_used) by (device_uuid)", "device_uuid")
+	nodeIPByName := s.nodeIPByName(ctx)
 
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
 	for _, device := range deviceInfos {
@@ -57,8 +59,14 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		if deviceUid != "" && deviceUid != device.Id {
 			continue
 		}
+		if want, err := strconv.ParseBool(strings.TrimSpace(filters.Health)); err == nil {
+			if want != device.Health {
+				continue
+			}
+		}
 		gpu.Uuid = device.Id
 		gpu.NodeName = device.NodeName
+		gpu.NodeIp = nodeIPByName[device.NodeName]
 		gpu.Type = device.Type
 		gpu.VgpuTotal = device.Count
 		gpu.CoreTotal = device.Devcore
@@ -73,10 +81,16 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.MemoryUsed = memory
 
 		if v, ok := coreSizeByUUID[device.Id]; ok {
-			gpu.CoreTotal = v
+			gpu.CoreTotal = int32(v)
 		}
 		if v, ok := memSizeByUUID[device.Id]; ok {
-			gpu.MemoryTotal = v
+			gpu.MemoryTotal = int32(v)
+		}
+		if v, ok := coreUsageByUUID[device.Id]; ok {
+			gpu.CoreUsage = v
+		}
+		if v, ok := memUsageByUUID[device.Id]; ok {
+			gpu.MemoryUsage = int32(v)
 		}
 		res.List = append(res.List, gpu)
 	}
@@ -90,8 +104,8 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 // queryGaugeByLabel runs a single instant query and returns the result values
 // keyed by the given label, so callers can batch what used to be per-entity
 // lookups into one round-trip to Prometheus / VictoriaMetrics.
-func (s *CardService) queryGaugeByLabel(ctx context.Context, query, label string) map[string]int32 {
-	out := map[string]int32{}
+func (s *CardService) queryGaugeByLabel(ctx context.Context, query, label string) map[string]float32 {
+	out := map[string]float32{}
 	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
 	if err != nil {
 		return out
@@ -101,7 +115,7 @@ func (s *CardService) queryGaugeByLabel(ctx context.Context, query, label string
 		if key == "" {
 			continue
 		}
-		out[key] = int32(sample.Value)
+		out[key] = sample.Value
 	}
 	return out
 }
@@ -153,6 +167,9 @@ func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPURep
 		gpu.NodeUid = device.NodeUid
 		gpu.Health = device.Health
 		gpu.Mode = device.Mode
+		if node, err := s.node.GetNode(ctx, device.NodeUid); err == nil {
+			gpu.NodeIp = node.IP
+		}
 
 		vGPU, core, memory, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
 		if err == nil {
@@ -163,4 +180,18 @@ func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPURep
 		return gpu, nil
 	}
 	return gpu, nil
+}
+
+func (s *CardService) nodeIPByName(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	nodes, err := s.node.ListAllNodes(ctx)
+	if err != nil {
+		return out
+	}
+	for _, node := range nodes {
+		if node != nil && node.Name != "" && node.IP != "" {
+			out[node.Name] = node.IP
+		}
+	}
+	return out
 }

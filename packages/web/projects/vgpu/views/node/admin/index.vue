@@ -21,16 +21,16 @@
             @change="applyFilters"
           />
           <t-select
-            v-model="filters.type"
+            v-model="filters.role"
             clearable
             :placeholder="$t('node.allTypes')"
-            :options="cardTypeOptions"
+            :options="roleOptions"
             @change="applyFilters"
           />
           <t-input
-            v-model="filters.ip"
+            v-model="filters.keyword"
             clearable
-            :placeholder="$t('node.searchIP')"
+            :placeholder="$t('node.searchNameOrIP')"
             @enter="applyFilters"
             @blur="applyFilters"
           >
@@ -55,11 +55,10 @@
 
 <script setup lang="jsx">
 import nodeApi from '~/vgpu/api/node';
-import cardApi from '~/vgpu/api/card';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
-import { roundToDecimal, getResourceColor } from '@/utils';
+import { getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
 import request from '@/utils/request';
 import { SearchIcon } from 'tdesign-icons-vue-next';
@@ -76,30 +75,19 @@ const tableLoading = ref(false);
 const allNodeMap = ref(new Map());
 const filters = reactive({
   isSchedulable: undefined,
-  type: undefined,
-  ip: '',
+  role: undefined,
+  keyword: '',
 });
-const rawCardTypes = ref([]);
 const statusOptions = computed(() => [
   { label: t('node.allStatus'), value: undefined },
   { label: t('node.normal'), value: 'true' },
   { label: t('node.abnormal'), value: 'false' },
 ]);
-const cardTypeOptions = computed(() => [
+const roleOptions = computed(() => [
   { label: t('node.allTypes'), value: undefined },
-  ...rawCardTypes.value.map((type) => ({ label: type, value: type })),
+  { label: t('node.controlPlane'), value: 'control-plane' },
+  { label: t('node.workerNode'), value: 'worker' },
 ]);
-
-const fetchCardTypeOptions = async () => {
-  try {
-    const { list = [] } = await request(cardApi.getCardType());
-    rawCardTypes.value = list
-      .map((item) => item?.type)
-      .filter(Boolean);
-  } catch {
-    rawCardTypes.value = [];
-  }
-};
 
 const handleClick = (params) => {
   const name = params.data.name;
@@ -137,12 +125,58 @@ const getNodeStatusDisplay = ({ isSchedulable, isExternal }) => {
   return { icon: 'status-unschedulable', text: t('node.abnormal') };
 };
 
+const getNodeRoleText = (role) => {
+  if (role === 'control-plane') return t('node.controlPlane');
+  if (role === 'worker') return t('node.workerNode');
+  return t('node.unknown');
+};
+
+const renderPercentPair = ({ allocPercent, usagePercent }) => {
+  const clamp = (v) => Math.max(0, Math.min(100, v));
+  const formatPercent = (v) => {
+    const n = Number.isFinite(v) ? v : 0;
+    return n.toFixed(2);
+  };
+  const allocRaw = Number.isFinite(allocPercent) ? allocPercent : 0;
+  const usageRaw = Number.isFinite(usagePercent) ? usagePercent : 0;
+  const allocProgress = clamp(allocRaw);
+  const usageProgress = clamp(usageRaw);
+  return (
+    <span class="node-resource-pair">
+      <span class="node-resource-item">
+        <t-progress
+          class="node-admin-circle-progress"
+          theme="circle"
+          size={24}
+          strokeWidth={3}
+          percentage={Number(formatPercent(allocProgress))}
+          color={getResourceColor(allocProgress)}
+          label={false}
+        />
+        <span>{formatPercent(allocRaw)}%</span>
+      </span>
+      <span class="node-resource-item">
+        <t-progress
+          class="node-admin-circle-progress"
+          theme="circle"
+          size={24}
+          strokeWidth={3}
+          percentage={Number(formatPercent(usageProgress))}
+          color={getResourceColor(usageProgress)}
+          label={false}
+        />
+        <span>{formatPercent(usageRaw)}%</span>
+      </span>
+    </span>
+  );
+};
+
 const baseColumns = computed(() => [
   {
     title: t('node.name'),
     minWidth: 200,
     dataIndex: 'name',
-    render: ({ uid, name }) => {
+    render: ({ uid, name, role }) => {
       const to = `/admin/vgpu/node/admin/${uid}?nodeName=${name}`;
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
@@ -151,6 +185,10 @@ const baseColumns = computed(() => [
           </span>
           <span class="vgpu-table-name-text-wrap">
             <text-plus text={name} to={to} />
+            <span class="node-role-text">
+              {t('node.nodeRolePrefix')}
+              {getNodeRoleText(role)}
+            </span>
           </span>
         </span>
       );
@@ -176,55 +214,27 @@ const baseColumns = computed(() => [
     dataIndex: 'ip',
   },
   {
-    title: t('node.computeAllocTotal'),
+    title: `${t('node.computeAllocTotal')}/${t('node.computeUsage')}`,
     key: 'node-compute-allocation',
     minWidth: 280,
-    dataIndex: 'used',
-    render: ({ coreTotal, coreUsed, isExternal }) => {
+    dataIndex: 'coreUsed',
+    render: ({ coreTotal, coreUsed, coreUsage, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
-      const rawPercent = (Number(coreUsed || 0) / Number(coreTotal)) * 100;
-      const percentForProgress = Math.max(0, Math.min(100, rawPercent));
-      const color = getResourceColor(percentForProgress);
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <t-progress
-            class="node-admin-circle-progress"
-            theme="circle"
-            size={24}
-            strokeWidth={3}
-            percentage={roundToDecimal(percentForProgress, 2)}
-            color={color}
-            label={false}
-          />
-          <span>{roundToDecimal(rawPercent, 2)}%</span>
-        </span>
-      );
+      const allocPercent = (Number(coreUsed || 0) / Number(coreTotal)) * 100;
+      const usagePercent = Number(coreUsage || 0);
+      return renderPercentPair({ allocPercent, usagePercent });
     },
   },
   {
-    title: t('node.memoryAllocTotal'),
+    title: `${t('node.memoryAllocTotal')}/${t('node.memoryUsage')}`,
     key: 'node-memory-allocation',
     minWidth: 280,
-    dataIndex: 'used',
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
+    dataIndex: 'memoryUsed',
+    render: ({ memoryTotal, memoryUsed, memoryUsage, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;
-      const rawPercent = (Number(memoryUsed || 0) / Number(memoryTotal)) * 100;
-      const percentForProgress = Math.max(0, Math.min(100, rawPercent));
-      const color = getResourceColor(percentForProgress);
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <t-progress
-            class="node-admin-circle-progress"
-            theme="circle"
-            size={24}
-            strokeWidth={3}
-            percentage={roundToDecimal(percentForProgress, 2)}
-            color={color}
-            label={false}
-          />
-          <span>{roundToDecimal(rawPercent, 2)}%</span>
-        </span>
-      );
+      const allocPercent = (Number(memoryUsed || 0) / Number(memoryTotal)) * 100;
+      const usagePercent = (Number(memoryUsage || 0) / Number(memoryTotal)) * 100;
+      return renderPercentPair({ allocPercent, usagePercent });
     },
   },
 ]);
@@ -236,8 +246,8 @@ const fetchTableData = async () => {
     const payload = {
       filters: {
         ...(filters.isSchedulable ? { isSchedulable: filters.isSchedulable } : {}),
-        ...(filters.type ? { type: filters.type } : {}),
-        ...(getTrimValue(filters.ip) ? { ip: getTrimValue(filters.ip) } : {}),
+        ...(filters.role ? { role: filters.role } : {}),
+        ...(getTrimValue(filters.keyword) ? { keyword: getTrimValue(filters.keyword) } : {}),
       },
     };
     const { list = [] } = await request(nodeApi.getNodeList(payload));
@@ -267,7 +277,6 @@ watch(
 );
 
 onMounted(() => {
-  fetchCardTypeOptions();
   fetchAllNodeMap();
 });
 </script>
@@ -306,5 +315,29 @@ onMounted(() => {
 
 :deep(.vgpu-table-name-text-wrap) {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+:deep(.node-role-text) {
+  color: var(--td-text-color-secondary, #8b8b8b);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+}
+
+:deep(.node-resource-pair) {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+}
+
+:deep(.node-resource-item) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

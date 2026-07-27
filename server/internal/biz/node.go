@@ -12,6 +12,7 @@ type Node struct {
 	IsSchedulable           bool
 	IsReady                 bool
 	Uid                     string
+	Role                    string
 	OSImage                 string
 	OperatingSystem         string
 	KernelVersion           string

@@ -359,6 +359,12 @@ const getNodeStatusDisplay = ({ isSchedulable, isExternal }) => {
 
 const toDisplayText = (value) => (value === '' || value === undefined || value === null ? '--' : value);
 
+const getNodeRoleText = (role) => {
+  if (role === 'control-plane') return t('node.controlPlane');
+  if (role === 'worker') return t('node.workerNode');
+  return t('node.unknown');
+};
+
 const detailColumns = computed(() => [
   {
     label: t('node.detail.nodeIpAddress'),
@@ -366,11 +372,9 @@ const detailColumns = computed(() => [
     render: ({ ip }) => <span>{ip || '--'}</span>,
   },
   {
-    label: t('node.detail.nodeUuid'),
-    value: 'uid',
-    render: ({ uid }) => (
-      <ellipsis-text text={uid || '--'} mode="middle" tooltip="always" />
-    ),
+    label: t('node.detail.nodeRole'),
+    value: 'role',
+    render: ({ role }) => <span>{getNodeRoleText(role)}</span>,
   },
   {
     label: t('node.detail.osVersion'),
@@ -442,7 +446,7 @@ onMounted(async () => {
 .node-overview-panel {
   flex: 1 1 48%;
   min-width: 0;
-  padding: 12px 16px 16px;
+  padding: 14px 18px 20px;
   border: 1px solid #e4ebf1;
   border-radius: 12px;
   background: #fff;
@@ -452,8 +456,9 @@ onMounted(async () => {
   color: #1d2b3a;
   font-size: 16px;
   font-weight: 500;
-  line-height: 28px;
-  margin-bottom: 8px;
+  height: 32px;
+  line-height: 32px;
+  margin-bottom: 0;
 }
 
 .node-detail {
@@ -467,7 +472,7 @@ onMounted(async () => {
 
   .node-detail-info-summary {
     width: 100%;
-    margin-top: 8px;
+    margin-top: 10px;
 
     &-cols {
       display: flex;
@@ -479,7 +484,7 @@ onMounted(async () => {
   .summary-col {
     flex: 1;
     min-width: 0;
-    padding: 8px 12px;
+    padding: 10px 14px;
     border-radius: 8px;
     background: rgb(0 0 0 / 2%);
   }
@@ -487,9 +492,9 @@ onMounted(async () => {
   .summary-item {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
     min-width: 0;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 
     &:last-child {
       margin-bottom: 0;
@@ -500,7 +505,7 @@ onMounted(async () => {
     color: #939ea9;
     font-size: 12px;
     font-weight: 400;
-    line-height: 16px;
+    line-height: 18px;
 
     &::after {
       content: ': ';
@@ -511,7 +516,7 @@ onMounted(async () => {
     color: #1d2b3a;
     font-size: 14px;
     font-weight: 500;
-    line-height: 20px;
+    line-height: 22px;
     min-width: 0;
 
     :deep(.ellipsis-text) {

@@ -146,6 +146,7 @@ func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
 	}
 	n.Uid = string(node.UID)
 	n.Name = node.Name
+	n.Role = resolveNodeRole(node.Labels)
 	n.OSImage = node.Status.NodeInfo.OSImage
 	n.OperatingSystem = strings.ToUpper(node.Status.NodeInfo.OperatingSystem[:1]) + strings.ToLower(node.Status.NodeInfo.OperatingSystem[1:])
 	n.KernelVersion = node.Status.NodeInfo.KernelVersion
@@ -155,6 +156,22 @@ func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
 	n.Architecture = strings.ToUpper(node.Status.NodeInfo.Architecture)
 	n.CreationTimestamp = node.CreationTimestamp.Format("2006-01-02 15:04:05")
 	return n
+}
+
+func resolveNodeRole(labels map[string]string) string {
+	if labels == nil {
+		return "worker"
+	}
+	controlPlaneKeys := []string{
+		"node-role.kubernetes.io/control-plane",
+		"node-role.kubernetes.io/master",
+	}
+	for _, key := range controlPlaneKeys {
+		if _, ok := labels[key]; ok {
+			return "control-plane"
+		}
+	}
+	return "worker"
 }
 
 func (r *nodeRepo) ListAll(context.Context) ([]*biz.Node, error) {

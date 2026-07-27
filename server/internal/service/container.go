@@ -81,10 +81,14 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		containerReply.NodeUid = container.NodeUID
 		containerReply.Namespace = container.Namespace
 		containerReply.Priority = container.Priority
+		containerReply.CpuLimit = container.CpuLimit
+		containerReply.MemoryLimit = container.MemoryLimit
 		for _, containerDevice := range container.ContainerDevices {
 			deviceID := containerDevice.UUID
+			deviceType := ""
 			if device, err := s.node.FindDeviceByAliasId(containerDevice.UUID); err == nil {
 				deviceID = device.Id
+				deviceType = device.Type
 			}
 
 			if deviceID == "" {
@@ -98,7 +102,9 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 			containerReply.DeviceIds = append(containerReply.DeviceIds, deviceID)
 			containerReply.AllocatedCores = containerReply.AllocatedCores + containerDevice.Usedcores
 			containerReply.AllocatedMem = containerReply.AllocatedMem + containerDevice.Usedmem
-			containerReply.Type = containerDevice.Type
+			if deviceType != "" {
+				containerReply.Type = deviceType
+			}
 			containerReply.AllocatedDevices++
 		}
 		if containerReply.DeviceIds == nil {
@@ -127,6 +133,8 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	ctrReply.NodeUid = container.NodeUID
 	ctrReply.Namespace = container.Namespace
 	ctrReply.Priority = container.Priority
+	ctrReply.CpuLimit = container.CpuLimit
+	ctrReply.MemoryLimit = container.MemoryLimit
 	allContainers, err := s.pod.ListAllContainers(ctx)
 	if err == nil {
 		images := make([]string, 0)
@@ -148,10 +156,12 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 			ctrReply.DeviceIds = append(ctrReply.DeviceIds, containerDevice.UUID)
 		} else {
 			ctrReply.DeviceIds = append(ctrReply.DeviceIds, device.Id)
+			if device.Type != "" {
+				ctrReply.Type = device.Type
+			}
 		}
 		ctrReply.AllocatedCores = ctrReply.AllocatedCores + containerDevice.Usedcores
 		ctrReply.AllocatedMem = ctrReply.AllocatedMem + containerDevice.Usedmem
-		ctrReply.Type = containerDevice.Type
 		ctrReply.AllocatedDevices++
 	}
 	ctrReply.CreateTime = container.CreateTime.Format(time.RFC3339)

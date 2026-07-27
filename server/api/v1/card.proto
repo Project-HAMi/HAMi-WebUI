@@ -48,6 +48,7 @@ message GetAllGpusReq {
     string type = 2;
     string node_name = 3;
     string provider = 4;
+    string health = 5;
   }
   Filters filters = 1;
 }
@@ -65,6 +66,9 @@ message GPUReply {
   string node_uid = 10;
   bool health = 11;
   string mode = 12;
+  string node_ip = 13;
+  float core_usage = 14;
+  int32 memory_usage = 15;
 }
 
 message GPUsReply {

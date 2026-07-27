@@ -27,6 +27,13 @@
             @change="onTypeChange"
           />
           <t-select
+            v-model="filters.health"
+            clearable
+            :placeholder="$t('card.allStatus')"
+            :options="statusOptions"
+            @change="applyFilters"
+          />
+          <t-select
             v-model="filters.nodeName"
             clearable
             :placeholder="$t('card.allNodes')"
@@ -103,9 +110,15 @@ const filters = reactive({
   uid: '',
   nodeName: props.filters?.nodeName,
   type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
+  health: undefined,
 });
 const rawNodes = ref([]);
 const rawCardTypes = ref([]);
+const statusOptions = computed(() => [
+  { label: t('card.allStatus'), value: undefined },
+  { label: t('card.normal'), value: 'true' },
+  { label: t('card.abnormal'), value: 'false' },
+]);
 const nodeOptions = computed(() => {
   // When a card type is selected, only offer nodes that actually carry that type.
   const nodes = filters.type
@@ -188,11 +201,49 @@ const getRemainingTotalText = ({ total, used, unit = '', divisor = 1 }) => {
   };
 };
 
+const renderPercentPair = ({ allocPercent, usagePercent }) => {
+  const clamp = (v) => Math.max(0, Math.min(100, v));
+  const formatPercent = (v) => {
+    const n = Number.isFinite(v) ? v : 0;
+    return n.toFixed(2);
+  };
+  const allocRaw = Number.isFinite(allocPercent) ? allocPercent : 0;
+  const usageRaw = Number.isFinite(usagePercent) ? usagePercent : 0;
+  const allocProgress = clamp(allocRaw);
+  const usageProgress = clamp(usageRaw);
+  return (
+    <span class="card-resource-pair">
+      <span class="card-resource-item">
+        <t-progress
+          theme="circle"
+          size={24}
+          strokeWidth={3}
+          percentage={Number(formatPercent(allocProgress))}
+          color={getResourceColor(allocProgress)}
+          label={false}
+        />
+        <span>{formatPercent(allocRaw)}%</span>
+      </span>
+      <span class="card-resource-item">
+        <t-progress
+          theme="circle"
+          size={24}
+          strokeWidth={3}
+          percentage={Number(formatPercent(usageProgress))}
+          color={getResourceColor(usageProgress)}
+          label={false}
+        />
+        <span>{formatPercent(usageRaw)}%</span>
+      </span>
+    </span>
+  );
+};
+
 const baseColumns = computed(() => [
   {
     title: t('card.uuid'),
     dataIndex: 'uuid',
-    width: 250,
+    width: 220,
     hideTooltip: true,
     render: ({ uuid, type }) => {
       const to = `/admin/vgpu/card/admin/${uuid}`;
@@ -215,7 +266,7 @@ const baseColumns = computed(() => [
   {
     title: t('task.status'),
     dataIndex: 'health',
-    width: 150,
+    width: 110,
     render: ({ health, isExternal }) => {
       const { icon, text } = getCardStatusDisplay({ health, isExternal });
       return (
@@ -229,17 +280,20 @@ const baseColumns = computed(() => [
   {
     title: t('card.node'),
     dataIndex: 'nodeName',
-    width: 200,
+    width: 160,
     hideTooltip: true,
-    render: ({ nodeName }) => (
-      <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
+    render: ({ nodeName, nodeIp }) => (
+      <span class="card-node-cell">
+        <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
+        <span class="card-node-ip">{nodeIp || '--'}</span>
+      </span>
     ),
   },
   {
     title: t('card.computeRemainingTotal'),
     key: 'card-compute-remaining-total',
     dataIndex: 'used',
-    width: 220,
+    width: 170,
     render: ({ coreTotal, coreUsed, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
       const stats = getRemainingTotalText({ total: coreTotal, used: coreUsed, divisor: 100 });
@@ -255,37 +309,22 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: t('card.computeAllocTotal'),
+    title: `${t('card.computeAllocTotal')}/${t('card.computeUsage')}`,
     key: 'card-compute-allocation',
-    dataIndex: 'used',
-    width: 180,
-    render: ({ coreTotal, coreUsed, isExternal }) => {
+    dataIndex: 'coreUsed',
+    width: 210,
+    render: ({ coreTotal, coreUsed, coreUsage, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
-      const percent = Math.max(
-        0,
-        Math.min(100, (Number(coreUsed || 0) / Number(coreTotal)) * 100),
-      );
-      const color = getResourceColor(percent);
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <t-progress
-            theme="circle"
-            size={24}
-            strokeWidth={3}
-            percentage={roundToDecimal(percent, 2)}
-            color={color}
-            label={false}
-          />
-          <span>{roundToDecimal(percent, 2)}%</span>
-        </span>
-      );
+      const allocPercent = (Number(coreUsed || 0) / Number(coreTotal)) * 100;
+      const usagePercent = Number(coreUsage || 0);
+      return renderPercentPair({ allocPercent, usagePercent });
     },
   },
   {
     title: t('card.memoryRemainingTotal'),
     key: 'card-memory-remaining-total',
     dataIndex: 'used',
-    width: 220,
+    width: 170,
     render: ({ memoryTotal, memoryUsed, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;
       const stats = getRemainingTotalText({
@@ -305,30 +344,15 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: t('card.memoryAllocTotal'),
+    title: `${t('card.memoryAllocTotal')}/${t('card.memoryUsage')}`,
     key: 'card-memory-allocation',
-    dataIndex: 'w',
-    width: 180,
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
+    dataIndex: 'memoryUsed',
+    width: 210,
+    render: ({ memoryTotal, memoryUsed, memoryUsage, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;
-      const percent = Math.max(
-        0,
-        Math.min(100, (Number(memoryUsed || 0) / Number(memoryTotal)) * 100),
-      );
-      const color = getResourceColor(percent);
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <t-progress
-            theme="circle"
-            size={24}
-            strokeWidth={3}
-            percentage={roundToDecimal(percent, 2)}
-            color={color}
-            label={false}
-          />
-          <span>{roundToDecimal(percent, 2)}%</span>
-        </span>
-      );
+      const allocPercent = (Number(memoryUsed || 0) / Number(memoryTotal)) * 100;
+      const usagePercent = (Number(memoryUsage || 0) / Number(memoryTotal)) * 100;
+      return renderPercentPair({ allocPercent, usagePercent });
     },
   },
 ]);
@@ -402,6 +426,7 @@ const fetchTableData = async () => {
         ...(getTrimValue(filters.uid) ? { uid: getTrimValue(filters.uid) } : {}),
         ...(nodeName ? { nodeName } : {}),
         ...(filters.type ? { type: filters.type } : {}),
+        ...(filters.health ? { health: filters.health } : {}),
       },
     };
     const { list = [] } = await request(cardApi.getCardList(payload));
@@ -522,6 +547,33 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+:deep(.card-node-cell) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+:deep(.card-node-ip) {
+  color: #939ea9;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+:deep(.card-resource-pair) {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+:deep(.card-resource-item) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 :deep(.card-id-cell-name) {

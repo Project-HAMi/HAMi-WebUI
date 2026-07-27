@@ -153,6 +153,12 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
 		}
+		if cpuQty, ok := ctr.Resources.Limits[corev1.ResourceCPU]; ok {
+			c.CpuLimit = cpuQty.AsApproximateFloat64()
+		}
+		if memQty, ok := ctr.Resources.Limits[corev1.ResourceMemory]; ok {
+			c.MemoryLimit = memQty.Value()
+		}
 		if len(containerDevices) > 0 {
 			c.Priority = containerDevices[0].Priority
 		}

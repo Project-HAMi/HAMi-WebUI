@@ -86,7 +86,7 @@ import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import { roundToDecimal, timeParse } from '@/utils';
 import request from '@/utils/request';
-import { SearchIcon, HelpCircleIcon } from 'tdesign-icons-vue-next';
+import { SearchIcon, HelpCircleIcon, InfoCircleIcon } from 'tdesign-icons-vue-next';
 import { reactive, ref, computed, onMounted, watch } from 'vue';
 import Top from './top.vue';
 import { useI18n } from 'vue-i18n';
@@ -220,7 +220,7 @@ const baseColumns = computed(() => [
               content={t('task.checkCloudPlatform')}
               overlay-inner-style={{ maxWidth: '180px' }}
             >
-              <help-circle-icon style={{ color: '#939EA9', fontSize: '14px', cursor: 'pointer' }} />
+              <HelpCircleIcon style={{ color: '#939EA9', fontSize: '14px', cursor: 'pointer' }} />
             </t-popup>
           )}
         </span>
@@ -249,6 +249,54 @@ const baseColumns = computed(() => [
             <span class="task-gpu-cell-segment">{cores}</span>
             <span class="task-gpu-cell-segment">{memoryGiB}</span>
           </span>
+        </div>
+      );
+    },
+  },
+  {
+    title: t('task.computeConfig'),
+    dataIndex: 'computeConfig',
+    hideTooltip: true,
+    render: ({ type, images, cpuLimit, memoryLimit }) => {
+      const gpuModel = type || '--';
+      const imageList = Array.isArray(images)
+        ? images.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean)
+        : [];
+      const imageText = imageList.length ? imageList.join(', ') : '--';
+      const cpuText = Number.isFinite(Number(cpuLimit)) && Number(cpuLimit) > 0
+        ? `${Number(cpuLimit)} Core`
+        : '--';
+      const memBytes = Number(memoryLimit);
+      const memoryText = Number.isFinite(memBytes) && memBytes > 0
+        ? `${(memBytes / 1024 / 1024 / 1024).toFixed(1)} GiB`
+        : '--';
+      const rows = [
+        { label: t('task.gpuModel'), value: gpuModel },
+        { label: t('task.image'), value: imageText },
+        { label: t('task.cpu'), value: cpuText },
+        { label: t('task.memory'), value: memoryText },
+      ];
+      return (
+        <div class="task-compute-config-cell">
+          <span class="task-compute-config-model">{gpuModel}</span>
+          <t-popup trigger="hover" placement="top" show-arrow>
+            {{
+              content: () => (
+                <section class="task-compute-config-tooltip">
+                  <p class="task-compute-config-tooltip-title">{t('task.computeConfigInfo')}：</p>
+                  {rows.map((row) => (
+                    <div class="task-compute-config-tooltip-row" key={row.label}>
+                      <label class="task-compute-config-tooltip-label">{row.label}</label>
+                      <span class="task-compute-config-tooltip-value">{row.value}</span>
+                    </div>
+                  ))}
+                </section>
+              ),
+              default: () => (
+                <InfoCircleIcon class="task-compute-config-info" />
+              ),
+            }}
+          </t-popup>
         </div>
       );
     },
@@ -412,4 +460,62 @@ watch(
   border-left: 1px solid #d5dee7;
 }
 
+:deep(.task-compute-config-cell) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #324558;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+:deep(.task-compute-config-model) {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.task-compute-config-info) {
+  color: #939ea9;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+</style>
+
+<style lang="scss">
+.task-compute-config-tooltip {
+  padding: 16px 12px;
+  width: 360px;
+
+  .task-compute-config-tooltip-title {
+    margin: 0 0 4px;
+    color: #1d2b3a;
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .task-compute-config-tooltip-row {
+    display: flex;
+    border-bottom: 1px solid #e4ebf1;
+    padding: 6px 0;
+  }
+
+  .task-compute-config-tooltip-label {
+    flex-basis: 104px;
+    color: #939ea9;
+    font-size: 14px;
+    font-weight: 400;
+  }
+
+  .task-compute-config-tooltip-value {
+    flex: 1;
+    color: #324558;
+    font-size: 14px;
+    font-weight: 400;
+    word-break: break-all;
+  }
+}
 </style>

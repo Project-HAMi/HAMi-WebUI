@@ -60,9 +60,10 @@ message DeviceSummaryReply {
 
 message GetAllNodesReq {
   message Filters {
-    string ip = 1;
+    string keyword = 1;
     string type = 2;
     string is_schedulable = 3;
+    string role = 4;
   }
   Filters filters = 1;
 }
@@ -93,6 +94,9 @@ message NodeReply {
   string kube_proxy_version = 19;
   string architecture = 20;
   string creation_timestamp = 21;
+  string role = 22;
+  float core_usage = 23;
+  int32 memory_usage = 24;
 }
 
 message NodesReply {
