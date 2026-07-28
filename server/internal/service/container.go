@@ -44,6 +44,15 @@ func uniqueNonEmpty(values []string) []string {
 	return result
 }
 
+// matchesWorkloadName keeps the task-list search aligned with the UI, which
+// displays the workload/Pod name rather than the internal container name.
+func matchesWorkloadName(podName, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	return strings.Contains(podName, filter)
+}
+
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {
 	filters := req.Filters
 	containers, err := s.pod.ListAllContainers(ctx)
@@ -52,7 +61,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 	}
 	var res = &pb.ContainersReply{Items: []*pb.ContainerReply{}}
 	for _, container := range containers {
-		if filters.Name != "" && !strings.Contains(container.Name, filters.Name) {
+		if !matchesWorkloadName(container.PodName, filters.Name) {
 			continue
 		}
 		if filters.NodeName != "" && filters.NodeName != container.NodeName {
