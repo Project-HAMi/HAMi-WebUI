@@ -79,7 +79,7 @@ func (r *nodeRepo) updateLocalNodes() {
 					continue
 				}
 				for _, device := range devices {
-					n[node.UID].Devices = append(bizNode.Devices, &biz.DeviceInfo{
+					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
 						Index:    int(device.Index),
 						Id:       device.ID,
 						AliasId:  device.AliasId,
