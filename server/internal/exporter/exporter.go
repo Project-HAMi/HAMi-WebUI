@@ -428,28 +428,35 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			if taskCoreUsedErr == nil {
 				used := float64(0)
 				util := float64(0)
-				switch provider {
-				case biz.NvidiaGPUDevice:
+				isProportionalSplit := provider == biz.AscendGPUDevice && ascendCardQueriesOK && ascendTotalMemoryOnCard > 0
+				if isProportionalSplit {
+					// 比例拆分：used/util 都是 ratio×cardUtil，不除以 core
 					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case biz.CambriconGPUDevice:
-					used = float64(taskCoreUsed) / 100 * float64(core)
-					util = float64(taskCoreUsed)
-				case biz.AscendGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case biz.HygonGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case metax.MetaxSGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				default:
-				}
-				cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
-				if err == nil && used != 0 && cardCoreUtil > 95 {
-					used = float64(cardCoreUtil) / 100 * float64(core)
-					util = float64(cardCoreUtil)
+					util = roundToOneDecimal(float64(taskCoreUsed))
+				} else {
+					switch provider {
+					case biz.NvidiaGPUDevice:
+						used = float64(taskCoreUsed)
+						util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+					case biz.CambriconGPUDevice:
+						used = float64(taskCoreUsed) / 100 * float64(core)
+						util = float64(taskCoreUsed)
+					case biz.AscendGPUDevice:
+						used = float64(taskCoreUsed)
+						util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+					case biz.HygonGPUDevice:
+						used = float64(taskCoreUsed)
+						util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+					case metax.MetaxSGPUDevice:
+						used = float64(taskCoreUsed)
+						util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
+					default:
+					}
+					cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
+					if err == nil && used != 0 && cardCoreUtil > 95 {
+						used = float64(cardCoreUtil) / 100 * float64(core)
+						util = float64(cardCoreUtil)
+					}
 				}
 				s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 				s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
