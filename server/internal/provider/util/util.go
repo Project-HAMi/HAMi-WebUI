@@ -330,13 +330,13 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 				if i >= podContainerCount(pod) {
 					break
 				}
+				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
+					continue
+				}
 				cd, err := DecodeNpuContainerDevices(s)
 				if err != nil {
 					return PodDevices{}, nil
-				}
-				if len(cd) == 0 {
-					pd[devType] = append(pd[devType], ContainerDevices{})
-					continue
 				}
 				pd[devType] = append(pd[devType], cd)
 			}
