@@ -325,17 +325,21 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 		}
 		pd[devType] = make(PodSingleDevice, 0)
 		switch devType {
-		case AscendGPUDevice, Ascend310PGPUDevice:
-			for _, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				cd, err := DecodeNpuContainerDevices(s)
-				if err != nil {
-					return PodDevices{}, nil
-				}
-				if len(cd) == 0 {
-					continue
-				}
-				pd[devType] = append(pd[devType], cd)
-			}
+                case AscendGPUDevice, Ascend310PGPUDevice:
+                        for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+                                if i >= podContainerCount(pod) {
+                                        break
+                                }
+                                if s == "" {
+                                        pd[devType] = append(pd[devType], ContainerDevices{})
+                                        continue
+                                }
+                                cd, err := DecodeNpuContainerDevices(s)
+                                if err != nil {
+                                        return PodDevices{}, nil
+                                }
+                                pd[devType] = append(pd[devType], cd)
+                        }
 		case CambriconGPUDevice:
 			instance := annos[DsmluProfileAndInstance]
 			cd, err := DecodeMLUContainerDevices(fmt.Sprintf("%s_%s", str, instance), nodeName)

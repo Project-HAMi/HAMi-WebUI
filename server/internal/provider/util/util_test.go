@@ -401,3 +401,38 @@ func TestDecodePodDevicesWithInitContainers(t *testing.T) {
 		t.Fatalf("unexpected priority: %s", nvidiaDevices[1][0].Priority)
 	}
 }
+
+func TestDecodePodDevicesAscendMultiContainer(t *testing.T) {
+	SupportDevices["Ascend"] = "hami.io/ascend-devices-allocated"
+	logger := log.NewHelper(log.DefaultLogger)
+	pod := &corev1.Pod{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "container-0"},
+				{Name: "container-1"},
+			},
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"hami.io/ascend-devices-allocated": ";Ascend910B-0,Ascend910B,32768,100:;",
+			},
+		},
+	}
+	got, err := DecodePodDevices(pod, logger)
+	if err != nil {
+		t.Fatalf("DecodePodDevices() error = %v", err)
+	}
+	ascendDevices, ok := got["Ascend"]
+	if !ok {
+		t.Fatal("expected Ascend devices")
+	}
+	if len(ascendDevices) != 2 {
+		t.Fatalf("expected 2 container slots, got %d", len(ascendDevices))
+	}
+	if len(ascendDevices[0]) != 0 {
+		t.Fatalf("expected empty container-0 devices, got %+v", ascendDevices[0])
+	}
+	if len(ascendDevices[1]) != 1 {
+		t.Fatalf("expected 1 device on container-1, got %+v", ascendDevices[1])
+	}
+}
