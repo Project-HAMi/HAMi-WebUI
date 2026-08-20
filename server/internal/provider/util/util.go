@@ -368,9 +368,9 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 				if err != nil {
 					return PodDevices{}, nil
 				}
-				if len(cd) == 0 {
-					continue
-				}
+				// Keep empty container positions. The annotation is indexed by
+				// init containers followed by regular containers, and fetchContainerInfo
+				// uses that same index to attach devices to the right container.
 				pd[devType] = append(pd[devType], cd)
 			}
 		case CambriconGPUDevice:

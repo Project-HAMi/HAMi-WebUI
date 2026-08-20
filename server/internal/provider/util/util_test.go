@@ -401,3 +401,36 @@ func TestDecodePodDevicesWithInitContainers(t *testing.T) {
 		t.Fatalf("unexpected priority: %s", nvidiaDevices[1][0].Priority)
 	}
 }
+
+func TestDecodePodDevicesPreservesAscendContainerPositions(t *testing.T) {
+	const deviceKey = "hami.io/Ascend910B4-devices-allocated"
+	const uuid = "C416F664-0100A346-17955433-808080E0-104301E3"
+
+	SupportDevices["Ascend910B4"] = deviceKey
+	t.Cleanup(func() { delete(SupportDevices, "Ascend910B4") })
+
+	pod := &corev1.Pod{
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "modelcar-init"}},
+			Containers:     []corev1.Container{{Name: "kserve-container"}, {Name: "modelcar"}},
+		},
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			deviceKey: ";" + uuid + ",Ascend910B4,32768,0:;;",
+		}},
+	}
+
+	got, err := DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
+	if err != nil {
+		t.Fatalf("DecodePodDevices() error = %v", err)
+	}
+	devices := got["Ascend910B4"]
+	if len(devices) != 4 {
+		t.Fatalf("Ascend container positions = %d, want 4", len(devices))
+	}
+	if len(devices[0]) != 0 || len(devices[2]) != 0 || len(devices[3]) != 0 {
+		t.Fatalf("empty container positions were not preserved: %#v", devices)
+	}
+	if len(devices[1]) != 1 || devices[1][0].UUID != uuid {
+		t.Fatalf("device position = %#v, want UUID %q at index 1", devices[1], uuid)
+	}
+}

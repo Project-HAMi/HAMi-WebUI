@@ -65,8 +65,8 @@ func TestDecodePodDevicesAscend910B4(t *testing.T) {
 	if !ok {
 		t.Fatalf("pod devices missing Ascend910B4 key, got %v", pd)
 	}
-	if len(devs) != 2 {
-		t.Fatalf("expected 2 container device sets, got %d", len(devs))
+	if len(devs) != 3 {
+		t.Fatalf("expected 3 container positions, got %d", len(devs))
 	}
 	full := devs[0][0]
 	if full.UUID != "Ascend910B4-0" || full.Type != "Ascend910B4" || full.Usedmem != 32768 || full.Usedcores != 100 {
@@ -75,5 +75,8 @@ func TestDecodePodDevicesAscend910B4(t *testing.T) {
 	slice := devs[1][0]
 	if slice.Usedmem != 8192 || slice.Usedcores != 25 {
 		t.Errorf("vNPU template 8192 should map to 25 cores, got %+v", slice)
+	}
+	if len(devs[2]) != 0 {
+		t.Errorf("trailing empty container position was not preserved: %+v", devs[2])
 	}
 }
