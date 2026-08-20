@@ -14,6 +14,7 @@ import (
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
+	putil "vgpu/internal/provider/util"
 	"vgpu/internal/service"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -375,7 +376,10 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				vGPU = vGPU + 1
 				core = core + cd.Usedcores
 				memory = memory + cd.Usedmem
-				provider = cd.Type
+				// Ascend container devices carry the chip commonWord (e.g.
+				// "Ascend910B4") as their type; provider dispatch below needs
+				// the vendor constant.
+				provider = putil.VendorOf(cd.Type)
 			}
 			if provider == "" || provider == metax.MetaxGPUDevice {
 				continue

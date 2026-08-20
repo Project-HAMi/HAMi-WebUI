@@ -31,6 +31,17 @@ const (
 	NVIDIAPriority = "nvidia.com/priority"
 )
 
+// VendorOf maps a device type string to the vendor constant used for provider
+// dispatch. Ascend device types carry the HAMi commonWord of the chip variant
+// (e.g. "Ascend910B4", "Ascend310P"), so anything with the Ascend prefix is
+// one vendor; every other type string already is its vendor constant.
+func VendorOf(devType string) string {
+	if strings.HasPrefix(devType, AscendGPUDevice) {
+		return AscendGPUDevice
+	}
+	return devType
+}
+
 type ascendDeviceConfig struct {
 	Usedmem   int32
 	Usedcores int32
@@ -45,8 +56,34 @@ var (
 func init() {
 	InRequestDevices = make(map[string]string)
 	SupportDevices = make(map[string]string)
+	// Per-variant vNPU templates from HAMi's device config (charts/hami
+	// device-configmap vnpus[].templates); Usedcores = template aiCore as a
+	// percentage of the chip's aiCore.
 	ascendDeviceConfigs = map[string]map[int32]ascendDeviceConfig{
+		"Ascend910A": {
+			2184:  {Usedmem: 2184, Usedcores: 7},
+			4369:  {Usedmem: 4369, Usedcores: 13},
+			8738:  {Usedmem: 8738, Usedcores: 27},
+			17476: {Usedmem: 17476, Usedcores: 53},
+		},
 		"Ascend910B": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+		},
+		"Ascend910B2": {
+			8192:  {Usedmem: 8192, Usedcores: 13},
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+		},
+		"Ascend910B3": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+		},
+		"Ascend910B4": {
+			8192:  {Usedmem: 8192, Usedcores: 25},
+			16384: {Usedmem: 16384, Usedcores: 50},
+		},
+		"Ascend910B4-1": {
 			16384: {Usedmem: 16384, Usedcores: 25},
 			32768: {Usedmem: 32768, Usedcores: 50},
 		},
@@ -324,7 +361,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 			continue
 		}
 		pd[devType] = make(PodSingleDevice, 0)
-		switch devType {
+		switch VendorOf(devType) {
 		case AscendGPUDevice, Ascend310PGPUDevice:
 			for _, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
 				cd, err := DecodeNpuContainerDevices(s)
