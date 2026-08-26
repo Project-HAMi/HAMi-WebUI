@@ -162,7 +162,9 @@ const baseColumns = computed(() => [
     hideTooltip: true,
     render: ({ name, appName, podUid, namespace, namespaceName }) => {
       const to = `/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`;
-      const workloadName = appName || name || '--';
+      const workloadName = [appName, name]
+        .filter((value, index, values) => value && values.indexOf(value) === index)
+        .join(' / ') || '--';
       const workloadNamespace = namespace || namespaceName || '--';
       return (
         <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '10px' }}>
