@@ -36,6 +36,7 @@ var ascendCommonWords = []string{
 	"Ascend910B3",
 	"Ascend910B4",
 	"Ascend910B4-1",
+	"Ascend910C",
 }
 
 func init() {

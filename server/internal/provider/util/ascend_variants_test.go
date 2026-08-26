@@ -30,6 +30,7 @@ func TestVendorOf(t *testing.T) {
 		"Ascend910B":    AscendGPUDevice,
 		"Ascend910B4":   AscendGPUDevice,
 		"Ascend910B4-1": AscendGPUDevice,
+		"Ascend910C":    AscendGPUDevice,
 		NvidiaGPUDevice: NvidiaGPUDevice,
 		HygonGPUDevice:  HygonGPUDevice,
 		MetaxGPUDevice:  MetaxGPUDevice,
@@ -75,6 +76,43 @@ func TestDecodePodDevicesAscend910B4(t *testing.T) {
 	slice := devs[1][0]
 	if slice.Usedmem != 8192 || slice.Usedcores != 25 {
 		t.Errorf("vNPU template 8192 should map to 25 cores, got %+v", slice)
+	}
+	if len(devs[2]) != 0 {
+		t.Errorf("trailing empty container position was not preserved: %+v", devs[2])
+	}
+}
+
+func TestDecodePodDevicesAscend910C(t *testing.T) {
+	SupportDevices["Ascend910C"] = "hami.io/Ascend910C-devices-allocated"
+	defer delete(SupportDevices, "Ascend910C")
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				"hami.io/Ascend910C-devices-allocated": "Ascend910C-0,Ascend910C,16384,0:;Ascend910C-1,Ascend910C,32768,0:;",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "c0"}, {Name: "c1"}},
+		},
+	}
+
+	pd, err := DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
+	if err != nil {
+		t.Fatalf("DecodePodDevices: %v", err)
+	}
+	devs, ok := pd["Ascend910C"]
+	if !ok {
+		t.Fatalf("pod devices missing Ascend910C key, got %v", pd)
+	}
+	if len(devs) != 3 {
+		t.Fatalf("expected 3 container positions, got %d", len(devs))
+	}
+	if devs[0][0].Usedmem != 16384 || devs[0][0].Usedcores != 25 {
+		t.Errorf("910C 16G template decoded wrong: %+v", devs[0][0])
+	}
+	if devs[1][0].Usedmem != 32768 || devs[1][0].Usedcores != 50 {
+		t.Errorf("910C 32G template decoded wrong: %+v", devs[1][0])
 	}
 	if len(devs[2]) != 0 {
 		t.Errorf("trailing empty container position was not preserved: %+v", devs[2])

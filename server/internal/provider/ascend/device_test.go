@@ -30,6 +30,7 @@ func TestAscendVariantRegistration(t *testing.T) {
 		"hami.io/node-register-Ascend910B3",
 		"hami.io/node-register-Ascend910B4",
 		"hami.io/node-register-Ascend910B4-1",
+		"hami.io/node-register-Ascend910C",
 	}
 	got := map[string]bool{}
 	for _, a := range AscendNodeRegisterAnnos {

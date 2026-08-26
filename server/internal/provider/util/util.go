@@ -87,6 +87,10 @@ func init() {
 			16384: {Usedmem: 16384, Usedcores: 25},
 			32768: {Usedmem: 32768, Usedcores: 50},
 		},
+		"Ascend910C": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+		},
 		"Ascend310P": {
 			3072:  {Usedmem: 3072, Usedcores: 13},
 			6144:  {Usedmem: 6144, Usedcores: 25},
