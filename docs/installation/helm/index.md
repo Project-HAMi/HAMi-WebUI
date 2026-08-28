@@ -59,6 +59,33 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
 
    You should get the expected both 'hami-webui' and 'hami-webui-dcgm-exporter' in running state if installation is successful.
 
+### Prometheus scrape labels
+
+HAMi's vgpu-monitor exposes workload identity as `namespace`, `pod`, and
+`container`. When Prometheus adds scrape-target labels with the same names and
+source labels are not honored, it renames the workload labels to `exported_*`.
+HAMi-WebUI's queries then return no series, and task utilization is reported as
+`0`.
+
+The included ServiceMonitor sets `hamiServiceMonitor.honorLabels: true`. If an
+external Prometheus discovers this ServiceMonitor, no additional scrape job is
+needed. For a separately managed scrape, set `honorLabels: true` on its
+ServiceMonitor or use the equivalent raw Prometheus setting:
+
+```yaml
+scrape_configs:
+  - job_name: hami-device-plugin-monitor
+    honor_labels: true
+    # ...
+```
+
+`Prometheus.spec.overrideHonorLabels: true` forces
+`honorLabels` off for every ServiceMonitor, including this one.
+
+If the same Prometheus selects both this chart's ServiceMonitor and HAMi's
+built-in device-plugin ServiceMonitor (`prometheus.enabled` in the HAMi chart),
+the endpoint is scraped twice. Configure that Prometheus to select only one.
+
 ### Access HAMi-WebUI
 
 1. Configure ~/.kube/config in your localhost to be able to connect your cluster.

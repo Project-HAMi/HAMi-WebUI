@@ -114,7 +114,9 @@ serviceMonitor:
 hamiServiceMonitor:
   enabled: true
   interval: 15s
-  honorLabels: false
+  # Preserve HAMi's namespace/pod/container workload labels when they collide
+  # with Prometheus scrape-target labels; required by the WebUI queries.
+  honorLabels: true
   additionalLabels:
     jobRelease: hami-webui-prometheus
   svcNamespace: kube-system
