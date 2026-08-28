@@ -44,6 +44,16 @@ func uniqueNonEmpty(values []string) []string {
 	return result
 }
 
+// matchesWorkloadName searches both names shown in the task-list row. A Pod
+// can contain several containers, so neither name should be hidden from the
+// user-facing filter.
+func matchesWorkloadName(podName, containerName, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	return strings.Contains(podName, filter) || strings.Contains(containerName, filter)
+}
+
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {
 	filters := req.Filters
 	containers, err := s.pod.ListAllContainers(ctx)
@@ -52,7 +62,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 	}
 	var res = &pb.ContainersReply{Items: []*pb.ContainerReply{}}
 	for _, container := range containers {
-		if filters.Name != "" && !strings.Contains(container.Name, filters.Name) {
+		if !matchesWorkloadName(container.PodName, container.Name, filters.Name) {
 			continue
 		}
 		if filters.NodeName != "" && filters.NodeName != container.NodeName {
