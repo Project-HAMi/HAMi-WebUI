@@ -3,6 +3,7 @@ CMD_PATH ?= ./cmd/
 BUILD_PATH ?= ./build/
 VERSION ?= $(shell git describe --tags --always)
 DIRS = $(shell ls $(CMD_PATH))
+WIRE_DIRS = $(patsubst $(CMD_PATH)%/wire.go,%,$(wildcard $(CMD_PATH)*/wire.go))
 TARGET_ARCH ?= amd64
 WIRE_VERSION ?= v0.7.0
 PROTOC_GEN_VALIDATE_VERSION ?= v1.0.4
@@ -33,7 +34,7 @@ generate-proto:
 
 .PHONY: generate-wire
 generate-wire:
-	@ for dir in $(DIRS); \
+	@ for dir in $(WIRE_DIRS); \
 	do \
 		cd ${CMD_PATH}$$dir/ && wire . && cd ../../; \
 	done
