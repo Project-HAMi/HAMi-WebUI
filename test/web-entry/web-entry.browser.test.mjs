@@ -170,6 +170,25 @@ async function loadAllowedFrame(parentURL, expectedFrameURL, { checkAPI = false 
   )
   await frame.waitForSelector('#app')
   await frame.waitForFunction(() => document.querySelector('#app')?.childElementCount > 0)
+  const svgSprite = await frame.evaluate(() => {
+    const root = document.getElementById('__svg__icons__dom__')
+    const symbolIDs = Array.from(
+      root?.querySelectorAll('symbol') ?? [],
+      (symbol) => symbol.id
+    )
+    return {
+      present: Boolean(root),
+      symbolCount: symbolIDs.length,
+      uniqueSymbolCount: new Set(symbolIDs).size
+    }
+  })
+  assert.equal(svgSprite.present, true, 'SVG sprite root was not registered')
+  assert.ok(svgSprite.symbolCount > 0, 'SVG sprite contains no symbols')
+  assert.equal(
+    svgSprite.uniqueSymbolCount,
+    svgSprite.symbolCount,
+    'SVG sprite contains duplicate symbol IDs'
+  )
   assert.equal(await frame.evaluate(() => new URL(document.baseURI).pathname), basePath)
   if (checkAPI) {
     await waitUntil(() => apiRequests.length > 0, 'SPA did not issue a base-prefixed API request')
