@@ -36,4 +36,7 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
+# Keep dependency archives out of source checkouts, but allow the packaged
+# chart artifacts that this branch serves as a Helm repository.
 *.tgz
+!hami-webui-*.tgz
