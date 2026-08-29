@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,6 +25,8 @@ const (
 	defaultBackendURL     = "http://127.0.0.1:8000"
 	defaultStaticDir      = "/apps/public"
 	defaultProxyTimeout   = "65s"
+	defaultBasePath       = "/"
+	defaultFrameAncestors = "null"
 	defaultHealthcheckURL = "http://127.0.0.1:3000/health_check"
 	healthcheckTimeout    = 3 * time.Second
 	shutdownTimeout       = 10 * time.Second
@@ -34,6 +37,8 @@ type options struct {
 	backendURL     string
 	staticDir      string
 	proxyTimeout   string
+	basePath       string
+	frameAncestors string
 	healthcheck    bool
 	healthcheckURL string
 }
@@ -52,6 +57,10 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	}
 	if config.healthcheck {
 		return performHealthcheck(config.healthcheckURL)
+	}
+	frameAncestors, err := parseFrameAncestorsJSON(config.frameAncestors)
+	if err != nil {
+		return errors.New("configuration error: frame ancestors must be null or a JSON array of allowed sources")
 	}
 
 	proxyTimeout, err := time.ParseDuration(config.proxyTimeout)
@@ -85,11 +94,13 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errors.New("configuration error: backend proxy is invalid")
 	}
 	handler, err := webentry.NewHandler(webentry.HandlerConfig{
-		StaticFS:   os.DirFS(config.staticDir),
-		APIHandler: proxy,
+		StaticFS:       os.DirFS(config.staticDir),
+		APIHandler:     proxy,
+		BasePath:       config.basePath,
+		FrameAncestors: frameAncestors,
 	})
 	if err != nil {
-		return errors.New("configuration error: static directory does not contain a usable SPA")
+		return errors.New("configuration error: Web-entry routing or SPA configuration is invalid")
 	}
 
 	listener, err := net.Listen("tcp", config.listenAddress)
@@ -122,6 +133,8 @@ func parseOptions(args []string, lookupEnv func(string) (string, bool)) (options
 	flags.StringVar(&config.backendURL, "backend-url", envOrDefault(lookupEnv, "HAMI_WEBUI_BACKEND_URL", defaultBackendURL), "backend base URL")
 	flags.StringVar(&config.staticDir, "static-dir", envOrDefault(lookupEnv, "HAMI_WEBUI_STATIC_DIR", defaultStaticDir), "SPA static directory")
 	flags.StringVar(&config.proxyTimeout, "proxy-timeout", envOrDefault(lookupEnv, "HAMI_WEBUI_PROXY_TIMEOUT", defaultProxyTimeout), "backend request timeout")
+	flags.StringVar(&config.basePath, "base-path", envOrDefault(lookupEnv, "HAMI_WEBUI_BASE_PATH", defaultBasePath), "external URL base path")
+	flags.StringVar(&config.frameAncestors, "frame-ancestors-json", envOrDefault(lookupEnv, "HAMI_WEBUI_FRAME_ANCESTORS_JSON", defaultFrameAncestors), "JSON array of allowed iframe ancestors, [] to deny all, or null to omit")
 	flags.BoolVar(&config.healthcheck, "healthcheck", false, "check the running Web entry and exit")
 	flags.StringVar(&config.healthcheckURL, "healthcheck-url", envOrDefault(lookupEnv, "HAMI_WEBUI_HEALTHCHECK_URL", defaultHealthcheckURL), "health-check URL")
 	if err := flags.Parse(args); err != nil {
@@ -131,6 +144,14 @@ func parseOptions(args []string, lookupEnv func(string) (string, bool)) (options
 		return options{}, errors.New("unexpected positional arguments")
 	}
 	return config, nil
+}
+
+func parseFrameAncestorsJSON(raw string) ([]string, error) {
+	var sources []string
+	if err := json.Unmarshal([]byte(raw), &sources); err != nil {
+		return nil, errors.New("invalid frame-ancestors JSON")
+	}
+	return sources, nil
 }
 
 func envOrDefault(lookupEnv func(string) (string, bool), key, fallback string) string {

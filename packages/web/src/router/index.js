@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { pick, uniqBy } from 'lodash';
+import { getBasePath } from '@/utils/base-path.mjs';
 /* Layout */
 import Layout from '@/layout';
 /* Router Modules */
@@ -50,7 +51,7 @@ export const asyncRoutes = [
 ];
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(getBasePath()),
   routes: constantRoutes,
 });
 

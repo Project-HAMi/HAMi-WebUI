@@ -9,14 +9,22 @@ export function launchWebEntry({
   backendURL,
   staticDir = path.join(cwd, 'public'),
   proxyTimeout = '150ms',
+  basePath,
+  frameAncestors,
   binary = path.join(cwd, 'server', 'build', 'web-entry')
 }) {
-  return spawn(binary, [
+  const args = [
     `--listen-address=${listenAddress}`,
     `--backend-url=${backendURL}`,
     `--static-dir=${staticDir}`,
     `--proxy-timeout=${proxyTimeout}`
-  ], {
+  ]
+  if (basePath !== undefined) args.push(`--base-path=${basePath}`)
+  if (frameAncestors !== undefined) {
+    args.push(`--frame-ancestors-json=${JSON.stringify(frameAncestors)}`)
+  }
+
+  return spawn(binary, args, {
     cwd,
     env: { TZ: 'UTC' },
     stdio: ['ignore', 'pipe', 'pipe']

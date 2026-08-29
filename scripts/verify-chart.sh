@@ -124,6 +124,11 @@ if [[ "$(grep -c 'path: /health_check' <<<"${tag_render}")" -ne 2 ]]; then
   exit 1
 fi
 grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${tag_render}" | grep -Fq 'value: "65s"'
+grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${tag_render}" | grep -Fq 'value: "/"'
+if grep -Fq 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${tag_render}"; then
+  echo "Default framing policy must preserve the Chart 1.x no-header behavior" >&2
+  exit 1
+fi
 
 proxy_timeout_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'frontend.proxyTimeout=125s')"
@@ -138,11 +143,74 @@ if [[ "$(grep -c 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_env_render
 fi
 grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_env_render}" | grep -Fq 'value: 75s'
 
+base_path_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'frontend.basePath=/gpu-ui/')"
+grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_render}" | grep -Fq 'value: "/gpu-ui/"'
+
+if helm template test "${work_dir}/hami-webui" \
+  --set-json 'frontend.basePath=123' >/dev/null 2>&1; then
+  echo "Non-string frontend.basePath was accepted" >&2
+  exit 1
+fi
+
+base_path_env_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'frontend.basePath=/ignored/' \
+  --set-string 'env.frontend[0].name=HAMI_WEBUI_BASE_PATH' \
+  --set-string 'env.frontend[0].value=/from-env/')"
+if [[ "$(grep -c 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_env_render}")" -ne 1 ]]; then
+  echo "Explicit frontend base-path environment override was duplicated" >&2
+  exit 1
+fi
+grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_env_render}" | grep -Fq 'value: /from-env/'
+
+frame_none_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-json 'frontend.frameAncestors=[]')"
+grep -A1 -F 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_none_render}" | grep -Fq 'value: "[]"'
+
+frame_allow_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-json "frontend.frameAncestors=[\"'self'\",\"https://portal.example.com\"]")"
+grep -A1 -F 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_allow_render}" | \
+  grep -Fq 'value: "[\"'"'"'self'"'"'\",\"https://portal.example.com\"]"'
+
+# Helm upgrades with --reuse-values can reuse Chart 1.x values that do not
+# contain the frontend map. Missing configuration preserves the compatible
+# no-header behavior; it is distinct from an explicitly invalid scalar.
+legacy_frontend_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-json 'frontend=null')"
+if grep -Fq 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${legacy_frontend_render}"; then
+  echo "Missing frontend.frameAncestors unexpectedly emitted an environment variable" >&2
+  exit 1
+fi
+
+frame_env_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-json 'frontend.frameAncestors=[]' \
+  --set-string 'env.frontend[0].name=HAMI_WEBUI_FRAME_ANCESTORS_JSON' \
+  --set-string 'env.frontend[0].value=["https://portal.internal"]')"
+if [[ "$(grep -c 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_env_render}")" -ne 1 ]]; then
+  echo "Explicit frontend frame-ancestors environment override was duplicated" >&2
+  exit 1
+fi
+
+if helm template test "${work_dir}/hami-webui" \
+  --set-string 'frontend.frameAncestors=https://portal.example.com' >/dev/null 2>&1; then
+  echo "Non-list frontend.frameAncestors was accepted" >&2
+  exit 1
+fi
+if helm template test "${work_dir}/hami-webui" \
+  --set-json 'frontend.frameAncestors=[123]' >/dev/null 2>&1; then
+  echo "Non-string frontend.frameAncestors entry was accepted" >&2
+  exit 1
+fi
+
 for empty_frontend_env in '[]' 'null'; do
   empty_frontend_env_render="$(helm template test "${work_dir}/hami-webui" \
     --set-json "env.frontend=${empty_frontend_env}")"
   if [[ "$(grep -c 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${empty_frontend_env_render}")" -ne 1 ]]; then
     echo "Empty frontend env value did not render exactly one proxy-timeout variable" >&2
+    exit 1
+  fi
+  if [[ "$(grep -c 'name: HAMI_WEBUI_BASE_PATH' <<<"${empty_frontend_env_render}")" -ne 1 ]]; then
+    echo "Empty frontend env value did not render exactly one base-path variable" >&2
     exit 1
   fi
 done

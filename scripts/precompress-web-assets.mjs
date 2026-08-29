@@ -8,7 +8,6 @@ const repositoryRoot = path.resolve(import.meta.dirname, '..')
 const outputDirectory = path.join(repositoryRoot, 'public')
 const compressibleExtensions = new Set([
   '.css',
-  '.html',
   '.js',
   '.json',
   '.svg'
@@ -24,7 +23,7 @@ async function listFiles(directory) {
 }
 
 const files = (await listFiles(outputDirectory)).filter((file) =>
-  compressibleExtensions.has(path.extname(file))
+  compressibleExtensions.has(path.extname(file)) && !file.endsWith('.gz')
 )
 
 await Promise.all(files.map(async(file) => {

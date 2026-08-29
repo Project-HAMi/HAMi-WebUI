@@ -82,6 +82,10 @@ jobs:
         run: mkdir -p build && GOTOOLCHAIN=local go build -mod=readonly -trimpath -o build/web-entry ./cmd/web-entry
       - name: Test Web-entry contract
         run: pnpm run test:web-entry-contract
+      - name: Install Chromium for Web-entry browser tests
+        run: pnpm exec playwright install --with-deps --only-shell chromium
+      - name: Test base-path and iframe browser contract
+        run: pnpm run test:web-entry-browser
       - name: Test web
         run: pnpm --filter hami-webui-web run test:metrics
       - name: Test BFF
@@ -102,11 +106,8 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      # The package `lint` script auto-fixes (`--fix`) and `--require`s a
-      # structured-clone polyfill that is not committed to the repo; run ESLint
-      # directly in check mode (the supported Node runtime has structuredClone).
       - name: Lint BFF
-        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts" "test/web-entry/**/*.mjs" "scripts/precompress-web-assets.mjs"
+        run: pnpm run lint
       - name: Lint web
         run: pnpm --filter hami-webui-web run lint
 

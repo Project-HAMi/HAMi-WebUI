@@ -180,6 +180,14 @@ externalPrometheus:
 # Web-entry runtime settings and health probes. The probes report the frontend
 # container's own health; backend readiness is gated separately below.
 frontend:
+  # Public URL prefix served by the official Go Web entry. Keep the Ingress
+  # path identical and do not configure the proxy to strip this prefix.
+  basePath: "/"
+  # Framing policy for whole-SPA embedding. null preserves the Chart 1.x
+  # behavior (no application framing header), [] blocks every parent, and a
+  # non-empty list allows only the listed origins. The first release accepts
+  # only "'self'" and exact http(s) origins.
+  frameAncestors: null
   # Keep this longer than backend.http.timeout so the backend owns normal API
   # deadline responses. The previous Node frontend safely ignores this value.
   proxyTimeout: "65s"

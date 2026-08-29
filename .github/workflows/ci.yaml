@@ -118,6 +118,34 @@ jobs:
           docker stop --time 5 "${container}" >/dev/null
           [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container}")" == "0" ]]
 
+          docker rm "${container}" >/dev/null
+          container="${container}-base-path"
+          docker run --detach \
+            --platform '${{ matrix.platform }}' \
+            --name "${container}" \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --env 'HAMI_WEBUI_BASE_PATH=/gpu-ui/' \
+            --env "HAMI_WEBUI_FRAME_ANCESTORS_JSON=[\"'self'\",\"https://portal.example.com\"]" \
+            --publish 127.0.0.1::3000 \
+            "${image}"
+
+          port="$(docker port "${container}" 3000/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n 1)"
+          for _ in {1..30}; do
+            if "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/health_check" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/gpu-ui/" | grep -Fq '<base data-hami-webui-base href="/gpu-ui/">'
+          "${curl_local[@]}" --silent --show-error --head "http://127.0.0.1:${port}/gpu-ui/" | tr -d '\r' | \
+            grep -Fq "Content-Security-Policy: frame-ancestors 'self' https://portal.example.com"
+          [[ "$("${curl_local[@]}" --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/")" == "404" ]]
+
+          docker stop --time 5 "${container}" >/dev/null
+          [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container}")" == "0" ]]
+
   pr-images-required:
     name: pr-images-required
     if: github.event_name == 'pull_request' && always()

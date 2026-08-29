@@ -16,6 +16,7 @@ HAMi-WebUI is built upon the [HAMi](https://github.com/Project-HAMi/HAMi) open-s
 ## Get started
 
 - [Installation guide](docs/installation/helm/index.md)
+- [URL prefix and platform embedding](docs/installation/embedding.md)
 
 ## Contributing
 

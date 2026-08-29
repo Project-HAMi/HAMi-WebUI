@@ -1,5 +1,5 @@
 <template>
-  <a class="navbar__brand" href="/zh/">
+  <router-link class="navbar__brand" to="/">
     <div class="navbar__logo">
       <img
         src="@/assets/logo/hami-graph-color.svg"
@@ -8,7 +8,7 @@
       />
     </div>
     <b class="navbar__title text--truncate">HAMi WebUI</b>
-  </a>
+  </router-link>
 </template>
 
 <style>
