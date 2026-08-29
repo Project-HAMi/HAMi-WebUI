@@ -26,7 +26,12 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             query: parsedQuery,
           });
 
-          const used = usedData.data.length ? usedData.data[0]?.value : 0;
+          // Preserve whether Prometheus returned a series. Some consumers need
+          // to distinguish a real zero from an empty vector (for example, an
+          // existing container with no CPU or memory limit).
+          const hasData = usedData.data.length > 0;
+          const used = hasData ? usedData.data[0]?.value : 0;
+          data.value[index].hasData = hasData;
           data.value[index].count = used;
           data.value[index].used = used;
         }

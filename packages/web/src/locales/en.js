@@ -39,6 +39,7 @@ export default {
     fieldRequired: 'This field is required',
     yes: 'Yes',
     no: 'No',
+    notLimited: 'Not limited',
     unitCount: '',
     unitSheet: '',
     paginationTotal: '{total} items',
