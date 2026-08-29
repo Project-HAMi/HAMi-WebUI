@@ -13,6 +13,9 @@ updates:
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: docker
     directory: "/"
@@ -22,6 +25,9 @@ updates:
     labels:
       - dependencies
       - kind/cleanup
+    # Dockerfile toolchain versions must stay aligned with .node-version and
+    # package.json, so image updates need a coordinated maintainer PR.
+    open-pull-requests-limit: 0
 
   - package-ecosystem: docker
     directory: "/server"
@@ -31,3 +37,6 @@ updates:
     labels:
       - dependencies
       - kind/cleanup
+    # Dockerfile toolchain versions must stay aligned with server/.go-version,
+    # so image updates need a coordinated maintainer PR.
+    open-pull-requests-limit: 0
