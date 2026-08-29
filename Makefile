@@ -24,7 +24,7 @@ build-web:
 	pnpm --filter hami-webui-web run build
 
 .PHONY: start-dev
-start-dev: install-modules start-bff start-web
+start-dev: install-modules start-web
 
 
 .PHONY: start-bff

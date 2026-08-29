@@ -21,6 +21,7 @@ const buildEnvironment = Object.fromEntries(
     .map((name) => [name, process.env[name]])
 )
 Object.assign(buildEnvironment, {
+  HAMI_WEBUI_BACKEND_URL: 'http://private-backend-canary.invalid:8000',
   HAMI_WEBUI_UNREFERENCED_CANARY: 'hami_webui_canary_should_not_ship',
   VITE_APP_BASE_API: '/vite-env-contract/',
   VITE_APP_REQUEST_TIMEOUT: '71234567'
@@ -60,6 +61,7 @@ const bundles = await Promise.all(
 const contains = (value) => bundles.some((bundle) => bundle.includes(value))
 
 const forbiddenValues = [
+  'http://private-backend-canary.invalid:8000',
   'HAMI_WEBUI_UNREFERENCED_CANARY',
   'hami_webui_canary_should_not_ship',
   '/vite-env-contract/'
