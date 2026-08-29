@@ -55,6 +55,21 @@ Allow the release namespace to be overridden for multi-namespace deployments in 
 {{- end -}}
 
 {{/*
+Resolve the Prometheus address. When the embedded stack is enabled, use the
+dependency chart's own helpers so its naming and override rules cannot drift.
+*/}}
+{{- define "hami-webui.prometheusAddress" -}}
+{{- if .Values.externalPrometheus.enabled -}}
+{{- .Values.externalPrometheus.address -}}
+{{- else if (index .Values "kube-prometheus-stack").enabled -}}
+{{- $stack := index .Subcharts "kube-prometheus-stack" -}}
+{{- printf "http://%s-prometheus.%s.svc.cluster.local:%v" (include "kube-prometheus-stack.fullname" $stack) (include "kube-prometheus-stack.namespace" $stack) $stack.Values.prometheus.service.port -}}
+{{- else -}}
+{{- printf "http://%s-kube-prometh-prometheus.%s.svc.cluster.local:9090" (include "hami-webui.fullname" .) (include "hami-webui.namespace" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "hami-webui.chart" -}}
