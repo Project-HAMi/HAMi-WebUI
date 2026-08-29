@@ -18,13 +18,13 @@ image:
     # Overrides the image tag whose default is the chart appVersion (CI uses the git tag name).
     tag: "v1.3.0"
     # When set, digest takes precedence over tag and renders repository@digest.
-    digest: "sha256:2a11f990d47833196869a3674ea64534eb2c817e231a1d2f2899a47b595002de"
+    digest: "sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e"
   backend:
     repository: projecthami/hami-webui-be-oss
     pullPolicy: IfNotPresent
     tag: "v1.3.0"
     # When set, digest takes precedence over tag and renders repository@digest.
-    digest: "sha256:4f3fa02710d56fea1e9a0d57587deb5fe86411b9471004c1f358a77437c62797"
+    digest: "sha256:7057047c7c2f7838cd190b3dc7263d503bbcf5d8e52642bc703227d137bc029d"
 
 imagePullSecrets: []
 nameOverride: ""
