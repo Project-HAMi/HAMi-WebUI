@@ -157,6 +157,11 @@ kube-prometheus-stack:
     enabled: false
   nodeExporter:
     enabled: false
+  kube-state-metrics:
+    prometheus:
+      monitor:
+        additionalLabels:
+          jobRelease: hami-webui-prometheus
   prometheusOperator:
     enabled: false
   prometheus:

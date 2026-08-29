@@ -83,6 +83,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | kube-prometheus-stack.defaultRules.create | bool | `false`                                                                            |  |
 | kube-prometheus-stack.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.grafana.enabled | bool | `false`                                                                            |  |
+| kube-prometheus-stack.kube-state-metrics.prometheus.monitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          | Allow the bundled Prometheus to scrape kube-state-metrics for cluster CPU and memory totals. |
 | kube-prometheus-stack.kubernetesServiceMonitors.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.nodeExporter.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.prometheus.prometheusSpec.serviceMonitorSelector.matchLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
@@ -189,5 +190,7 @@ You must also modify all ...ServiceMonitor.additionalLabels in your values.yaml 
   additionalLabels:
     <jobRelease-label-key>: <jobRelease-label-value>
 ```
+
+This includes `kube-prometheus-stack.kube-state-metrics.prometheus.monitor.additionalLabels`.
 
 This ensures that Prometheus will correctly discover all the ServiceMonitor configurations based on the updated labels.
