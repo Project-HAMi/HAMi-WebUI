@@ -22,6 +22,7 @@
     "lint": "NODE_OPTIONS=\"--require ./scripts/structured-clone-polyfill.js\" eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:web-entry-contract": "node --test --test-concurrency=1 test/web-entry/web-entry.contract.test.mjs",
+    "precompress:web-assets": "node scripts/precompress-web-assets.mjs",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",

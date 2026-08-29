@@ -6,6 +6,8 @@ packages/*/node_modules
 # Build outputs
 dist
 packages/*/dist
+/public
+server/build
 coverage
 .nyc_output
 
@@ -50,22 +52,20 @@ jest.config.*
 .eslintrc.*
 .prettierrc.*
 
-# Server (backend is built separately)
-server
-
 # Charts
 charts
 
-# Scripts (not needed in production)
-scripts
+# Only the Web-asset build helper is part of the frontend image context.
+scripts/*
+!scripts/precompress-web-assets.mjs
 
 # Temporary files
 tmp
 *.tmp
 *.temp
 
-# Environment files (should be provided at runtime)
+# Ignore local environment files but keep the committed Vite production defaults.
 .env
 .env.*
 !.env.example
-
+!packages/web/.env.production

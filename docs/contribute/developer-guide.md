@@ -7,8 +7,9 @@ This guide helps you get started developing HAMi-WebUI.
 Make sure you have the following dependencies installed before setting up your developer environment:
 
 - [Git](https://git-scm.com/)
-- [Go](https://golang.org/dl/) (see [go.mod](../../server/go.mod) for minimum required version)
-- [Node.js](https://nodejs.org/), [Vue.js](https://vuejs.org/), [Element-UI](https://element.eleme.cn/)
+- [Go](https://golang.org/dl/) (use the version in [`server/.go-version`](../../server/.go-version))
+- [Node.js](https://nodejs.org/) (use the version in [`.node-version`](../../.node-version))
+- [pnpm](https://pnpm.io/) (use the version in the root `package.json`)
 
 
 ### macOS
@@ -18,7 +19,8 @@ We recommend using [Homebrew](https://brew.sh/) for installing any missing depen
 ```
 brew install git
 brew install go
-brew install node@20
+brew install node@24
+corepack enable
 ```
 
 ## Download HAMi-WebUI
@@ -32,10 +34,15 @@ For alternative ways of cloning the HAMi-WebUI repository, refer to [GitHub's do
 
 ## Build HAMi-WebUI
 
-When building HAMi-WebUI, be aware that it consists of two components:
+The Chart 1.x deployment consists of two containers:
 
-- The _backend_.
-- The _frontend_.
+- the Go API and metrics backend; and
+- the Web entry, which serves the built Vue application and proxies
+  `/api/vgpu/v1/*` to the backend.
+
+Node.js is required to build the Vue application. The frontend image built from
+this revision uses Go at runtime; the previous official Node image remains
+supported for Chart 1.x rollback.
 
 ### Backend
 
@@ -45,25 +52,84 @@ By default, you can access the web-ui-server-swagger at `http://localhost:8000/q
 
 ### Frontend
 
-Build and run the frontend by running `make start-dev` in the `root` directory of the repository. This command installs the related dependencies and starts a bff server and a frontend server.
+For browser development, run `make start-dev` in the repository root. This
+starts the Vite development server and the legacy development proxy.
 
 By default, you can access the web-ui at `http://localhost:3000/`.
+
+To exercise the production Web entry locally:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter hami-webui-web run build
+pnpm run precompress:web-assets
+(cd server && mkdir -p build && go build -trimpath -o build/web-entry ./cmd/web-entry)
+server/build/web-entry --static-dir ./public
+```
+
+The backend must be available at `http://127.0.0.1:8000` for API requests.
+
+### Chart 1.x frontend image contract
+
+The frontend image owns its OCI entrypoint; the Chart does not inject a
+Node-specific command. A compatible custom image must:
+
+- listen on port `3000`;
+- return HTTP 200 from `/health_check` without depending on backend readiness;
+- serve the SPA and its static assets;
+- forward `/api/vgpu/v1/*` to the backend while preserving HTTP status codes;
+  and
+- terminate cleanly on `SIGTERM`.
+
+The new official Go image additionally runs as a numeric non-root user and is
+verified with a read-only root filesystem in CI. Those are official-image
+security gates, not new requirements retroactively imposed on the previous
+official image.
+
+The new official Go Web entry exposes only the versioned HAMi Web API through
+the same-origin entry. Backend-only `/metrics`, `/readyz`, and `/q` endpoints
+remain available only on the backend listener for internal diagnostics and
+scraping. Pinning the previous Node-based official image restores its legacy
+wildcard `/api/vgpu/*` proxy and HTTP 200 / `code: 599` proxy-error behavior;
+that rollback path does not provide the new routing or error guarantees. The
+legacy process may also require forced termination when the Pod's termination
+grace period expires.
+
+The official Go Web entry also accepts these optional environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HAMI_WEBUI_LISTEN_ADDRESS` | `:3000` | Standalone Web listener; Chart 1.x requires `:3000` |
+| `HAMI_WEBUI_BACKEND_URL` | `http://127.0.0.1:8000` | Backend origin |
+| `HAMI_WEBUI_STATIC_DIR` | `/apps/public` | Built Vue asset directory |
+| `HAMI_WEBUI_PROXY_TIMEOUT` | `65s` | End-to-end backend request timeout; keep it longer than `backend.http.timeout` |
+| `HAMI_WEBUI_HEALTHCHECK_URL` | `http://127.0.0.1:3000/health_check` | Target used only by `--healthcheck` |
+
+The public port, health endpoint, and versioned API prefix are compatibility
+contracts.
+Filesystem paths and executable names inside the image are not.
+
+Chart 1.x currently serves the WebUI at the site root. Runtime base-path and
+configurable iframe framing support are tracked as the next compatibility
+increment and are not part of this container revision.
 
 ## Build a Docker image
 
 To build a HAMi-WebUI Frontend Docker image, run:
 
 ```
-make build-image DOCKER_IMAGE=projecthami/hami-webui-fe VERSION=dev
+make build-image DOCKER_IMAGE=projecthami/hami-webui-fe-oss VERSION=dev
 ```
 
-The resulting image will be tagged as `projecthami/hami-webui-fe:dev`.
+The resulting image will be tagged as `projecthami/hami-webui-fe-oss:dev`. It
+contains the Go Web entry and built Vue assets, but no production Node.js
+runtime.
 
 
-To build a HAMi-WebUI Backend Docker image, run:
+To build a HAMi-WebUI Backend Docker image, run from the repository root:
 
 ```
-make build-image DOCKER_IMAGE=projecthami/hami-webui-be VERSION=dev
+make -C server build-image DOCKER_IMAGE=projecthami/hami-webui-be-oss VERSION=dev
 ```
 
-The resulting image will be tagged as `projecthami/hami-webui-be:dev`.
+The resulting image will be tagged as `projecthami/hami-webui-be-oss:dev`.

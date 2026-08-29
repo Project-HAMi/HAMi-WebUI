@@ -1,4 +1,11 @@
 {{- $podAnnotations := mergeOverwrite (dict) (default (dict) .Values.podAnnotations) (dict "checksum/config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum)) -}}
+{{- $frontendEnv := default (list) .Values.env.frontend -}}
+{{- $frontendProxyTimeoutOverridden := false -}}
+{{- range $frontendEnv -}}
+{{- if eq (get . "name") "HAMI_WEBUI_PROXY_TIMEOUT" -}}
+{{- $frontendProxyTimeoutOverridden = true -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,15 +38,43 @@ spec:
           image: {{ include "hami-webui.image" (dict "name" "frontend" "image" .Values.image.frontend "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
           env:
-            {{- toYaml .Values.env.frontend | nindent 12 }}
+            {{- if not $frontendProxyTimeoutOverridden }}
+            - name: HAMI_WEBUI_PROXY_TIMEOUT
+              value: {{ default "65s" (get (default (dict) .Values.frontend) "proxyTimeout") | quote }}
+            {{- end }}
+            {{- with $frontendEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 3000
               protocol: TCP
-          command:
-            - "node"
-          args:
-            - "/apps/dist/main"
+          {{- with .Values.frontend }}
+          {{- with .livenessProbe }}
+          {{- if .enabled }}
+          livenessProbe:
+            httpGet:
+              path: /health_check
+              port: http
+            initialDelaySeconds: {{ .initialDelaySeconds }}
+            periodSeconds: {{ .periodSeconds }}
+            timeoutSeconds: {{ .timeoutSeconds }}
+            failureThreshold: {{ .failureThreshold }}
+          {{- end }}
+          {{- end }}
+          {{- with .readinessProbe }}
+          {{- if .enabled }}
+          readinessProbe:
+            httpGet:
+              path: /health_check
+              port: http
+            initialDelaySeconds: {{ .initialDelaySeconds }}
+            periodSeconds: {{ .periodSeconds }}
+            timeoutSeconds: {{ .timeoutSeconds }}
+            failureThreshold: {{ .failureThreshold }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources.frontend | nindent 12 }}
         - name: {{ .Chart.Name }}-be-oss

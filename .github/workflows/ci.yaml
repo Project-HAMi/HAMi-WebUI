@@ -47,16 +47,93 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
+  frontend-runtime-smoke:
+    name: Smoke frontend image runtime (${{ matrix.arch }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build frontend image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: hami-webui-frontend:runtime-smoke-${{ matrix.arch }}
+          cache-from: type=gha,scope=frontend-runtime-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=frontend-runtime-${{ matrix.arch }}
+
+      - name: Verify non-root read-only runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=hami-webui-frontend:runtime-smoke-${{ matrix.arch }}
+          container=hami-webui-frontend-runtime-smoke-${{ matrix.arch }}
+          curl_local=(curl --noproxy '*')
+          trap 'docker rm --force "${container}" >/dev/null 2>&1 || true' EXIT
+
+          [[ "$(docker image inspect --format '{{.Config.User}}' "${image}")" == "65532:65532" ]]
+          docker run --detach \
+            --platform '${{ matrix.platform }}' \
+            --name "${container}" \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --publish 127.0.0.1::3000 \
+            "${image}"
+
+          port="$(docker port "${container}" 3000/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n 1)"
+          for _ in {1..30}; do
+            if "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/health_check" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/health_check" >/dev/null
+          "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/" | grep -Fq '<div id="app"></div>'
+          [[ "$("${curl_local[@]}" --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/static/contract-missing.js")" == "404" ]]
+
+          docker stop --time 5 "${container}" >/dev/null
+          [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container}")" == "0" ]]
+
   pr-images-required:
     name: pr-images-required
     if: github.event_name == 'pull_request' && always()
-    needs: validate-images
+    needs:
+      - validate-images
+      - frontend-runtime-smoke
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate image build results
         run: |
           if [[ "${{ needs.validate-images.result }}" != "success" ]]; then
             echo "Image builds did not complete successfully: ${{ needs.validate-images.result }}"
+            exit 1
+          fi
+          if [[ "${{ needs.frontend-runtime-smoke.result }}" != "success" ]]; then
+            echo "Frontend runtime smoke did not complete successfully: ${{ needs.frontend-runtime-smoke.result }}"
             exit 1
           fi
           echo "All image builds passed."

@@ -1,52 +1,60 @@
-FROM --platform=$BUILDPLATFORM node:24.20.0-bookworm@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2 AS builder
+FROM --platform=$BUILDPLATFORM node:24.20.0-bookworm@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2 AS web-builder
 
 WORKDIR /src
 
 # Enable corepack to use pnpm version from package.json packageManager field
 RUN corepack enable
 
-# Copy dependency files for better layer caching
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Copy dependency manifests before application sources so source-only changes
+# can reuse the dependency layer.
+COPY .browserslistrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/web/package.json packages/web/
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --filter hami-webui-web...
 
-# Copy source code
-COPY . .
+COPY packages/web/ packages/web/
+COPY scripts/precompress-web-assets.mjs scripts/precompress-web-assets.mjs
 
-# Build application
-RUN make build-bff build-web
+# Build the browser application. Node.js is a build-time dependency only; the
+# production image runs the Go Web entry below.
+RUN pnpm --filter hami-webui-web run build
 
-# Remove devDependencies to reduce image size (only keep production dependencies)
-RUN CI=true pnpm prune --prod
+# Pre-compress immutable browser assets once at build time. The Web entry serves
+# these siblings when the client advertises gzip support.
+RUN pnpm run precompress:web-assets
 
-# Clean pnpm store cache to reduce image size
-RUN pnpm store prune
+FROM --platform=$BUILDPLATFORM golang:1.26.7-bookworm@sha256:e8c859f5632dcfde7b32d2012b4351728f6437930887c2f6a91ea242459e5514 AS web-entry-builder
 
-FROM node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+WORKDIR /src/server
 
-# Set production environment
-ENV NODE_ENV=production
+ARG TARGETOS=linux
+ARG TARGETARCH
 
-# Create app directory and non-root user for security
+COPY server/go.mod server/go.sum ./
+COPY server/cmd/web-entry/ ./cmd/web-entry/
+COPY server/internal/webentry/ ./internal/webentry/
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOTOOLCHAIN=local \
+    go build -mod=readonly -trimpath -o /out/web-entry ./cmd/web-entry
+
+FROM scratch
+
 WORKDIR /apps
-RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# Copy built artifacts from builder stage
-COPY --from=builder --chown=appuser:appuser /src/dist/ ./dist/
-COPY --from=builder --chown=appuser:appuser /src/node_modules/ ./node_modules/
-COPY --from=builder --chown=appuser:appuser /src/public/ ./public/
+# Keep HTTPS proxy targets and the existing TZ environment extension point
+# functional without carrying a production Linux package layer.
+COPY --from=web-entry-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=web-entry-builder /usr/share/zoneinfo/ /usr/share/zoneinfo/
+COPY --from=web-entry-builder --chown=65532:65532 /out/web-entry /apps/web-entry
+COPY --from=web-builder --chown=65532:65532 /src/public/ /apps/public/
 
-# Switch to non-root user
-USER appuser
+USER 65532:65532
 
-# Expose port
 EXPOSE 3000
 
-# Health check using the application's health_check endpoint
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health_check', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
+  CMD ["/apps/web-entry", "--healthcheck"]
 
-# Start application
-CMD ["node", "dist/main"]
+ENTRYPOINT ["/apps/web-entry"]

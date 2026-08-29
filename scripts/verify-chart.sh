@@ -110,6 +110,50 @@ tag_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'image.backend.digest=')"
 grep -Fq "image: \"projecthami/hami-webui-fe-oss:${expected_tag}\"" <<<"${tag_render}"
 grep -Fq "image: \"projecthami/hami-webui-be-oss:${expected_tag}\"" <<<"${tag_render}"
+frontend_container="$(awk '
+  /^        - name: .*fe-oss$/ { in_frontend = 1 }
+  in_frontend && /^        - name: .*be-oss$/ { exit }
+  in_frontend { print }
+' <<<"${tag_render}")"
+if [[ -z "${frontend_container}" ]] || grep -Eq '^[[:space:]]+(command|args):' <<<"${frontend_container}"; then
+  echo "Chart must leave the frontend image entrypoint and command untouched" >&2
+  exit 1
+fi
+if [[ "$(grep -c 'path: /health_check' <<<"${tag_render}")" -ne 2 ]]; then
+  echo "Frontend liveness and readiness probes were not both rendered" >&2
+  exit 1
+fi
+grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${tag_render}" | grep -Fq 'value: "65s"'
+
+proxy_timeout_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'frontend.proxyTimeout=125s')"
+grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_render}" | grep -Fq 'value: "125s"'
+
+proxy_timeout_env_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'env.frontend[0].name=HAMI_WEBUI_PROXY_TIMEOUT' \
+  --set-string 'env.frontend[0].value=75s')"
+if [[ "$(grep -c 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_env_render}")" -ne 1 ]]; then
+  echo "Explicit frontend proxy-timeout environment override was duplicated" >&2
+  exit 1
+fi
+grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_env_render}" | grep -Fq 'value: 75s'
+
+for empty_frontend_env in '[]' 'null'; do
+  empty_frontend_env_render="$(helm template test "${work_dir}/hami-webui" \
+    --set-json "env.frontend=${empty_frontend_env}")"
+  if [[ "$(grep -c 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${empty_frontend_env_render}")" -ne 1 ]]; then
+    echo "Empty frontend env value did not render exactly one proxy-timeout variable" >&2
+    exit 1
+  fi
+done
+
+probes_disabled_render="$(helm template test "${work_dir}/hami-webui" \
+  --set 'frontend.livenessProbe.enabled=false' \
+  --set 'frontend.readinessProbe.enabled=false')"
+if grep -Fq 'path: /health_check' <<<"${probes_disabled_render}"; then
+  echo "Disabled frontend probes were still rendered" >&2
+  exit 1
+fi
 
 fallback_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'image.frontend.tag=' \
@@ -126,6 +170,24 @@ digest_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string "image.backend.digest=${backend_digest}")"
 grep -Fq "image: \"projecthami/hami-webui-fe-oss@${frontend_digest}\"" <<<"${digest_render}"
 grep -Fq "image: \"projecthami/hami-webui-be-oss@${backend_digest}\"" <<<"${digest_render}"
+
+# Chart 1.x must continue to accept the last Node-based frontend image. That
+# image owns `node dist/main` through its OCI entrypoint and command, so the
+# Deployment must not inject process-specific command or args.
+legacy_frontend_digest='sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e'
+legacy_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string "image.frontend.digest=${legacy_frontend_digest}" \
+  --set-string 'image.backend.digest=')"
+grep -Fq "image: \"projecthami/hami-webui-fe-oss@${legacy_frontend_digest}\"" <<<"${legacy_render}"
+legacy_frontend_container="$(awk '
+  /^        - name: .*fe-oss$/ { in_frontend = 1 }
+  in_frontend && /^        - name: .*be-oss$/ { exit }
+  in_frontend { print }
+' <<<"${legacy_render}")"
+if [[ -z "${legacy_frontend_container}" ]] || grep -Eq '^[[:space:]]+(command|args):' <<<"${legacy_frontend_container}"; then
+  echo "Legacy frontend image compatibility was broken by a process override" >&2
+  exit 1
+fi
 
 if helm template test "${work_dir}/hami-webui" \
   --set-string 'image.frontend.digest=not-a-digest' >/dev/null 2>&1; then

@@ -5,11 +5,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const backendAddress = '127.0.0.1'
-const backendPort = 8000
-const frontendURL = 'http://127.0.0.1:3000'
 
 let backend
+let backendPort
 let frontend
+let frontendPort
+let frontendURL
 let frontendLogs = ''
 let lastBackendRequest
 
@@ -57,27 +58,22 @@ async function closeServer(server) {
   }
 }
 
-async function assertPortAvailable(port, host) {
+async function reservePort(host) {
   const probe = http.createServer()
-  try {
-    await listen(probe, port, host)
-  } catch (error) {
-    if (error.code === 'EADDRINUSE') {
-      throw new Error(
-        `Contract test requires ${host ?? 'all interfaces'}:${port} ` +
-        'to be unused; ' +
-        'refusing to test against an unrelated process'
-      )
-    }
-    throw error
-  }
+  await listen(probe, 0, host)
+  const address = probe.address()
+  assert.equal(typeof address, 'object')
   await closeServer(probe)
+  return address.port
 }
 
 async function stopProcess(child) {
-  if (!child || child.exitCode !== null) return
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
 
-  const exited = new Promise((resolve) => child.once('exit', resolve))
+  const exited = new Promise((resolve) => child.once(
+    'exit',
+    (code, signal) => resolve({ code, signal })
+  ))
   child.kill('SIGTERM')
   try {
     await withTimeout(exited, 2_000, 'Web entry ignored SIGTERM')
@@ -97,9 +93,10 @@ function fetchFrontend(path, options = {}) {
 async function waitForFrontend() {
   const deadline = Date.now() + 15_000
   while (Date.now() < deadline) {
-    if (frontend.exitCode !== null) {
+    if (frontend.exitCode !== null || frontend.signalCode !== null) {
       throw new Error(
-        `Web entry exited with code ${frontend.exitCode}.\n${frontendLogs}`
+        `Web entry exited with code ${frontend.exitCode} and signal ` +
+        `${frontend.signalCode}.\n${frontendLogs}`
       )
     }
 
@@ -110,7 +107,7 @@ async function waitForFrontend() {
       await response.arrayBuffer()
       if (response.ok) {
         await delay(25)
-        if (frontend.exitCode === null) return
+        if (frontend.exitCode === null && frontend.signalCode === null) return
       }
     } catch {
       // The process may still be binding the port.
@@ -122,8 +119,11 @@ async function waitForFrontend() {
 }
 
 before(async() => {
-  await assertPortAvailable(3000)
-  await assertPortAvailable(backendPort, backendAddress)
+  frontendPort = await reservePort(backendAddress)
+  do {
+    backendPort = await reservePort(backendAddress)
+  } while (backendPort === frontendPort)
+  frontendURL = `http://${backendAddress}:${frontendPort}`
 
   backend = http.createServer(async(req, res) => {
     const chunks = []
@@ -137,7 +137,27 @@ before(async() => {
       body: Buffer.concat(chunks).toString('utf8')
     }
 
-    if (req.method !== 'POST' || req.url !== '/v1/nodes') {
+    if (
+      req.url === '/metrics' ||
+      req.url === '/readyz' ||
+      req.url === '/q/openapi.yaml' ||
+      req.url === '/v2/private'
+    ) {
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.end('private backend response')
+      return
+    }
+
+    if (req.url === '/v1/contract-timeout') {
+      await delay(500)
+      if (!res.destroyed) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ delayed: true }))
+      }
+      return
+    }
+
+    if (req.method !== 'POST' || req.url !== '/v1/nodes?limit=10') {
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'unexpected contract-test request' }))
       return
@@ -150,11 +170,14 @@ before(async() => {
     res.end(JSON.stringify({ error: 'contract-probe' }))
   })
 
-  frontend = launchWebEntry(process.cwd())
+  frontend = launchWebEntry({
+    cwd: process.cwd(),
+    listenAddress: `${backendAddress}:${frontendPort}`,
+    backendURL: `http://${backendAddress}:${backendPort}`
+  })
   captureFrontendLogs(frontend.stdout)
   captureFrontendLogs(frontend.stderr)
   await waitForFrontend()
-  await listen(backend, backendPort, backendAddress)
 }, { timeout: 20_000 })
 
 after(async() => {
@@ -179,6 +202,16 @@ test('serves the SPA shell at the root and an existing deep link', {
     /text\/html/
   )
   assert.equal(deepLinkBody, rootBody)
+
+  const trailingSlashResponse = await fetchFrontend(
+    '/admin/vgpu/monitor/overview/'
+  )
+  assert.equal(trailingSlashResponse.status, 200)
+  assert.equal(await trailingSlashResponse.text(), rootBody)
+
+  const dottedParameterResponse = await fetchFrontend('/redirect/example.com')
+  assert.equal(dottedParameterResponse.status, 200)
+  assert.equal(await dottedParameterResponse.text(), rootBody)
 })
 
 test('keeps the Chart 1.x unrestricted iframe baseline', {
@@ -204,13 +237,29 @@ test('reports Web-entry liveness without asserting backend readiness', {
   assert.match(body, /OK/)
 })
 
+test('reports an unavailable backend as HTTP 502 JSON', {
+  timeout: 10_000
+}, async() => {
+  const response = await fetchFrontend('/api/vgpu/v1/nodes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}'
+  })
+
+  assert.equal(response.status, 502)
+  assert.match(response.headers.get('content-type') ?? '', /application\/json/)
+  assert.equal(typeof await response.json(), 'object')
+})
+
 test('preserves the supported API request and non-success response', {
   timeout: 10_000
 }, async() => {
+  await listen(backend, backendPort, backendAddress)
+
   const requestBody = JSON.stringify({
     filters: { name: 'contract-probe' }
   })
-  const response = await fetchFrontend('/api/vgpu/v1/nodes', {
+  const response = await fetchFrontend('/api/vgpu/v1/nodes?limit=10', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -222,7 +271,7 @@ test('preserves the supported API request and non-success response', {
 
   assert.deepEqual(lastBackendRequest, {
     method: 'POST',
-    url: '/v1/nodes',
+    url: '/v1/nodes?limit=10',
     contentType: 'application/json',
     probeHeader: 'preserved',
     body: requestBody
@@ -230,4 +279,120 @@ test('preserves the supported API request and non-success response', {
   assert.equal(response.status, 400)
   assert.equal(response.headers.get('x-upstream-contract'), 'preserved')
   assert.equal(responseBody, JSON.stringify({ error: 'contract-probe' }))
+})
+
+test('reports an upstream timeout as HTTP 504 JSON', {
+  timeout: 10_000
+}, async() => {
+  const response = await fetchFrontend('/api/vgpu/v1/contract-timeout')
+
+  assert.equal(response.status, 504)
+  assert.match(response.headers.get('content-type') ?? '', /application\/json/)
+  assert.equal(typeof await response.json(), 'object')
+})
+
+test('preserves the backend JSON response for an unknown v1 API', {
+  timeout: 10_000
+}, async() => {
+  const response = await fetchFrontend('/api/vgpu/v1/contract-missing')
+
+  assert.equal(response.status, 404)
+  assert.match(response.headers.get('content-type') ?? '', /application\/json/)
+  assert.deepEqual(await response.json(), {
+    error: 'unexpected contract-test request'
+  })
+})
+
+test('returns 404 for missing static assets and private backend paths', {
+  timeout: 10_000
+}, async() => {
+  const rootBody = await (await fetchFrontend('/')).text()
+  for (const requestPath of [
+    '/static/contract-missing.js',
+    '/metrics',
+    '/readyz',
+    '/q/openapi.yaml',
+    '/api/vgpu/metrics',
+    '/api/vgpu/readyz',
+    '/api/vgpu/q/openapi.yaml',
+    '/api/vgpu/v2/private'
+  ]) {
+    const response = await fetchFrontend(requestPath)
+    const body = await response.text()
+    assert.equal(response.status, 404, requestPath)
+    assert.equal(response.headers.get('cache-control'), 'no-store', requestPath)
+    assert.notEqual(body, rootBody, requestPath)
+    assert.notEqual(body, 'private backend response', requestPath)
+  }
+})
+
+test('serves built assets with bounded caching, gzip and HEAD semantics', {
+  timeout: 10_000
+}, async() => {
+  const indexResponse = await fetchFrontend('/')
+  const indexBody = await indexResponse.text()
+  assert.match(indexResponse.headers.get('cache-control') ?? '', /no-cache/)
+  assert.doesNotMatch(
+    indexResponse.headers.get('cache-control') ?? '',
+    /immutable/
+  )
+
+  const references = [...indexBody.matchAll(
+    /(?:src|href)="([^"?#]+\.(?:js|css))"/g
+  )].map((match) => match[1])
+  const hashedReference = references.find((reference) =>
+    /[-.][A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(reference)
+  )
+  assert.ok(hashedReference, 'built index did not reference a hashed asset')
+  const assetPath = new URL(hashedReference, `${frontendURL}/`).pathname
+
+  const identityResponse = await fetchFrontend(assetPath, {
+    headers: { 'accept-encoding': 'identity' }
+  })
+  const identityBody = Buffer.from(await identityResponse.arrayBuffer())
+  assert.equal(identityResponse.status, 200)
+  assert.match(
+    identityResponse.headers.get('cache-control') ?? '',
+    /max-age=31536000/
+  )
+  assert.match(identityResponse.headers.get('cache-control') ?? '', /immutable/)
+  assert.equal(identityResponse.headers.has('content-encoding'), false)
+
+  const gzipResponse = await fetchFrontend(assetPath, {
+    headers: { 'accept-encoding': 'gzip' }
+  })
+  const gzipBody = Buffer.from(await gzipResponse.arrayBuffer())
+  assert.equal(gzipResponse.status, 200)
+  assert.equal(gzipResponse.headers.get('content-encoding'), 'gzip')
+  assert.match(gzipResponse.headers.get('vary') ?? '', /Accept-Encoding/i)
+  assert.deepEqual(gzipBody, identityBody)
+
+  const headResponse = await fetchFrontend(assetPath, {
+    method: 'HEAD',
+    headers: { 'accept-encoding': 'gzip' }
+  })
+  assert.equal(headResponse.status, 200)
+  assert.equal(headResponse.headers.get('content-encoding'), 'gzip')
+  assert.equal(headResponse.headers.get('cache-control'), gzipResponse.headers.get('cache-control'))
+  assert.equal((await headResponse.arrayBuffer()).byteLength, 0)
+})
+
+test('exits cleanly on SIGTERM and releases its listener', {
+  timeout: 10_000
+}, async() => {
+  const exited = new Promise((resolve) => frontend.once(
+    'exit',
+    (code, signal) => resolve({ code, signal })
+  ))
+  assert.equal(frontend.kill('SIGTERM'), true)
+  const result = await withTimeout(
+    exited,
+    3_000,
+    'Web entry did not exit after SIGTERM'
+  )
+  assert.deepEqual(result, { code: 0, signal: null })
+
+  const probe = http.createServer()
+  await listen(probe, frontendPort, backendAddress)
+  await closeServer(probe)
 })
