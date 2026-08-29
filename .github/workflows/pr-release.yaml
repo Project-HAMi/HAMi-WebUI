@@ -1,0 +1,86 @@
+name: PR Release Controller Checks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ github.event_name != 'pull_request' || steps.filter.outputs.release == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            release:
+              - '.github/workflows/release.yaml'
+              - '.github/workflows/pr-release.yaml'
+              - 'scripts/release/**'
+              - 'docs/releasing.md'
+
+  validate:
+    name: Validate release controller
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned validation tools
+        run: |
+          tool_dir="${RUNNER_TEMP}/release-validation/bin"
+          bash scripts/release/install-validation-tools.sh "${tool_dir}"
+          yq_path="$(bash scripts/release/install-yq.sh "${tool_dir}/yq")"
+          [[ "${yq_path}" == "${tool_dir}/yq" ]]
+          echo "${tool_dir}" >>"${GITHUB_PATH}"
+
+      - name: Validate workflow syntax and expressions
+        run: actionlint .github/workflows/release.yaml .github/workflows/pr-release.yaml
+
+      - name: Check release shell scripts
+        run: shellcheck scripts/release/*.sh scripts/release/tests/*.sh
+
+      - name: Run deterministic release contract tests
+        run: bash scripts/release/tests/release-controller.sh
+
+  pr-release-required:
+    name: pr-release-required
+    needs:
+      - changes
+      - validate
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate release controller results
+        run: |
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "Release change detection did not complete successfully: ${{ needs.changes.result }}"
+            exit 1
+          fi
+          if [[ "${{ needs.changes.outputs.release }}" != "true" ]]; then
+            echo "No release-controller changes; skipping."
+            exit 0
+          fi
+          if [[ "${{ needs.validate.result }}" != "success" ]]; then
+            echo "Release controller checks did not complete successfully: ${{ needs.validate.result }}"
+            exit 1
+          fi
+          echo "All release controller checks passed."
