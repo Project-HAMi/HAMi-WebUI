@@ -8,7 +8,7 @@ legacy tag-triggered chart workflow is removed.
 This workflow is deliberately fail-closed. Merging it does not enable stable
 publishing: the protected `release` environment must exist and its
 `STABLE_RELEASES_ENABLED` variable must be set to `true` after the repository,
-registry, and T4 acceptance gates below are configured.
+registry, and release acceptance gates below are configured.
 
 ## What “atomic” means here
 
@@ -17,7 +17,8 @@ The controller therefore makes an ordered, resumable release:
 
 1. build each multi-platform image once and address it by digest;
 2. package the chart once and preserve that exact archive;
-3. test that archive on T4/K3s while the `release` environment is waiting;
+3. test that archive against the release issue acceptance matrix while the
+   `release` environment is waiting;
 4. preflight every destination, stage the private GitHub draft and assets, and
    reserve the exact release tag before any registry or Pages stable write;
 5. promote manifests and publish the same archive to every chart endpoint;
@@ -187,12 +188,13 @@ Before setting `STABLE_RELEASES_ENABLED=true`:
   approval gate;
 - configure required reviewer(s) and restrict deployments to the intended
   default-branch workflow; while there is only one reliably active maintainer,
-  allow that maintainer to approve after attaching explicit T4 evidence, and
+  allow that maintainer to approve after attaching explicit acceptance
+  evidence, and
   enable “prevent self-review” only when a second release approver is reliably
   available;
 - keep environment variable `STABLE_RELEASES_ENABLED=false` until the exact
-  canonical bundle has passed the T4 matrix, then set it to `true` immediately
-  before approving the stable publish job;
+  canonical bundle has passed the release issue acceptance matrix, then set it
+  to `true` immediately before approving the stable publish job;
 - retain repository secrets, or selected organization secrets,
   `DOCKERHUB_TOKEN` (username) and `DOCKERHUB_PASSWD` (access token/password);
 - allow the workflow's `GITHUB_TOKEN` `contents:write`, `packages:write`, and
