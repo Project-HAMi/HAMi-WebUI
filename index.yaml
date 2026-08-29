@@ -14,7 +14,7 @@ entries:
       repository: https://prometheus-community.github.io/helm-charts
       version: 62.6.0
     description: A Helm chart for Kubernetes
-    digest: 646aac61ab13a43b3c9733554e4a4150419de4aab9fd208fd2069ee468b4f986
+    digest: 0a36b4fe8395a37e4ebc1393370a42601b36beb84089db51e9c8c43a9ab9d083
     name: hami-webui
     type: application
     urls:
