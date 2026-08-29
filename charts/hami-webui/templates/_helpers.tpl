@@ -45,11 +45,17 @@ If release name contains chart name it will be used as a full name.
 
 {{/*
 Name the internal backend Service without allowing a 63-character fullname to
-drop the distinguishing suffix.
+drop the distinguishing suffix. Hash long names so distinct releases with the
+same prefix cannot collide after truncation.
 */}}
 {{- define "hami-webui.backendServiceName" -}}
-{{- $baseName := include "hami-webui.fullname" . | trunc 55 | trimSuffix "-" -}}
-{{- printf "%s-backend" $baseName -}}
+{{- $fullName := include "hami-webui.fullname" . -}}
+{{- if le (len $fullName) 55 -}}
+{{- printf "%s-backend" $fullName -}}
+{{- else -}}
+{{- $prefix := $fullName | trunc 46 | trimSuffix "-" -}}
+{{- printf "%s-%s-backend" $prefix ($fullName | sha256sum | trunc 8) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

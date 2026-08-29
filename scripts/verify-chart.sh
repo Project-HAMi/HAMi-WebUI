@@ -53,15 +53,20 @@ if [[ "$(service_port_names <<<"${backend_service_render}")" != "backend-http" ]
 fi
 
 long_fullname="$(printf '%063d' 0 | tr '0' 'a')"
+other_long_fullname="${long_fullname:0:55}bbbbbbbb"
 long_name_web_service="$(render_template templates/service.yaml \
   --set-string "fullnameOverride=${long_fullname}")"
 long_name_backend_service="$(render_template templates/backend-service.yaml \
   --set-string "fullnameOverride=${long_fullname}")"
+other_long_name_backend_service="$(render_template templates/backend-service.yaml \
+  --set-string "fullnameOverride=${other_long_fullname}")"
 rendered_web_service_name="$(awk '$1 == "name:" { print $2; exit }' <<<"${long_name_web_service}")"
 rendered_backend_service_name="$(awk '$1 == "name:" { print $2; exit }' <<<"${long_name_backend_service}")"
+other_rendered_backend_service_name="$(awk '$1 == "name:" { print $2; exit }' <<<"${other_long_name_backend_service}")"
 if [[ ${#rendered_backend_service_name} -gt 63 ]] ||
   [[ "${rendered_backend_service_name}" != *-backend ]] ||
-  [[ "${rendered_backend_service_name}" == "${rendered_web_service_name}" ]]; then
+  [[ "${rendered_backend_service_name}" == "${rendered_web_service_name}" ]] ||
+  [[ "${rendered_backend_service_name}" == "${other_rendered_backend_service_name}" ]]; then
   echo "Internal backend Service name is not distinct and DNS-label safe" >&2
   exit 1
 fi
