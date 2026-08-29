@@ -237,7 +237,7 @@ export default {
     description: '监控 GPU 上运行的工作负载状态与占用。',
     name: '任务名称',
     workload: '工作负载',
-    searchWorkloadName: '搜索工作负载名称',
+    searchWorkloadName: '搜索 Pod 或容器名称',
     status: '状态',
     allStatus: '全部状态',
     node: '所属节点',

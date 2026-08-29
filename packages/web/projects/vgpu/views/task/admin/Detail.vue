@@ -1,7 +1,7 @@
 <template>
   <page-header
     :title="$t('task.workload')"
-    :name="detail.appName || detail.name"
+    :name="workloadDisplayName"
     :status="headerStatusDisplay.text"
     :status-icon="headerStatusDisplay.icon"
   >
@@ -80,6 +80,18 @@
             </div>
           </div>
           <div class="basic-info-summary">
+            <div class="summary-item">
+              <span class="summary-item-label">{{ $t('task.detail.podName') }}</span>
+              <span class="summary-item-value">
+                <ellipsis-text :text="detail.appName || '--'" mode="middle" tooltip="always" />
+              </span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
+              <span class="summary-item-value">
+                <ellipsis-text :text="detail.name || '--'" mode="middle" tooltip="always" />
+              </span>
+            </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.image') }}</span>
               <span class="summary-item-value">
@@ -189,12 +201,14 @@ import BlockBox from '@/components/BlockBox.vue';
 import { getLineOptions } from '~/vgpu/components/config';
 import VChart from 'vue-echarts';
 import { useI18n } from 'vue-i18n';
+import { formatWorkloadName } from './workload-identity.mjs';
 
 const route = useRoute();
 const router = useRouter();
 const { t, locale } = useI18n();
 
 const detail = ref({});
+const workloadDisplayName = computed(() => formatWorkloadName(detail.value));
 const nodeUid = ref('');
 const cardTypeById = ref({});
 

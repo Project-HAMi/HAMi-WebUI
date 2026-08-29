@@ -240,7 +240,7 @@ export default {
     description: 'Monitor workloads running on GPUs.',
     name: 'Name',
     workload: 'Workload',
-    searchWorkloadName: 'Search workload name',
+    searchWorkloadName: 'Search Pod or container name',
     status: 'Status',
     allStatus: 'All Status',
     node: 'Hosting Node',
