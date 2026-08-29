@@ -175,7 +175,10 @@ import useFetchList from '@/hooks/useFetchList';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
-import { createComputeUsageGaugeConfig } from './metric-config.mjs';
+import {
+  createComputeUsageGaugeConfig,
+  createNodeAllocationTopQueries,
+} from './metric-config.mjs';
 
 const router = useRouter();
 const { t, locale } = useI18n();
@@ -535,8 +538,7 @@ const nodeComputeTop5 = computed(() => ({
       key: 'alloc',
       nameKey: 'node',
       data: [],
-      query:
-        'topk(5, avg(hami_container_vcore_allocated{}) by (node) / avg(hami_core_size{}) by (node) * 100)',
+      query: createNodeAllocationTopQueries().compute,
     },
     {
       tab: t('dashboard.usageRateLegend'),
@@ -557,8 +559,7 @@ const nodeMemoryTop5 = computed(() => ({
       key: 'alloc',
       nameKey: 'node',
       data: [],
-      query:
-        'topk(5, avg(hami_container_vmemory_allocated{}) by (node) / avg(hami_memory_size{}) by (node) * 100)',
+      query: createNodeAllocationTopQueries().memory,
     },
     {
       tab: t('dashboard.usageRateLegend'),

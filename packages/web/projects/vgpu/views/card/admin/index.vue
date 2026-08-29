@@ -83,6 +83,7 @@ import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
+import { getAllocationPercent } from './allocation-percent.mjs';
 
 const props = defineProps(['hideTitle', 'filters']);
 
@@ -261,22 +262,20 @@ const baseColumns = computed(() => [
     width: 180,
     render: ({ coreTotal, coreUsed, isExternal }) => {
       if (isExternal || !coreTotal) return <span>--</span>;
-      const percent = Math.max(
-        0,
-        Math.min(100, (Number(coreUsed || 0) / Number(coreTotal)) * 100),
-      );
-      const color = getResourceColor(percent);
+      const percent = getAllocationPercent(coreUsed, coreTotal);
+      if (!percent) return <span>--</span>;
+      const color = getResourceColor(percent.progress);
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
           <t-progress
             theme="circle"
             size={24}
             strokeWidth={3}
-            percentage={roundToDecimal(percent, 2)}
+            percentage={roundToDecimal(percent.progress, 2)}
             color={color}
             label={false}
           />
-          <span>{roundToDecimal(percent, 2)}%</span>
+          <span>{roundToDecimal(percent.raw, 2)}%</span>
         </span>
       );
     },
@@ -311,22 +310,20 @@ const baseColumns = computed(() => [
     width: 180,
     render: ({ memoryTotal, memoryUsed, isExternal }) => {
       if (isExternal || !memoryTotal) return <span>--</span>;
-      const percent = Math.max(
-        0,
-        Math.min(100, (Number(memoryUsed || 0) / Number(memoryTotal)) * 100),
-      );
-      const color = getResourceColor(percent);
+      const percent = getAllocationPercent(memoryUsed, memoryTotal);
+      if (!percent) return <span>--</span>;
+      const color = getResourceColor(percent.progress);
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
           <t-progress
             theme="circle"
             size={24}
             strokeWidth={3}
-            percentage={roundToDecimal(percent, 2)}
+            percentage={roundToDecimal(percent.progress, 2)}
             color={color}
             label={false}
           />
-          <span>{roundToDecimal(percent, 2)}%</span>
+          <span>{roundToDecimal(percent.raw, 2)}%</span>
         </span>
       );
     },

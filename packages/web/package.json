@@ -11,7 +11,7 @@
     "build:vite": "vite build",
     "test": "pnpm run test:dev-proxy && pnpm run test:metrics",
     "test:dev-proxy": "node --test test/vite-dev-proxy.contract.test.mjs",
-    "test:metrics": "node --test projects/vgpu/views/monitor/overview/metric-config.test.mjs"
+    "test:metrics": "node --test projects/vgpu/views/monitor/overview/metric-config.test.mjs projects/vgpu/views/card/admin/allocation-percent.test.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.1.0",
