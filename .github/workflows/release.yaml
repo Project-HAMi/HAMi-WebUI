@@ -118,7 +118,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the same bootstrap package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-oci-bootstrap-${{ github.run_id }}
           path: bootstrap-bundle
@@ -290,7 +290,7 @@ jobs:
           persist-credentials: false
 
       - name: Download image metadata
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-candidate-part-${{ github.run_id }}-*
           path: candidate-parts
@@ -360,7 +360,7 @@ jobs:
           persist-credentials: false
 
       - name: Download sealed candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-candidate-${{ inputs.candidate_run_id }}
           path: candidate
@@ -479,7 +479,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the canonical bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-bundle-${{ github.run_id }}
           path: release-bundle
