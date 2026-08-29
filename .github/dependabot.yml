@@ -6,16 +6,27 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    open-pull-requests-limit: 2
     labels:
       - dependencies
       - kind/cleanup
     groups:
-      github-actions:
+      github-actions-routine:
+        applies-to: version-updates
         patterns:
           - "*"
         update-types:
           - minor
           - patch
+      github-actions-major:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
 
   - package-ecosystem: docker
     directory: "/"
