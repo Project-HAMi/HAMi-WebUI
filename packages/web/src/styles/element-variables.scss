@@ -24,7 +24,7 @@ $--font-path: "~element-plus/dist/fonts";
 
 @import "element-plus/dist/index";
 
-// the :export directive is the magic sauce for webpack
+// Expose these Sass values to JavaScript imports.
 // https://www.bluematador.com/blog/how-to-share-variables-between-js-and-sass
 :export {
   theme: $--color-primary;

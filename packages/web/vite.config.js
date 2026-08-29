@@ -6,6 +6,9 @@ import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import path from 'path'
 
+// vite-plugin-svg-icons 2.0.1 imports fast-glob without declaring it. Keep the
+// explicit Web devDependency until the plugin fixes its package metadata.
+
 const versionedAPIPrefix = '/api/vgpu/v1'
 const apiProxyContext = '^/api/vgpu/v1(?:/|[?]|$)'
 
@@ -17,7 +20,8 @@ export default defineConfig(() => {
     process.env.HAMI_WEBUI_BACKEND_URL || 'http://127.0.0.1:8000'
 
   return {
-    base: './', // 对应 publicPath: './'
+    // Keep assets relative so the Web entry can inject the runtime base path.
+    base: './',
     plugins: [
       {
         name: 'hami-webui-dev-api-boundary',
@@ -52,12 +56,9 @@ export default defineConfig(() => {
         },
       }),
       createSvgIconsPlugin({
-        // 指定需要缓存的图标文件夹
-        iconDirs: [
-          path.resolve(process.cwd(), 'src/icons/svg'),
-          path.resolve(process.cwd(), 'src/icons/svg/menu') // 确保包含子目录如果需要，或者直接用 src/icons/svg 递归
-        ],
-        // 指定symbolId格式
+        // The parent directory is scanned recursively; listing menu separately
+        // would emit duplicate symbol IDs for every menu icon.
+        iconDirs: [path.resolve(process.cwd(), 'src/icons/svg')],
         symbolId: 'icon-[name]',
       }),
     ],
@@ -65,8 +66,6 @@ export default defineConfig(() => {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
         '~': fileURLToPath(new URL('./projects', import.meta.url)),
-        // 兼容 Webpack 的特定 fallback
-        // path: 'path-browserify', 这里的 polyfill 由插件处理
       },
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']
     },
@@ -83,7 +82,8 @@ export default defineConfig(() => {
       },
     },
     build: {
-      outDir: '../../public', // 输出到与 Webpack 相同的目录
+      // The Go Web entry serves this generated directory.
+      outDir: '../../public',
       assetsDir: 'static',
       emptyOutDir: true,
     },

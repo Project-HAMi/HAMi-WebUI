@@ -66,6 +66,14 @@ Set `HAMI_WEBUI_BACKEND_URL` when the backend uses a different origin:
 HAMI_WEBUI_BACKEND_URL=http://127.0.0.1:18000 make start-dev
 ```
 
+Before opening a frontend pull request, run the supported Vite checks:
+
+```bash
+pnpm --filter hami-webui-web run lint
+pnpm --filter hami-webui-web run test
+pnpm run verify:vite-env
+```
+
 To exercise the production Web entry locally:
 
 ```bash

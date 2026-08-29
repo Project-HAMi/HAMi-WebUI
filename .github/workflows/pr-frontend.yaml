@@ -71,8 +71,8 @@ jobs:
         run: bash scripts/verify-toolchain-versions.sh
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Test Vite development proxy
-        run: pnpm --filter hami-webui-web run test:dev-proxy
+      - name: Test Web
+        run: pnpm --filter hami-webui-web run test
       - name: Build web and verify environment boundary
         run: pnpm run verify:vite-env
       - name: Pre-compress Web assets
@@ -86,8 +86,6 @@ jobs:
         run: pnpm exec playwright install --with-deps --only-shell chromium
       - name: Test base-path and iframe browser contract
         run: pnpm run test:web-entry-browser
-      - name: Test web
-        run: pnpm --filter hami-webui-web run test:metrics
 
   lint:
     runs-on: ubuntu-latest
