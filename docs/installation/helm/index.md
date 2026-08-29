@@ -86,6 +86,49 @@ If the same Prometheus selects both this chart's ServiceMonitor and HAMi's
 built-in device-plugin ServiceMonitor (`prometheus.enabled` in the HAMi chart),
 the endpoint is scraped twice. Configure that Prometheus to select only one.
 
+### Backend service boundary
+
+HAMi-WebUI exposes the supported browser API through the same-origin Web entry
+on the primary Service. The backend listener on port `8000` also serves raw API,
+`/readyz`, `/metrics`, and Swagger endpoints, so the chart creates a separate
+ClusterIP Service with a generated `*-backend` name (for example,
+`my-hami-webui-backend`) for backend discovery and Prometheus scraping.
+
+For Chart 1.x upgrade compatibility, the primary Service still includes port
+`8000` by default. The port is deprecated and can be removed from the primary
+Service without affecting WebUI traffic or the included ServiceMonitor:
+
+```yaml
+service:
+  legacyBackendPort: false
+```
+
+Set this to `false` for `NodePort` and `LoadBalancer` Services unless an existing
+integration still connects directly to the raw backend. Move in-cluster clients
+to the generated backend Service on port `8000`. For local diagnostics, forward
+that Service instead of changing the primary Service type:
+
+```bash
+kubectl port-forward service/my-hami-webui-backend 8000:8000 --namespace=kube-system
+```
+
+Use NetworkPolicy or an equivalent cluster policy when backend access must also
+be restricted inside the cluster; a ClusterIP Service is a discovery boundary,
+not an authorization boundary.
+
+The included ServiceMonitor now selects only the backend Service, so retaining
+the compatibility port does not double-scrape Pods. It preserves the existing
+Prometheus `job` label through an explicit Service label; the generated `service`
+target label changes to the generated backend Service name. Update custom rules
+that match `service` before upgrading.
+
+Custom ServiceMonitors that still select the primary Service—whether by
+`component: hami-webui` or only the common name and instance labels—and port
+`metrics` must move to `component: backend` and port `backend-http`. Otherwise
+they can duplicate the included ServiceMonitor while the compatibility port is
+enabled, and stop finding a target when it is disabled. The compatibility port
+will be removed from the primary Service in Chart 2.0.0.
+
 ### Access HAMi-WebUI
 
 1. Configure ~/.kube/config in your localhost to be able to connect your cluster.

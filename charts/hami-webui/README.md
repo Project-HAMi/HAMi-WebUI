@@ -116,6 +116,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | resources.frontend.requests.cpu | string | `"200m"`                                                                           |  |
 | resources.frontend.requests.memory | string | `"500Mi"`                                                                          |  |
 | securityContext | object | `{}`                                                                               |  |
+| service.legacyBackendPort | bool | `true`                                                                        | Deprecated Chart 1.x compatibility port for direct access to the raw backend on the primary Service. Set to `false` to expose only the supported Web entry; removed in Chart 2.0.0. |
 | service.port | int | `3000`                                                                             |  |
 | service.type | string | `"ClusterIP"`                                                                      |  |
 | serviceAccount.annotations | object | `{}`                                                                               |  |

@@ -56,6 +56,11 @@ securityContext: {}
 service:
   type: ClusterIP
   port: 3000
+  # Chart 1.x compatibility only. Port 8000 exposes the raw backend API,
+  # readiness, metrics, and Swagger endpoints through the primary Service.
+  # Disable it when only the supported Web entry should be reachable.
+  # This option is deprecated and will be removed in Chart 2.0.0.
+  legacyBackendPort: true
 
 ingress:
   enabled: false

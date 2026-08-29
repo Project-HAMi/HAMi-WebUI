@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hami-webui.backendServiceName" . }}
+  namespace: {{ include "hami-webui.namespace" . }}
+  labels:
+    {{- include "hami-webui.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "backend"
+    monitoring.hami.io/job: {{ include "hami-webui.fullname" . | quote }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: metrics
+      protocol: TCP
+      name: backend-http
+  selector:
+    {{- include "hami-webui.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: "hami-webui"

@@ -25,15 +25,16 @@ metadata:
     {{- toYaml .Values.serviceMonitor.additionalLabels | nindent 4 }}
     {{- end }}
 spec:
+  jobLabel: monitoring.hami.io/job
   selector:
     matchLabels:
       {{- include "hami-webui.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: "hami-webui"
+      app.kubernetes.io/component: "backend"
   namespaceSelector:
     matchNames:
     - "{{ include "hami-webui.namespace" . }}"
   endpoints:
-  - port: "metrics"
+  - port: "backend-http"
     path: "/metrics"
     interval: "{{ .Values.serviceMonitor.interval }}"
     honorLabels: {{ .Values.serviceMonitor.honorLabels }}
