@@ -209,8 +209,8 @@ metricsExporter:
   timeout: "60s"
 
 # The frontend axios client timeout (default 60000ms) is compiled into the JS
-# bundle at image build time from the VUE_APP_REQUEST_TIMEOUT env var, as Vite
-# evaluates process.env at build, not at runtime. To change it for a deployed
-# cluster you need to rebuild packages/web with a different VUE_APP_REQUEST_TIMEOUT
-# (set in packages/web/.env.production or as a build-arg). It cannot be tuned
-# through this values.yaml.
+# bundle at image build time from the VITE_APP_REQUEST_TIMEOUT env var. To
+# change it for a deployed cluster you need to rebuild packages/web with a
+# different VITE_APP_REQUEST_TIMEOUT
+# (set in packages/web/.env.production before building the frontend image). It
+# cannot be tuned through this values.yaml.
