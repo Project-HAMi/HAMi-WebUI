@@ -116,52 +116,27 @@ The resulting `release-bundle-<run-id>` contains:
 The next job waits for approval on the protected `release` environment. Do not
 approve it yet.
 
-## Two-node T4/K3s acceptance and maintainer UAT gate
+## Acceptance gate
+
+Track every stable release in a dedicated release issue. Define the acceptance
+environment and risk-based test matrix there, and attach the run-specific
+evidence and approval to that issue or to retained workflow artifacts.
 
 Download `release-bundle-<run-id>` from the waiting publish run and verify
-`SHA256SUMS`. Test that exact `.tgz`; do not run `helm package` locally.
-Keep the protected `release` job waiting and
-`STABLE_RELEASES_ENABLED=false` throughout acceptance.
+`SHA256SUMS`. Test that exact `.tgz`; do not repackage it locally. Keep the
+protected `release` job waiting and `STABLE_RELEASES_ENABLED=false` throughout
+acceptance.
 
-Use one disposable K3s cluster with two schedulable GPU nodes:
+The acceptance matrix must cover installation and lifecycle safety on a
+representative supported GPU/Kubernetes environment, plus device discovery,
+allocation, workload metrics, and ordinary WebUI use. An authorized maintainer
+must inspect the running WebUI for this exact bundle and explicitly record
+approval. Automated checks, silence, or approval of another run do not count.
 
-- one node with two physical T4 GPUs;
-- a second node with at least one physical T4 GPU;
-- at least three concurrently running GPU workloads spread across both nodes,
-  including allocations on both GPUs of the two-GPU node and at least one
-  allocation on the second node.
-
-Minimum matrix:
-
-1. clean install on the disposable T4/K3s cluster;
-2. upgrade from the currently published chart to the candidate with
-   `--atomic --wait`;
-3. `helm rollback` to the previous revision;
-4. upgrade to the candidate again;
-5. uninstall and reinstall;
-6. verify each Pod spec uses the recorded multi-platform index digest, and that
-   each runtime-resolved platform digest is a member of that index;
-7. verify both nodes, all three or more physical GPUs, their allocations, and
-   all concurrent workloads are represented correctly;
-8. expose this exact candidate WebUI to the maintainer's local browser through
-   a port-forward or tunnel, then verify non-zero compute/memory utilization,
-   task-to-node/device mapping, filtering, refresh, and ordinary navigation.
-   Screenshots and automated checks do not replace this inspection;
-9. retain commands, screenshots, rendered manifests, events, and the acceptance
-   result.
-
-After the automated matrix passes, pause and ask the maintainer to inspect the
-running WebUI. Passing tests, silence, or approval of an earlier release is not
-approval for this run.
-
-Only after the maintainer explicitly approves this exact release bundle and run
-may `STABLE_RELEASES_ENABLED` be changed to `true` and the pending protected
-`release` deployment be approved.
-
-Keep the cluster, workloads, and browser access running through stable
-publication. After publication, verify the public images, chart endpoints,
-GitHub Release, and the released WebUI against the retained cluster. Delete the
-disposable GCP resources only after those post-publication checks pass.
+Only after that approval may `STABLE_RELEASES_ENABLED` be changed to `true` and
+the pending protected deployment be approved. Keep the acceptance environment
+available until the published artifacts and released WebUI pass post-release
+verification.
 
 ## Ordered publication
 
