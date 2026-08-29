@@ -295,33 +295,14 @@ jobs:
           SOURCE_SHA: ${{ needs.candidate-preflight.outputs.source_sha }}
           CANDIDATE_TAG: ${{ needs.candidate-preflight.outputs.candidate_tag }}
         run: |
-          set -euo pipefail
-          [[ -f candidate-parts/frontend.json ]]
-          [[ -f candidate-parts/backend.json ]]
-          jq -e -s \
-            --arg repository "${GITHUB_REPOSITORY}" \
-            --arg source_sha "${SOURCE_SHA}" \
-            --arg candidate_tag "${CANDIDATE_TAG}" \
-            --arg run_id "${GITHUB_RUN_ID}" \
-            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" '
-              if length != 2 or
-                 any(.[]; .sourceSha != $source_sha or .candidateTag != $candidate_tag) or
-                 ([.[].component] | sort != ["backend", "frontend"])
-              then error("candidate image metadata is incomplete or inconsistent")
-              else {
-                schemaVersion: 1,
-                repository: $repository,
-                workflow: ".github/workflows/release.yaml",
-                sourceSha: $source_sha,
-                candidateTag: $candidate_tag,
-                runId: $run_id,
-                runAttempt: $run_attempt,
-                images: reduce .[] as $image ({};
-                  .[$image.component] = $image.registries)
-              }
-              end
-            ' candidate-parts/*.json >candidate.json
-          jq -e . candidate.json >/dev/null
+          bash scripts/release/seal-candidate-manifest.sh \
+            candidate-parts \
+            candidate.json \
+            "${GITHUB_REPOSITORY}" \
+            "${SOURCE_SHA}" \
+            "${CANDIDATE_TAG}" \
+            "${GITHUB_RUN_ID}" \
+            "${GITHUB_RUN_ATTEMPT}"
 
       - name: Upload sealed candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
