@@ -69,6 +69,40 @@ jq -n \
     }
   ' >"${contract_repo}/candidate.json"
 
+# Exercise the exact candidate-sealing code used by the workflow. This catches
+# jq compile errors and rejects inconsistent image metadata before release use.
+candidate_parts="${work_dir}/candidate-parts"
+mkdir -p "${candidate_parts}"
+jq '{
+  component: "frontend",
+  sourceSha,
+  candidateTag,
+  registries: .images.frontend
+}' "${contract_repo}/candidate.json" >"${candidate_parts}/frontend.json"
+jq '{
+  component: "backend",
+  sourceSha,
+  candidateTag,
+  registries: .images.backend
+}' "${contract_repo}/candidate.json" >"${candidate_parts}/backend.json"
+bash "${release_dir}/seal-candidate-manifest.sh" \
+  "${candidate_parts}" "${work_dir}/sealed-candidate.json" \
+  Project-HAMi/HAMi-WebUI "${candidate_sha}" \
+  "candidate-${candidate_sha:0:12}-42-1" 42 1
+jq -S . "${contract_repo}/candidate.json" >"${work_dir}/expected-candidate.json"
+jq -S . "${work_dir}/sealed-candidate.json" >"${work_dir}/actual-candidate.json"
+cmp "${work_dir}/expected-candidate.json" "${work_dir}/actual-candidate.json"
+
+cp -R "${candidate_parts}" "${work_dir}/bad-candidate-parts"
+jq '.sourceSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
+  "${work_dir}/bad-candidate-parts/backend.json" >"${work_dir}/bad-backend.json"
+mv "${work_dir}/bad-backend.json" "${work_dir}/bad-candidate-parts/backend.json"
+require_failure "inconsistent candidate image metadata" \
+  bash "${release_dir}/seal-candidate-manifest.sh" \
+    "${work_dir}/bad-candidate-parts" "${work_dir}/bad-candidate.json" \
+    Project-HAMi/HAMi-WebUI "${candidate_sha}" \
+    "candidate-${candidate_sha:0:12}-42-1" 42 1
+
 VERSION=1.2.1 DIGEST="${digest_a}" yq -i '
   .version = strenv(VERSION) |
   .appVersion = strenv(VERSION)
