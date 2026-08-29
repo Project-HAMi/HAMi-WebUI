@@ -36,6 +36,7 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'scripts/verify-toolchain-versions.sh'
+              - 'scripts/verify-vite-env-boundary.mjs'
               - 'tsconfig*.json'
               - 'Makefile'
               - '.github/workflows/pr-frontend.yaml'
