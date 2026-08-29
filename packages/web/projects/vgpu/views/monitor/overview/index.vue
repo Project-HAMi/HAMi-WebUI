@@ -6,9 +6,13 @@
       <div class="home-top-left">
         <Block :title="$t('dashboard.cardResource')">
           <template #extra>
-            <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
+            <RouterLink
+              class="all-btn"
+              to="/admin/vgpu/card/admin"
+              :aria-label="$t('dashboard.viewAllGpuResources')"
+            >
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </div>
+            </RouterLink>
           </template>
           <div class="card-overview">
             <div v-for="item in cardGaugeConfig" :key="item.title">
@@ -22,21 +26,32 @@
             <li
               v-for="{ title, count, icon, to, unit } in resourceOverview"
               :key="title"
-              :class="{ 'is-clickable': !!to }"
-              @click="to && router.push(to)"
             >
-              <div class="avatar">
-                <svg-icon :icon="icon" />
-              </div>
-              <div class="main">
-                <div class="count">
-                  {{ count }}
-                  <span v-if="unit" class="count-unit">{{ unit }}</span>
+              <component
+                :is="to ? RouterLink : 'div'"
+                :to="to || undefined"
+                class="resource-overview-item"
+                :class="{ 'is-clickable': !!to }"
+              >
+                <div class="avatar">
+                  <svg-icon :icon="icon" />
                 </div>
-                <div class="title">
-                  {{ title }}
+                <div class="main">
+                  <div class="count">
+                    {{ count }}
+                    <span v-if="unit" class="count-unit">{{ unit }}</span>
+                  </div>
+                  <div class="title">
+                    {{ title }}
+                  </div>
                 </div>
-              </div>
+                <svg-icon
+                  v-if="to"
+                  icon="jump"
+                  class="resource-overview-nav-icon"
+                  aria-hidden="true"
+                />
+              </component>
             </li>
           </ul>
         </Block>
@@ -45,28 +60,43 @@
       <div class="home-top-right">
         <Block :title="$t('dashboard.nodeOverview')" class="home-top-right-card">
           <template #extra>
-            <div class="all-btn" @click="router.push('/admin/vgpu/node/admin')">
+            <RouterLink
+              class="all-btn"
+              to="/admin/vgpu/node/admin"
+              :aria-label="$t('dashboard.viewAllNodes')"
+            >
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </div>
+            </RouterLink>
           </template>
           <ul class="node-all">
             <li
               v-for="{ title, status, count, color } in nodes"
               :key="title"
-              @click="router.push({ path: '/admin/vgpu/node/admin', query: { isSchedulable: status } })"
             >
-              <div class="title">{{ title }}</div>
-              <div class="count" :style="{ color }">
-                {{ count }}
-              </div>
+              <RouterLink
+                class="node-overview-link"
+                :to="{ path: '/admin/vgpu/node/admin', query: { isSchedulable: status } }"
+              >
+                <div class="title">{{ title }}</div>
+                <div class="node-overview-value">
+                  <div class="count" :style="{ color }">
+                    {{ count }}
+                  </div>
+                  <svg-icon icon="jump" class="node-overview-nav-icon" aria-hidden="true" />
+                </div>
+              </RouterLink>
             </li>
           </ul>
         </Block>
         <Block :title="$t('dashboard.cardTypeDist')" class="home-top-right-card">
           <template #extra>
-            <div class="all-btn" @click="router.push('/admin/vgpu/card/admin')">
+            <RouterLink
+              class="all-btn"
+              to="/admin/vgpu/card/admin"
+              :aria-label="$t('dashboard.viewAllGpuTypes')"
+            >
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </div>
+            </RouterLink>
           </template>
           <div class="card-type-chart">
             <VChart
@@ -166,7 +196,7 @@ import {
 import Block from './Block.vue';
 import './style.scss';
 import { timeParse, calculatePrometheusStep } from '@/utils';
-import { useRouter } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 import taskApi from '~/vgpu/api/task';
