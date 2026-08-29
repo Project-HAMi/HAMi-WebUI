@@ -175,6 +175,7 @@ import useFetchList from '@/hooks/useFetchList';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
+import { createComputeUsageGaugeConfig } from './metric-config.mjs';
 
 const router = useRouter();
 const { t, locale } = useI18n();
@@ -395,16 +396,7 @@ const _cardGaugeConfig = useInstantVector([
     used: 0,
     unit: 'GiB',
   },
-  {
-    title: 'computeUsageRate',
-    percent: 0,
-    query: `avg(avg(hami_core_util) by (node, device_uuid))`,
-    percentQuery: `avg(avg(hami_core_util_avg) by (node, device_uuid))`,
-    totalQuery: `avg(sum(hami_core_size) by (instance))`,
-    total: 100,
-    used: 0,
-    unit: ' ',
-  },
+  createComputeUsageGaugeConfig(),
   {
     title: 'memUsageRate',
     percent: 0,

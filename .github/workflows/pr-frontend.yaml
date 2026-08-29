@@ -61,6 +61,8 @@ jobs:
         run: pnpm run build
       - name: Build web
         run: pnpm --filter hami-webui-web run build
+      - name: Test web
+        run: pnpm --filter hami-webui-web run test:metrics
       - name: Test BFF
         run: pnpm test
 
