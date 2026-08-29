@@ -58,7 +58,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | fullnameOverride | string | `""`                                                                               |  |
 | hamiServiceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
 | hamiServiceMonitor.enabled | bool | `true`                                                                             |  |
-| hamiServiceMonitor.honorLabels | bool | `false`                                                                            |  |
+| hamiServiceMonitor.honorLabels | bool | `true`                                                                            | Keep HAMi's workload namespace/pod/container labels when they collide with Prometheus scrape-target labels. |
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
 | hamiServiceMonitor.svcNamespace | string | "kube-system"                                                                      | Default is "kube-system", but it should be set according to the namespace where the HAMi components are installed. || image.backend.pullPolicy | string | `"IfNotPresent"` |  |
