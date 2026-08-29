@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Run when the Vue app, legacy Nest code, Go Web entry, or their build and
-  # contract inputs change.
+  # Run when the Vue app, Go Web entry, or their build and contract inputs
+  # change.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -28,9 +28,10 @@ jobs:
         with:
           filters: |
             frontend:
-              - 'src/**'
               - 'packages/**'
               - 'package.json'
+              - '.eslintignore'
+              - '.eslintrc.js'
               - '.browserslistrc'
               - '.dockerignore'
               - '.node-version'
@@ -46,7 +47,6 @@ jobs:
               - 'scripts/verify-toolchain-versions.sh'
               - 'scripts/verify-vite-env-boundary.mjs'
               - 'test/web-entry/**'
-              - 'tsconfig*.json'
               - 'Makefile'
               - '.github/workflows/pr-frontend.yaml'
 
@@ -73,8 +73,6 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test Vite development proxy
         run: pnpm --filter hami-webui-web run test:dev-proxy
-      - name: Build BFF
-        run: pnpm run build
       - name: Build web and verify environment boundary
         run: pnpm run verify:vite-env
       - name: Pre-compress Web assets
@@ -90,8 +88,6 @@ jobs:
         run: pnpm run test:web-entry-browser
       - name: Test web
         run: pnpm --filter hami-webui-web run test:metrics
-      - name: Test BFF
-        run: pnpm test
 
   lint:
     runs-on: ubuntu-latest
@@ -108,7 +104,7 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Lint BFF
+      - name: Lint Web-entry tooling
         run: pnpm run lint
       - name: Lint web
         run: pnpm --filter hami-webui-web run lint

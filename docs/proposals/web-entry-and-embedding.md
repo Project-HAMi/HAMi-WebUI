@@ -15,11 +15,10 @@ HAMi-WebUI will remain a single-cluster, read-only observability UI. It must als
 be easy for platform teams to embed in an existing portal without rebuilding the
 frontend for each deployment.
 
-The same-origin Web entry remains part of the product contract, but the current
-pass-through NestJS process is not required to provide it. During HAMi-WebUI
-Chart package 1.x, the production NestJS runtime will be replaced by a minimal
-static-file and reverse-proxy Gateway while preserving the public Helm and HTTP
-contracts.
+The same-origin Web entry remains part of the product contract, but it does not
+require a pass-through NestJS process. For HAMi-WebUI Chart package 1.x, the
+production NestJS runtime was replaced by a minimal static-file and
+reverse-proxy Gateway while preserving the public Helm and HTTP contracts.
 
 A single Go application image is deferred to Chart version 2.0.0 and will be
 considered only after compatibility and adoption conditions are met.
@@ -30,15 +29,14 @@ clarity, UI quality, and maintainability remain applicable.
 
 ## Context
 
-The production NestJS process currently serves built Vue assets, provides SPA
-history fallback, proxies `/api/vgpu/*` to the Go backend, and exposes a basic
-health endpoint. It does not aggregate page data, own metric semantics, maintain
+The former production NestJS process served built Vue assets, provided SPA
+history fallback, proxied `/api/vgpu/*` to the Go backend, and exposed a basic
+health endpoint. It did not aggregate page data, own metric semantics, maintain
 sessions, authorize users, or route between clusters.
 
-The same-origin entry is useful. The dedicated NestJS runtime is not. Keeping it
-requires a second production runtime, image, dependency graph, vulnerability
-surface, and release artifact without providing an independently scalable
-service boundary.
+The same-origin entry is useful. The dedicated NestJS runtime was not. It
+required a second production runtime and dependency graph without providing an
+independently scalable service boundary.
 
 Removing NestJS is primarily a maintainability, release, error-semantics, and
 security-boundary improvement. It must not be presented as a fix for dashboard
@@ -106,8 +104,8 @@ existing behavior; it is not a secure default. Without a framing policy, a
 publicly reachable deployment can be embedded by an arbitrary origin and is
 exposed to clickjacking risk.
 
-The Chart will accept structured `frame-ancestors` sources and the Gateway will
-render them as CSP. The setting has three states: omitted or `null` emits no
+The Chart accepts structured `frame-ancestors` sources and the Gateway renders
+them as CSP. The setting has three states: omitted or `null` emits no
 framing header to preserve Chart 1.x behavior; an empty list emits `'none'`; and
 a non-empty list emits only its validated sources. `'self'` is allowed as an
 explicit source and is never added implicitly. Deployers may instead enforce
@@ -128,9 +126,9 @@ verified.
 
 ### Chart 1.x Web Gateway
 
-Chart 1.x will continue to deploy separate frontend and backend containers.
-The frontend container will use the standard-library Go Web entry selected by
-the checked-in spike instead of a production NestJS runtime.
+Chart 1.x continues to deploy separate frontend and backend containers. The
+frontend container uses the standard-library Go Web entry instead of a
+production NestJS runtime.
 
 The following public contracts remain stable:
 
@@ -148,12 +146,11 @@ contract, not a tunnel to every backend endpoint. Unsupported API versions and
 `/metrics`, `/readyz`, and `/q` remain backend-only even when requested through
 `/api/vgpu`; no browser-facing route exposes them.
 
-The Gateway implementation PR must publish a versioned frontend-container
-contract before changing the default image. At minimum, that contract defines
-the OCI entrypoint behavior, port, health endpoint, SPA and API paths, and how
-base-path and framing configuration are supplied. The Chart must stop forcing
-the Nest-specific `node /apps/dist/main` command so a conforming image can use
-its own entrypoint.
+The Gateway implementation publishes a versioned frontend-container contract
+covering the OCI entrypoint behavior, port, health endpoint, SPA and API paths,
+and how base-path and framing configuration are supplied. The Chart no longer
+forces the Nest-specific `node /apps/dist/main` command, so a conforming image
+can use its own entrypoint.
 
 The Helm value remains an extension point, not a promise that every existing
 custom image supports new Gateway features. Compatibility is guaranteed for
@@ -181,32 +178,32 @@ Unknown API and static-asset paths must not return `index.html` with HTTP 200.
 `/health_check` reports whether the frontend Gateway can serve requests; it is
 not a claim that the backend is healthy. Backend readiness remains the Go
 server's `/readyz` responsibility, while individual API failures retain their
-HTTP error status. The Chart will add frontend readiness and liveness probes so
-a failed Gateway cannot leave the Pod ready merely because the backend is
-healthy.
+HTTP error status. The Chart uses separate frontend readiness and liveness
+probes so a failed Gateway cannot leave the Pod ready merely because the
+backend is healthy.
 
 Go port `8000` is a backend listener, not a metrics-only listener: it serves the
-API, `/readyz`, and `/metrics`. Chart 1.x will add a separately labelled internal
-backend ClusterIP Service and make ServiceMonitor select only that Service. The
-primary Web Service's existing port `8000` is a compatibility contract and will
-not be silently removed. It will become a documented, deprecated
-`service.legacyBackendPort` option that remains enabled by default in Chart 1.x,
-can be disabled by security-sensitive deployments, and is removed only in Chart
-version 2.0.0. Distinct Service labels must ensure that each Ready backend Pod
-has one scrape target and is not discovered again through the primary Service.
+API, `/readyz`, and `/metrics`. Chart 1.x provides a separately labelled internal
+backend ClusterIP Service, and ServiceMonitor selects only that Service. The
+primary Web Service's existing port `8000` remains a compatibility contract
+through the documented, deprecated `service.legacyBackendPort` option. It is
+enabled by default in Chart 1.x, can be disabled by security-sensitive
+deployments, and is removed only in Chart version 2.0.0. Distinct Service labels
+ensure that each Ready backend Pod has one scrape target and is not discovered
+again through the primary Service.
 
 The selected Web entry supports a non-root, read-only container; amd64 and
-arm64; deterministic proxy status codes; and a small standard-library runtime
-surface. The default proxy timeout is explicit and longer than the default
-backend HTTP timeout. Runtime base-path and framing configuration are the next
-increment. In Chart 1.x it uses a reverse-proxy API adapter; Chart 2.0 can reuse
-the same static, routing, cache, compression, and framing handler with the
-in-process API handler. This keeps the compatibility bridge from becoming
-throwaway infrastructure.
+arm64; deterministic proxy status codes; runtime base-path and framing
+configuration; and a small standard-library runtime surface. The default proxy
+timeout is explicit and longer than the default backend HTTP timeout. In Chart
+1.x it uses a reverse-proxy API adapter; Chart 2.0 can reuse the same static,
+routing, cache, compression, and framing handler with the in-process API
+handler. This keeps the compatibility bridge from becoming throwaway
+infrastructure.
 
-NestJS source and dependencies will be deleted only after the minimal Gateway is
-the tested default and rollback through the previous frontend image has been
-verified.
+The checked-in NestJS source and dependencies were removed only after the
+minimal Gateway became the tested default and rollback through the previous
+frontend image was verified.
 
 ### Observable contract
 
@@ -253,8 +250,8 @@ being silently ignored.
 
 ## Consequences
 
-- The production Node.js and NestJS dependency graph can be removed after the
-  Gateway migration, reducing runtime and release maintenance.
+- Node.js remains a frontend build dependency, but the production runtime and
+  checked-in NestJS dependency graph are removed.
 - Chart 1.x deliberately retains two containers, two images, and one same-Pod
   proxy hop. Those costs are accepted to preserve upgrade and customization
   contracts.
