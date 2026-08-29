@@ -229,8 +229,8 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.computeUsageRate',
     percent: 0,
-    query: `avg(sum(hami_core_util{node=~"$node"}) by (instance))`,
-    percentQuery: `avg(sum(hami_core_util_avg{node=~"$node"}) by (instance))`,
+    query: `avg(avg(hami_core_util{node=~"$node"}) by (node, device_uuid))`,
+    percentQuery: `avg(avg(hami_core_util_avg{node=~"$node"}) by (node, device_uuid))`,
     totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
     total: 100,
     used: 0,

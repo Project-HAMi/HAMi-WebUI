@@ -272,7 +272,7 @@ export default {
     appName: '应用名称',
     createTime: '创建时间',
     times: '倍',
-    computeUsageTrend: 'GPU 算力使用率（%）',
+    computeUsageTrend: 'GPU 算力配额利用率（%）',
     memUsageTrend: 'GPU 显存使用率（%）',
     cpuUsageTrend: 'CPU 使用率（%）',
     memoryUsageTrend: '内存使用率（%）',

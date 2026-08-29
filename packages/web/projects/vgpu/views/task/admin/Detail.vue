@@ -353,12 +353,12 @@ const handleGpuJump = (uuid) => {
 const lineConfig = ref([
   {
     titleKey: 'task.computeUsageTrend',
-    query: `avg(sum(hami_container_core_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
+    query: `avg(avg(hami_container_core_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (node, device_uuid))`,
     data: [],
   },
   {
     titleKey: 'task.memUsageTrend',
-    query: `avg(sum(hami_container_memory_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (instance))`,
+    query: `100 * sum(avg(hami_container_memory_used{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (node, device_uuid)) / clamp_min(sum(avg(hami_container_vmemory_allocated{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (node, device_uuid)), 1)`,
     data: [],
   },
 ]);

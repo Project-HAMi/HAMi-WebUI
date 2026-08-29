@@ -32,8 +32,8 @@ func init() {
 	prometheus.MustRegister(HamiContainerVcoreAllocated)   // 任务申请的vcore
 	prometheus.MustRegister(HamiContainerMemoryUsed)       // 任务实际使用的显存大小（MB）
 	prometheus.MustRegister(HamiContainerMemoryUtil)       // 任务实际使用的显存占任务申请的比例
-	prometheus.MustRegister(HamiContainerCoreUsed)         // 任务实际使用的算力占卡的百分比
-	prometheus.MustRegister(HamiContainerCoreUtil)         // 任务实际使用的算力占任务申请的比例
+	prometheus.MustRegister(HamiContainerCoreUsed)         // 任务算力使用量（厂商语义；NVIDIA 为活跃分配 vCore 估算）
+	prometheus.MustRegister(HamiContainerCoreUtil)         // 任务算力利用率（NVIDIA 为已分配算力活跃度）
 
 	// 资源池维度指标
 	prometheus.MustRegister(HamiPoolVcoreSize)   // 资源池总算力大小
@@ -42,7 +42,6 @@ func init() {
 
 	prometheus.MustRegister(HamiSystemComponentHealth) // 系统组件健康状态
 }
-
 
 var (
 	HamiVCoreScaling = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -167,12 +166,12 @@ var (
 
 	HamiContainerCoreUsed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_container_core_used",
-		Help: "task used core ",
+		Help: "task compute usage in provider-specific core units; NVIDIA estimates active allocated vCore percentage points and excludes elastic borrowing",
 	}, []string{"node", "provider", "device_type", "device_uuid", "pod_name", "container_name", "namespace_name"})
 
 	HamiContainerCoreUtil = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_container_core_util",
-		Help: "task core util percent 0-100",
+		Help: "task compute utilization percent; NVIDIA reports allocated-compute activity 0-100, not physical-card utilization",
 	}, []string{"node", "provider", "device_type", "device_uuid", "pod_name", "container_name", "namespace_name"})
 
 	HamiPoolVgpuCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
