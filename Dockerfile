@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM node:24.20.0-bookworm@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2 AS builder
+FROM --platform=$BUILDPLATFORM node:26.8.1-bookworm@sha256:9f94d34c787165dca03b74e5bf9c3bf90e8de79b19aa3d87fe1fa1694bf75c89 AS builder
 
 WORKDIR /src
 
@@ -24,7 +24,7 @@ RUN CI=true pnpm prune --prod
 # Clean pnpm store cache to reduce image size
 RUN pnpm store prune
 
-FROM node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:26.8.1-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e
 
 # Set production environment
 ENV NODE_ENV=production
