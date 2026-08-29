@@ -208,9 +208,12 @@ Before setting `STABLE_RELEASES_ENABLED=true`:
   `gh-pages`, then explicitly deploys them because pushes made with
   `GITHUB_TOKEN` do not trigger legacy branch builds;
 - serve the deployed site at `https://project-hami.github.io/HAMi-WebUI`;
-- split tag protection so GitHub Actions App may bypass only creation for `v*`,
-  while update and deletion of `v*` have no bypass; keep creation, update, and
-  deletion of legacy `hami-webui-*` tags blocked with no bypass;
+- block update and deletion of both `v*` and legacy `hami-webui-*` tags with no
+  bypass, and block creation of legacy `hami-webui-*` tags. Leave new `v*` tag
+  creation under repository write permission: this repository cannot select the
+  built-in GitHub Actions App as a ruleset bypass actor. The protected controller
+  uses a strict SemVer name, performs a create-only API call, and rejects any
+  existing tag that does not already resolve to the verified commit;
 - enable immutable releases. Immediately before approving a stable publish, an
   administrator must verify `GET /repos/Project-HAMi/HAMi-WebUI/immutable-releases`
   returns `enabled: true`, or enforce immutable releases for this repository at
