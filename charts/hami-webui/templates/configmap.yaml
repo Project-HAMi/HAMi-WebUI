@@ -13,7 +13,7 @@ data:
         addr: 0.0.0.0:9000
         timeout: {{ .Values.backend.grpc.timeout | default "60s" }}
     prometheus:
-      address: {{ ternary .Values.externalPrometheus.address (printf "http://%s-kube-prometh-prometheus.%s.svc.cluster.local:9090" (include "hami-webui.fullname" .) (include "hami-webui.namespace" .)) .Values.externalPrometheus.enabled }}
+      address: {{ include "hami-webui.prometheusAddress" . }}
       timeout: {{ .Values.externalPrometheus.timeout | default "1m" }}
     exporter:
       interval: {{ .Values.metricsExporter.interval | default "30s" }}
