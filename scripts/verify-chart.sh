@@ -20,13 +20,19 @@ helm lint "${work_dir}/hami-webui"
 app_version="$(helm show chart "${work_dir}/hami-webui" | awk -F': *' '$1 == "appVersion" {gsub(/\"/, "", $2); print $2}')"
 expected_tag="v${app_version#v}"
 
-tag_render="$(helm template test "${work_dir}/hami-webui")"
+# Exercise the tag path independently of stable release defaults, which pin a
+# digest and therefore render repository@digest instead.
+tag_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.frontend.digest=' \
+  --set-string 'image.backend.digest=')"
 grep -Fq "image: \"projecthami/hami-webui-fe-oss:${expected_tag}\"" <<<"${tag_render}"
 grep -Fq "image: \"projecthami/hami-webui-be-oss:${expected_tag}\"" <<<"${tag_render}"
 
 fallback_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'image.frontend.tag=' \
-  --set-string 'image.backend.tag=')"
+  --set-string 'image.frontend.digest=' \
+  --set-string 'image.backend.tag=' \
+  --set-string 'image.backend.digest=')"
 grep -Fq "image: \"projecthami/hami-webui-fe-oss:${expected_tag}\"" <<<"${fallback_render}"
 grep -Fq "image: \"projecthami/hami-webui-be-oss:${expected_tag}\"" <<<"${fallback_render}"
 
