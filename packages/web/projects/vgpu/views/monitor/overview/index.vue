@@ -398,8 +398,8 @@ const _cardGaugeConfig = useInstantVector([
   {
     title: 'computeUsageRate',
     percent: 0,
-    query: `avg(sum(hami_core_util) by (instance))`,
-    percentQuery: `avg(sum(hami_core_util_avg) by (instance))`,
+    query: `avg(avg(hami_core_util) by (node, device_uuid))`,
+    percentQuery: `avg(avg(hami_core_util_avg) by (node, device_uuid))`,
     totalQuery: `avg(sum(hami_core_size) by (instance))`,
     total: 100,
     used: 0,

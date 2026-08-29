@@ -30,6 +30,15 @@ const (
 	defaultGenerateTimeout  = 60 * time.Second
 )
 
+var (
+	errNoMetricData        = errors.New("prometheus query returned no data")
+	errInvalidCoreCapacity = errors.New("allocated core capacity must be greater than zero")
+)
+
+type instantQuerier interface {
+	QueryInstant(context.Context, *pb.QueryInstantRequest) (*pb.InstantResponse, error)
+}
+
 // MetricsGenerator owns the lifecycle of the background /metrics collector.
 //
 // It satisfies kratos transport.Server: Start spins up a single refresh goroutine that
@@ -43,7 +52,7 @@ type MetricsGenerator struct {
 	promClient     *prom.Client
 	nodeUsecase    *biz.NodeUsecase
 	podUsecase     *biz.PodUseCase
-	monitorService *service.MonitorService
+	monitorService instantQuerier
 
 	interval time.Duration
 	timeout  time.Duration
@@ -385,30 +394,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			// 查询任务在当前设备下的算力利用率
-			taskCoreUsed, err := s.taskCoreUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
+			used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index, core)
 			if err == nil {
-				used := float64(0)
-				util := float64(0)
-				switch provider {
-				case biz.NvidiaGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case biz.CambriconGPUDevice:
-					used = float64(taskCoreUsed) / 100 * float64(core)
-					util = float64(taskCoreUsed)
-				case biz.HygonGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				case metax.MetaxSGPUDevice:
-					used = float64(taskCoreUsed)
-					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core))
-				default:
-				}
-				cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
-				if err == nil && used != 0 && cardCoreUtil > 95 {
-					used = float64(cardCoreUtil) / 100 * float64(core)
-					util = float64(cardCoreUtil)
-				}
 				s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 				s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 			}
@@ -430,16 +417,21 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 }
 
 func (s *MetricsGenerator) queryInstantVal(ctx context.Context, query string) (float32, error) {
-	res, err := s.monitorService.QueryInstant(context.TODO(), &pb.QueryInstantRequest{
+	val, _, err := s.queryInstantValWithPresence(ctx, query)
+	return val, err
+}
+
+func (s *MetricsGenerator) queryInstantValWithPresence(ctx context.Context, query string) (float32, bool, error) {
+	res, err := s.monitorService.QueryInstant(ctx, &pb.QueryInstantRequest{
 		Query: query,
 	})
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if len(res.Data) > 0 {
-		return res.Data[0].Value, nil
+		return res.Data[0].Value, true, nil
 	}
-	return 0, nil
+	return 0, false, nil
 }
 
 // 卡显存已使用量
@@ -529,14 +521,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
-		//query = fmt.Sprintf("avg(hami_container_device_utilization_ratio{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"})", deviceUUID, namespace, pod, container)
-		//		queryTemplate := `last_over_time((hami_container_device_utilization_ratio{device_uuid="%s", namespace="%s", pod="%s", container="%s"} != 0)[1m:])
-		//or
-		//last_over_time(hami_container_device_utilization_ratio{device_uuid="%s", namespace="%s", pod="%s", container="%s"}[1m:])`
-		//		query = fmt.Sprintf(queryTemplate, deviceUUID, namespace, pod, container, deviceUUID, namespace, pod, container)
-		queryTemplate := fmt.Sprintf("hami_container_device_utilization_ratio{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"}", deviceUUID, namespace, pod, container)
-		query = fmt.Sprintf("sum_over_time(%s[1m]) == 0 or (sum_over_time(%s[10m:]) / count_over_time(( %s !=0)[10m:])) ", queryTemplate, queryTemplate, queryTemplate)
-		//query = queryTemplate
+		query = nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vcore\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
@@ -551,7 +536,64 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	val, present, err := s.queryInstantValWithPresence(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	if !present && provider == biz.NvidiaGPUDevice {
+		return 0, errNoMetricData
+	}
+	return val, nil
+}
+
+func nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container string) string {
+	selector := fmt.Sprintf("hami_container_device_utilization_ratio{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"}", deviceUUID, namespace, pod, container)
+	return fmt.Sprintf("avg(avg_over_time(%s[1m]))", selector)
+}
+
+// containerCoreMetrics preserves each provider's existing task-compute conversion.
+// For NVIDIA, used estimates active allocated compute in vCore percentage points
+// and excludes elastic borrowing; util is allocated-compute activity (0-100), not
+// physical-card utilization.
+func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int, allocatedCore int32) (float64, float64, error) {
+	if allocatedCore <= 0 {
+		return 0, 0, errInvalidCoreCapacity
+	}
+
+	taskCoreUsed, err := s.taskCoreUsed(ctx, provider, namespace, pod, container, podUUID, deviceUUID, hostname, deviceIndex)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	used := float64(0)
+	util := float64(0)
+	switch provider {
+	case biz.NvidiaGPUDevice:
+		rawActivity := float64(taskCoreUsed)
+		if math.IsNaN(rawActivity) || math.IsInf(rawActivity, 0) {
+			return 0, 0, errNoMetricData
+		}
+		activity := math.Max(0, math.Min(100, rawActivity))
+		used = roundToTwoDecimal(math.Min(100, activity*float64(allocatedCore)/100))
+		util = roundToOneDecimal(activity)
+		return used, util, nil
+	case biz.CambriconGPUDevice:
+		used = float64(taskCoreUsed) / 100 * float64(allocatedCore)
+		util = float64(taskCoreUsed)
+	case biz.HygonGPUDevice, metax.MetaxSGPUDevice:
+		used = float64(taskCoreUsed)
+		util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(allocatedCore))
+	}
+
+	// Keep the legacy fallback for providers whose task-level metrics still need it.
+	// It must not be used for NVIDIA: physical-card activity cannot be attributed to
+	// one container when several workloads share the same GPU.
+	cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, deviceUUID)
+	if err == nil && used != 0 && cardCoreUtil > 95 {
+		used = float64(cardCoreUtil) / 100 * float64(allocatedCore)
+		util = float64(cardCoreUtil)
+	}
+	return used, util, nil
 }
 
 // 任务显存使用量

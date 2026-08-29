@@ -275,7 +275,7 @@ export default {
     appName: 'App Name',
     createTime: 'Creation Time',
     times: 'x',
-    computeUsageTrend: 'GPU Compute Utilization (%)',
+    computeUsageTrend: 'Allocated GPU Compute Utilization (%)',
     memUsageTrend: 'GPU Memory Utilization (%)',
     cpuUsageTrend: 'CPU Usage (%)',
     memoryUsageTrend: 'Memory Usage (%)',
