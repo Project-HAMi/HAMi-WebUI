@@ -129,8 +129,8 @@ verified.
 ### Chart 1.x Web Gateway
 
 Chart 1.x will continue to deploy separate frontend and backend containers.
-The frontend container will use a minimal Nginx, Caddy, or equivalent Gateway
-instead of a production NestJS runtime.
+The frontend container will use the standard-library Go Web entry selected by
+the checked-in spike instead of a production NestJS runtime.
 
 The following public contracts remain stable:
 
@@ -138,10 +138,15 @@ The following public contracts remain stable:
   `env.frontend` Helm values;
 - existing `service.*`, `ingress.*`, and security-context configuration;
 - the frontend container port `3000` and configurable Service port;
-- `/api/vgpu/*`;
+- the versioned HAMi Web API below `/api/vgpu/v1/*`;
 - `/health_check` as a frontend-container liveness endpoint;
 - existing SPA routes and Helm upgrade and rollback behavior; and
 - amd64 and arm64 images.
+
+For the new official Go Web entry, the prefix is an allowlisted application API
+contract, not a tunnel to every backend endpoint. Unsupported API versions and
+`/metrics`, `/readyz`, and `/q` remain backend-only even when requested through
+`/api/vgpu`; no browser-facing route exposes them.
 
 The Gateway implementation PR must publish a versioned frontend-container
 contract before changing the default image. At minimum, that contract defines
@@ -156,6 +161,12 @@ the previous official frontend image at the root base path and for custom
 images that implement the published container contract. Both pinning the
 previous official image digest in the new Chart and `helm rollback` to the
 previous Chart must be tested.
+
+The previous Node-based official image retains its legacy wildcard
+`/api/vgpu/*` proxy and HTTP 200 / `code: 599` proxy-error behavior when pinned
+for rollback. Image rollback restores the previous availability contract; it
+does not provide the new allowlist, status-code, caching, static-404, or
+graceful-shutdown guarantees.
 
 The current `/admin` SPA path segment is a legacy route name, not an
 authentication boundary. Canonical route cleanup is separate work and must use
@@ -184,12 +195,14 @@ can be disabled by security-sensitive deployments, and is removed only in Chart
 version 2.0.0. Distinct Service labels must ensure that each Ready backend Pod
 has one scrape target and is not discovered again through the primary Service.
 
-The Gateway implementation will be selected with a small checked-in spike. The
-choice must support a non-root, read-only container; amd64 and arm64; runtime
-base-path and framing configuration; deterministic proxy status codes; and a
-small, actively maintained runtime surface. Technology preference alone is not
-a selection criterion. Proxy timeouts must be explicit and must not be shorter
-than the configured Go HTTP timeout.
+The selected Web entry supports a non-root, read-only container; amd64 and
+arm64; deterministic proxy status codes; and a small standard-library runtime
+surface. The default proxy timeout is explicit and longer than the default
+backend HTTP timeout. Runtime base-path and framing configuration are the next
+increment. In Chart 1.x it uses a reverse-proxy API adapter; Chart 2.0 can reuse
+the same static, routing, cache, compression, and framing handler with the
+in-process API handler. This keeps the compatibility bridge from becoming
+throwaway infrastructure.
 
 NestJS source and dependencies will be deleted only after the minimal Gateway is
 the tested default and rollback through the previous frontend image has been
@@ -197,12 +210,17 @@ verified.
 
 ### Observable contract
 
+The target behavior below applies to the new official Go Web entry. The legacy
+frontend image is tested as a rollback path under its explicitly documented
+legacy semantics.
+
 | Scenario | Required result |
 | --- | --- |
 | `/` and an existing SPA deep link | Serve the SPA at the root or configured base path |
 | Missing static asset | Return HTTP 404; never return `index.html` |
-| Existing `/api/vgpu/*` request | Preserve method, body, relevant headers, response body, and upstream status |
-| Unknown `/api/vgpu/*` request | Preserve the backend's non-2xx JSON response |
+| Existing `/api/vgpu/v1/*` request | Preserve method, query, body, relevant headers, response body, and upstream status |
+| Unknown application request below `/api/vgpu/v1/*` | Preserve the backend's non-2xx JSON response |
+| Unsupported version or backend-only `/metrics`, `/readyz`, or `/q` path, directly or below `/api/vgpu` | Return HTTP 404 without proxying |
 | Backend connection refused / timed out | Return HTTP 502 / 504 with a non-success JSON response |
 | `/health_check` | Return HTTP 200 when the Gateway can serve, independent of backend readiness |
 | `index.html` / hashed asset | No long-lived cache / immutable cache with compression |
@@ -253,16 +271,17 @@ being silently ignored.
    current root SPA, deep-link refresh, API method/body/status forwarding,
    `/health_check`, and current iframe behavior. Do not lock known incorrect
    error or caching behavior into the baseline.
-2. Select and document the minimal Gateway implementation using the acceptance
-   criteria above.
-3. Introduce target-behavior tests together with the Gateway: static 404s,
-   `502`/`504`, caching, compression, root and sub-path deployment, framing
-   allow/deny, probes, security context, and both rollback paths.
-4. Verify Kubernetes install, upgrade, Helm rollback, image rollback, and
-   backend failure recovery in an integration environment.
-5. Delete the unused NestJS runtime and dependencies after parity is established.
-6. Add the internal backend Service and deprecated legacy-port switch with
+2. Introduce the selected Go Web entry at the root path with target-behavior
+   tests for static 404s, `502`/`504`, caching, compression, probes, non-root and
+   read-only execution, and previous-image compatibility.
+3. Add runtime base-path and framing allow/deny behavior as a separate
+   compatibility increment with browser-level embedding tests.
+4. Add the internal backend Service and deprecated legacy-port switch with
    explicit upgrade notes and per-Ready-Pod exactly-once ServiceMonitor tests.
+5. Verify Kubernetes install, upgrade, Helm rollback, image rollback, and
+   backend failure recovery in an integration environment.
+6. Delete the unused NestJS runtime and dependencies after parity and rollback
+   are established, then publish and observe the Chart 1.x transition release.
 7. Treat a single Go image as separate Chart version 2.0.0 work after the
    exploration gates are satisfied.
 

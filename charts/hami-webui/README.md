@@ -55,6 +55,17 @@ The command removes all the Kubernetes components associated with the chart and 
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
 | externalPrometheus.address | string | `"http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"` |  |
 | externalPrometheus.enabled | bool | `false`                                                                            |  |
+| frontend.livenessProbe.enabled | bool | `true` | Enable the Web-entry liveness probe. |
+| frontend.livenessProbe.failureThreshold | int | `6` |  |
+| frontend.livenessProbe.initialDelaySeconds | int | `5` |  |
+| frontend.livenessProbe.periodSeconds | int | `10` |  |
+| frontend.livenessProbe.timeoutSeconds | int | `3` |  |
+| frontend.proxyTimeout | string | `"65s"` | End-to-end backend proxy timeout; keep this longer than `backend.http.timeout`. |
+| frontend.readinessProbe.enabled | bool | `true` | Enable the Web-entry readiness probe. |
+| frontend.readinessProbe.failureThreshold | int | `3` |  |
+| frontend.readinessProbe.initialDelaySeconds | int | `1` |  |
+| frontend.readinessProbe.periodSeconds | int | `5` |  |
+| frontend.readinessProbe.timeoutSeconds | int | `3` |  |
 | fullnameOverride | string | `""`                                                                               |  |
 | hamiServiceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
 | hamiServiceMonitor.enabled | bool | `true`                                                                             |  |

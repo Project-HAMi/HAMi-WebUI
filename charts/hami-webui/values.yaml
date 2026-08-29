@@ -177,6 +177,28 @@ externalPrometheus:
   # Single PromQL upstream timeout (sent to Prometheus / VictoriaMetrics as the &timeout= parameter).
   timeout: "1m"
 
+# Web-entry runtime settings and health probes. The probes report the frontend
+# container's own health; backend readiness is gated separately below.
+frontend:
+  # Keep this longer than backend.http.timeout so the backend owns normal API
+  # deadline responses. The previous Node frontend safely ignores this value.
+  proxyTimeout: "65s"
+  # /health_check reports whether the Web entry itself can serve traffic. It is
+  # intentionally independent from backend readiness; the backend probe below
+  # still keeps the Pod out of Service endpoints until informer caches sync.
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 1
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
 # Kratos server timeouts. These bound the deadline placed on each incoming HTTP/gRPC
 # request context. They no longer affect /metrics generation (which runs in the background),
 # but they still gate the page-side APIs, some of which legitimately take a few seconds
@@ -188,8 +210,8 @@ backend:
     timeout: "60s"
   # Readiness probe on the backend's /readyz. The backend only starts listening
   # after its k8s informer caches have synced, so gating the pod on /readyz keeps
-  # it out of the Service until the backend can serve — this prevents the frontend
-  # BFF from hitting "connection refused" against the not-yet-listening backend
+  # it out of the Service until the backend can serve — this prevents the Web entry
+  # from hitting "connection refused" against the not-yet-listening backend
   # during startup. failureThreshold * periodSeconds should comfortably exceed the
   # worst-case informer sync time on a large cluster.
   readinessProbe:

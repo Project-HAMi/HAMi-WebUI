@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Only run the frontend jobs when frontend sources (the NestJS BFF in src/,
-  # the Vue app in packages/, the workspace manifests) or this workflow change.
+  # Run when the Vue app, legacy Nest code, Go Web entry, or their build and
+  # contract inputs change.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -31,10 +31,18 @@ jobs:
               - 'src/**'
               - 'packages/**'
               - 'package.json'
+              - '.browserslistrc'
+              - '.dockerignore'
               - '.node-version'
               - 'Dockerfile'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
+              - 'server/.go-version'
+              - 'server/cmd/web-entry/**'
+              - 'server/go.mod'
+              - 'server/go.sum'
+              - 'server/internal/webentry/**'
+              - 'scripts/precompress-web-assets.mjs'
               - 'scripts/verify-toolchain-versions.sh'
               - 'scripts/verify-vite-env-boundary.mjs'
               - 'test/web-entry/**'
@@ -55,6 +63,10 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/.go-version
+          cache-dependency-path: server/go.sum
       - name: Verify toolchain versions
         run: bash scripts/verify-toolchain-versions.sh
       - name: Install dependencies
@@ -63,6 +75,11 @@ jobs:
         run: pnpm run build
       - name: Build web and verify environment boundary
         run: pnpm run verify:vite-env
+      - name: Pre-compress Web assets
+        run: pnpm run precompress:web-assets
+      - name: Build Go Web entry
+        working-directory: server
+        run: mkdir -p build && GOTOOLCHAIN=local go build -mod=readonly -trimpath -o build/web-entry ./cmd/web-entry
       - name: Test Web-entry contract
         run: pnpm run test:web-entry-contract
       - name: Test web
@@ -89,7 +106,7 @@ jobs:
       # structured-clone polyfill that is not committed to the repo; run ESLint
       # directly in check mode (the supported Node runtime has structuredClone).
       - name: Lint BFF
-        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts" "test/web-entry/**/*.mjs"
+        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts" "test/web-entry/**/*.mjs" "scripts/precompress-web-assets.mjs"
       - name: Lint web
         run: pnpm --filter hami-webui-web run lint
 
