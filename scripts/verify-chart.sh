@@ -56,6 +56,21 @@ assert_internal_prometheus_address test hami-webui-test \
   --set-string 'kube-prometheus-stack.namespaceOverride=metrics-system' \
   --set 'kube-prometheus-stack.prometheus.service.port=19090'
 
+prometheus_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --set 'kube-prometheus-stack.enabled=true' \
+  --show-only charts/kube-prometheus-stack/templates/prometheus/prometheus.yaml)"
+kube_state_metrics_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --set 'kube-prometheus-stack.enabled=true' \
+  --show-only charts/kube-prometheus-stack/charts/kube-state-metrics/templates/servicemonitor.yaml)"
+selector_label='jobRelease: hami-webui-prometheus'
+if ! grep -Fq "${selector_label}" <<<"${prometheus_render}" ||
+  ! grep -Fq "${selector_label}" <<<"${kube_state_metrics_render}"; then
+  echo "Bundled Prometheus does not select the kube-state-metrics ServiceMonitor" >&2
+  exit 1
+fi
+
 external_address='http://external-prometheus.observability.svc.cluster.local:9090'
 external_render="$(helm template test "${work_dir}/hami-webui" \
   --set 'externalPrometheus.enabled=true' \
