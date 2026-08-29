@@ -313,6 +313,11 @@ const resourceOverviewData = useInstantVector(
       query:
         `sum(kube_pod_container_resource_limits{resource="memory", namespace="$namespace", pod=~"$pod", container="$container"}) / 1024 / 1024 / 1024`,
     },
+    {
+      key: 'containerInfo',
+      query:
+        `count(kube_pod_container_info{namespace="$namespace", pod=~"$pod", container="$container"})`,
+    },
   ],
   (query) =>
     query
@@ -325,18 +330,31 @@ const toNumOrUndefined = (v) => {
   return Number.isFinite(n) ? n : undefined;
 };
 const resourceOverviewTexts = computed(() => {
-  const get = (key) => resourceOverviewData.value.find((item) => item.key === key)?.count;
+  const getMetric = (key) => resourceOverviewData.value.find((item) => item.key === key);
+  const get = (key) => getMetric(key)?.count;
+  const containerInfo = getMetric('containerInfo');
+  const hasContainerInfo =
+    containerInfo?.hasData === true && Number(containerInfo.count) > 0;
+  const formatLimit = (key, formatter) => {
+    const metric = getMetric(key);
+    if (metric?.hasData === true) {
+      const value = toNumOrUndefined(metric.count);
+      return value === undefined ? '--' : formatter(value);
+    }
+    if (metric?.hasData === false && hasContainerInfo) {
+      return t('common.notLimited');
+    }
+    return '--';
+  };
   const gpuCards = toNumOrUndefined(get('gpuCards'));
   const computeLimit = toNumOrUndefined(get('computeLimit'));
   const singleCardMemory = toNumOrUndefined(get('singleCardMemory'));
-  const cpuLimit = toNumOrUndefined(get('cpuLimit'));
-  const memoryLimit = toNumOrUndefined(get('memoryLimit'));
   return {
     gpuCards: gpuCards === undefined ? '--' : `${Math.round(gpuCards)}`,
     computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 1)}`,
     singleCardMemory: singleCardMemory === undefined ? '--' : `${singleCardMemory.toFixed(1)} GiB`,
-    cpuLimit: cpuLimit === undefined ? '--' : `${Math.round(cpuLimit)} Core`,
-    memoryLimit: memoryLimit === undefined ? '--' : `${memoryLimit.toFixed(1)} GiB`,
+    cpuLimit: formatLimit('cpuLimit', (value) => `${roundToDecimal(value, 3)} Core`),
+    memoryLimit: formatLimit('memoryLimit', (value) => `${value.toFixed(1)} GiB`),
   };
 });
 

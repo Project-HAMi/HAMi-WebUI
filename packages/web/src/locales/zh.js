@@ -39,6 +39,7 @@ export default {
     fieldRequired: '该字段是必填字段',
     yes: '是',
     no: '否',
+    notLimited: '未限制',
     unitCount: '个',
     unitSheet: '张',
     paginationTotal: '共 {total} 条数据',
