@@ -10,6 +10,11 @@ creation-date: 2025-02-09
 
 # HAMi-WebUI Refactoring and Multi-Cluster Capability
 
+> **Architecture update:** The multi-cluster direction in this proposal has
+> been replaced by [HAMi-WebUI Single-Cluster Web Entry and Embedding Architecture](web-entry-and-embedding.md).
+> The build, metric-clarity, UI-quality, and maintainability goals below remain
+> useful historical context.
+
 ## Summary
 
 <!--
@@ -135,4 +140,3 @@ This section contains the concrete design details for implementation and review.
 
 - **Only fix bugs in current codebase, no refactor**: Would improve stability somewhat but would not unify build and architecture or extend to multi-cluster at low cost; therefore the “refactor + multi-cluster” evolution is adopted.
 - **Multi-cluster via multiple browser tabs, one per cluster**: Poor UX and no aggregate view; supporting cluster switching and optional aggregation inside the WebUI better fits operator workflows.
-
