@@ -4,17 +4,24 @@ BUILD_PATH ?= ./build/
 VERSION ?= $(shell git describe --tags --always)
 DIRS = $(shell ls $(CMD_PATH))
 TARGET_ARCH ?= amd64
+WIRE_VERSION ?= v0.7.0
+PROTOC_GEN_VALIDATE_VERSION ?= v1.0.4
+KRATOS_VERSION ?= v2.0.0-20240322155018-41971ffa647a
+PROTOC_GEN_GO_VERSION ?= v1.34.2
+PROTOC_GEN_GO_GRPC_VERSION ?= v1.4.0
+PROTOC_GEN_GO_HTTP_VERSION ?= v2.0.0-20240322155018-41971ffa647a
+PROTOC_GEN_OPENAPI_VERSION ?= v0.6.9
 
 # 1. Install Go dependencies
 .PHONY: install-deps
 install-deps:
-	go install github.com/google/wire/cmd/wire@latest
-	go install github.com/envoyproxy/protoc-gen-validate@latest
-	go install github.com/go-kratos/kratos/cmd/kratos/v2@latest
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-http/v2@latest
-	go install github.com/google/gnostic/cmd/protoc-gen-openapi@latest
+	go install github.com/google/wire/cmd/wire@$(WIRE_VERSION)
+	go install github.com/envoyproxy/protoc-gen-validate@$(PROTOC_GEN_VALIDATE_VERSION)
+	go install github.com/go-kratos/kratos/cmd/kratos/v2@$(KRATOS_VERSION)
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-http/v2@$(PROTOC_GEN_GO_HTTP_VERSION)
+	go install github.com/google/gnostic/cmd/protoc-gen-openapi@$(PROTOC_GEN_OPENAPI_VERSION)
 
 # 2. Generate proto and wire files
 .PHONY: generate
@@ -25,11 +32,17 @@ generate-proto:
 	kratos proto client .
 
 .PHONY: generate-wire
-generate-wire: tidy-mod
+generate-wire:
 	@ for dir in $(DIRS); \
 	do \
 		cd ${CMD_PATH}$$dir/ && wire . && cd ../../; \
 	done
+
+# Verify module metadata without changing it. Release builds must not repair
+# dependency files as a side effect of code generation.
+.PHONY: verify-mod
+verify-mod:
+	go mod tidy -diff
 
 # 3. Clean Go modules
 .PHONY: tidy-mod
@@ -40,7 +53,7 @@ tidy-mod:
 .PHONY: build-linux
 build-linux:
 	@echo "Building for GOOS=linux GOARCH=$(TARGET_ARCH)" # TARGET_ARCH 会从 make 命令传入
-	@for dir in $(DIRS); \
+	@set -e; for dir in $(DIRS); \
 	do \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) go build -o $(BUILD_PATH)$$dir ${CMD_PATH}$$dir; \
 		echo "Built $$dir for Linux/$(TARGET_ARCH)"; \
@@ -91,7 +104,7 @@ clean-build:
 
 # 8. Complete build workflow
 .PHONY: build
-build: install-deps generate build-linux
+build: install-deps generate verify-mod build-linux
 
 # 9. Release workflow
 .PHONY: release

@@ -1,0 +1,33 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - kind/cleanup
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - kind/cleanup
+
+  - package-ecosystem: docker
+    directory: "/server"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - kind/cleanup

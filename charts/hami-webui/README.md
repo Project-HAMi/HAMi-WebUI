@@ -1,6 +1,6 @@
 # HAMi-WebUI
 
-![Version: 1.0.4](https://img.shields.io/badge/Version-1.0.4-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.4](https://img.shields.io/badge/AppVersion-1.0.4-informational?style=flat-square)
+![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.2.0](https://img.shields.io/badge/AppVersion-1.2.0-informational?style=flat-square)
 
 ## Get Repo Info
 
@@ -61,12 +61,15 @@ The command removes all the Kubernetes components associated with the chart and 
 | hamiServiceMonitor.honorLabels | bool | `true`                                                                            | Keep HAMi's workload namespace/pod/container labels when they collide with Prometheus scrape-target labels. |
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
-| hamiServiceMonitor.svcNamespace | string | "kube-system"                                                                      | Default is "kube-system", but it should be set according to the namespace where the HAMi components are installed. || image.backend.pullPolicy | string | `"IfNotPresent"` |  |
+| hamiServiceMonitor.svcNamespace | string | `"kube-system"`                                                                    | Namespace where the HAMi monitor Service is installed. |
+| image.backend.digest | string | `""`                                                                                | Immutable manifest digest; takes precedence over `image.backend.tag` when set. |
+| image.backend.pullPolicy | string | `"IfNotPresent"`                                                                  |  |
 | image.backend.repository | string | `"projecthami/hami-webui-be-oss"`                                                  |  |
-| image.backend.tag | string | `"v1.0.0"`                                                                         |  |
+| image.backend.tag | string | `"v1.2.0"`                                                                         | Used only when `image.backend.digest` is empty. |
+| image.frontend.digest | string | `""`                                                                               | Immutable manifest digest; takes precedence over `image.frontend.tag` when set. |
 | image.frontend.pullPolicy | string | `"IfNotPresent"`                                                                   |  |
 | image.frontend.repository | string | `"projecthami/hami-webui-fe-oss"`                                                  |  |
-| image.frontend.tag | string | `"v1.0.0"`                                                                         |  |
+| image.frontend.tag | string | `"v1.2.0"`                                                                         | Used only when `image.frontend.digest` is empty. |
 | imagePullSecrets | list | `[]`                                                                               |  |
 | ingress.annotations | object | `{}`                                                                               |  |
 | ingress.className | string | `""`                                                                               |  |
@@ -78,7 +81,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | kube-prometheus-stack.alertmanager.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.crds.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.defaultRules.create | bool | `false`                                                                            |  |
-| kube-prometheus-stack.enabled | bool | `true`                                                                             |  |
+| kube-prometheus-stack.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.grafana.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.kubernetesServiceMonitors.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.nodeExporter.enabled | bool | `false`                                                                            |  |
