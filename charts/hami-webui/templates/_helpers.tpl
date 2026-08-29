@@ -6,6 +6,26 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Render an image reference. A verified manifest digest takes precedence over a
+mutable tag; tag remains the backwards-compatible default for normal installs.
+*/}}
+{{- define "hami-webui.image" -}}
+{{- $repository := required (printf "image.%s.repository is required" .name) .image.repository -}}
+{{- $digest := default "" .image.digest -}}
+{{- if $digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
+{{- fail (printf "image.%s.digest must be a sha256 digest" .name) -}}
+{{- end -}}
+{{- printf "%s@%s" $repository $digest -}}
+{{- else -}}
+{{- $appVersion := required "Chart.appVersion is required when an image digest is not set" .appVersion -}}
+{{- $defaultTag := ternary $appVersion (printf "v%s" $appVersion) (hasPrefix "v" $appVersion) -}}
+{{- $tag := default $defaultTag .image.tag -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.

@@ -29,7 +29,7 @@ spec:
         - name: {{ .Chart.Name }}-fe-oss
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag | default .Chart.AppVersion }}"
+          image: {{ include "hami-webui.image" (dict "name" "frontend" "image" .Values.image.frontend "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
           env:
             {{- toYaml .Values.env.frontend | nindent 12 }}
@@ -46,7 +46,7 @@ spec:
         - name: {{ .Chart.Name }}-be-oss
           securityContext:
                   {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag | default .Chart.AppVersion }}"
+          image: {{ include "hami-webui.image" (dict "name" "backend" "image" .Values.image.backend "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
           env:
             {{- toYaml .Values.env.backend | nindent 12 }}

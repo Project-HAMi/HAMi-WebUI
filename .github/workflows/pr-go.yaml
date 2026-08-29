@@ -11,7 +11,6 @@ permissions:
   pull-requests: read
 
 env:
-  GO_VERSION: "1.25.1"
   GOLANGCI_VERSION: "v2.12"
   PROTOC_VERSION: "28.3"
 
@@ -26,13 +25,14 @@ jobs:
     outputs:
       go: ${{ github.event_name != 'pull_request' || steps.filter.outputs.go == 'true' }}
     steps:
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         if: github.event_name == 'pull_request'
         with:
           filters: |
             go:
               - 'server/**'
+              - 'scripts/verify-toolchain-versions.sh'
               - '.github/workflows/pr-go.yaml'
 
   # `make generate` (proto + wire) is mandatory before build/vet/test because
@@ -46,13 +46,17 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: ${{ env.GO_VERSION }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/.go-version
           cache-dependency-path: server/go.sum
+      - name: Verify toolchain versions
+        run: bash ../scripts/verify-toolchain-versions.sh
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: ${{ env.PROTOC_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -60,6 +64,8 @@ jobs:
         run: make install-deps
       - name: Generate proto + wire
         run: make generate
+      - name: Verify module metadata
+        run: make verify-mod
       - name: Build
         run: go build ./...
       - name: Vet
@@ -75,15 +81,16 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: server/.go-version
           cache-dependency-path: server/go.sum
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: ${{ env.PROTOC_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -91,8 +98,10 @@ jobs:
         run: make install-deps
       - name: Generate proto + wire
         run: make generate
+      - name: Verify module metadata
+        run: make verify-mod
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_VERSION }}
           working-directory: server
@@ -113,6 +122,10 @@ jobs:
     steps:
       - name: Aggregate Go check results
         run: |
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "Go change detection did not complete successfully: ${{ needs.changes.result }}"
+            exit 1
+          fi
           if [[ "${{ needs.changes.outputs.go }}" != "true" ]]; then
             echo "No Go-relevant changes; skipping."
             exit 0
