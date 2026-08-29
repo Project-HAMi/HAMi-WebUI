@@ -1,0 +1,6 @@
+dependencies:
+  - name: fixture
+    repository: https://example.invalid/charts
+    version: 1.0.0
+digest: sha256:1ddc85b742b26bdb2d55eafe3b47a925d9e696624a1fd63366908552bdb016f7
+generated: "2026-08-29T00:00:00Z"

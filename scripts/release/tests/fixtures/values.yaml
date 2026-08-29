@@ -1,0 +1,12 @@
+replicaCount: 1
+vendorNodeSelectors:
+  NVIDIA: gpu=on
+image:
+  frontend:
+    repository: projecthami/hami-webui-fe-oss
+    tag: "v1.2.0"
+    digest: ""
+  backend:
+    repository: projecthami/hami-webui-be-oss
+    tag: "v1.2.0"
+    digest: ""
