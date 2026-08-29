@@ -1,14 +1,12 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import path from 'path'
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd())
-  
+export default defineConfig(() => {
   return {
     base: './', // 对应 publicPath: './'
     plugins: [
@@ -67,9 +65,5 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    define: {
-      // 注入 Webpack 环境变量
-      'process.env': { ...process.env, ...env }
-    }
   }
 })

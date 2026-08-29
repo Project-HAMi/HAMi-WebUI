@@ -36,6 +36,7 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'scripts/verify-toolchain-versions.sh'
+              - 'scripts/verify-vite-env-boundary.mjs'
               - 'tsconfig*.json'
               - 'Makefile'
               - '.github/workflows/pr-frontend.yaml'
@@ -59,8 +60,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build BFF
         run: pnpm run build
-      - name: Build web
-        run: pnpm --filter hami-webui-web run build
+      - name: Build web and verify environment boundary
+        run: pnpm run verify:vite-env
       - name: Test web
         run: pnpm --filter hami-webui-web run test:metrics
       - name: Test BFF
