@@ -37,6 +37,7 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'scripts/verify-toolchain-versions.sh'
               - 'scripts/verify-vite-env-boundary.mjs'
+              - 'test/web-entry/**'
               - 'tsconfig*.json'
               - 'Makefile'
               - '.github/workflows/pr-frontend.yaml'
@@ -62,6 +63,8 @@ jobs:
         run: pnpm run build
       - name: Build web and verify environment boundary
         run: pnpm run verify:vite-env
+      - name: Test Web-entry contract
+        run: pnpm run test:web-entry-contract
       - name: Test web
         run: pnpm --filter hami-webui-web run test:metrics
       - name: Test BFF
@@ -84,9 +87,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       # The package `lint` script auto-fixes (`--fix`) and `--require`s a
       # structured-clone polyfill that is not committed to the repo; run ESLint
-      # directly in check mode (node 22 has structuredClone natively).
+      # directly in check mode (the supported Node runtime has structuredClone).
       - name: Lint BFF
-        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts"
+        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts" "test/web-entry/**/*.mjs"
       - name: Lint web
         run: pnpm --filter hami-webui-web run lint
 
