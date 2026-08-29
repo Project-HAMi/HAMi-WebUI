@@ -1,6 +1,6 @@
 # HAMi-WebUI
 
-![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.2.0](https://img.shields.io/badge/AppVersion-1.2.0-informational?style=flat-square)
+![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.3.0](https://img.shields.io/badge/AppVersion-1.3.0-informational?style=flat-square)
 
 ## Get Repo Info
 
@@ -62,14 +62,14 @@ The command removes all the Kubernetes components associated with the chart and 
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
 | hamiServiceMonitor.svcNamespace | string | `"kube-system"`                                                                    | Namespace where the HAMi monitor Service is installed. |
-| image.backend.digest | string | `""`                                                                                | Immutable manifest digest; takes precedence over `image.backend.tag` when set. |
+| image.backend.digest | string | `"sha256:b37a24461b9289039dc6676d811c92c031abedf912d61f6371a2aa3909938cfe"`                | Immutable manifest digest; takes precedence over `image.backend.tag` when set. |
 | image.backend.pullPolicy | string | `"IfNotPresent"`                                                                  |  |
 | image.backend.repository | string | `"projecthami/hami-webui-be-oss"`                                                  |  |
-| image.backend.tag | string | `"v1.2.0"`                                                                         | Used only when `image.backend.digest` is empty. |
-| image.frontend.digest | string | `""`                                                                               | Immutable manifest digest; takes precedence over `image.frontend.tag` when set. |
+| image.backend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.backend.digest` is empty. |
+| image.frontend.digest | string | `"sha256:efb77348f98d0aecb84b76d049f395b487544c03734ee8b7f98c75f6311a2489"`               | Immutable manifest digest; takes precedence over `image.frontend.tag` when set. |
 | image.frontend.pullPolicy | string | `"IfNotPresent"`                                                                   |  |
 | image.frontend.repository | string | `"projecthami/hami-webui-fe-oss"`                                                  |  |
-| image.frontend.tag | string | `"v1.2.0"`                                                                         | Used only when `image.frontend.digest` is empty. |
+| image.frontend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.frontend.digest` is empty. |
 | imagePullSecrets | list | `[]`                                                                               |  |
 | ingress.annotations | object | `{}`                                                                               |  |
 | ingress.className | string | `""`                                                                               |  |
