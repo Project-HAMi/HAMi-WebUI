@@ -71,6 +71,8 @@ jobs:
         run: bash scripts/verify-toolchain-versions.sh
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Test Vite development proxy
+        run: pnpm --filter hami-webui-web run test:dev-proxy
       - name: Build BFF
         run: pnpm run build
       - name: Build web and verify environment boundary

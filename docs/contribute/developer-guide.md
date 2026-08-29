@@ -52,10 +52,19 @@ By default, you can access the web-ui-server-swagger at `http://localhost:8000/q
 
 ### Frontend
 
-For browser development, run `make start-dev` in the repository root. This
-starts the Vite development server and the legacy development proxy.
+Start the backend first, then run `make start-dev` in the repository root. This
+starts the Vite development server; NestJS is not part of the browser
+development path. Vite forwards browser requests below `/api/vgpu/v1/*`
+directly to the backend at `http://127.0.0.1:8000` and removes the
+`/api/vgpu` prefix.
 
 By default, you can access the web-ui at `http://localhost:3000/`.
+
+Set `HAMI_WEBUI_BACKEND_URL` when the backend uses a different origin:
+
+```bash
+HAMI_WEBUI_BACKEND_URL=http://127.0.0.1:18000 make start-dev
+```
 
 To exercise the production Web entry locally:
 
