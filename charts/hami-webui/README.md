@@ -62,11 +62,11 @@ The command removes all the Kubernetes components associated with the chart and 
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
 | hamiServiceMonitor.svcNamespace | string | `"kube-system"`                                                                    | Namespace where the HAMi monitor Service is installed. |
-| image.backend.digest | string | `"sha256:4f3fa02710d56fea1e9a0d57587deb5fe86411b9471004c1f358a77437c62797"`                | Immutable manifest digest; takes precedence over `image.backend.tag` when set. |
+| image.backend.digest | string | `"sha256:7057047c7c2f7838cd190b3dc7263d503bbcf5d8e52642bc703227d137bc029d"`                | Immutable manifest digest; takes precedence over `image.backend.tag` when set. |
 | image.backend.pullPolicy | string | `"IfNotPresent"`                                                                  |  |
 | image.backend.repository | string | `"projecthami/hami-webui-be-oss"`                                                  |  |
 | image.backend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.backend.digest` is empty. |
-| image.frontend.digest | string | `"sha256:2a11f990d47833196869a3674ea64534eb2c817e231a1d2f2899a47b595002de"`               | Immutable manifest digest; takes precedence over `image.frontend.tag` when set. |
+| image.frontend.digest | string | `"sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e"`               | Immutable manifest digest; takes precedence over `image.frontend.tag` when set. |
 | image.frontend.pullPolicy | string | `"IfNotPresent"`                                                                   |  |
 | image.frontend.repository | string | `"projecthami/hami-webui-fe-oss"`                                                  |  |
 | image.frontend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.frontend.digest` is empty. |
