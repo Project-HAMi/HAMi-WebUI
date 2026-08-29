@@ -1,9 +1,35 @@
 {{- $podAnnotations := mergeOverwrite (dict) (default (dict) .Values.podAnnotations) (dict "checksum/config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum)) -}}
 {{- $frontendEnv := default (list) .Values.env.frontend -}}
+{{- $frontendSettings := default (dict) .Values.frontend -}}
 {{- $frontendProxyTimeoutOverridden := false -}}
+{{- $frontendBasePathOverridden := false -}}
+{{- $frontendFrameAncestorsOverridden := false -}}
 {{- range $frontendEnv -}}
 {{- if eq (get . "name") "HAMI_WEBUI_PROXY_TIMEOUT" -}}
 {{- $frontendProxyTimeoutOverridden = true -}}
+{{- end -}}
+{{- if eq (get . "name") "HAMI_WEBUI_BASE_PATH" -}}
+{{- $frontendBasePathOverridden = true -}}
+{{- end -}}
+{{- if eq (get . "name") "HAMI_WEBUI_FRAME_ANCESTORS_JSON" -}}
+{{- $frontendFrameAncestorsOverridden = true -}}
+{{- end -}}
+{{- end -}}
+{{- $basePathConfigured := hasKey $frontendSettings "basePath" -}}
+{{- $basePath := get $frontendSettings "basePath" -}}
+{{- if and (not $frontendBasePathOverridden) $basePathConfigured (ne (toJson $basePath) "null") (not (kindIs "string" $basePath)) -}}
+{{- fail "frontend.basePath must be a string" -}}
+{{- end -}}
+{{- $frameAncestorsConfigured := hasKey $frontendSettings "frameAncestors" -}}
+{{- $frameAncestors := get $frontendSettings "frameAncestors" -}}
+{{- if and (not $frontendFrameAncestorsOverridden) $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") (not (kindIs "slice" $frameAncestors)) -}}
+{{- fail "frontend.frameAncestors must be null or a list" -}}
+{{- end -}}
+{{- if and (not $frontendFrameAncestorsOverridden) (kindIs "slice" $frameAncestors) -}}
+{{- range $source := $frameAncestors -}}
+{{- if not (kindIs "string" $source) -}}
+{{- fail "frontend.frameAncestors entries must be strings" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 apiVersion: apps/v1
@@ -41,6 +67,14 @@ spec:
             {{- if not $frontendProxyTimeoutOverridden }}
             - name: HAMI_WEBUI_PROXY_TIMEOUT
               value: {{ default "65s" (get (default (dict) .Values.frontend) "proxyTimeout") | quote }}
+            {{- end }}
+            {{- if not $frontendBasePathOverridden }}
+            - name: HAMI_WEBUI_BASE_PATH
+              value: {{ default "/" $basePath | quote }}
+            {{- end }}
+            {{- if and (not $frontendFrameAncestorsOverridden) $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") }}
+            - name: HAMI_WEBUI_FRAME_ANCESTORS_JSON
+              value: {{ toJson $frameAncestors | quote }}
             {{- end }}
             {{- with $frontendEnv }}
             {{- toYaml . | nindent 12 }}

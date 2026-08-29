@@ -55,6 +55,8 @@ The command removes all the Kubernetes components associated with the chart and 
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
 | externalPrometheus.address | string | `"http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"` |  |
 | externalPrometheus.enabled | bool | `false`                                                                            |  |
+| frontend.basePath | string | `"/"` | Public URL prefix served by the official Go Web entry; use the same non-stripped Ingress path. |
+| frontend.frameAncestors | list or null | `null` | CSP framing allowlist. `null` preserves existing behavior, `[]` blocks framing, and a list allows explicit parents. |
 | frontend.livenessProbe.enabled | bool | `true` | Enable the Web-entry liveness probe. |
 | frontend.livenessProbe.failureThreshold | int | `6` |  |
 | frontend.livenessProbe.initialDelaySeconds | int | `5` |  |
@@ -127,6 +129,11 @@ The command removes all the Kubernetes components associated with the chart and 
 | tolerations | list | `[]`                                                                               |  |
 
 ## Configuration Guide for HAMi-WebUI Helm Chart
+
+For a non-root URL path and whole-application iframe embedding, see the
+[embedding guide](https://github.com/Project-HAMi/HAMi-WebUI/blob/main/docs/installation/embedding.md).
+The official Go Web entry requires the Ingress to preserve the configured
+`frontend.basePath`.
 
 ### 1. About `dcgm-exporter`
 

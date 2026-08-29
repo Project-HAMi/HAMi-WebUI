@@ -103,6 +103,12 @@ the endpoint is scraped twice. Configure that Prometheus to select only one.
 
    The HAMi-WebUI resources-overview page appears.
 
+### Serve from a URL prefix or embed in a platform
+
+To host HAMi-WebUI below a path such as `/hami/` or embed the whole application
+in an internal portal, configure the runtime base path and an explicit framing
+policy. See [Serve and embed HAMi-WebUI under a URL prefix](../embedding.md).
+
 ## Troubleshooting
 
 This section includes troubleshooting tips you might find helpful when deploying HAMi-WebUI on Kubernetes via Helm.

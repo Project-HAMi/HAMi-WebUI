@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
 import i18n from '@/locales';
+import { getBasePath } from '@/utils/base-path.mjs';
 
 // Default request timeout in ms. Override at build time via VITE_APP_REQUEST_TIMEOUT
 // (injected through .env.* or the image build environment). 60s is large
@@ -12,7 +13,9 @@ const requestTimeout =
   Number.parseInt(import.meta.env.VITE_APP_REQUEST_TIMEOUT, 10) || DEFAULT_REQUEST_TIMEOUT;
 
 const service = axios.create({
-  baseURL: import.meta.env.VITE_APP_BASE_API, // url = base url + request url
+  // API descriptors remain `/api/vgpu/...`; Axios combines them with this
+  // runtime prefix so root and sub-path deployments use the same bundle.
+  baseURL: getBasePath(),
   timeout: requestTimeout,
   validateStatus: function (status) {
     return (status >= 200 && status < 300) || status > 520;

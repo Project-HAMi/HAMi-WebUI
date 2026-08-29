@@ -103,15 +103,18 @@ The official Go Web entry also accepts these optional environment variables:
 | `HAMI_WEBUI_BACKEND_URL` | `http://127.0.0.1:8000` | Backend origin |
 | `HAMI_WEBUI_STATIC_DIR` | `/apps/public` | Built Vue asset directory |
 | `HAMI_WEBUI_PROXY_TIMEOUT` | `65s` | End-to-end backend request timeout; keep it longer than `backend.http.timeout` |
+| `HAMI_WEBUI_BASE_PATH` | `/` | Public URL prefix; the reverse proxy must preserve it |
+| `HAMI_WEBUI_FRAME_ANCESTORS_JSON` | unset | JSON framing allowlist; `[]` blocks all parents |
 | `HAMI_WEBUI_HEALTHCHECK_URL` | `http://127.0.0.1:3000/health_check` | Target used only by `--healthcheck` |
 
 The public port, health endpoint, and versioned API prefix are compatibility
 contracts.
 Filesystem paths and executable names inside the image are not.
 
-Chart 1.x currently serves the WebUI at the site root. Runtime base-path and
-configurable iframe framing support are tracked as the next compatibility
-increment and are not part of this container revision.
+The official Go frontend can serve the SPA below a configured base path and
+emit a validated CSP `frame-ancestors` policy. These settings are runtime
+configuration, not Vite build variables. The unprefixed `/health_check`
+endpoint remains stable for Chart probes.
 
 ## Build a Docker image
 

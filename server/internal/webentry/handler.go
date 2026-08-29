@@ -7,16 +7,20 @@ package webentry
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -25,11 +29,14 @@ const (
 	noCache         = "no-cache"
 	immutableCache  = "public, max-age=31536000, immutable"
 	healthCheckBody = "OK\n"
+	rootBasePath    = "/"
 )
 
 var (
 	viteHashPattern    = regexp.MustCompile(`-[A-Za-z0-9_-]{8,}\.[^.]+$`)
 	webpackHashPattern = regexp.MustCompile(`\.[0-9a-fA-F]{8,}\.[^.]+$`)
+	runtimeBaseElement = regexp.MustCompile(`<base[[:space:]]+data-hami-webui-base[[:space:]]+href="/"[[:space:]]*/?>`)
+	basePathSegment    = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 	backendOnlyPaths   = []string{"/metrics", "/readyz", "/q"}
 )
 
@@ -39,6 +46,11 @@ var (
 type HandlerConfig struct {
 	StaticFS   fs.FS
 	APIHandler http.Handler
+	// BasePath is the operator-controlled external URL prefix. Empty means root.
+	BasePath string
+	// FrameAncestors is tri-state: nil omits CSP framing policy, an empty slice
+	// denies all framing, and a non-empty slice is an explicit allowlist.
+	FrameAncestors []string
 }
 
 // NewHandler constructs the Web entry handler and verifies that the SPA shell
@@ -48,12 +60,32 @@ func NewHandler(config HandlerConfig) (http.Handler, error) {
 	if config.StaticFS == nil {
 		return nil, errors.New("static filesystem is required")
 	}
+	basePath, err := normalizeBasePath(config.BasePath)
+	if err != nil {
+		return nil, fmt.Errorf("base path: %w", err)
+	}
+	frameAncestors, err := frameAncestorsPolicy(config.FrameAncestors)
+	if err != nil {
+		return nil, fmt.Errorf("frame ancestors: %w", err)
+	}
 	info, err := fs.Stat(config.StaticFS, indexFile)
 	if err != nil {
 		return nil, fmt.Errorf("open SPA index: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("SPA index is not a regular file")
+	}
+	indexSource, err := fs.ReadFile(config.StaticFS, indexFile)
+	if err != nil {
+		return nil, fmt.Errorf("read SPA index: %w", err)
+	}
+	indexBody, err := renderIndexBase(indexSource, basePath)
+	if err != nil {
+		return nil, err
+	}
+	compressedIndex, err := gzipBytes(indexBody)
+	if err != nil {
+		return nil, fmt.Errorf("compress SPA index: %w", err)
 	}
 
 	apiHandler := config.APIHandler
@@ -62,14 +94,22 @@ func NewHandler(config HandlerConfig) (http.Handler, error) {
 	}
 
 	return &entryHandler{
-		staticFS: config.StaticFS,
-		api:      http.StripPrefix(apiPrefix, apiHandler),
+		staticFS:        config.StaticFS,
+		api:             http.StripPrefix(apiPrefix, apiHandler),
+		basePath:        basePath,
+		indexBody:       indexBody,
+		compressedIndex: compressedIndex,
+		frameAncestors:  frameAncestors,
 	}, nil
 }
 
 type entryHandler struct {
-	staticFS fs.FS
-	api      http.Handler
+	staticFS        fs.FS
+	api             http.Handler
+	basePath        string
+	indexBody       []byte
+	compressedIndex []byte
+	frameAncestors  string
 }
 
 func (h *entryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +117,44 @@ func (h *entryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/health_check":
 		h.serveHealth(w, r)
 	case hasPathPrefix(r.URL.Path, "/health_check"):
+		writeNotFound(w, r)
+	default:
+		applicationRequest, ok := h.applicationRequest(r)
+		if !ok {
+			writeNotFound(w, r)
+			return
+		}
+		h.serveApplication(w, applicationRequest)
+	}
+}
+
+func (h *entryHandler) applicationRequest(r *http.Request) (*http.Request, bool) {
+	if h.basePath == rootBasePath {
+		return r, true
+	}
+
+	basePrefix := strings.TrimSuffix(h.basePath, "/")
+	if !hasPathPrefix(r.URL.Path, basePrefix) {
+		return nil, false
+	}
+	requestPath := strings.TrimPrefix(r.URL.Path, basePrefix)
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	clone := r.Clone(r.Context())
+	clonedURL := *r.URL
+	clonedURL.Path = requestPath
+	// Routing uses URL.Path. Clear RawPath after removing the operator-controlled
+	// prefix so an encoded spelling cannot retain an unstripped external path.
+	clonedURL.RawPath = ""
+	clone.URL = &clonedURL
+	return clone, true
+}
+
+func (h *entryHandler) serveApplication(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case hasPathPrefix(r.URL.Path, "/health_check"):
+		// The liveness endpoint deliberately remains outside a configured base path.
 		writeNotFound(w, r)
 	case hasPathPrefix(r.URL.Path, apiPrefix):
 		if hasInvalidPathSegment(r.URL.Path) {
@@ -124,7 +202,7 @@ func (h *entryHandler) serveFrontend(w http.ResponseWriter, r *http.Request) {
 			writeNotFound(w, r)
 			return
 		}
-		h.serveFile(w, r, indexFile, true)
+		h.serveIndex(w, r)
 		return
 	}
 
@@ -134,7 +212,15 @@ func (h *entryHandler) serveFrontend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if name == "." {
-		h.serveFile(w, r, indexFile, true)
+		h.serveIndex(w, r)
+		return
+	}
+	if name == indexFile {
+		h.serveIndex(w, r)
+		return
+	}
+	if name == indexFile+".gz" {
+		writeNotFound(w, r)
 		return
 	}
 
@@ -143,7 +229,7 @@ func (h *entryHandler) serveFrontend(w http.ResponseWriter, r *http.Request) {
 			writeNotFound(w, r)
 			return
 		}
-		h.serveFile(w, r, name, false)
+		h.serveFile(w, r, name)
 		return
 	}
 
@@ -151,10 +237,28 @@ func (h *entryHandler) serveFrontend(w http.ResponseWriter, r *http.Request) {
 		writeNotFound(w, r)
 		return
 	}
-	h.serveFile(w, r, indexFile, true)
+	h.serveIndex(w, r)
 }
 
-func (h *entryHandler) serveFile(w http.ResponseWriter, r *http.Request, name string, index bool) {
+func (h *entryHandler) serveIndex(w http.ResponseWriter, r *http.Request) {
+	body := h.indexBody
+	w.Header().Add("Vary", "Accept-Encoding")
+	if acceptsGzip(r.Header.Get("Accept-Encoding")) {
+		body = h.compressedIndex
+		w.Header().Set("Content-Encoding", "gzip")
+	}
+	w.Header().Set("Cache-Control", noCache)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if h.frameAncestors != "" {
+		w.Header().Set("Content-Security-Policy", h.frameAncestors)
+	}
+	// Runtime configuration changes the representation without changing the
+	// image file's mtime. A file-derived Last-Modified validator could therefore
+	// produce a stale 304 after a base-path or framing-policy update.
+	http.ServeContent(w, r, indexFile, time.Time{}, bytes.NewReader(body))
+}
+
+func (h *entryHandler) serveFile(w http.ResponseWriter, r *http.Request, name string) {
 	servedName := name
 	if info, err := fs.Stat(h.staticFS, name+".gz"); err == nil && info.Mode().IsRegular() {
 		w.Header().Add("Vary", "Accept-Encoding")
@@ -178,7 +282,7 @@ func (h *entryHandler) serveFile(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 
-	if index || !isHashedAsset(name) {
+	if !isHashedAsset(name) {
 		w.Header().Set("Cache-Control", noCache)
 	} else {
 		w.Header().Set("Cache-Control", immutableCache)
@@ -193,6 +297,116 @@ func (h *entryHandler) serveFile(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	http.ServeContent(w, r, name, info.ModTime(), reader)
+}
+
+func normalizeBasePath(raw string) (string, error) {
+	if raw == "" || raw == rootBasePath {
+		return rootBasePath, nil
+	}
+	if strings.TrimSpace(raw) != raw {
+		return "", errors.New("must not contain surrounding whitespace")
+	}
+	if strings.ContainsAny(raw, `?#%\\`) {
+		return "", errors.New("must be an unescaped URL path without query or fragment")
+	}
+	if !strings.HasPrefix(raw, "/") {
+		raw = "/" + raw
+	}
+	if !strings.HasSuffix(raw, "/") {
+		raw += "/"
+	}
+	for _, segment := range strings.Split(strings.Trim(raw, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." || !basePathSegment.MatchString(segment) {
+			return "", errors.New("contains an invalid path segment")
+		}
+	}
+	basePrefix := strings.TrimSuffix(raw, "/")
+	if hasPathPrefix(basePrefix, "/health_check") {
+		return "", errors.New("conflicts with the health-check endpoint")
+	}
+	return raw, nil
+}
+
+func renderIndexBase(source []byte, basePath string) ([]byte, error) {
+	if matches := runtimeBaseElement.FindAllIndex(source, -1); len(matches) != 1 {
+		return nil, errors.New("SPA index must contain exactly one runtime base marker")
+	}
+	replacement := []byte(`<base data-hami-webui-base href="` + basePath + `">`)
+	return runtimeBaseElement.ReplaceAll(source, replacement), nil
+}
+
+func gzipBytes(source []byte) ([]byte, error) {
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(source); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return compressed.Bytes(), nil
+}
+
+func frameAncestorsPolicy(sources []string) (string, error) {
+	if sources == nil {
+		return "", nil
+	}
+	if len(sources) == 0 {
+		return "frame-ancestors 'none'", nil
+	}
+	for _, source := range sources {
+		if source == "'self'" {
+			continue
+		}
+		origin, err := url.Parse(source)
+		if err != nil || origin.Scheme == "" || origin.Host == "" {
+			return "", fmt.Errorf("%q is not an absolute HTTP origin", source)
+		}
+		if (origin.Scheme != "http" && origin.Scheme != "https") || origin.User != nil || origin.Path != "" || origin.RawPath != "" || origin.RawQuery != "" || origin.ForceQuery || origin.Fragment != "" || origin.Opaque != "" {
+			return "", fmt.Errorf("%q is not an exact HTTP origin", source)
+		}
+		if source != origin.Scheme+"://"+origin.Host || !validOriginHost(origin) {
+			return "", fmt.Errorf("%q is not an exact HTTP origin", source)
+		}
+	}
+	return "frame-ancestors " + strings.Join(sources, " "), nil
+}
+
+func validOriginHost(origin *url.URL) bool {
+	host := origin.Hostname()
+	if host == "" || strings.HasSuffix(origin.Host, ":") {
+		return false
+	}
+	if port := origin.Port(); port != "" {
+		value, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || value > 65535 {
+			return false
+		}
+	}
+	if strings.Contains(host, ":") {
+		_, err := netip.ParseAddr(host)
+		return err == nil
+	}
+
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || !isASCIILetterOrDigit(label[0]) || !isASCIILetterOrDigit(label[len(label)-1]) {
+			return false
+		}
+		for index := 1; index < len(label)-1; index++ {
+			if !isASCIILetterOrDigit(label[index]) && label[index] != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isASCIILetterOrDigit(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 func (h *entryHandler) isStaticRequest(name string) bool {

@@ -6,7 +6,7 @@
     "start": "vite",
     "start:dev": "vite",
     "start:webpack": "export NODE_ENV=development && vue-cli-service serve",
-    "lint": "eslint --ext .js,.vue src",
+    "lint": "eslint --ext .js,.mjs,.vue src",
     "build": "vite build",
     "build:webpack": "vue-cli-service build",
     "build:stage": "vue-cli-service build --mode staging",

@@ -2,6 +2,7 @@ package webentry
 
 import (
 	"bytes"
+	"compress/gzip"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 )
+
+const indexFixture = `<html><head><base data-hami-webui-base href="/"><title>HAMi</title></head><body><main>HAMi WebUI</main></body></html>`
 
 func TestHandlerRoutes(t *testing.T) {
 	t.Parallel()
@@ -40,28 +43,28 @@ func TestHandlerRoutes(t *testing.T) {
 			method:     http.MethodGet,
 			path:       "/",
 			wantStatus: http.StatusOK,
-			wantBody:   "<main>HAMi WebUI</main>",
+			wantBody:   indexFixture,
 		},
 		{
 			name:       "deep route serves index",
 			method:     http.MethodGet,
 			path:       "/admin/vgpu/monitor/overview",
 			wantStatus: http.StatusOK,
-			wantBody:   "<main>HAMi WebUI</main>",
+			wantBody:   indexFixture,
 		},
 		{
 			name:       "deep route with trailing slash serves index",
 			method:     http.MethodGet,
 			path:       "/admin/vgpu/monitor/overview/",
 			wantStatus: http.StatusOK,
-			wantBody:   "<main>HAMi WebUI</main>",
+			wantBody:   indexFixture,
 		},
 		{
 			name:       "deep route with dotted parameter serves index",
 			method:     http.MethodGet,
 			path:       "/redirect/example.com",
 			wantStatus: http.StatusOK,
-			wantBody:   "<main>HAMi WebUI</main>",
+			wantBody:   indexFixture,
 		},
 		{
 			name:       "existing asset is served",
@@ -255,7 +258,7 @@ func TestHandlerCachingAndPrecompressedAssets(t *testing.T) {
 		{
 			name:             "index is revalidated",
 			path:             "/",
-			wantBody:         "<main>HAMi WebUI</main>",
+			wantBody:         indexFixture,
 			wantCacheControl: "no-cache",
 		},
 		{
@@ -369,6 +372,228 @@ func TestNewHandlerRequiresIndex(t *testing.T) {
 	}
 }
 
+func TestHandlerConfiguredBasePath(t *testing.T) {
+	t.Parallel()
+
+	var receivedPath string
+	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.RequestURI()
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := mustHandler(t, HandlerConfig{
+		StaticFS:   os.DirFS(newStaticDir(t)),
+		APIHandler: api,
+		BasePath:   "gpu-ui",
+	})
+
+	tests := []struct {
+		name        string
+		method      string
+		path        string
+		wantStatus  int
+		wantAPIPath string
+		wantIndex   bool
+	}{
+		{name: "base root", method: http.MethodGet, path: "/gpu-ui", wantStatus: http.StatusOK, wantIndex: true},
+		{name: "base root slash", method: http.MethodGet, path: "/gpu-ui/", wantStatus: http.StatusOK, wantIndex: true},
+		{name: "deep link", method: http.MethodGet, path: "/gpu-ui/admin/vgpu/monitor/overview", wantStatus: http.StatusOK, wantIndex: true},
+		{name: "static asset", method: http.MethodGet, path: "/gpu-ui/static/app.js", wantStatus: http.StatusOK},
+		{name: "API", method: http.MethodPost, path: "/gpu-ui/api/vgpu/v1/nodes?limit=10", wantStatus: http.StatusNoContent, wantAPIPath: "/v1/nodes?limit=10"},
+		{name: "unprefixed root", method: http.MethodGet, path: "/", wantStatus: http.StatusNotFound},
+		{name: "unprefixed deep link", method: http.MethodGet, path: "/admin/vgpu/monitor/overview", wantStatus: http.StatusNotFound},
+		{name: "unprefixed API", method: http.MethodPost, path: "/api/vgpu/v1/nodes", wantStatus: http.StatusNotFound},
+		{name: "similar prefix", method: http.MethodGet, path: "/gpu-ui-extra/admin", wantStatus: http.StatusNotFound},
+		{name: "prefixed health is private", method: http.MethodGet, path: "/gpu-ui/health_check", wantStatus: http.StatusNotFound},
+		{name: "root health remains available", method: http.MethodGet, path: "/health_check", wantStatus: http.StatusOK},
+		{name: "dot segment cannot escape API", method: http.MethodGet, path: "/gpu-ui/api/vgpu/../metrics", wantStatus: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			receivedPath = ""
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(tt.method, tt.path, nil))
+			response := recorder.Result()
+			defer closeResponseBody(t, response.Body)
+			body, err := io.ReadAll(response.Body)
+			if err != nil {
+				t.Fatalf("read response: %v", err)
+			}
+			if response.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", response.StatusCode, tt.wantStatus)
+			}
+			if tt.wantIndex {
+				if !strings.Contains(string(body), `<base data-hami-webui-base href="/gpu-ui/">`) {
+					t.Errorf("index base was not rewritten: %q", body)
+				}
+				if strings.Contains(string(body), `<base data-hami-webui-base href="/">`) {
+					t.Errorf("index retained root base: %q", body)
+				}
+			}
+			if receivedPath != tt.wantAPIPath {
+				t.Errorf("API request URI = %q, want %q", receivedPath, tt.wantAPIPath)
+			}
+		})
+	}
+}
+
+func TestHandlerRecompressesRenderedIndex(t *testing.T) {
+	t.Parallel()
+
+	staticDir := newStaticDir(t)
+	writeFile(t, filepath.Join(staticDir, "index.html.gz"), []byte("stale precompressed index"))
+	handler := mustHandler(t, HandlerConfig{
+		StaticFS: os.DirFS(staticDir),
+		BasePath: "/gpu-ui/",
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/gpu-ui/", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	defer closeResponseBody(t, response.Body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if response.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", response.Header.Get("Content-Encoding"))
+	}
+	reader, err := gzip.NewReader(response.Body)
+	if err != nil {
+		t.Fatalf("open gzip response: %v", err)
+	}
+	defer func() {
+		if err := reader.Close(); err != nil {
+			t.Errorf("close gzip reader: %v", err)
+		}
+	}()
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read gzip response: %v", err)
+	}
+	if !strings.Contains(string(body), `<base data-hami-webui-base href="/gpu-ui/">`) {
+		t.Errorf("compressed index base was not rewritten: %q", body)
+	}
+	if strings.Contains(string(body), "stale precompressed index") {
+		t.Errorf("served stale index.html.gz: %q", body)
+	}
+
+	direct := httptest.NewRecorder()
+	handler.ServeHTTP(direct, httptest.NewRequest(http.MethodGet, "/gpu-ui/index.html.gz", nil))
+	if direct.Code != http.StatusNotFound {
+		t.Errorf("direct index.html.gz status = %d, want %d", direct.Code, http.StatusNotFound)
+	}
+}
+
+func TestRenderedIndexDoesNotUseStaticFileValidator(t *testing.T) {
+	t.Parallel()
+
+	handler := mustHandler(t, HandlerConfig{
+		StaticFS: os.DirFS(newStaticDir(t)),
+		BasePath: "/gpu-ui/",
+	})
+	request := httptest.NewRequest(http.MethodGet, "/gpu-ui/", nil)
+	request.Header.Set("If-Modified-Since", "Wed, 31 Dec 2099 23:59:59 GMT")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if got := recorder.Header().Get("Last-Modified"); got != "" {
+		t.Errorf("Last-Modified = %q, want empty for runtime-rendered index", got)
+	}
+	if !strings.Contains(recorder.Body.String(), `<base data-hami-webui-base href="/gpu-ui/">`) {
+		t.Errorf("body did not contain current runtime base: %q", recorder.Body.String())
+	}
+}
+
+func TestHandlerFrameAncestorsPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		sources []string
+		want    string
+	}{
+		{name: "unset omits header", sources: nil, want: ""},
+		{name: "empty denies all", sources: []string{}, want: "frame-ancestors 'none'"},
+		{name: "explicit sources", sources: []string{"'self'", "https://portal.example", "http://localhost:8080"}, want: "frame-ancestors 'self' https://portal.example http://localhost:8080"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := mustHandler(t, HandlerConfig{
+				StaticFS:       os.DirFS(newStaticDir(t)),
+				FrameAncestors: tt.sources,
+			})
+
+			for _, requestPath := range []string{"/", "/admin/vgpu/monitor/overview", "/index.html"} {
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requestPath, nil))
+				if recorder.Code != http.StatusOK {
+					t.Fatalf("%s status = %d, want %d", requestPath, recorder.Code, http.StatusOK)
+				}
+				if got := recorder.Header().Get("Content-Security-Policy"); got != tt.want {
+					t.Errorf("%s CSP = %q, want %q", requestPath, got, tt.want)
+				}
+			}
+
+			for _, requestPath := range []string{"/health_check", "/static/app.js", "/api/unknown"} {
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requestPath, nil))
+				if got := recorder.Header().Get("Content-Security-Policy"); got != "" {
+					t.Errorf("%s CSP = %q, want empty", requestPath, got)
+				}
+			}
+		})
+	}
+}
+
+func TestNewHandlerRejectsInvalidRuntimeConfiguration(t *testing.T) {
+	t.Parallel()
+
+	staticFS := os.DirFS(newStaticDir(t))
+	invalidBasePaths := []string{
+		" /gpu-ui", "/gpu ui", "/gpu-ui//nested", "/./gpu-ui", "/gpu-ui?tenant=x", "/gpu%2Dui", `/gpu\\ui`, "/health_check", "/health_check/nested",
+	}
+	for _, basePath := range invalidBasePaths {
+		t.Run("base "+basePath, func(t *testing.T) {
+			if _, err := NewHandler(HandlerConfig{StaticFS: staticFS, BasePath: basePath}); err == nil {
+				t.Fatalf("NewHandler accepted base path %q", basePath)
+			}
+		})
+	}
+
+	invalidFrameAncestors := [][]string{
+		{"self"}, {"'none'"}, {"*"}, {"https:"}, {"ftp://portal.example"}, {"https://user@portal.example"}, {"https://portal.example/"}, {"https://portal.example/path"}, {"https://portal.example?tenant=x"}, {"https://portal.example#"}, {"https://*.example"}, {"https://portal.example:"}, {"https://portal.example:99999"}, {"https://-portal.example"}, {"https://portal..example"}, {"https://[::::]"}, {"https://例子.测试"},
+	}
+	for _, sources := range invalidFrameAncestors {
+		t.Run("frame "+strings.Join(sources, "_"), func(t *testing.T) {
+			if _, err := NewHandler(HandlerConfig{StaticFS: staticFS, FrameAncestors: sources}); err == nil {
+				t.Fatalf("NewHandler accepted frame ancestors %#v", sources)
+			}
+		})
+	}
+}
+
+func TestNewHandlerRequiresSingleRuntimeBaseMarker(t *testing.T) {
+	t.Parallel()
+
+	for _, body := range []string{
+		"<html><head></head></html>",
+		indexFixture + indexFixture,
+	} {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, indexFile), []byte(body))
+		if _, err := NewHandler(HandlerConfig{StaticFS: os.DirFS(dir)}); err == nil {
+			t.Fatalf("NewHandler accepted index %q", body)
+		}
+	}
+}
+
 func TestHandlerForwardsRequestBodyAndHeaders(t *testing.T) {
 	t.Parallel()
 
@@ -414,7 +639,7 @@ func mustHandler(t *testing.T, config HandlerConfig) http.Handler {
 func newStaticDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "index.html"), []byte("<main>HAMi WebUI</main>"))
+	writeFile(t, filepath.Join(dir, "index.html"), []byte(indexFixture))
 	writeFile(t, filepath.Join(dir, "static", "app.js"), []byte("console.log('app')"))
 	return dir
 }

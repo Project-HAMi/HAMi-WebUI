@@ -13,11 +13,13 @@ func TestParseOptionsFlagsOverrideEnvironment(t *testing.T) {
 	t.Parallel()
 
 	environment := map[string]string{
-		"HAMI_WEBUI_LISTEN_ADDRESS":  ":3100",
-		"HAMI_WEBUI_BACKEND_URL":     "http://backend-from-env:8000",
-		"HAMI_WEBUI_STATIC_DIR":      "/env/public",
-		"HAMI_WEBUI_PROXY_TIMEOUT":   "70s",
-		"HAMI_WEBUI_HEALTHCHECK_URL": "http://health-from-env/health_check",
+		"HAMI_WEBUI_LISTEN_ADDRESS":       ":3100",
+		"HAMI_WEBUI_BACKEND_URL":          "http://backend-from-env:8000",
+		"HAMI_WEBUI_STATIC_DIR":           "/env/public",
+		"HAMI_WEBUI_PROXY_TIMEOUT":        "70s",
+		"HAMI_WEBUI_BASE_PATH":            "/env-ui/",
+		"HAMI_WEBUI_FRAME_ANCESTORS_JSON": `[]`,
+		"HAMI_WEBUI_HEALTHCHECK_URL":      "http://health-from-env/health_check",
 	}
 	lookup := func(key string) (string, bool) {
 		value, ok := environment[key]
@@ -29,6 +31,8 @@ func TestParseOptionsFlagsOverrideEnvironment(t *testing.T) {
 		"--backend-url=http://backend-from-flag:8000",
 		"--static-dir=/flag/public",
 		"--proxy-timeout=80s",
+		"--base-path=/flag-ui/",
+		`--frame-ancestors-json=["'self'"]`,
 		"--healthcheck-url=http://health-from-flag/health_check",
 	}, lookup)
 	if err != nil {
@@ -39,6 +43,8 @@ func TestParseOptionsFlagsOverrideEnvironment(t *testing.T) {
 		config.backendURL != "http://backend-from-flag:8000" ||
 		config.staticDir != "/flag/public" ||
 		config.proxyTimeout != "80s" ||
+		config.basePath != "/flag-ui/" ||
+		config.frameAncestors != `["'self'"]` ||
 		config.healthcheckURL != "http://health-from-flag/health_check" {
 		t.Fatalf("flags did not override environment: %+v", config)
 	}
@@ -55,6 +61,8 @@ func TestParseOptionsUsesDocumentedDefaults(t *testing.T) {
 		config.backendURL != defaultBackendURL ||
 		config.staticDir != defaultStaticDir ||
 		config.proxyTimeout != defaultProxyTimeout ||
+		config.basePath != defaultBasePath ||
+		config.frameAncestors != defaultFrameAncestors ||
 		config.healthcheckURL != defaultHealthcheckURL {
 		t.Fatalf("defaults = %+v", config)
 	}
@@ -94,10 +102,12 @@ func TestHealthcheckModeDoesNotInitializeServeConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 	environment := map[string]string{
-		"HAMI_WEBUI_BACKEND_URL":     "://invalid",
-		"HAMI_WEBUI_STATIC_DIR":      "/does/not/exist",
-		"HAMI_WEBUI_PROXY_TIMEOUT":   "not-a-duration",
-		"HAMI_WEBUI_HEALTHCHECK_URL": server.URL,
+		"HAMI_WEBUI_BACKEND_URL":          "://invalid",
+		"HAMI_WEBUI_STATIC_DIR":           "/does/not/exist",
+		"HAMI_WEBUI_PROXY_TIMEOUT":        "not-a-duration",
+		"HAMI_WEBUI_BASE_PATH":            "/invalid?base",
+		"HAMI_WEBUI_FRAME_ANCESTORS_JSON": "not-json",
+		"HAMI_WEBUI_HEALTHCHECK_URL":      server.URL,
 	}
 	lookup := func(key string) (string, bool) {
 		value, ok := environment[key]
@@ -106,6 +116,74 @@ func TestHealthcheckModeDoesNotInitializeServeConfiguration(t *testing.T) {
 
 	if err := run([]string{"--healthcheck"}, lookup); err != nil {
 		t.Fatalf("healthcheck initialized unrelated serve configuration: %v", err)
+	}
+}
+
+func TestParseFrameAncestorsJSONPreservesTriState(t *testing.T) {
+	t.Parallel()
+
+	unset, err := parseFrameAncestorsJSON("null")
+	if err != nil {
+		t.Fatalf("parse null: %v", err)
+	}
+	if unset != nil {
+		t.Fatalf("null = %#v, want nil", unset)
+	}
+
+	denyAll, err := parseFrameAncestorsJSON("[]")
+	if err != nil {
+		t.Fatalf("parse empty array: %v", err)
+	}
+	if denyAll == nil || len(denyAll) != 0 {
+		t.Fatalf("[] = %#v, want non-nil empty slice", denyAll)
+	}
+
+	allowed, err := parseFrameAncestorsJSON(`["'self'","https://portal.example"]`)
+	if err != nil {
+		t.Fatalf("parse sources: %v", err)
+	}
+	if len(allowed) != 2 || allowed[0] != "'self'" || allowed[1] != "https://portal.example" {
+		t.Fatalf("sources = %#v", allowed)
+	}
+
+	for _, raw := range []string{"", "{}", `"'self'"`, `["'self'", 1]`, "[] trailing"} {
+		if _, err := parseFrameAncestorsJSON(raw); err == nil {
+			t.Errorf("accepted invalid JSON %q", raw)
+		}
+	}
+}
+
+func TestRunRejectsInvalidBasePathAndFrameAncestorsBeforeListening(t *testing.T) {
+	t.Parallel()
+
+	staticDir := t.TempDir()
+	index := `<html><head><base data-hami-webui-base href="/"></head><body></body></html>`
+	if err := os.WriteFile(filepath.Join(staticDir, "index.html"), []byte(index), 0o644); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+	tests := []struct {
+		name     string
+		override map[string]string
+	}{
+		{name: "base path", override: map[string]string{"HAMI_WEBUI_BASE_PATH": "/invalid?base"}},
+		{name: "frame ancestors", override: map[string]string{"HAMI_WEBUI_FRAME_ANCESTORS_JSON": `["https://portal.example/path"]`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			environment := map[string]string{
+				"HAMI_WEBUI_STATIC_DIR": staticDir,
+			}
+			for key, value := range tt.override {
+				environment[key] = value
+			}
+			lookup := func(key string) (string, bool) {
+				value, ok := environment[key]
+				return value, ok
+			}
+			if err := run(nil, lookup); err == nil {
+				t.Fatalf("run accepted invalid configuration: %#v", tt.override)
+			}
+		})
 	}
 }
 
