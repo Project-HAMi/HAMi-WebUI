@@ -26,7 +26,7 @@ import (
 // /readyz answers 200 once this HTTP server is accepting requests. The backend only
 // starts listening after the k8s informer caches have synced (see data.NewNodeRepo /
 // NewPodRepo), so a readiness probe on /readyz keeps the pod out of Service endpoints
-// until the backend can actually serve — this is what prevents the frontend BFF from
+// until the backend can actually serve — this is what prevents the Web entry from
 // getting "connection refused" against the not-yet-listening backend at startup.
 func NewHTTPServer(c *conf.Bootstrap,
 	node *service.NodeService,

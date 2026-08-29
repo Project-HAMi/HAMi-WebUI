@@ -1,6 +1,5 @@
 VERSION?=latest
 DOCKER_IMAGE=projecthami/hami-webui-fe
-OUT=./dist
 PROJECT_NAME?=test-project
 
 # 按项目最小化构建
@@ -13,11 +12,7 @@ install-modules:
 	pnpm install
 
 .PHONY: build-all
-build-all: install-modules build-bff build-web
-
-.PHONY: build-bff
-build-bff:
-	pnpm run build
+build-all: install-modules build-web
 
 .PHONY: build-web
 build-web:
@@ -27,17 +22,9 @@ build-web:
 start-dev: install-modules start-web
 
 
-.PHONY: start-bff
-start-bff:
-	pnpm run start:dev &
-
 .PHONY: start-web
 start-web:
 	pnpm --filter hami-webui-web run start:dev
-
-.PHONY: start-prod
-start-prod:
-	pnpm run start:prod
 
 .PHONY: build-image
 build-image:

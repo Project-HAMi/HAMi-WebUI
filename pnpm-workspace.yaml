@@ -2,7 +2,6 @@ packages:
   - "packages/*"
 
 ignoredBuiltDependencies:
-  - "@nestjs/core"
   - "@parcel/watcher"
   - "core-js"
   - "esbuild"
