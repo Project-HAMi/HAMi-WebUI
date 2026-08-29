@@ -49,7 +49,7 @@
       </toolbar>
       <t-table
         :key="locale"
-        row-key="podUid"
+        row-key="workloadRowKey"
         class="workload-table vgpu-table-skin"
         :data="pagedTableData"
         :columns="visibleColumns"
@@ -93,6 +93,10 @@ import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
+import {
+  createWorkloadRowKey,
+  formatWorkloadName,
+} from './workload-identity.mjs';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
 const { t, locale } = useI18n();
@@ -162,9 +166,7 @@ const baseColumns = computed(() => [
     hideTooltip: true,
     render: ({ name, appName, podUid, namespace, namespaceName }) => {
       const to = `/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`;
-      const workloadName = [appName, name]
-        .filter((value, index, values) => value && values.indexOf(value) === index)
-        .join(' / ') || '--';
+      const workloadName = formatWorkloadName({ appName, name });
       const workloadNamespace = namespace || namespaceName || '--';
       return (
         <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -284,7 +286,10 @@ const fetchTableData = async () => {
       },
     };
     const { items = [] } = await taskApi.getTaskListReq(payload);
-    tableData.value = items;
+    tableData.value = items.map((item) => ({
+      ...item,
+      workloadRowKey: createWorkloadRowKey(item),
+    }));
     syncTotalAndClamp();
   } finally {
     tableLoading.value = false;
