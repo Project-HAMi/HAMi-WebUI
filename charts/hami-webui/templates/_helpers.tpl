@@ -44,6 +44,15 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 
 {{/*
+Name the internal backend Service without allowing a 63-character fullname to
+drop the distinguishing suffix.
+*/}}
+{{- define "hami-webui.backendServiceName" -}}
+{{- $baseName := include "hami-webui.fullname" . | trunc 55 | trimSuffix "-" -}}
+{{- printf "%s-backend" $baseName -}}
+{{- end -}}
+
+{{/*
 Allow the release namespace to be overridden for multi-namespace deployments in combined charts
 */}}
 {{- define "hami-webui.namespace" -}}
@@ -95,6 +104,23 @@ Selector labels
 app.kubernetes.io/name: {{ include "hami-webui.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Keep the Chart 1.x backend port when the value is absent from reused values.
+Do not use Helm's default function here: an explicit false is considered empty.
+*/}}
+{{- define "hami-webui.legacyBackendPortEnabled" -}}
+{{- $serviceSettings := default (dict) .Values.service -}}
+{{- $legacyBackendPort := true -}}
+{{- if hasKey $serviceSettings "legacyBackendPort" -}}
+{{- $configuredLegacyBackendPort := get $serviceSettings "legacyBackendPort" -}}
+{{- if not (kindIs "bool" $configuredLegacyBackendPort) -}}
+{{- fail "service.legacyBackendPort must be a boolean" -}}
+{{- end -}}
+{{- $legacyBackendPort = $configuredLegacyBackendPort -}}
+{{- end -}}
+{{- $legacyBackendPort -}}
+{{- end -}}
 
 {{/*
 Create the name of the service account to use

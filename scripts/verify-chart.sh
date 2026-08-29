@@ -17,6 +17,121 @@ cp -R "${repo_root}/charts/hami-webui" "${work_dir}/hami-webui"
 helm dependency build --skip-refresh "${work_dir}/hami-webui"
 helm lint "${work_dir}/hami-webui"
 
+render_template() {
+  local template="$1"
+  shift
+
+  helm template test "${work_dir}/hami-webui" \
+    --namespace hami-webui-test \
+    "$@" \
+    --show-only "${template}"
+}
+
+service_port_names() {
+  awk '
+    /^  ports:$/ { in_ports = 1; next }
+    /^  selector:$/ { in_ports = 0 }
+    in_ports && /^      name:/ { print $2 }
+  '
+}
+
+web_service_render="$(render_template templates/service.yaml)"
+backend_service_render="$(render_template templates/backend-service.yaml)"
+service_monitor_render="$(render_template templates/servicemonitor.yaml)"
+
+if [[ "$(service_port_names <<<"${web_service_render}")" != $'http\nmetrics' ]]; then
+  echo "Primary Service must preserve the Chart 1.x backend compatibility port by default" >&2
+  exit 1
+fi
+if [[ "$(service_port_names <<<"${backend_service_render}")" != "backend-http" ]] ||
+  ! grep -Fq 'name: test-hami-webui-backend' <<<"${backend_service_render}" ||
+  ! grep -Fq 'type: ClusterIP' <<<"${backend_service_render}" ||
+  ! grep -Fq 'monitoring.hami.io/job: "test-hami-webui"' <<<"${backend_service_render}" ||
+  ! grep -Fq 'targetPort: metrics' <<<"${backend_service_render}"; then
+  echo "Internal backend Service contract was not rendered" >&2
+  exit 1
+fi
+
+long_fullname="$(printf '%063d' 0 | tr '0' 'a')"
+long_name_web_service="$(render_template templates/service.yaml \
+  --set-string "fullnameOverride=${long_fullname}")"
+long_name_backend_service="$(render_template templates/backend-service.yaml \
+  --set-string "fullnameOverride=${long_fullname}")"
+rendered_web_service_name="$(awk '$1 == "name:" { print $2; exit }' <<<"${long_name_web_service}")"
+rendered_backend_service_name="$(awk '$1 == "name:" { print $2; exit }' <<<"${long_name_backend_service}")"
+if [[ ${#rendered_backend_service_name} -gt 63 ]] ||
+  [[ "${rendered_backend_service_name}" != *-backend ]] ||
+  [[ "${rendered_backend_service_name}" == "${rendered_web_service_name}" ]]; then
+  echo "Internal backend Service name is not distinct and DNS-label safe" >&2
+  exit 1
+fi
+
+service_monitor_spec="$(sed -n '/^spec:/,$p' <<<"${service_monitor_render}")"
+if ! grep -Fq 'app.kubernetes.io/component: "backend"' <<<"${service_monitor_spec}" ||
+  grep -Fq 'app.kubernetes.io/component: "hami-webui"' <<<"${service_monitor_spec}" ||
+  ! grep -Fq 'jobLabel: monitoring.hami.io/job' <<<"${service_monitor_spec}" ||
+  ! grep -Fq 'port: "backend-http"' <<<"${service_monitor_spec}"; then
+  echo "ServiceMonitor must select only the internal backend Service" >&2
+  exit 1
+fi
+
+web_only_service_render="$(render_template templates/service.yaml \
+  --set 'service.legacyBackendPort=false')"
+if [[ "$(service_port_names <<<"${web_only_service_render}")" != "http" ]] ||
+  grep -Fq 'targetPort: metrics' <<<"${web_only_service_render}"; then
+  echo "Disabling service.legacyBackendPort did not remove the raw backend port" >&2
+  exit 1
+fi
+
+for invalid_legacy_backend_port in \
+  --set-string=service.legacyBackendPort=false \
+  --set-json=service.legacyBackendPort=1; do
+  if helm template test "${work_dir}/hami-webui" \
+    "${invalid_legacy_backend_port}" >/dev/null 2>&1; then
+    echo "Invalid service.legacyBackendPort value was accepted: ${invalid_legacy_backend_port}" >&2
+    exit 1
+  fi
+done
+
+load_balancer_web_service="$(render_template templates/service.yaml \
+  --set 'service.type=LoadBalancer')"
+load_balancer_backend_service="$(render_template templates/backend-service.yaml \
+  --set 'service.type=LoadBalancer')"
+if ! grep -Fq 'type: LoadBalancer' <<<"${load_balancer_web_service}" ||
+  ! grep -Fq 'type: ClusterIP' <<<"${load_balancer_backend_service}" ||
+  grep -Fq 'type: LoadBalancer' <<<"${load_balancer_backend_service}"; then
+  echo "Internal backend Service must not inherit the public Service type" >&2
+  exit 1
+fi
+
+legacy_values_chart="${work_dir}/hami-webui-legacy-values"
+cp -R "${work_dir}/hami-webui" "${legacy_values_chart}"
+awk '$1 != "legacyBackendPort:" { print }' \
+  "${legacy_values_chart}/values.yaml" >"${legacy_values_chart}/values.yaml.next"
+mv "${legacy_values_chart}/values.yaml.next" "${legacy_values_chart}/values.yaml"
+legacy_values_service_render="$(helm template test "${legacy_values_chart}" \
+  --show-only templates/service.yaml)"
+if [[ "$(service_port_names <<<"${legacy_values_service_render}")" != $'http\nmetrics' ]]; then
+  echo "Missing service.legacyBackendPort did not preserve the Chart 1.x upgrade contract" >&2
+  exit 1
+fi
+
+null_legacy_backend_port_render="$(render_template templates/service.yaml \
+  --set-json 'service.legacyBackendPort=null')"
+if [[ "$(service_port_names <<<"${null_legacy_backend_port_render}")" != $'http\nmetrics' ]]; then
+  echo "A null service.legacyBackendPort did not preserve the compatibility port" >&2
+  exit 1
+fi
+
+monitor_disabled_render="$(helm template test "${work_dir}/hami-webui" \
+  --set 'serviceMonitor.enabled=false' \
+  --set 'hamiServiceMonitor.enabled=false')"
+if grep -Fq 'name: test-hami-webui-svc-monitor' <<<"${monitor_disabled_render}" ||
+  ! grep -Fq 'name: test-hami-webui-backend' <<<"${monitor_disabled_render}"; then
+  echo "Disabling ServiceMonitors must not remove the internal backend Service" >&2
+  exit 1
+fi
+
 assert_internal_prometheus_address() {
   local release_name="$1"
   local release_namespace="$2"

@@ -116,6 +116,22 @@ emit a validated CSP `frame-ancestors` policy. These settings are runtime
 configuration, not Vite build variables. The unprefixed `/health_check`
 endpoint remains stable for Chart probes.
 
+### Chart 1.x Service topology
+
+The primary Service routes browser traffic to the Web entry on port `3000`.
+An independently labelled `*-backend` ClusterIP Service routes port `8000` to
+the backend container and is the only Service selected by the included
+ServiceMonitor. The Deployment keeps `component: hami-webui` because both
+containers share one Pod; the backend component label belongs to the Service
+used for discovery, not to a separate backend workload.
+
+The primary Service retains a deprecated port `8000` only when
+`service.legacyBackendPort` is enabled for Chart 1.x compatibility. Do not
+widen the ServiceMonitor selector to include both Services: that would create
+duplicate scrape targets. The ClusterIP split also does not create an
+authorization boundary; cluster-internal access policy remains a deployment
+concern.
+
 ## Build a Docker image
 
 To build a HAMi-WebUI Frontend Docker image, run:
