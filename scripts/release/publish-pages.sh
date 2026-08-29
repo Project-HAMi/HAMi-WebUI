@@ -55,9 +55,10 @@ else
   [[ "${indexed_url}" == "${expected_url}" ]] || release_die "generated index URL is incorrect"
 fi
 
-if ! git -C "${pages_dir}" diff --quiet -- "${chart_file}" index.yaml || \
-   [[ -n "$(git -C "${pages_dir}" status --short -- "${chart_file}" index.yaml)" ]]; then
-  git -C "${pages_dir}" add "${chart_file}" index.yaml
+git -C "${pages_dir}" add --force -- "${chart_file}"
+git -C "${pages_dir}" add -- index.yaml
+
+if ! git -C "${pages_dir}" diff --cached --quiet -- "${chart_file}" index.yaml; then
   git -C "${pages_dir}" commit -m "release(chart): publish ${version}"
   [[ -n "${GITHUB_TOKEN:-}" ]] || release_die "GITHUB_TOKEN is required to publish gh-pages"
   auth_header="$(printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 -w 0)"

@@ -409,6 +409,51 @@ require_failure "conflicting OCI chart found after all image checks" \
     "${preflight_bundle}" Project-HAMi/HAMi-WebUI "${pages}" \
     https://project-hami.github.io/HAMi-WebUI
 
+# A generated Pages branch may ignore chart archives globally. The publisher
+# owns this validated artifact, so it must still commit the package and index
+# together instead of failing at git add.
+pages_chart_dir="${work_dir}/pages-chart"
+pages_publish_dir="${work_dir}/pages-publish"
+pages_remote_dir="${work_dir}/pages-remote.git"
+mkdir -p "${pages_chart_dir}" "${pages_publish_dir}"
+cat >"${pages_chart_dir}/Chart.yaml" <<'PAGES_CHART'
+apiVersion: v2
+name: hami-webui
+type: application
+version: 9.9.9
+appVersion: "9.9.9"
+PAGES_CHART
+helm package "${pages_chart_dir}" --destination "${work_dir}" >/dev/null
+
+git -C "${pages_publish_dir}" init -q -b gh-pages
+git -C "${pages_publish_dir}" config user.name release-test
+git -C "${pages_publish_dir}" config user.email release-test@example.invalid
+printf '*.tgz\n' >"${pages_publish_dir}/.gitignore"
+printf 'apiVersion: v1\nentries:\n  hami-webui: []\n' >"${pages_publish_dir}/index.yaml"
+git -C "${pages_publish_dir}" add .gitignore index.yaml
+git -C "${pages_publish_dir}" commit -qm 'initialize Pages source'
+git init -q --bare "${pages_remote_dir}"
+git -C "${pages_publish_dir}" remote add origin "${pages_remote_dir}"
+git -C "${pages_publish_dir}" push -q -u origin gh-pages
+
+GITHUB_TOKEN=test-token bash "${release_dir}/publish-pages.sh" \
+  "${work_dir}/hami-webui-9.9.9.tgz" 9.9.9 "${pages_publish_dir}" \
+  https://project-hami.github.io/HAMi-WebUI
+git --git-dir="${pages_remote_dir}" show \
+  gh-pages:hami-webui-9.9.9.tgz >"${work_dir}/published-pages-chart.tgz"
+cmp "${work_dir}/hami-webui-9.9.9.tgz" "${work_dir}/published-pages-chart.tgz"
+git --git-dir="${pages_remote_dir}" show gh-pages:index.yaml \
+  >"${work_dir}/published-pages-index.yaml"
+VERSION=9.9.9 yq -e '
+  [.entries."hami-webui"[] | select(.version == strenv(VERSION))] | length == 1
+' "${work_dir}/published-pages-index.yaml" >/dev/null
+[[ -z "$(git -C "${pages_publish_dir}" status --short)" ]]
+pages_publish_commit="$(git --git-dir="${pages_remote_dir}" rev-parse gh-pages)"
+GITHUB_TOKEN=test-token bash "${release_dir}/publish-pages.sh" \
+  "${work_dir}/hami-webui-9.9.9.tgz" 9.9.9 "${pages_publish_dir}" \
+  https://project-hami.github.io/HAMi-WebUI
+[[ "$(git --git-dir="${pages_remote_dir}" rev-parse gh-pages)" == "${pages_publish_commit}" ]]
+
 # Pages must never accept only half of the immutable package/index pair.
 cp "${preflight_bundle}/hami-webui-9.9.9.tgz" "${pages}/hami-webui-9.9.9.tgz"
 require_failure "Pages package without matching index entry" \
