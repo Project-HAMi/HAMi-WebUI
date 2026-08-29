@@ -32,6 +32,18 @@ verify_contract_in_repo() {
 digest_a="sha256:$(printf 'candidate manifest fixture' | sha256sum | awk '{print $1}')"
 digest_b="sha256:$(printf 'conflicting stable fixture' | sha256sum | awk '{print $1}')"
 
+# Candidate sealing calls a repository script, so its job must fetch the exact
+# source commit with credentials disabled. Actionlint cannot infer this runtime
+# dependency.
+# shellcheck disable=SC2016
+yq -e '
+  [.jobs."candidate-manifest".steps[] |
+    select(.uses == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1") |
+    select(.with.ref == "${{ needs.candidate-preflight.outputs.source_sha }}") |
+    select(.with."persist-credentials" == false)] |
+  length == 1
+' .github/workflows/release.yaml >/dev/null
+
 # Build a minimal two-commit repository so the contract test exercises the
 # candidate-to-release comparison rather than relying on this checkout's history.
 contract_repo="${work_dir}/contract-repo"
