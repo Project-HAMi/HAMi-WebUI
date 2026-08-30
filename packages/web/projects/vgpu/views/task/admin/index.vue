@@ -68,13 +68,6 @@
       />
     </div>
 
-    <form-plus-drawer
-      v-model="state.visible"
-      v-model:form="state.formValues"
-      :schema="state.schema"
-      :title="state.title"
-      @ok="state.ok"
-    />
   </div>
 </template>
 
@@ -84,6 +77,7 @@ import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
+import TextPlus from '@/components/TextPlus.vue';
 import { roundToDecimal, timeParse } from '@/utils';
 import request from '@/utils/request';
 import { SearchIcon, HelpCircleIcon } from 'tdesign-icons-vue-next';
@@ -133,14 +127,6 @@ const statusOptions = computed(() => [
   { label: t('task.statusUnknown'), value: 'unknown' },
 ]);
 
-const state = reactive({
-  visible: false,
-  schema: {},
-  formValues: {},
-  title: '',
-  ok: () => {},
-});
-
 const fetchFilterOptions = async () => {
   try {
     const [{ list: nodeList = [] }, { list: cardList = [] }] = await Promise.all([
@@ -175,7 +161,7 @@ const baseColumns = computed(() => [
           </span>
           <span class="task-name-text-wrap vgpu-table-name-text-wrap">
             <span style={{ display: 'inline-flex', flexDirection: 'column', minWidth: 0 }}>
-              <text-plus text={workloadName} to={to} />
+              <TextPlus text={workloadName} to={to} />
               <span class="task-namespace-text">{workloadNamespace}</span>
             </span>
           </span>

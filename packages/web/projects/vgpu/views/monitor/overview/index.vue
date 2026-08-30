@@ -163,7 +163,7 @@
 
     <div class="home-bottom">
       <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
-        <trend-time-filter v-model="times" />
+        <TrendTimeFilter v-model="times" />
       </div>
       <div class="home-bottom-row" v-if="rangeConfig[0] || rangeConfig[1]">
         <div class="home-bottom-col" v-if="rangeConfig[0]">
@@ -376,6 +376,7 @@ import taskApi from '~/vgpu/api/task';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import useFetchList from '@/hooks/useFetchList';
+import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';

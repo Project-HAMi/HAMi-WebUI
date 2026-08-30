@@ -75,6 +75,8 @@ import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
+import EllipsisText from '@/components/EllipsisText.vue';
+import TextPlus from '@/components/TextPlus.vue';
 import request from '@/utils/request';
 import { SearchIcon } from 'tdesign-icons-vue-next';
 import { ref, watch, computed, reactive, onMounted } from 'vue';
@@ -205,7 +207,7 @@ const baseColumns = computed(() => [
           </span>
           <div class="card-id-cell-right">
             <span class="card-id-cell-name vgpu-table-name-text-wrap">
-              <text-plus text={uuid} to={to} />
+              <TextPlus text={uuid} to={to} />
             </span>
             {gpuModel && <p class="card-id-cell-model">{t('card.typeLabel')}{gpuModel}</p>}
           </div>
@@ -233,7 +235,7 @@ const baseColumns = computed(() => [
     width: 200,
     hideTooltip: true,
     render: ({ nodeName }) => (
-      <ellipsis-text text={nodeName || '--'} mode="middle" tooltip="always" />
+      <EllipsisText text={nodeName || '--'} mode="middle" tooltip="always" />
     ),
   },
   {

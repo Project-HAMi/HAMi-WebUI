@@ -1,7 +1,7 @@
 <template>
   <div class="text-plus">
     <span :class="{ link: !!to }" @click="handleClick">
-      <ellipsis-text
+      <EllipsisText
         :text="text"
         mode="middle"
         tooltip="always"
@@ -12,6 +12,7 @@
 
 <script setup>
 import { useRouter } from 'vue-router';
+import EllipsisText from './EllipsisText.vue';
 
 const router = useRouter();
 

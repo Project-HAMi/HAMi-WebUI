@@ -59,6 +59,7 @@ import cardApi from '~/vgpu/api/card';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
+import TextPlus from '@/components/TextPlus.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
 import request from '@/utils/request';
@@ -150,7 +151,7 @@ const baseColumns = computed(() => [
             <svg-icon icon="node-name" style={{ fontSize: '20px' }} />
           </span>
           <span class="vgpu-table-name-text-wrap">
-            <text-plus text={name} to={to} />
+            <TextPlus text={name} to={to} />
           </span>
         </span>
       );

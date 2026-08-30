@@ -687,6 +687,9 @@ test('browser language selects English without leaking active Chinese UI text', 
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('.lang-text').filter({ hasText: 'English' }).waitFor()
+    await page.locator('.workload-table .vgpu-table-name-text-wrap .ellipsis-text')
+      .filter({ hasText: 'worker' })
+      .waitFor()
 
     const requestsCard = page.locator('.task-top-box .home-block').nth(1)
     await requestsCard.locator('.title')
