@@ -3,7 +3,6 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
-import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import path from 'path'
 
 // vite-plugin-svg-icons 2.0.1 imports fast-glob without declaring it. Keep the
@@ -47,14 +46,6 @@ export default defineConfig(() => {
       },
       vue(),
       vueJsx(),
-      nodePolyfills({
-        include: ['crypto', 'stream', 'util', 'process', 'buffer'],
-        globals: {
-          Buffer: true,
-          global: true,
-          process: true,
-        },
-      }),
       createSvgIconsPlugin({
         // The parent directory is scanned recursively; listing menu separately
         // would emit duplicate symbol IDs for every menu icon.
