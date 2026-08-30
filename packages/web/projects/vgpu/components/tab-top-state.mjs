@@ -12,6 +12,16 @@ const toFiniteValue = (value) => {
   return Number.isFinite(number) ? number : undefined;
 };
 
+export const formatRankingValue = (value, unit = '%') => {
+  const number = toFiniteValue(value) ?? 0;
+  const rounded = Math.round((number + Number.EPSILON) * 100) / 100;
+  const display = number !== 0 && rounded === 0
+    ? number > 0 ? '<0.01' : '>-0.01'
+    : String(rounded);
+  const normalizedUnit = typeof unit === 'string' ? unit.trim() : '';
+  return normalizedUnit ? `${display} ${normalizedUnit}` : display;
+};
+
 export const readRankingRows = (response, nameKey) => {
   if (!Array.isArray(response?.data)) {
     return { data: [], status: REQUEST_STATUS.INVALID };

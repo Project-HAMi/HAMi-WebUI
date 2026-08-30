@@ -260,6 +260,10 @@ async function assertChartRuntime(target) {
   await page.waitForFunction(
     () => document.querySelectorAll('.echarts canvas').length >= 4
   )
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.tab-top-value')]
+      .some((element) => element.textContent?.trim() === '0.4 %')
+  )
 
   const initialRangeRequests = rangeRequests
   await page.locator('.home-bottom-trend-filter .t-radio-button').nth(1).click()
@@ -402,7 +406,7 @@ before(async() => {
             node: 'node-1',
             provider: 'NVIDIA'
           },
-          value: 42
+          value: 0.4
         }]
       }
     } else if (pathname === '/v1/monitor/query/range-vector') {
