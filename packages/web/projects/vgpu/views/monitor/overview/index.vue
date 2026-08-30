@@ -24,7 +24,7 @@
         <Block :title="$t('dashboard.resourceOverview')">
           <ul class="resourceOverview">
             <li
-              v-for="{ title, count, icon, to, unit } in resourceOverview"
+              v-for="{ title, count, icon, to, unit, status, metric } in resourceOverview"
               :key="title"
             >
               <component
@@ -32,14 +32,25 @@
                 :to="to || undefined"
                 class="resource-overview-item"
                 :class="{ 'is-clickable': !!to }"
+                :aria-busy="status === 'loading'"
               >
                 <div class="avatar vgpu-table-name-icon-card">
                   <svg-icon :icon="icon" />
                 </div>
                 <div class="main">
-                  <div class="count">
-                    {{ count }}
-                    <span v-if="unit" class="count-unit">{{ unit }}</span>
+                  <div v-if="status === 'loading'" class="resource-count-skeleton">
+                    <t-skeleton
+                      animation="gradient"
+                      :row-col="[{ width: '56%', height: '22px' }]"
+                      aria-hidden="true"
+                    />
+                    <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+                  </div>
+                  <div v-else-if="status === 'ready'" class="count">
+                    {{ count }}<span v-if="unit" class="count-unit"> {{ unit }}</span>
+                  </div>
+                  <div v-else class="resource-state-text">
+                    {{ getStateText(status, metric) }}
                   </div>
                   <div class="title">
                     {{ title }}
@@ -68,7 +79,27 @@
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
             </RouterLink>
           </template>
-          <ul class="node-all">
+          <div
+            v-if="nodeListState.status.value === 'loading'"
+            class="node-overview-skeleton"
+            aria-busy="true"
+          >
+            <t-skeleton
+              v-for="index in 2"
+              :key="index"
+              animation="gradient"
+              :row-col="[{ width: '100%', height: '56px' }]"
+              aria-hidden="true"
+            />
+            <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+          </div>
+          <div
+            v-else-if="nodeListState.status.value !== 'ready'"
+            class="overview-state"
+          >
+            {{ getStateText(nodeListState.status.value, false) }}
+          </div>
+          <ul v-else class="node-all">
             <li
               v-for="{ title, status, count, color } in nodes"
               :key="title"
@@ -98,7 +129,28 @@
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
             </RouterLink>
           </template>
-          <div class="card-type-chart">
+          <div
+            v-if="cardListState.status.value === 'loading'"
+            class="card-type-skeleton"
+            aria-busy="true"
+          >
+            <t-skeleton
+              animation="gradient"
+              :row-col="[{ type: 'circle', size: '132px' }]"
+              aria-hidden="true"
+            />
+            <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+          </div>
+          <div
+            v-else-if="cardListState.status.value !== 'ready'"
+            class="overview-state"
+          >
+            {{ getStateText(cardListState.status.value, false) }}
+          </div>
+          <div v-else-if="!cardData.length" class="overview-state">
+            {{ $t('common.noData') }}
+          </div>
+          <div v-else class="card-type-chart">
             <VChart
               :option="getCardOptions(cardData, chartWidth)"
               :autoresize="true"
@@ -116,20 +168,104 @@
       <div class="home-bottom-row" v-if="rangeConfig[0] || rangeConfig[1]">
         <div class="home-bottom-col" v-if="rangeConfig[0]">
           <Block :title="rangeConfig[0].title">
-            <VChart
-              :option="getRangeOptions(rangeConfig[0].dataSource)"
-              :autoresize="true"
-              style="height: 250px"
-            />
+            <div
+              class="range-chart-content"
+              :aria-busy="rangeConfig[0].status === 'loading' || rangeConfig[0].refreshing"
+            >
+              <template v-if="rangeConfig[0].status === 'loading'">
+                <t-skeleton
+                  animation="gradient"
+                  :row-col="[
+                    { width: '100%', height: '200px' },
+                    { width: '42%', height: '16px', margin: '16px auto 0' },
+                  ]"
+                  class="range-chart-skeleton"
+                  aria-hidden="true"
+                />
+                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+              </template>
+              <VChart
+                v-else-if="rangeConfig[0].status === 'ready'"
+                :option="getRangeOptions(rangeConfig[0].dataSource)"
+                :autoresize="true"
+                style="height: 250px"
+              />
+              <div v-else class="overview-state overview-state--chart">
+                {{ getStateText(rangeConfig[0].status) }}
+              </div>
+              <div
+                v-if="rangeConfig[0].refreshing || rangeConfig[0].refreshError || rangeConfig[0].partialStatusText"
+                class="range-status-list"
+                role="status"
+              >
+                <span
+                  v-if="rangeConfig[0].partialStatusText"
+                  class="range-partial-status"
+                >
+                  {{ rangeConfig[0].partialStatusText }}
+                </span>
+                <span v-if="rangeConfig[0].refreshing" class="range-refresh-status">
+                  {{ $t('common.loading') }}
+                </span>
+                <span
+                  v-else-if="rangeConfig[0].refreshError"
+                  class="range-refresh-status range-refresh-status--error"
+                >
+                  {{ $t('common.refreshFailedShowingPreviousResult') }}
+                </span>
+              </div>
+            </div>
           </Block>
         </div>
         <div class="home-bottom-col" v-if="rangeConfig[1]">
           <Block :title="rangeConfig[1].title">
-            <VChart
-              :option="getRangeOptions(rangeConfig[1].dataSource)"
-              :autoresize="true"
-              style="height: 250px"
-            />
+            <div
+              class="range-chart-content"
+              :aria-busy="rangeConfig[1].status === 'loading' || rangeConfig[1].refreshing"
+            >
+              <template v-if="rangeConfig[1].status === 'loading'">
+                <t-skeleton
+                  animation="gradient"
+                  :row-col="[
+                    { width: '100%', height: '200px' },
+                    { width: '42%', height: '16px', margin: '16px auto 0' },
+                  ]"
+                  class="range-chart-skeleton"
+                  aria-hidden="true"
+                />
+                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+              </template>
+              <VChart
+                v-else-if="rangeConfig[1].status === 'ready'"
+                :option="getRangeOptions(rangeConfig[1].dataSource)"
+                :autoresize="true"
+                style="height: 250px"
+              />
+              <div v-else class="overview-state overview-state--chart">
+                {{ getStateText(rangeConfig[1].status) }}
+              </div>
+              <div
+                v-if="rangeConfig[1].refreshing || rangeConfig[1].refreshError || rangeConfig[1].partialStatusText"
+                class="range-status-list"
+                role="status"
+              >
+                <span
+                  v-if="rangeConfig[1].partialStatusText"
+                  class="range-partial-status"
+                >
+                  {{ rangeConfig[1].partialStatusText }}
+                </span>
+                <span v-if="rangeConfig[1].refreshing" class="range-refresh-status">
+                  {{ $t('common.loading') }}
+                </span>
+                <span
+                  v-else-if="rangeConfig[1].refreshError"
+                  class="range-refresh-status range-refresh-status--error"
+                >
+                  {{ $t('common.refreshFailedShowingPreviousResult') }}
+                </span>
+              </div>
+            </div>
           </Block>
         </div>
       </div>
@@ -149,7 +285,20 @@
         </div>
         <div class="home-bottom-col">
           <Block :title="t('dashboard.nodeWorkloadTop5')">
+            <div
+              v-if="nodeWorkloadTop5State.status === 'loading'"
+              class="workload-table-skeleton"
+              aria-busy="true"
+            >
+              <t-skeleton
+                animation="gradient"
+                :row-col="workloadTableSkeletonRows"
+                aria-hidden="true"
+              />
+              <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+            </div>
             <t-table
+              v-else-if="nodeWorkloadTop5State.status === 'ready'"
               :columns="nodeWorkloadColumns"
               :data="nodeWorkloadTop5TableData"
               row-key="name"
@@ -157,6 +306,9 @@
               class="top5-item-list-table"
               :bordered="false"
             />
+            <div v-else class="overview-state overview-state--chart">
+              {{ getStateText(nodeWorkloadTop5State.status) }}
+            </div>
           </Block>
         </div>
         <div class="home-bottom-col">
@@ -172,11 +324,32 @@
                 <svg-icon icon="help-circle" class="workload-distribution-tip-icon" />
               </t-tooltip>
             </template>
-            <VChart
-              :option="nodeWorkloadDistributionOptions"
-              :autoresize="true"
-              style="height: 250px"
-            />
+            <div
+              class="workload-distribution-content"
+              :aria-busy="nodeWorkloadDistributionState.status === 'loading'"
+            >
+              <template v-if="nodeWorkloadDistributionState.status === 'loading'">
+                <t-skeleton
+                  animation="gradient"
+                  :row-col="[
+                    { width: '100%', height: '200px' },
+                    { width: '42%', height: '16px', margin: '16px auto 0' },
+                  ]"
+                  class="range-chart-skeleton"
+                  aria-hidden="true"
+                />
+                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+              </template>
+              <VChart
+                v-else-if="nodeWorkloadDistributionState.status === 'ready'"
+                :option="nodeWorkloadDistributionOptions"
+                :autoresize="true"
+                style="height: 250px"
+              />
+              <div v-else class="overview-state overview-state--chart">
+                {{ getStateText(nodeWorkloadDistributionState.status) }}
+              </div>
+            </div>
           </Block>
         </div>
       </div>
@@ -185,7 +358,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, watch, watchEffect, onMounted, h, resolveComponent } from 'vue';
+import { ref, computed, reactive, onMounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
 import VChart from 'vue-echarts';
 import {
@@ -195,12 +368,12 @@ import {
 } from './getOptions';
 import Block from './Block.vue';
 import './style.scss';
-import { timeParse, calculatePrometheusStep } from '@/utils';
 import { RouterLink, useRouter } from 'vue-router';
 import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 import taskApi from '~/vgpu/api/task';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
+import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import useFetchList from '@/hooks/useFetchList';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
@@ -209,15 +382,31 @@ import {
   createNodeTopQueries,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
+import {
+  createRequestState,
+  rejectRequest,
+  REQUEST_STATUS,
+  resolveRequest,
+  startRequest,
+} from '@/hooks/request-state.mjs';
+import {
+  aggregateStatuses,
+  getPartialRangeStates,
+  stateTextKey,
+} from './overview-state.mjs';
 
 const router = useRouter();
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
 const end = new Date();
 const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
+const workloadTableSkeletonRows = Array.from({ length: 6 }, () => ({
+  width: '100%',
+  height: '32px',
+}));
 
 const handlePieClick = (params) => {
   router.push({
@@ -228,8 +417,8 @@ const handlePieClick = (params) => {
 
 const chartWidth = ref(200);
 
-const nodeWorkloadTop5Rows = ref([]);
-const nodeWorkloadDistributionRows = ref([]);
+const nodeWorkloadTop5State = reactive(createRequestState([]));
+const nodeWorkloadDistributionState = reactive(createRequestState([]));
 const nodeWorkloadColumns = computed(() => [
   {
     colKey: 'index',
@@ -266,14 +455,14 @@ const nodeWorkloadColumns = computed(() => [
   },
 ]);
 const nodeWorkloadTop5TableData = computed(() =>
-  nodeWorkloadTop5Rows.value.map((item, idx) => ({
+  nodeWorkloadTop5State.data.map((item, idx) => ({
     ...item,
     index: idx + 1,
   })),
 );
 
 const nodeWorkloadDistributionOptions = computed(() => {
-  const rows = nodeWorkloadDistributionRows.value || [];
+  const rows = nodeWorkloadDistributionState.data || [];
   const bucketSize = 10;
   const maxValue = rows.length ? Math.max(...rows.map((item) => Number(item.value) || 0)) : 0;
   const bucketCount = Math.max(1, Math.floor(maxValue / bucketSize) + 1);
@@ -351,43 +540,69 @@ const nodeWorkloadDistributionOptions = computed(() => {
   };
 });
 
-const fetchNodeWorkloadTop5 = () => {
-  cardApi
-    .getInstantVector({
-      query:
-        'topk(5, count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node))',
-    })
-    .then((res) => {
-      nodeWorkloadTop5Rows.value = (res?.data || [])
-        .map((item) => ({
-          name: item?.metric?.node || '-',
-          value: Number(item?.value || 0),
-        }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5);
-    })
-    .catch(() => {
-      nodeWorkloadTop5Rows.value = [];
+// These page-specific vectors share request-state mechanics without introducing
+// a universal query component for two one-off presentations.
+const fetchVectorRows = async (state, query, transform) => {
+  const hasResolved = state.hasResolved;
+  const requestId = startRequest(state, { hasResolved });
+  try {
+    const res = await cardApi.getInstantVector({ query });
+    if (!Array.isArray(res?.data)) {
+      resolveRequest(state, {
+        data: [],
+        status: REQUEST_STATUS.INVALID,
+        requestId,
+      });
+      return;
+    }
+    const rows = res.data
+      .map(transform)
+      .filter((row) => Number.isFinite(row?.value));
+    resolveRequest(state, {
+      data: rows,
+      status: rows.length
+        ? REQUEST_STATUS.READY
+        : res.data.length
+          ? REQUEST_STATUS.INVALID
+          : REQUEST_STATUS.MISSING,
+      requestId,
     });
+  } catch (error) {
+    rejectRequest(state, error, { hasResolved, requestId });
+  }
 };
 
-const fetchNodeWorkloadDistribution = () => {
-  cardApi
-    .getInstantVector({
-      query: 'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node)',
-    })
-    .then((res) => {
-      nodeWorkloadDistributionRows.value = (res?.data || [])
-        .map((item) => ({
-          name: item?.metric?.node || '-',
-          value: Number(item?.value || 0),
-        }))
-        .sort((a, b) => b.value - a.value);
-    })
-    .catch(() => {
-      nodeWorkloadDistributionRows.value = [];
-    });
-};
+const fetchNodeWorkloadTop5 = () =>
+  fetchVectorRows(
+    nodeWorkloadTop5State,
+    'topk(5, count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node))',
+    (item) => ({
+      name: item?.metric?.node || '-',
+      value: Number(item?.value),
+    }),
+  ).then(() => {
+    if (nodeWorkloadTop5State.status === REQUEST_STATUS.READY) {
+      nodeWorkloadTop5State.data = nodeWorkloadTop5State.data
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+    }
+  });
+
+const fetchNodeWorkloadDistribution = () =>
+  fetchVectorRows(
+    nodeWorkloadDistributionState,
+    'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node)',
+    (item) => ({
+      name: item?.metric?.node || '-',
+      value: Number(item?.value),
+    }),
+  ).then(() => {
+    if (nodeWorkloadDistributionState.status === REQUEST_STATUS.READY) {
+      nodeWorkloadDistributionState.data = nodeWorkloadDistributionState.data.sort(
+        (a, b) => b.value - a.value,
+      );
+    }
+  });
 
 const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs());
 
@@ -417,82 +632,92 @@ const cardGaugeConfig = computed(() => {
   }));
 });
 
-// resourceOverview needs to be reactive for counts, but titles need i18n.
-// We can keep the data source separate and merge in computed.
-const resourceCounts = reactive({
-  node: 0,
-  card: 0,
-  workload: 0,
-  cpuTotal: 0,
-  memoryTotal: 0,
-  memory: 0,
-});
+const nodeListState = useFetchList(() =>
+  nodeApi.getNodeListReq({ filters: {} }),
+);
+const cardListState = useFetchList(() =>
+  cardApi.getCardListReq({ filters: {} }),
+);
+const taskListState = useFetchList(
+  () => taskApi.getTaskListReq({ filters: {} }),
+  'items',
+);
+
+const nodeData = nodeListState.data;
+const cardData = cardListState.data;
+const taskData = taskListState.data;
+
+const readyMetricValue = (metric, field, format) => {
+  if (metric?.status !== REQUEST_STATUS.READY) return undefined;
+  const value = Number(metric?.[field]);
+  return Number.isFinite(value) ? format(value) : undefined;
+};
 
 const resourceOverview = computed(() => [
   {
     title: t('dashboard.nodeTotal'),
-    count: resourceCounts.node,
+    count: nodeData.value.length,
+    status: nodeListState.status.value,
+    metric: false,
     icon: 'vgpu-node',
     unit: '',
     to: '/admin/vgpu/node/admin',
   },
   {
     title: t('dashboard.gpuCardCount'),
-    count: resourceCounts.card,
+    count: cardData.value.length,
+    status: cardListState.status.value,
+    metric: false,
     icon: 'vgpu-gpu-d',
     unit: '',
     to: '/admin/vgpu/card/admin',
   },
   {
     title: t('dashboard.cpuTotalCores'),
-    count: resourceCounts.cpuTotal,
+    count: readyMetricValue(
+      clusterResourceConfig.value[0],
+      'used',
+      (value) => value.toFixed(0),
+    ),
+    status: clusterResourceConfig.value[0]?.status,
+    metric: true,
     icon: 'vgpu-card',
     unit: t('dashboard.cpuCoreUnit'),
   },
   {
     title: t('dashboard.workloadCount'),
-    count: resourceCounts.workload,
+    count: taskData.value.length,
+    status: taskListState.status.value,
+    metric: false,
     icon: 'vgpu-workload',
     unit: '',
     to: '/admin/vgpu/task/admin',
   },
   {
     title: t('dashboard.memoryTotal'),
-    count: resourceCounts.memory,
+    count: readyMetricValue(
+      _cardGaugeConfig.value[2],
+      'total',
+      (value) => value.toFixed(0),
+    ),
+    status: _cardGaugeConfig.value[2]?.status,
+    metric: true,
     icon: 'vgpu-mem',
     unit: 'GiB',
   },
   {
     title: t('dashboard.systemMemoryTotal'),
-    count: resourceCounts.memoryTotal,
+    count: readyMetricValue(
+      clusterResourceConfig.value[1],
+      'used',
+      (value) => (value / 1024 / 1024 / 1024).toFixed(0),
+    ),
+    status: clusterResourceConfig.value[1]?.status,
+    metric: true,
     icon: 'vgpu-core',
     unit: 'GiB',
   },
 ]);
-
-// Node Config
-// Since nodeConfig is reactive and populated in onMounted, we need to be careful.
-// The titles are static.
-// Let's just translate them when we use them? No, they are iterated.
-// We can make the definitions computed.
-// Use a computed to generate the array for the template
-// Note: The original code modified a reactive 'nodeConfig' in onMounted.
-// We will simulate that by updating 'nodeDataValues' and computing the display object.
-// BUT the template iterates 'nodes' (which is different) and specific charts?
-// No, the template doesn't seem to use 'nodeConfig' directly in the snippet provided?
-// Wait, the template uses 'nodes' for "Node Overview" block.
-// And 'nodeTotalTop' / 'nodeUsedTop'.
-// Where is 'nodeConfig' used? It seems it might be used in a child component or I missed it.
-// Ah, searching the file content... 'nodeConfig' is defined but I don't see it used in the provided template snippet.
-// It might be used in 'getCardOptions' or similar? Or maybe it was passed to something not shown.
-// Wait, 'nodes' computed uses 'nodeData'.
-// Let's look at 'nodes' computed.
-
-const nodeData = useFetchList(nodeApi.getNodeListReq({ filters: {} }));
-
-const cardData = useFetchList(cardApi.getCardListReq({ filters: {} }));
-
-const taskData = useFetchList(taskApi.getTaskListReq({ filters: {} }), 'items');
 
 const nodes = computed(() => [
 
@@ -559,68 +784,53 @@ const nodeMemoryTop5 = computed(() => ({
 }));
 
 
-const rangeConfig = ref(getRangeConfigInit(t));
+const rangeDefinitions = getRangeConfigInit(t);
+const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) =>
+  section.dataSource.map((series, seriesIndex) => ({
+    ...series,
+    sectionIndex,
+    seriesIndex,
+  })),
+);
+const { data: rangeSeries } = useRangeVector(
+  rangeSeriesDefinitions,
+  (query) => query,
+  times,
+);
 
-const fetchRangeData = () => {
-
-  const params = {
-    range: {
-      start: timeParse(times.value[0]),
-      end: timeParse(times.value[1]),
-      step: calculatePrometheusStep(times.value[0], times.value[1]),
-    },
-  };
-
-  for (const item of rangeConfig.value) {
-    for (const v of item.dataSource) {
-      cardApi
-        .getRangeVector({
-          ...params,
-          query: v.query,
-        })
-        .then((res) => {
-          v.data = res.data?.[0]?.values || [];
-        })
-        .catch((err) => {
-          console.error('Failed to fetch range data:', err);
-        });
-    }
-  }
-};
-
-watchEffect(() => {
-  resourceCounts.node = nodeData.value.length;
-  resourceCounts.card = cardData.value.length;
-  resourceCounts.workload = taskData.value.length;
-  resourceCounts.cpuTotal = Number(clusterResourceConfig.value[0]?.used || 0).toFixed(0);
-  resourceCounts.memoryTotal = (Number(clusterResourceConfig.value[1]?.used || 0) / 1024 / 1024 / 1024).toFixed(0);
-  resourceCounts.memory = _cardGaugeConfig.value[2].total.toFixed(0);
+const rangeConfig = computed(() => {
+  const translated = getRangeConfigInit(t);
+  return translated.map((section, sectionIndex) => {
+    const dataSource = section.dataSource.map((series, seriesIndex) => {
+      const state = rangeSeries.value.find(
+        (item) =>
+          item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
+      );
+      return {
+        ...series,
+        data: state?.data || [],
+        status: state?.status || REQUEST_STATUS.LOADING,
+        refreshing: state?.refreshing || false,
+        refreshError: state?.refreshError || null,
+      };
+    });
+    const status = aggregateStatuses(dataSource);
+    const partialStatusText = getPartialRangeStates(dataSource)
+      .map((item) => `${item.name}: ${t(stateTextKey(item.status))}`)
+      .join(' · ');
+    return {
+      ...section,
+      dataSource,
+      status,
+      refreshing: dataSource.some((item) => item.refreshing),
+      refreshError: dataSource.find((item) => item.refreshError)?.refreshError || null,
+      partialStatusText,
+    };
+  });
 });
 
-watch(
-  times,
-  () => {
-    // fetchLineData();
-    fetchRangeData();
-  },
-  { immediate: true },
-);
-
-// 更新趋势标题/系列文案随语言切换
-watch(
-  () => locale.value,
-  () => {
-    const old = rangeConfig.value;
-    const next = getRangeConfigInit(t);
-    // 保留已拉取的数据
-    next.forEach((section, idx) => {
-      section.dataSource.forEach((ds, j) => {
-        ds.data = old?.[idx]?.dataSource?.[j]?.data || [];
-      });
-    });
-    rangeConfig.value = next;
-  },
-);
+const getStateText = (status, metric = true) =>
+  t(stateTextKey(status, { metric }));
 
 onMounted(() => {
   fetchNodeWorkloadTop5();

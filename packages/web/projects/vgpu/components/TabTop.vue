@@ -12,36 +12,61 @@
       </t-radio-group>
     </template>
 
-    <div class="tab-top-list">
-      <div
-        v-for="item in displayItems"
-        :key="item.name"
-        class="tab-top-item"
-        @click="handleItemClick(item)"
-      >
-        <div class="tab-top-rank">
-          {{ item.index }}
-        </div>
-        <div class="tab-top-content">
-          <div class="tab-top-header">
-            <span class="tab-top-name" :title="item.name">
-              {{ item.name }}
-            </span>
-            <span class="tab-top-value">
-              {{ item.valueDisplay }}
-            </span>
-          </div>
-          <t-progress
-            theme="line"
-            :percentage="item.percentage"
-            :label="false"
-            track-color="#e5e7eb"
-            color="#5b8ff9"
+    <div class="tab-top-list" :aria-busy="activeStatus === 'loading'">
+      <template v-if="activeStatus === 'loading'">
+        <div
+          v-for="index in 5"
+          :key="`skeleton-${index}`"
+          class="tab-top-skeleton"
+          aria-hidden="true"
+        >
+          <t-skeleton
+            animation="gradient"
+            :row-col="[
+              [
+                { type: 'rect', width: '24px', height: '24px' },
+                { type: 'text', width: 'calc(100% - 34px)', height: '18px' },
+              ],
+              { type: 'rect', width: 'calc(100% - 34px)', height: '4px', marginLeft: '34px' },
+            ]"
           />
         </div>
-      </div>
-      <div v-if="!displayItems.length" class="tab-top-empty">
-        {{ t('common.noData') }}
+        <span class="tab-top-sr-only" role="status">{{ t('common.loading') }}</span>
+      </template>
+      <template v-else>
+        <div
+          v-for="item in displayItems"
+          :key="item.name"
+          class="tab-top-item"
+          @click="handleItemClick(item)"
+        >
+          <div class="tab-top-rank">
+            {{ item.index }}
+          </div>
+          <div class="tab-top-content">
+            <div class="tab-top-header">
+              <span class="tab-top-name" :title="item.name">
+                {{ item.name }}
+              </span>
+              <span class="tab-top-value">
+                {{ item.valueDisplay }}
+              </span>
+            </div>
+            <t-progress
+              theme="line"
+              :percentage="item.percentage"
+              :label="false"
+              track-color="#e5e7eb"
+              color="#5b8ff9"
+            />
+          </div>
+        </div>
+      </template>
+      <div
+        v-if="activeStatus !== 'loading' && !displayItems.length"
+        class="tab-top-empty"
+      >
+        {{ activeStateText }}
       </div>
     </div>
   </block-box>
@@ -53,6 +78,14 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import cardApi from '~/vgpu/api/card';
 import { cloneDeep } from 'lodash';
+import {
+  createRequestState,
+  rejectRequest,
+  REQUEST_STATUS,
+  resolveRequest,
+  startRequest,
+} from '@/hooks/request-state.mjs';
+import { readRankingRows } from './tab-top-state.mjs';
 
 const props = defineProps({
   title: String,
@@ -61,7 +94,12 @@ const props = defineProps({
   onClick: Function,
 });
 const { t } = useI18n();
-const currentConfig = ref(props.config);
+const createStatefulConfigs = (configs = []) =>
+  cloneDeep(configs).map((item) => ({
+    ...item,
+    ...createRequestState(Array.isArray(item.data) ? item.data : []),
+  }));
+const currentConfig = ref(createStatefulConfigs(props.config));
 const tabActive = ref('');
 
 const radioOptions = computed(() =>
@@ -115,24 +153,45 @@ const displayItems = computed(() => {
     }));
 });
 
+const activeConfig = computed(() =>
+  currentConfig.value.find((item) => item.key === tabActive.value),
+);
+const activeStatus = computed(
+  () => activeConfig.value?.status || REQUEST_STATUS.LOADING,
+);
+const activeStateText = computed(() => {
+  if (activeStatus.value === REQUEST_STATUS.ERROR) {
+    return t('dashboard.metricQueryFailed');
+  }
+  if (activeStatus.value === REQUEST_STATUS.INVALID) {
+    return t('dashboard.metricInvalid');
+  }
+  return t('common.noData');
+});
+
 const handleItemClick = (item) => {
   handleClick({ data: item });
 };
 
 const fetchData = (configList) => {
   if (!configList?.length) return;
-  tabActive.value = configList[0].key;
+  if (!configList.some((item) => item.key === tabActive.value)) {
+    tabActive.value = configList[0].key;
+  }
   configList.forEach((v, i) => {
-    cardApi
-      .getInstantVector({
-        query: v.query,
-      })
-      .then((res) => {
-        configList[i].data = res.data.map((item) => ({
-          name: item.metric[v.nameKey],
-          value: item.value,
-        }));
-      });
+    const state = configList[i];
+    const hasResolved = state.hasResolved;
+    const requestId = startRequest(state, { hasResolved });
+    cardApi.getInstantVector({ query: v.query }).then(
+      (res) => {
+        const result = readRankingRows(res, v.nameKey);
+        resolveRequest(state, {
+          ...result,
+          requestId,
+        });
+      },
+      (error) => rejectRequest(state, error, { hasResolved, requestId }),
+    );
   });
 };
 
@@ -143,7 +202,22 @@ onMounted(() => {
 watch(
   () => props.config,
   (val) => {
-    currentConfig.value = cloneDeep(val);
+    const previous = new Map(
+      currentConfig.value.map((item) => [`${item.key}:${item.query}`, item]),
+    );
+    currentConfig.value = createStatefulConfigs(val).map((item) => {
+      const old = previous.get(`${item.key}:${item.query}`);
+      if (!old) return item;
+      return {
+        ...item,
+        data: old.data,
+        status: old.status,
+        hasResolved: old.hasResolved,
+        refreshing: old.refreshing,
+        error: old.error,
+        refreshError: old.refreshError,
+      };
+    });
     fetchData(currentConfig.value);
   },
   { deep: true },
@@ -255,5 +329,21 @@ watch(
   padding: 0 8px;
   color: #9ca3af;
   font-size: 12px;
+}
+
+.tab-top-skeleton {
+  min-height: 40px;
+}
+
+.tab-top-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 </style>

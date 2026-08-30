@@ -28,6 +28,7 @@ export default {
     details: '详情',
     formValidationFailed: '表单填写校验不通过！',
     requestError: '请求异常',
+    refreshFailedShowingPreviousResult: '刷新失败，正在显示上次查询结果',
     tip: '提示',
     copySuccess: '复制成功',
     copyFailed: '复制失败',

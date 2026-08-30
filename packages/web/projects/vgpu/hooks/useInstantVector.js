@@ -1,22 +1,34 @@
 import cardApi from '~/vgpu/api/card';
-import { ref, watch, watchEffect } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { timeParse, calculatePrometheusStep } from '@/utils';
 import {
   calculateMetricPercent,
+  classifyParsedQuery,
   METRIC_STATUS,
+  PARSED_QUERY_STATUS,
   readInstantValue,
   requiresMetricCapacity,
+  restoreMetricState,
   resolveMetricStatus,
   setMetricErrorState,
+  snapshotMetricState,
 } from './instant-vector-state.mjs';
+import {
+  createRequestState,
+  isLatestRequest,
+  rejectRequest,
+  resolveRequest,
+  startRequest,
+} from '@/hooks/request-state.mjs';
 
 const useInstantVector = (configs, parseQuery = (query) => query, times) => {
   const data = ref(
     configs.map((config) => ({
       ...config,
-      status: METRIC_STATUS.LOADING,
+      ...createRequestState(config.data),
     })),
   );
+  const rangeRequestIds = configs.map(() => 0);
 
   const safeParseQuery = (q) => {
     try {
@@ -27,15 +39,44 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
     }
   };
 
-  const fetchInstantData = async () => {
+  const parseConfigQueries = () =>
+    configs.map(({ query, totalQuery, percentQuery }) => ({
+      query: query ? safeParseQuery(query) : undefined,
+      totalQuery: totalQuery ? safeParseQuery(totalQuery) : undefined,
+      percentQuery: percentQuery ? safeParseQuery(percentQuery) : undefined,
+    }));
+
+  const fetchInstantData = async (parsedConfigs) => {
     const reqs = configs.map(
       async (config, index) => {
-        const { query, totalQuery, percentQuery } = config;
+        const { query, totalQuery } = config;
+        const parsedConfig = parsedConfigs[index];
         const metric = data.value[index];
         const requiresCapacity = requiresMetricCapacity(config);
-        metric.status = METRIC_STATUS.LOADING;
-        const parsedQuery = query ? safeParseQuery(query) : undefined;
-        if (!parsedQuery || parsedQuery.includes('undefined')) {
+        const hasResolved = metric.hasResolved;
+        const nextMetric = snapshotMetricState(metric);
+        const requestId = startRequest(metric, { hasResolved });
+        const parsedQuery = parsedConfig.query;
+        const parsedQueryStatus = classifyParsedQuery(parsedQuery);
+        const parsedTotalQueryStatus = totalQuery
+          ? classifyParsedQuery(parsedConfig.totalQuery)
+          : PARSED_QUERY_STATUS.READY;
+
+        if (
+          parsedQueryStatus === PARSED_QUERY_STATUS.PENDING ||
+          parsedTotalQueryStatus === PARSED_QUERY_STATUS.PENDING
+        ) {
+          metric.refreshing = false;
+          return;
+        }
+        if (
+          parsedQueryStatus === PARSED_QUERY_STATUS.INVALID ||
+          parsedTotalQueryStatus === PARSED_QUERY_STATUS.INVALID
+        ) {
+          resolveRequest(metric, {
+            status: METRIC_STATUS.INVALID,
+            requestId,
+          });
           return;
         }
         try {
@@ -45,70 +86,59 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             const usedData = await cardApi.getInstantVector({
               query: parsedQuery,
             });
+            if (!isLatestRequest(metric, requestId)) return;
             const usedSample = readInstantValue(usedData);
 
             // Preserve whether Prometheus returned a real sample. A zero sample
             // is valid; an empty vector means that the metric is unavailable.
-            metric.hasData = usedSample.status === METRIC_STATUS.READY;
-            metric.count = usedSample.value;
-            metric.used = usedSample.value;
+            nextMetric.hasData = usedSample.status === METRIC_STATUS.READY;
+            nextMetric.count = usedSample.value;
+            nextMetric.used = usedSample.value;
             usedStatus = usedSample.status;
           }
 
           if (totalQuery) {
-            const parsedTotalQuery = safeParseQuery(totalQuery);
-            if (!parsedTotalQuery || parsedTotalQuery.includes('undefined')) {
-              return;
-            }
+            const parsedTotalQuery = parsedConfig.totalQuery;
             const totalData = await cardApi.getInstantVector({
               query: parsedTotalQuery,
             });
+            if (!isLatestRequest(metric, requestId)) return;
             const totalSample = readInstantValue(totalData);
             totalStatus = totalSample.status;
-            metric.totalHasData = totalSample.status === METRIC_STATUS.READY;
-            metric.total = totalSample.value;
+            nextMetric.totalHasData = totalSample.status === METRIC_STATUS.READY;
+            nextMetric.total = totalSample.value;
           }
 
-          metric.status = resolveMetricStatus({
+          nextMetric.status = resolveMetricStatus({
             usedStatus,
             totalStatus,
-            total: metric.total,
+            total: nextMetric.total,
             requiresCapacity,
           });
 
           if (requiresCapacity) {
-            const percent = calculateMetricPercent(metric.used, metric.total);
-            metric.percent = percent ?? 0;
+            const percent = calculateMetricPercent(
+              nextMetric.used,
+              nextMetric.total,
+            );
+            nextMetric.percent = percent ?? 0;
           }
 
-          if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
-            const parsedPercentQuery = safeParseQuery(percentQuery);
-            if (
-              !parsedPercentQuery ||
-              parsedPercentQuery.includes('undefined')
-            ) {
-              return;
-            }
-            try {
-              const percentData = await cardApi.getRangeVector({
-                query: parsedPercentQuery,
-                range: {
-                  start: timeParse(times.value[0]),
-                  end: timeParse(times.value[1]),
-                  step: calculatePrometheusStep(times.value[0], times.value[1]),
-                },
-              });
-
-              metric.data = percentData.data[0]?.values || [];
-            } catch {
-              metric.data = [];
-            }
-          }
-        } catch {
-          setMetricErrorState(metric, {
-            hasTotal: Boolean(totalQuery),
-            requiresCapacity,
+          if (!isLatestRequest(metric, requestId)) return;
+          restoreMetricState(metric, nextMetric);
+          resolveRequest(metric, {
+            status: nextMetric.status,
+            requestId,
           });
+        } catch (error) {
+          if (!isLatestRequest(metric, requestId)) return;
+          if (!hasResolved) {
+            setMetricErrorState(metric, {
+              hasTotal: Boolean(totalQuery),
+              requiresCapacity,
+            });
+          }
+          rejectRequest(metric, error, { hasResolved, requestId });
         }
       },
     );
@@ -116,29 +146,33 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
     await Promise.all(reqs);
   };
 
-  const fetchRangeData = async () => {
+  const fetchRangeData = async (parsedConfigs = parseConfigQueries()) => {
     const reqs = configs.map(
-      async ({ query, totalQuery, percentQuery }, index) => {
-        const parsedQuery = query ? safeParseQuery(query) : undefined;
-        if (!parsedQuery || parsedQuery.includes('undefined')) {
-          return;
-        }
-
+      async ({ percentQuery }, index) => {
+        const requestId = ++rangeRequestIds[index];
         if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
-          const parsedPercentQuery = safeParseQuery(percentQuery);
-          if (!parsedPercentQuery || parsedPercentQuery.includes('undefined')) {
+          const parsedPercentQuery = parsedConfigs[index]?.percentQuery;
+          if (
+            classifyParsedQuery(parsedPercentQuery) !==
+            PARSED_QUERY_STATUS.READY
+          ) {
             return;
           }
-          const percentData = await cardApi.getRangeVector({
-            query: parsedPercentQuery,
-            range: {
+          try {
+            const percentData = await cardApi.getRangeVector({
+              query: parsedPercentQuery,
+              range: {
                 start: timeParse(times.value[0]),
                 end: timeParse(times.value[1]),
-              step: calculatePrometheusStep(times.value[0], times.value[1]),
-            },
-          });
+                step: calculatePrometheusStep(times.value[0], times.value[1]),
+              },
+            });
+            if (requestId !== rangeRequestIds[index]) return;
 
-          data.value[index].data = percentData.data[0]?.values || [];
+            data.value[index].data = percentData.data[0]?.values || [];
+          } catch {
+            // Keep the last successful series during a failed range refresh.
+          }
         }
       },
     );
@@ -146,9 +180,15 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
     await Promise.all(reqs);
   };
 
-  watchEffect(() => {
-    fetchInstantData();
-  });
+  const parsedConfigs = computed(parseConfigQueries);
+  watch(
+    parsedConfigs,
+    (value) => {
+      fetchInstantData(value);
+      fetchRangeData(value);
+    },
+    { immediate: true, deep: true },
+  );
 
   if (times) {
     watch(

@@ -7,6 +7,22 @@ export const METRIC_STATUS = Object.freeze({
   ERROR: 'error',
 });
 
+export const PARSED_QUERY_STATUS = Object.freeze({
+  READY: 'ready',
+  PENDING: 'pending',
+  INVALID: 'invalid',
+});
+
+export const classifyParsedQuery = (query) => {
+  if (typeof query !== 'string' || !query.trim()) {
+    return PARSED_QUERY_STATUS.INVALID;
+  }
+  if (query.includes('undefined')) {
+    return PARSED_QUERY_STATUS.PENDING;
+  }
+  return PARSED_QUERY_STATUS.READY;
+};
+
 export const readInstantValue = (response) => {
   const rawValue = response?.data?.[0]?.value;
   if (rawValue === undefined || rawValue === null || rawValue === '') {
@@ -28,6 +44,22 @@ export const readReadyMetricField = (metric, field) => {
 
   const value = Number(metric?.[field]);
   return Number.isFinite(value) ? value : undefined;
+};
+
+export const snapshotMetricState = (metric) => ({
+  status: metric.status,
+  hasData: metric.hasData,
+  totalHasData: metric.totalHasData,
+  count: metric.count,
+  used: metric.used,
+  total: metric.total,
+  percent: metric.percent,
+});
+
+export const restoreMetricState = (metric, snapshot) => {
+  Object.assign(metric, snapshot);
+  if (snapshot.percent === undefined) delete metric.percent;
+  return metric;
 };
 
 export const calculateMetricPercent = (used, total) => {
