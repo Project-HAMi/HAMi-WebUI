@@ -1,6 +1,6 @@
 # HAMi-WebUI
 
-![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.3.0](https://img.shields.io/badge/AppVersion-1.3.0-informational?style=flat-square)
+![Version: 2.0.0-rc.0](https://img.shields.io/badge/Version-2.0.0--rc.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: main](https://img.shields.io/badge/AppVersion-main-informational?style=flat-square)
 
 ## Get Repo Info
 
@@ -25,12 +25,17 @@ https://github.com/Project-HAMi/HAMi-WebUI/blob/main/charts/hami-webui/values.ya
 helm install my-hami-webui hami-webui/hami-webui --create-namespace --namespace hami -f values.yaml
 ```
 
+Chart 2 deploys one `projecthami/hami-webui` image and one container. When
+upgrading from Chart 1.3, create a fresh Chart 2 values file and use
+`--reset-values`; do not reuse the nested frontend/backend values. See the
+[upgrade and rollback procedure](../../docs/installation/helm/index.md#upgrade-from-chart-13-to-20).
+
 ## Uninstalling the Chart
 
-To uninstall/delete the my-release deployment:
+To uninstall the release:
 
 ```console
-helm delete my-hami-webui
+helm uninstall my-hami-webui --namespace hami
 ```
 
 The command removes all the Kubernetes components associated with the chart and deletes the release.
@@ -47,12 +52,15 @@ The command removes all the Kubernetes components associated with the chart and 
 | Key | Type | Default                                                                            | Description |
 |-----|------|------------------------------------------------------------------------------------|-------------|
 | affinity | object | `{}`                                                                               |  |
+| backend.http.timeout | string | `"60s"` | Timeout applied to each incoming API request context. |
 | dcgm-exporter.enabled | bool | `true`                                                                             |  |
 | dcgm-exporter.nodeSelector.gpu | string | `"on"`                                                                             |  |
 | dcgm-exporter.serviceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
 | dcgm-exporter.serviceMonitor.enabled | bool | `true`                                                                             |  |
 | dcgm-exporter.serviceMonitor.honorLabels | bool | `false`                                                                            |  |
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
+| env[0].name | string | `"TZ"` | Default environment variable name for the single application container. Replace the list to add other variables. |
+| env[0].value | string | `"Asia/Shanghai"` | Default timezone value. |
 | externalPrometheus.address | string | `"http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"` | Prometheus or VictoriaMetrics HTTP API address. |
 | externalPrometheus.enabled | bool | `false`                                                                            | Use an existing metrics backend instead of the bundled address. |
 | externalPrometheus.timeout | string | `"1m"` | Timeout sent with each upstream PromQL request. |
@@ -64,17 +72,6 @@ The command removes all the Kubernetes components associated with the chart and 
 | externalPrometheus.tls.keyKey | string | `""` | Secret data key containing the client private key; configure with `certKey`. |
 | frontend.basePath | string | `"/"` | Public URL prefix served by the official Go Web entry; use the same non-stripped Ingress path. |
 | frontend.frameAncestors | list or null | `null` | CSP framing allowlist. `null` preserves existing behavior, `[]` blocks framing, and a list allows explicit parents. |
-| frontend.livenessProbe.enabled | bool | `true` | Enable the Web-entry liveness probe. |
-| frontend.livenessProbe.failureThreshold | int | `6` |  |
-| frontend.livenessProbe.initialDelaySeconds | int | `5` |  |
-| frontend.livenessProbe.periodSeconds | int | `10` |  |
-| frontend.livenessProbe.timeoutSeconds | int | `3` |  |
-| frontend.proxyTimeout | string | `"65s"` | End-to-end backend proxy timeout; keep this longer than `backend.http.timeout`. |
-| frontend.readinessProbe.enabled | bool | `true` | Enable the Web-entry readiness probe. |
-| frontend.readinessProbe.failureThreshold | int | `3` |  |
-| frontend.readinessProbe.initialDelaySeconds | int | `1` |  |
-| frontend.readinessProbe.periodSeconds | int | `5` |  |
-| frontend.readinessProbe.timeoutSeconds | int | `3` |  |
 | fullnameOverride | string | `""`                                                                               |  |
 | hamiServiceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
 | hamiServiceMonitor.enabled | bool | `true`                                                                             |  |
@@ -82,15 +79,11 @@ The command removes all the Kubernetes components associated with the chart and 
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
 | hamiServiceMonitor.svcNamespace | string | `"kube-system"`                                                                    | Namespace where the HAMi monitor Service is installed. |
-| image.backend.digest | string | `"sha256:7057047c7c2f7838cd190b3dc7263d503bbcf5d8e52642bc703227d137bc029d"`                | Immutable manifest digest; takes precedence over `image.backend.tag` when set. |
-| image.backend.pullPolicy | string | `"IfNotPresent"`                                                                  |  |
-| image.backend.repository | string | `"projecthami/hami-webui-be-oss"`                                                  |  |
-| image.backend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.backend.digest` is empty. |
-| image.frontend.digest | string | `"sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e"`               | Immutable manifest digest; takes precedence over `image.frontend.tag` when set. |
-| image.frontend.pullPolicy | string | `"IfNotPresent"`                                                                   |  |
-| image.frontend.repository | string | `"projecthami/hami-webui-fe-oss"`                                                  |  |
-| image.frontend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.frontend.digest` is empty. |
-| imagePullSecrets | list | `[]`                                                                               | Image pull secrets used by both containers in the WebUI Pod. |
+| image.digest | string | `""` | Immutable manifest digest; takes precedence over `image.tag` when set. |
+| image.pullPolicy | string | `"IfNotPresent"` | Pull policy for the application image. |
+| image.repository | string | `"projecthami/hami-webui"` | Unified HAMi-WebUI image repository. |
+| image.tag | string | `"main"` | Used only when `image.digest` is empty. Release packaging replaces development defaults with the released version. |
+| imagePullSecrets | list | `[]` | Image pull secrets used by the WebUI Pod. |
 | ingress.annotations | object | `{}`                                                                               |  |
 | ingress.className | string | `""`                                                                               |  |
 | ingress.enabled | bool | `false`                                                                            |  |
@@ -108,23 +101,35 @@ The command removes all the Kubernetes components associated with the chart and 
 | kube-prometheus-stack.nodeExporter.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.prometheus.prometheusSpec.serviceMonitorSelector.matchLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
 | kube-prometheus-stack.prometheusOperator.enabled | bool | `false`                                                                            |  |
+| metricsExporter.interval | string | `"30s"` | Interval between background metric refreshes. |
+| metricsExporter.timeout | string | `"60s"` | Hard timeout for one background metric refresh. |
 | nameOverride | string | `""`                                                                               |  |
 | namespaceOverride | string | `""`                                                                               |  |
 | nodeSelector | object | `{}`                                                                               |  |
 | podAnnotations | object | `{}`                                                                               |  |
 | podSecurityContext | object | `{}`                                                                               |  |
+| probes.liveness.enabled | bool | `true` | Probe the public `/health_check` endpoint after startup. |
+| probes.liveness.failureThreshold | int | `6` |  |
+| probes.liveness.initialDelaySeconds | int | `0` |  |
+| probes.liveness.periodSeconds | int | `10` |  |
+| probes.liveness.timeoutSeconds | int | `3` |  |
+| probes.readiness.enabled | bool | `true` | Probe the public `/health_check` endpoint after startup. |
+| probes.readiness.failureThreshold | int | `3` |  |
+| probes.readiness.initialDelaySeconds | int | `0` |  |
+| probes.readiness.periodSeconds | int | `5` |  |
+| probes.readiness.timeoutSeconds | int | `3` |  |
+| probes.startup.enabled | bool | `true` | Wait for internal `/readyz` and informer synchronization before other probes begin. |
+| probes.startup.failureThreshold | int | `60` | Combined with the five-second period, allows up to five minutes for startup. |
+| probes.startup.initialDelaySeconds | int | `0` |  |
+| probes.startup.periodSeconds | int | `5` |  |
+| probes.startup.timeoutSeconds | int | `3` |  |
 | replicaCount | int | `1`                                                                                |  |
-| resources.backend.limits.cpu | string | `"50m"`                                                                            |  |
-| resources.backend.limits.memory | string | `"250Mi"`                                                                          |  |
-| resources.backend.requests.cpu | string | `"50m"`                                                                            |  |
-| resources.backend.requests.memory | string | `"250Mi"`                                                                          |  |
-| resources.frontend.limits.cpu | string | `"200m"`                                                                           |  |
-| resources.frontend.limits.memory | string | `"500Mi"`                                                                          |  |
-| resources.frontend.requests.cpu | string | `"200m"`                                                                           |  |
-| resources.frontend.requests.memory | string | `"500Mi"`                                                                          |  |
+| resources.limits.cpu | string | `"250m"` | CPU limit for the single application container. |
+| resources.limits.memory | string | `"750Mi"` | Memory limit for the single application container. |
+| resources.requests.cpu | string | `"250m"` | CPU request for the single application container. |
+| resources.requests.memory | string | `"750Mi"` | Memory request for the single application container. |
 | securityContext | object | `{}`                                                                               |  |
-| service.legacyBackendPort | bool | `true`                                                                        | Deprecated Chart 1.x compatibility port for direct access to the raw backend on the primary Service. Set to `false` to expose only the supported Web entry; removed in Chart 2.0.0. |
-| service.port | int | `3000`                                                                             |  |
+| service.port | int | `3000` | Public SPA and browser API Service port. The internal metrics Service keeps port 8000 separate. |
 | service.type | string | `"ClusterIP"`                                                                      |  |
 | serviceAccount.annotations | object | `{}`                                                                               |  |
 | serviceAccount.create | bool | `true`                                                                             |  |
@@ -135,6 +140,11 @@ The command removes all the Kubernetes components associated with the chart and 
 | serviceMonitor.interval | string | `"15s"`                                                                            |  |
 | serviceMonitor.relabelings | list | `[]`                                                                               |  |
 | tolerations | list | `[]`                                                                               |  |
+| vendorNodeSelectors.Ascend | string | `"ascend=on"` | Node-label selector used for Ascend device discovery. |
+| vendorNodeSelectors.DCU | string | `"dcu=on"` | Node-label selector used for DCU device discovery. |
+| vendorNodeSelectors.MLU | string | `"mlu=on"` | Node-label selector used for MLU device discovery. |
+| vendorNodeSelectors.Metax | string | `"metax-tech.com/gpu.installed=true"` | Node-label selector used for Metax device discovery. |
+| vendorNodeSelectors.NVIDIA | string | `"gpu=on"` | Node-label selector used for NVIDIA device discovery. |
 
 ## Configuration Guide for HAMi-WebUI Helm Chart
 

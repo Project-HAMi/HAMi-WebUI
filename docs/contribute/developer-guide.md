@@ -55,19 +55,17 @@ dependency or tool versions change. On Linux, use
 `pnpm exec playwright install --with-deps chromium` when Chromium's system
 libraries are not already installed.
 
-## Build HAMi-WebUI
+## Build and run HAMi-WebUI
 
-The Chart 1.x deployment consists of two containers:
+Chart 2 deploys one application image and one container. Its Go process serves
+the built Vue application on port `3000`, invokes the versioned API handler
+in-process, and exposes readiness, metrics, and diagnostics on the internal port
+`8000`.
 
-- the Go API and metrics backend; and
-- the Web entry, which serves the built Vue application and proxies
-  `/api/vgpu/v1/*` to the backend.
+Node.js and pnpm remain build and test dependencies for the Vue application.
+They are not present in the production image.
 
-Node.js is required to build the Vue application. The frontend image built from
-this revision uses Go at runtime; the previous official Node image remains
-supported for Chart 1.x rollback.
-
-### Backend
+### Backend development
 
 Generate the API code and start the backend from the repository root:
 
@@ -75,19 +73,17 @@ Generate the API code and start the backend from the repository root:
 make -C server run
 ```
 
-By default, you can access the web-ui-server-swagger at `http://localhost:8000/q/swagger-ui`.
+Swagger is available at `http://localhost:8000/q/swagger-ui`.
 
-### Frontend
+### Frontend development
 
-Start the backend first, then run `make dev` in the repository root. This
-starts the Vite development server; NestJS is not part of the browser
-development path. Vite forwards browser requests below `/api/vgpu/v1/*`
-directly to the backend at `http://127.0.0.1:8000` and removes the
+Start the backend first, then run `make dev` in the repository root. This starts
+the Vite development server; NestJS is not part of the browser development
+path. Vite forwards `/api/vgpu/v1/*` to `http://127.0.0.1:8000` and removes the
 `/api/vgpu` prefix.
 
-By default, you can access the web-ui at `http://localhost:3000/`.
-
-Set `HAMI_WEBUI_BACKEND_URL` when the backend uses a different origin:
+Open `http://localhost:3000/`. Set `HAMI_WEBUI_BACKEND_URL` when the backend
+uses another origin:
 
 ```bash
 HAMI_WEBUI_BACKEND_URL=http://127.0.0.1:18000 make dev
@@ -106,104 +102,86 @@ build, the Go Web entry, and its HTTP and Chromium contracts. The server target
 generates code before building, vetting, and testing every Go package. CI calls
 the same granular Make targets so local and pull-request behavior stay aligned.
 
-To exercise the production Web entry locally:
+To exercise the standalone Web entry while changing its static-serving
+contract:
 
 ```bash
 make build build-web-entry
 server/build/web-entry --static-dir ./public
 ```
 
-The backend must be available at `http://127.0.0.1:8000` for API requests.
+The backend must be available at `http://127.0.0.1:8000` for API requests in
+this standalone mode.
 
-### Chart 1.x frontend image contract
+### Chart 2 application contract
 
-The frontend image owns its OCI entrypoint; the Chart does not inject a
-Node-specific command. A compatible custom image must:
+The official image owns its OCI entrypoint; the Chart does not inject an
+implementation-specific command. The image runs as a numeric non-root user and
+is verified on amd64 and arm64 with a read-only root filesystem.
 
-- listen on port `3000`;
-- return HTTP 200 from `/health_check` without depending on backend readiness;
-- serve the SPA and its static assets;
-- forward `/api/vgpu/v1/*` to the backend while preserving HTTP status codes;
-  and
-- terminate cleanly on `SIGTERM`.
+The public listener exposes the SPA and only the versioned HAMi Web API below
+`/api/vgpu/v1/*`. Backend-only `/metrics`, `/readyz`, and `/q` endpoints remain
+on port `8000` for internal diagnostics and scraping. The browser API calls the
+backend handler directly in-process; there is no loopback reverse proxy.
 
-The new official Go image additionally runs as a numeric non-root user and is
-verified with a read-only root filesystem in CI. Those are official-image
-security gates, not new requirements retroactively imposed on the previous
-official image.
-
-The new official Go Web entry exposes only the versioned HAMi Web API through
-the same-origin entry. Backend-only `/metrics`, `/readyz`, and `/q` endpoints
-remain available only on the backend listener for internal diagnostics and
-scraping. Pinning the previous Node-based official image restores its legacy
-wildcard `/api/vgpu/*` proxy and HTTP 200 / `code: 599` proxy-error behavior;
-that rollback path does not provide the new routing or error guarantees. The
-legacy process may also require forced termination when the Pod's termination
-grace period expires.
-
-The official Go Web entry also accepts these optional environment variables:
+The unified application accepts these optional environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HAMI_WEBUI_LISTEN_ADDRESS` | `:3000` | Standalone Web listener; Chart 1.x requires `:3000` |
-| `HAMI_WEBUI_BACKEND_URL` | `http://127.0.0.1:8000` | Backend origin |
+| `HAMI_WEBUI_LISTEN_ADDRESS` | `:3000` | Public Web listener; the Chart requires `:3000` |
 | `HAMI_WEBUI_STATIC_DIR` | `/apps/public` | Built Vue asset directory |
-| `HAMI_WEBUI_PROXY_TIMEOUT` | `65s` | End-to-end backend request timeout; keep it longer than `backend.http.timeout` |
 | `HAMI_WEBUI_BASE_PATH` | `/` | Public URL prefix; the reverse proxy must preserve it |
 | `HAMI_WEBUI_FRAME_ANCESTORS_JSON` | unset | JSON framing allowlist; `[]` blocks all parents |
 | `HAMI_WEBUI_HEALTHCHECK_URL` | `http://127.0.0.1:3000/health_check` | Target used only by `--healthcheck` |
 
-The public port, health endpoint, and versioned API prefix are compatibility
-contracts.
-Filesystem paths and executable names inside the image are not.
+`HAMI_WEBUI_BACKEND_URL` and `HAMI_WEBUI_PROXY_TIMEOUT` apply only to the
+standalone Web-entry development binary. They are intentionally absent from the
+Chart 2 in-process runtime. The public port, health endpoint, and versioned API
+prefix are compatibility contracts; filesystem paths and executable names are
+not.
 
-The official Go frontend can serve the SPA below a configured base path and
-emit a validated CSP `frame-ancestors` policy. These settings are runtime
-configuration, not Vite build variables. The unprefixed `/health_check`
-endpoint remains stable for Chart probes.
+The application can serve the SPA below a configured base path and emit a
+validated CSP `frame-ancestors` policy. These are runtime settings, not Vite
+build variables. The unprefixed `/health_check` remains stable for Chart probes.
 
-### Chart 1.x Service topology
+### Chart 2 Service and probe topology
 
-The primary Service routes browser traffic to the Web entry on port `3000`.
-An independently labelled `*-backend` ClusterIP Service routes port `8000` to
-the backend container and is the only Service selected by the included
-ServiceMonitor. The Deployment keeps `component: hami-webui` because both
-containers share one Pod; the backend component label belongs to the Service
-used for discovery, not to a separate backend workload.
+The primary Service routes browser traffic to port `3000`. An independently
+labelled `*-backend` ClusterIP Service routes port `8000` to the same container
+and is the only Service selected by the included ServiceMonitor. The `backend`
+component label belongs to this discovery Service, not to a separate workload
+or authorization boundary. The primary Service never exposes port `8000` in
+Chart 2.
 
-The primary Service retains a deprecated port `8000` only when
-`service.legacyBackendPort` is enabled for Chart 1.x compatibility. Do not
-widen the ServiceMonitor selector to include both Services: that would create
-duplicate scrape targets. The ClusterIP split also does not create an
-authorization boundary; cluster-internal access policy remains a deployment
-concern.
+The startup probe waits for `/readyz` on port `8000` for up to 300 seconds so
+Kubernetes informer caches can synchronize. After startup, readiness and
+liveness probe `/health_check` on port `3000`. This separates slow initial data
+bootstrap from the ongoing ability to serve the Web entry.
 
 ## Build a Docker image
 
-To build a frontend development image for the local Docker platform, run:
+Build the same unified target used by development publication and release
+candidates:
 
 ```bash
-make build-image
+make build-unified-image
 ```
 
-The resulting image is tagged as `hami-webui-frontend:dev`. It
-contains the Go Web entry and built Vue assets, but no production Node.js
-runtime.
-
-Build the backend development image from the repository root:
+The resulting image is tagged `hami-webui:dev`. Override
+`UNIFIED_DOCKER_IMAGE`, `VERSION`, or `PLATFORM` when a local integration
+environment needs another tag or architecture:
 
 ```bash
-make -C server build-image
+make build-unified-image \
+  UNIFIED_DOCKER_IMAGE=my-registry/hami-webui \
+  VERSION=test \
+  PLATFORM=linux/amd64
 ```
 
-The resulting image is tagged as `hami-webui-backend:dev`. Override
-`DOCKER_IMAGE`, `VERSION`, or `PLATFORM` when a local integration environment
-needs a different tag or architecture, for example:
+This target builds one local image and never pushes it. Stable multi-platform
+images, the Helm chart, release tag, and release notes are published only
+through the [verified release process](../releasing.md).
 
-```bash
-make build-image DOCKER_IMAGE=my-registry/hami-webui-frontend VERSION=test PLATFORM=linux/amd64
-```
-
-These targets build one local development image and never push it. Stable
-multi-platform images, the Helm chart, release tag, and release notes are
-published only through the [verified release process](../releasing.md).
+Chart 1.3 rollback restores its complete two-image deployment. Do not combine a
+Chart 1.x frontend or backend image with the Chart 2 templates; see the
+[Helm migration guide](../installation/helm/index.md#upgrade-from-chart-13-to-20).

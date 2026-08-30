@@ -1,3 +1,4 @@
+{{- include "hami-webui.validateChart2Values" . -}}
 {{- include "hami-webui.validatePrometheusTLS" . -}}
 {{- $externalPrometheus := default (dict) .Values.externalPrometheus -}}
 {{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
@@ -15,9 +16,6 @@ data:
       http:
         addr: 0.0.0.0:8000
         timeout: {{ .Values.backend.http.timeout | default "60s" }}
-      grpc:
-        addr: 0.0.0.0:9000
-        timeout: {{ .Values.backend.grpc.timeout | default "60s" }}
     prometheus:
       address: {{ include "hami-webui.prometheusAddress" . }}
       timeout: {{ .Values.externalPrometheus.timeout | default "1m" }}

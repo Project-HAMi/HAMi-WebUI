@@ -4,7 +4,7 @@ authors:
 - "@Nimbus318"
 approvers: []
 creation-date: 2026-08-30
-status: proposed
+status: accepted
 ---
 
 # HAMi-WebUI Single-Cluster Web Entry and Embedding Architecture
@@ -16,12 +16,12 @@ be easy for platform teams to embed in an existing portal without rebuilding the
 frontend for each deployment.
 
 The same-origin Web entry remains part of the product contract, but it does not
-require a pass-through NestJS process. For HAMi-WebUI Chart package 1.x, the
-production NestJS runtime was replaced by a minimal static-file and
-reverse-proxy Gateway while preserving the public Helm and HTTP contracts.
-
-A single Go application image is deferred to Chart version 2.0.0 and will be
-considered only after compatibility and adoption conditions are met.
+require a pass-through NestJS process. After v1.3.0, the unreleased Chart 1.x
+main branch replaced the production NestJS runtime with a minimal static-file
+and reverse-proxy Gateway while preserving the public Helm and HTTP contracts.
+Chart 2 completes the transition with one Go application image and one
+container, as recorded in
+[`chart-2-single-image.md`](chart-2-single-image.md).
 
 This proposal supersedes the multi-cluster direction in
 `docs/proposals/webui-redesign.md`. Its goals around build consistency, metric
@@ -61,7 +61,8 @@ separate workstreams.
 - A central multi-cluster control plane or cluster registry.
 - Workload creation, mutation, or lifecycle management.
 - A widget SDK or micro-frontend framework in the first embedding iteration.
-- An immediate migration to one Go image.
+- A change to RBAC, NetworkPolicy, external authentication, or the default
+  iframe policy as part of runtime consolidation.
 - Metric correctness, dashboard aggregation, and exporter query optimization;
   those continue as independent workstreams.
 
@@ -124,11 +125,14 @@ support alone is not complete iframe support: framing policy, external
 authentication, cookies, navigation, and deep-link behavior must also be
 verified.
 
-### Chart 1.x Web Gateway
+### Post-v1.3 Web Gateway transition
 
-Chart 1.x continues to deploy separate frontend and backend containers. The
-frontend container uses the standard-library Go Web entry instead of a
-production NestJS runtime.
+This section records the compatibility bridge that preceded Chart 2; it is not
+the current deployment contract.
+
+The unreleased post-v1.3 transition retained separate frontend and backend
+containers. Its frontend container used the standard-library Go Web entry
+instead of a production NestJS runtime.
 
 The following public contracts remain stable:
 
@@ -183,21 +187,22 @@ probes so a failed Gateway cannot leave the Pod ready merely because the
 backend is healthy.
 
 Go port `8000` is a backend listener, not a metrics-only listener: it serves the
-API, `/readyz`, and `/metrics`. Chart 1.x provides a separately labelled internal
-backend ClusterIP Service, and ServiceMonitor selects only that Service. The
-primary Web Service's existing port `8000` remains a compatibility contract
-through the documented, deprecated `service.legacyBackendPort` option. It is
-enabled by default in Chart 1.x, can be disabled by security-sensitive
-deployments, and is removed only in Chart version 2.0.0. Distinct Service labels
-ensure that each Ready backend Pod has one scrape target and is not discovered
-again through the primary Service.
+API, `/readyz`, and `/metrics`. The post-v1.3 transition provided a separately
+labelled internal backend ClusterIP Service, and ServiceMonitor selected only
+that Service. The primary Web Service's existing port `8000` remained a
+compatibility contract through the documented, deprecated
+`service.legacyBackendPort` option. It was enabled by default during the
+transition, could be disabled by security-sensitive deployments, and is removed
+in Chart version 2.0.0. Distinct Service labels ensure that each Ready backend
+Pod has one scrape target and is not discovered again through the primary
+Service.
 
 The selected Web entry supports a non-root, read-only container; amd64 and
 arm64; deterministic proxy status codes; runtime base-path and framing
 configuration; and a small standard-library runtime surface. The default proxy
-timeout is explicit and longer than the default backend HTTP timeout. In Chart
-1.x it uses a reverse-proxy API adapter; Chart 2.0 can reuse the same static,
-routing, cache, compression, and framing handler with the in-process API
+timeout is explicit and longer than the default backend HTTP timeout. The
+post-v1.3 transition used a reverse-proxy API adapter; Chart 2 reuses the same
+static, routing, cache, compression, and framing handler with the in-process API
 handler. This keeps the compatibility bridge from becoming throwaway
 infrastructure.
 
@@ -207,9 +212,10 @@ frontend image was verified.
 
 ### Observable contract
 
-The target behavior below applies to the new official Go Web entry. The legacy
-frontend image is tested as a rollback path under its explicitly documented
-legacy semantics.
+The behavior below applies to the official Go Web entry in both the post-v1.3
+transition and the Chart 2 application unless a row is explicitly scoped to
+the reverse-proxy bridge. The v1.3.0 frontend image is a rollback path under its
+documented legacy semantics.
 
 | Scenario | Required result |
 | --- | --- |
@@ -218,51 +224,47 @@ legacy semantics.
 | Existing `/api/vgpu/v1/*` request | Preserve method, query, body, relevant headers, response body, and upstream status |
 | Unknown application request below `/api/vgpu/v1/*` | Preserve the backend's non-2xx JSON response |
 | Unsupported version or backend-only `/metrics`, `/readyz`, or `/q` path, directly or below `/api/vgpu` | Return HTTP 404 without proxying |
-| Backend connection refused / timed out | Return HTTP 502 / 504 with a non-success JSON response |
-| `/health_check` | Return HTTP 200 when the Gateway can serve, independent of backend readiness |
+| Post-v1.3 reverse-proxy bridge: backend connection refused / timed out | Return HTTP 502 / 504 with a non-success JSON response |
+| `/health_check` | Return HTTP 200 when the public Web entry can serve requests |
 | `index.html` / hashed asset | No long-lived cache / immutable cache with compression |
 | Iframe parent | Unset preserves the existing behavior; `[]` blocks all parents; explicit `'self'` and origin sources allow only those parents |
-| Primary Web / internal backend Services | Disabling the legacy backend port removes `8000` from Web exposure; ServiceMonitor discovers each Ready backend Pod exactly once |
-| Architecture | The new official Gateway frontend image passes non-root, read-only-filesystem, amd64, and arm64 smoke tests |
-| Migration | New Chart plus previous official frontend digest, and Helm rollback, both pass at the root base path |
+| Primary Web / internal backend Services | The primary Chart 2 Service exposes only `3000`; ServiceMonitor discovers each Ready Pod exactly once through the internal `8000` Service |
+| Architecture | The official application image passes non-root, read-only-filesystem, amd64, and arm64 smoke tests |
+| Migration | Chart 2 upgrade with fresh values and full Helm rollback to Chart 1.3 both pass at the root base path |
 
-### Chart version 2.0.0 gates
+### Chart version 2.0.0 follow-up
 
-A unified Go application image is an option, not a committed Chart 1.x
-deliverable. Exploration may begin when all of the following are true:
+The unified application and image passed the HTTP, browser, non-root,
+read-only-filesystem, and multi-architecture gates before becoming the Chart 2
+runtime. Keeping an unreleased two-image transition for another release would
+have preserved publication and operational complexity without an independent
+scaling boundary, so maintainers accepted the explicit major-version migration.
 
-1. The minimal Gateway has been stable for at least one release cycle.
-2. Maintainers have collected feedback on custom `image.frontend`, branding,
-   base-path, and iframe usage.
-3. There is a testable hypothesis for release or operational benefit.
-4. Maintainers accept a Chart major-version migration.
+Chart 2 exposes named `http` and `metrics` container ports from one Go
+application. The names describe traffic, not an authorization boundary. The
+primary Service exposes only port `3000`; a separate internal Service keeps
+port `8000` discoverable for readiness and metrics. Removed Chart 1.x values
+fail with a clear migration message rather than being silently ignored.
 
-The unified image may become the default only after its benefit is measured;
-upgrade, both rollback paths, multi-architecture, and read-only-filesystem tests
-pass; and the release controller is migrated from two components to one without
-weakening fail-closed digest or publication checks.
-
-If adopted, Chart version 2.0.0 may expose named `web` and `metrics` listeners
-from one Go application image. It must not call them `public` and `admin`,
-because those names imply an authorization boundary that does not exist.
-Removed Chart 1.x values must fail with a clear migration message rather than
-being silently ignored.
+The release remains gated on Helm upgrade and rollback verification plus final
+maintainer browser acceptance. The complete Chart 2 decision and migration
+boundary are recorded in [`chart-2-single-image.md`](chart-2-single-image.md).
 
 ## Consequences
 
 - Node.js remains a frontend build dependency, but the production runtime and
   checked-in NestJS dependency graph are removed.
-- Chart 1.x deliberately retains two containers, two images, and one same-Pod
-  proxy hop. Those costs are accepted to preserve upgrade and customization
-  contracts.
+- Chart 1.x retained two containers as a compatibility bridge. Chart 2 has one
+  image, one container resource budget, and no same-Pod proxy hop.
 - Leaving the framing allowlist empty preserves compatibility but leaves the
   existing clickjacking risk to the deployment boundary.
-- Custom frontend images are supported only through the documented container
-  contract; arbitrary internal layouts are not a compatibility promise.
-- A single Go image, Chart version 2.0.0, built-in authentication, and
-  multi-cluster control remain intentionally deferred.
+- Custom frontend-only images remain a Chart 1.x rollback concern. Chart 2
+  accepts a complete application image, not an independently replaceable
+  frontend container.
+- Built-in authentication and multi-cluster control remain intentionally
+  deferred.
 
-## Migration plan
+## Implementation sequence
 
 1. Add a Gateway-independent test harness and passing baseline tests for the
    current root SPA, deep-link refresh, API method/body/status forwarding,
@@ -278,9 +280,9 @@ being silently ignored.
 5. Verify Kubernetes install, upgrade, Helm rollback, image rollback, and
    backend failure recovery in an integration environment.
 6. Delete the unused NestJS runtime and dependencies after parity and rollback
-   are established, then publish and observe the Chart 1.x transition release.
-7. Treat a single Go image as separate Chart version 2.0.0 work after the
-   exploration gates are satisfied.
+   are established.
+7. Adopt the independently verified unified image through the explicit Chart 2
+   values and rollback boundary.
 
 Gateway pull requests do not require GPU hardware. Every stable release remains
 subject to the risk-based Kubernetes, GPU, and maintainer browser acceptance in
@@ -296,8 +298,8 @@ designed if a concrete client-specific or session-owning requirement appears.
 
 ### Move directly to Go static embedding in Chart 1.x
 
-Deferred. It would remove the public `image.frontend` customization and change
-Chart, release, and rollback contracts before their real usage is known.
+Rejected for the Chart 1.x compatibility bridge. The same consolidation was
+later adopted at the explicit Chart 2 major-version boundary.
 
 ### Add multi-cluster routing to the current Web process
 

@@ -1,9 +1,4 @@
-{{- $legacyBackendPort := eq (include "hami-webui.legacyBackendPortEnabled" .) "true" -}}
-{{- if and $legacyBackendPort (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) }}
-WARNING: The primary Service exposes the deprecated raw backend port 8000 because
-service.legacyBackendPort is true. Set it to false unless an existing integration
-still connects directly to the backend.
-{{ end }}
+{{- include "hami-webui.validateChart2Values" . -}}
 1. Get the application URL by running these commands:
 {{- if .Values.ingress.enabled }}
 {{- range $host := .Values.ingress.hosts }}

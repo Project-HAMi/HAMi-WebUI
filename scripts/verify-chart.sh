@@ -15,7 +15,7 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 
 cp -R "${repo_root}/charts/hami-webui" "${work_dir}/hami-webui"
 helm dependency build --skip-refresh "${work_dir}/hami-webui"
-helm lint "${work_dir}/hami-webui"
+helm lint --strict "${work_dir}/hami-webui"
 
 render_template() {
   local template="$1"
@@ -39,6 +39,66 @@ web_service_render="$(render_template templates/service.yaml)"
 backend_service_render="$(render_template templates/backend-service.yaml)"
 service_monitor_render="$(render_template templates/servicemonitor.yaml)"
 default_deployment_render="$(render_template templates/deployment.yaml)"
+default_config_render="$(render_template templates/configmap.yaml)"
+
+deployment_containers="$(awk '
+  /^      containers:$/ { in_containers = 1; next }
+  in_containers && /^      [[:alpha:]][[:alnum:]]*:/ { exit }
+  in_containers && /^        - name:/ { print $3 }
+' <<<"${default_deployment_render}")"
+if [[ "$(awk 'NF { count++ } END { print count + 0 }' <<<"${deployment_containers}")" -ne 1 ]]; then
+  echo "Chart 2 must render exactly one application container" >&2
+  exit 1
+fi
+
+application_container="$(awk '
+  /^      containers:$/ { in_containers = 1; next }
+  in_containers && /^      [[:alpha:]][[:alnum:]]*:/ { exit }
+  in_containers { print }
+' <<<"${default_deployment_render}")"
+if [[ "$(grep -c 'containerPort:' <<<"${application_container}")" -ne 2 ]] ||
+  ! grep -B1 -A1 -F 'containerPort: 3000' <<<"${application_container}" | grep -Fq 'name: http' ||
+  ! grep -B1 -A1 -F 'containerPort: 8000' <<<"${application_container}" | grep -Fq 'name: metrics'; then
+  echo "The unified container must expose named http:3000 and metrics:8000 ports" >&2
+  exit 1
+fi
+if grep -Eq '^[[:space:]]+(command|args):' <<<"${application_container}"; then
+  echo "Chart must leave the unified image entrypoint and command untouched" >&2
+  exit 1
+fi
+
+probe_block() {
+  local probe_name="$1"
+  awk -v probe="${probe_name}" '
+    $0 == "          " probe ":" { in_probe = 1; print; next }
+    in_probe && /^          [[:alpha:]][[:alnum:]]*:/ { exit }
+    in_probe { print }
+  '
+}
+
+startup_probe="$(probe_block startupProbe <<<"${application_container}")"
+readiness_probe="$(probe_block readinessProbe <<<"${application_container}")"
+liveness_probe="$(probe_block livenessProbe <<<"${application_container}")"
+if ! grep -Fq 'path: /readyz' <<<"${startup_probe}" ||
+  ! grep -Fq 'port: metrics' <<<"${startup_probe}" ||
+  ! grep -Fq 'periodSeconds: 5' <<<"${startup_probe}" ||
+  ! grep -Fq 'failureThreshold: 60' <<<"${startup_probe}"; then
+  echo "Startup probe must allow five minutes for backend informer synchronization on /readyz:8000" >&2
+  exit 1
+fi
+for steady_probe in "${readiness_probe}" "${liveness_probe}"; do
+  if ! grep -Fq 'path: /health_check' <<<"${steady_probe}" ||
+    ! grep -Fq 'port: http' <<<"${steady_probe}"; then
+    echo "Steady-state readiness and liveness must check the public Web entry on /health_check:3000" >&2
+    exit 1
+  fi
+done
+
+if grep -Eq '^[[:space:]]+grpc:|0\.0\.0\.0:9000' <<<"${default_config_render}" ||
+  ! grep -Fq 'addr: 0.0.0.0:8000' <<<"${default_config_render}"; then
+  echo "Chart 2 configuration must keep HTTP :8000 and remove the unused gRPC listener" >&2
+  exit 1
+fi
 
 if grep -Fq '      imagePullSecrets:' <<<"${default_deployment_render}"; then
   echo "An empty imagePullSecrets value must not render a Pod field" >&2
@@ -59,14 +119,18 @@ if [[ "${image_pull_secrets_block}" != "${expected_image_pull_secrets_block}" ]]
   exit 1
 fi
 
-if [[ "$(service_port_names <<<"${web_service_render}")" != $'http\nmetrics' ]]; then
-  echo "Primary Service must preserve the Chart 1.x backend compatibility port by default" >&2
+if [[ "$(service_port_names <<<"${web_service_render}")" != "http" ]] ||
+  ! grep -Fq 'port: 3000' <<<"${web_service_render}" ||
+  ! grep -Fq 'targetPort: http' <<<"${web_service_render}" ||
+  grep -Fq 'targetPort: metrics' <<<"${web_service_render}"; then
+  echo "Primary Service must expose only the supported Web entry on port 3000" >&2
   exit 1
 fi
 if [[ "$(service_port_names <<<"${backend_service_render}")" != "backend-http" ]] ||
   ! grep -Fq 'name: test-hami-webui-backend' <<<"${backend_service_render}" ||
   ! grep -Fq 'type: ClusterIP' <<<"${backend_service_render}" ||
   ! grep -Fq 'monitoring.hami.io/job: "test-hami-webui"' <<<"${backend_service_render}" ||
+  ! grep -Fq 'port: 8000' <<<"${backend_service_render}" ||
   ! grep -Fq 'targetPort: metrics' <<<"${backend_service_render}"; then
   echo "Internal backend Service contract was not rendered" >&2
   exit 1
@@ -100,24 +164,6 @@ if ! grep -Fq 'app.kubernetes.io/component: "backend"' <<<"${service_monitor_spe
   exit 1
 fi
 
-web_only_service_render="$(render_template templates/service.yaml \
-  --set 'service.legacyBackendPort=false')"
-if [[ "$(service_port_names <<<"${web_only_service_render}")" != "http" ]] ||
-  grep -Fq 'targetPort: metrics' <<<"${web_only_service_render}"; then
-  echo "Disabling service.legacyBackendPort did not remove the raw backend port" >&2
-  exit 1
-fi
-
-for invalid_legacy_backend_port in \
-  --set-string=service.legacyBackendPort=false \
-  --set-json=service.legacyBackendPort=1; do
-  if helm template test "${work_dir}/hami-webui" \
-    "${invalid_legacy_backend_port}" >/dev/null 2>&1; then
-    echo "Invalid service.legacyBackendPort value was accepted: ${invalid_legacy_backend_port}" >&2
-    exit 1
-  fi
-done
-
 load_balancer_web_service="$(render_template templates/service.yaml \
   --set 'service.type=LoadBalancer')"
 load_balancer_backend_service="$(render_template templates/backend-service.yaml \
@@ -126,25 +172,6 @@ if ! grep -Fq 'type: LoadBalancer' <<<"${load_balancer_web_service}" ||
   ! grep -Fq 'type: ClusterIP' <<<"${load_balancer_backend_service}" ||
   grep -Fq 'type: LoadBalancer' <<<"${load_balancer_backend_service}"; then
   echo "Internal backend Service must not inherit the public Service type" >&2
-  exit 1
-fi
-
-legacy_values_chart="${work_dir}/hami-webui-legacy-values"
-cp -R "${work_dir}/hami-webui" "${legacy_values_chart}"
-awk '$1 != "legacyBackendPort:" { print }' \
-  "${legacy_values_chart}/values.yaml" >"${legacy_values_chart}/values.yaml.next"
-mv "${legacy_values_chart}/values.yaml.next" "${legacy_values_chart}/values.yaml"
-legacy_values_service_render="$(helm template test "${legacy_values_chart}" \
-  --show-only templates/service.yaml)"
-if [[ "$(service_port_names <<<"${legacy_values_service_render}")" != $'http\nmetrics' ]]; then
-  echo "Missing service.legacyBackendPort did not preserve the Chart 1.x upgrade contract" >&2
-  exit 1
-fi
-
-null_legacy_backend_port_render="$(render_template templates/service.yaml \
-  --set-json 'service.legacyBackendPort=null')"
-if [[ "$(service_port_names <<<"${null_legacy_backend_port_render}")" != $'http\nmetrics' ]]; then
-  echo "A null service.legacyBackendPort did not preserve the compatibility port" >&2
   exit 1
 fi
 
@@ -245,7 +272,7 @@ if ! grep -Fq 'ca_file: "/apps/prometheus-tls/ca.crt"' <<<"${prometheus_tls_ca_c
   ! grep -A1 -F 'key: "company-ca.pem"' <<<"${prometheus_tls_ca_deployment}" | grep -Fq 'path: ca.crt' ||
   [[ "$(grep -c 'name: prometheus-tls' <<<"${prometheus_tls_ca_deployment}")" -ne 2 ]] ||
   ! grep -A2 -F 'mountPath: /apps/prometheus-tls/' <<<"${prometheus_tls_ca_deployment}" | grep -Fq 'readOnly: true'; then
-  echo "Private-CA Secret was not rendered as a backend-only fixed-path mount" >&2
+  echo "Private-CA Secret was not rendered as a single unified-container fixed-path mount" >&2
   exit 1
 fi
 
@@ -330,48 +357,80 @@ if [[ ! "${checksum_a}" =~ ^[a-f0-9]{64}$ || ! "${checksum_b}" =~ ^[a-f0-9]{64}$
   exit 1
 fi
 
-app_version="$(helm show chart "${work_dir}/hami-webui" | awk -F': *' '$1 == "appVersion" {gsub(/\"/, "", $2); print $2}')"
-expected_tag="v${app_version#v}"
+# The development default is deliberately mutable. Stable release automation
+# replaces it with the verified candidate tag or digest before publication.
+grep -Fq 'image: "projecthami/hami-webui:main"' <<<"${default_deployment_render}"
 
-# Exercise the tag path independently of stable release defaults, which pin a
-# digest and therefore render repository@digest instead.
-tag_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'image.frontend.digest=' \
-  --set-string 'image.backend.digest=')"
-grep -Fq "image: \"projecthami/hami-webui-fe-oss:${expected_tag}\"" <<<"${tag_render}"
-grep -Fq "image: \"projecthami/hami-webui-be-oss:${expected_tag}\"" <<<"${tag_render}"
-frontend_container="$(awk '
-  /^        - name: .*fe-oss$/ { in_frontend = 1 }
-  in_frontend && /^        - name: .*be-oss$/ { exit }
-  in_frontend { print }
-' <<<"${tag_render}")"
-if [[ -z "${frontend_container}" ]] || grep -Eq '^[[:space:]]+(command|args):' <<<"${frontend_container}"; then
-  echo "Chart must leave the frontend image entrypoint and command untouched" >&2
+explicit_tag_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.tag=chart-contract' \
+  --set-string 'image.digest=' \
+  --show-only templates/deployment.yaml)"
+grep -Fq 'image: "projecthami/hami-webui:chart-contract"' <<<"${explicit_tag_render}"
+
+fallback_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.tag=' \
+  --set-string 'image.digest=' \
+  --show-only templates/deployment.yaml)"
+grep -Fq 'image: "projecthami/hami-webui:main"' <<<"${fallback_render}"
+
+assert_release_app_version_fallback() {
+  local app_version="$1"
+  local expected_tag="$2"
+  local release_chart
+  release_chart="$(mktemp -d "${work_dir}/release-XXXXXX")/hami-webui"
+  local chart_yaml_tmp="${release_chart}/Chart.yaml.tmp"
+
+  cp -R "${work_dir}/hami-webui" "${release_chart}"
+  awk -v app_version="${app_version}" '
+    $1 == "appVersion:" { print "appVersion: \"" app_version "\""; next }
+    { print }
+  ' "${release_chart}/Chart.yaml" >"${chart_yaml_tmp}"
+  mv "${chart_yaml_tmp}" "${release_chart}/Chart.yaml"
+
+  local release_fallback_render
+  release_fallback_render="$(helm template test "${release_chart}" \
+    --set-string 'image.tag=' \
+    --set-string 'image.digest=' \
+    --show-only templates/deployment.yaml)"
+  grep -Fq "image: \"projecthami/hami-webui:${expected_tag}\"" <<<"${release_fallback_render}"
+}
+
+assert_release_app_version_fallback '2.0.0' 'v2.0.0'
+assert_release_app_version_fallback 'v2.0.0' 'v2.0.0'
+assert_release_app_version_fallback '2.0.0-rc.1+build.7' 'v2.0.0-rc.1_build.7'
+
+if helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.tag=invalid+tag' >/dev/null 2>&1; then
+  echo "Invalid OCI image tag was accepted" >&2
   exit 1
 fi
-if [[ "$(grep -c 'path: /health_check' <<<"${tag_render}")" -ne 2 ]]; then
-  echo "Frontend liveness and readiness probes were not both rendered" >&2
+
+image_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+digest_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.tag=must-not-win' \
+  --set-string "image.digest=${image_digest}" \
+  --show-only templates/deployment.yaml)"
+grep -Fq "image: \"projecthami/hami-webui@${image_digest}\"" <<<"${digest_render}"
+if grep -Fq 'must-not-win' <<<"${digest_render}"; then
+  echo "Image tag took precedence over an immutable digest" >&2
   exit 1
 fi
-grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${tag_render}" | grep -Fq 'value: "65s"'
-grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${tag_render}" | grep -Fq 'value: "/"'
-if grep -Fq 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${tag_render}"; then
+
+if helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.digest=not-a-digest' >/dev/null 2>&1; then
+  echo "Invalid image digest was accepted" >&2
+  exit 1
+fi
+
+grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${default_deployment_render}" | grep -Fq 'value: "/"'
+if grep -Fq 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${default_deployment_render}"; then
   echo "Default framing policy must preserve the Chart 1.x no-header behavior" >&2
   exit 1
 fi
-
-proxy_timeout_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'frontend.proxyTimeout=125s')"
-grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_render}" | grep -Fq 'value: "125s"'
-
-proxy_timeout_env_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'env.frontend[0].name=HAMI_WEBUI_PROXY_TIMEOUT' \
-  --set-string 'env.frontend[0].value=75s')"
-if [[ "$(grep -c 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_env_render}")" -ne 1 ]]; then
-  echo "Explicit frontend proxy-timeout environment override was duplicated" >&2
+if grep -Fq 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${default_deployment_render}"; then
+  echo "Removed frontend proxy timeout leaked into the single-process Deployment" >&2
   exit 1
 fi
-grep -A1 -F 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${proxy_timeout_env_render}" | grep -Fq 'value: 75s'
 
 base_path_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'frontend.basePath=/gpu-ui/')"
@@ -385,10 +444,10 @@ fi
 
 base_path_env_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'frontend.basePath=/ignored/' \
-  --set-string 'env.frontend[0].name=HAMI_WEBUI_BASE_PATH' \
-  --set-string 'env.frontend[0].value=/from-env/')"
+  --set-string 'env[0].name=HAMI_WEBUI_BASE_PATH' \
+  --set-string 'env[0].value=/from-env/')"
 if [[ "$(grep -c 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_env_render}")" -ne 1 ]]; then
-  echo "Explicit frontend base-path environment override was duplicated" >&2
+  echo "Explicit base-path environment override was duplicated" >&2
   exit 1
 fi
 grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_env_render}" | grep -Fq 'value: /from-env/'
@@ -402,22 +461,12 @@ frame_allow_render="$(helm template test "${work_dir}/hami-webui" \
 grep -A1 -F 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_allow_render}" | \
   grep -Fq 'value: "[\"'"'"'self'"'"'\",\"https://portal.example.com\"]"'
 
-# Helm upgrades with --reuse-values can reuse Chart 1.x values that do not
-# contain the frontend map. Missing configuration preserves the compatible
-# no-header behavior; it is distinct from an explicitly invalid scalar.
-legacy_frontend_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-json 'frontend=null')"
-if grep -Fq 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${legacy_frontend_render}"; then
-  echo "Missing frontend.frameAncestors unexpectedly emitted an environment variable" >&2
-  exit 1
-fi
-
 frame_env_render="$(helm template test "${work_dir}/hami-webui" \
   --set-json 'frontend.frameAncestors=[]' \
-  --set-string 'env.frontend[0].name=HAMI_WEBUI_FRAME_ANCESTORS_JSON' \
-  --set-string 'env.frontend[0].value=["https://portal.internal"]')"
+  --set-string 'env[0].name=HAMI_WEBUI_FRAME_ANCESTORS_JSON' \
+  --set-string 'env[0].value=["https://portal.internal"]')"
 if [[ "$(grep -c 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_env_render}")" -ne 1 ]]; then
-  echo "Explicit frontend frame-ancestors environment override was duplicated" >&2
+  echo "Explicit frame-ancestors environment override was duplicated" >&2
   exit 1
 fi
 
@@ -432,65 +481,160 @@ if helm template test "${work_dir}/hami-webui" \
   exit 1
 fi
 
-for empty_frontend_env in '[]' 'null'; do
-  empty_frontend_env_render="$(helm template test "${work_dir}/hami-webui" \
-    --set-json "env.frontend=${empty_frontend_env}")"
-  if [[ "$(grep -c 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${empty_frontend_env_render}")" -ne 1 ]]; then
-    echo "Empty frontend env value did not render exactly one proxy-timeout variable" >&2
-    exit 1
-  fi
-  if [[ "$(grep -c 'name: HAMI_WEBUI_BASE_PATH' <<<"${empty_frontend_env_render}")" -ne 1 ]]; then
-    echo "Empty frontend env value did not render exactly one base-path variable" >&2
+empty_env_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-json 'env=[]')"
+if [[ "$(grep -c 'name: HAMI_WEBUI_BASE_PATH' <<<"${empty_env_render}")" -ne 1 ]]; then
+  echo "Empty env value did not render exactly one base-path variable" >&2
+  exit 1
+fi
+
+probes_disabled_render="$(helm template test "${work_dir}/hami-webui" \
+  --set 'probes.startup.enabled=false' \
+  --set 'probes.readiness.enabled=false' \
+  --set 'probes.liveness.enabled=false' \
+  --show-only templates/deployment.yaml)"
+if grep -Eq '^[[:space:]]+(startupProbe|readinessProbe|livenessProbe):' <<<"${probes_disabled_render}"; then
+  echo "Disabled unified-container probes were still rendered" >&2
+  exit 1
+fi
+
+clean_migration_render="$(helm template test "${work_dir}/hami-webui" \
+  --set-string 'image.repository=registry.example.com/platform/hami-webui' \
+  --set-string 'image.tag=migrated' \
+  --set-string 'image.digest=' \
+  --set-string 'resources.requests.cpu=125m' \
+  --set-string 'resources.requests.memory=384Mi' \
+  --set-string 'resources.limits.cpu=500m' \
+  --set-string 'resources.limits.memory=1Gi' \
+  --set-string 'env[0].name=TZ' \
+  --set-string 'env[0].value=UTC' \
+  --set-string 'frontend.basePath=/embedded/' \
+  --set-json "frontend.frameAncestors=[\"'self'\",\"https://portal.example.com\"]" \
+  --set-string 'backend.http.timeout=45s' \
+  --show-only templates/deployment.yaml \
+  --show-only templates/configmap.yaml)"
+for expected in \
+  'image: "registry.example.com/platform/hami-webui:migrated"' \
+  'cpu: 125m' \
+  'memory: 384Mi' \
+  'cpu: 500m' \
+  'memory: 1Gi' \
+  'name: TZ' \
+  'value: UTC' \
+  'value: "/embedded/"' \
+  'value: "[\"'"'"'self'"'"'\",\"https://portal.example.com\"]"' \
+  'timeout: 45s'; do
+  if ! grep -Fq "${expected}" <<<"${clean_migration_render}"; then
+    echo "Clean Chart 2 migration values did not render ${expected}" >&2
     exit 1
   fi
 done
 
-probes_disabled_render="$(helm template test "${work_dir}/hami-webui" \
-  --set 'frontend.livenessProbe.enabled=false' \
-  --set 'frontend.readinessProbe.enabled=false')"
-if grep -Fq 'path: /health_check' <<<"${probes_disabled_render}"; then
-  echo "Disabled frontend probes were still rendered" >&2
+legacy_values_fixture="${repo_root}/scripts/chart/tests/values-chart1-transition.yaml"
+if [[ ! -f "${legacy_values_fixture}" ]]; then
+  echo "Missing the complete Chart 1 migration regression fixture" >&2
   exit 1
 fi
 
-fallback_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'image.frontend.tag=' \
-  --set-string 'image.frontend.digest=' \
-  --set-string 'image.backend.tag=' \
-  --set-string 'image.backend.digest=')"
-grep -Fq "image: \"projecthami/hami-webui-fe-oss:${expected_tag}\"" <<<"${fallback_render}"
-grep -Fq "image: \"projecthami/hami-webui-be-oss:${expected_tag}\"" <<<"${fallback_render}"
-
-frontend_digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-backend_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-digest_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string "image.frontend.digest=${frontend_digest}" \
-  --set-string "image.backend.digest=${backend_digest}")"
-grep -Fq "image: \"projecthami/hami-webui-fe-oss@${frontend_digest}\"" <<<"${digest_render}"
-grep -Fq "image: \"projecthami/hami-webui-be-oss@${backend_digest}\"" <<<"${digest_render}"
-
-# Chart 1.x must continue to accept the last Node-based frontend image. That
-# image owns `node dist/main` through its OCI entrypoint and command, so the
-# Deployment must not inject process-specific command or args.
-legacy_frontend_digest='sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e'
-legacy_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string "image.frontend.digest=${legacy_frontend_digest}" \
-  --set-string 'image.backend.digest=')"
-grep -Fq "image: \"projecthami/hami-webui-fe-oss@${legacy_frontend_digest}\"" <<<"${legacy_render}"
-legacy_frontend_container="$(awk '
-  /^        - name: .*fe-oss$/ { in_frontend = 1 }
-  in_frontend && /^        - name: .*be-oss$/ { exit }
-  in_frontend { print }
-' <<<"${legacy_render}")"
-if [[ -z "${legacy_frontend_container}" ]] || grep -Eq '^[[:space:]]+(command|args):' <<<"${legacy_frontend_container}"; then
-  echo "Legacy frontend image compatibility was broken by a process override" >&2
-  exit 1
+helm_supports_skip_schema=false
+if helm template --help | grep -Fq -- '--skip-schema-validation'; then
+  helm_supports_skip_schema=true
 fi
 
-if helm template test "${work_dir}/hami-webui" \
-  --set-string 'image.frontend.digest=not-a-digest' >/dev/null 2>&1; then
-  echo "invalid image digest was accepted" >&2
-  exit 1
-fi
+assert_legacy_values_rejected() {
+  local expected_field="$1"
+  shift
+  local mode output
 
-echo "Chart lint and image reference checks passed."
+  for mode in schema template; do
+    if [[ "${mode}" == template ]]; then
+      if [[ "${helm_supports_skip_schema}" != true ]]; then
+        continue
+      fi
+      if output="$(helm template test "${work_dir}/hami-webui" \
+        --namespace hami-webui-test \
+        --skip-schema-validation \
+        "$@" 2>&1)"; then
+        echo "Chart 1.x value ${expected_field} was accepted in ${mode} validation mode" >&2
+        exit 1
+      fi
+    elif output="$(helm template test "${work_dir}/hami-webui" \
+      --namespace hami-webui-test \
+      "$@" 2>&1)"; then
+      echo "Chart 1.x value ${expected_field} was accepted in ${mode} validation mode" >&2
+      exit 1
+    fi
+    if ! grep -Fq "${expected_field}" <<<"${output}"; then
+      echo "Chart 1.x value rejection did not identify ${expected_field} in ${mode} validation mode" >&2
+      echo "${output}" >&2
+      exit 1
+    fi
+  done
+}
+
+assert_legacy_values_rejected 'image.frontend' \
+  --set-json 'image.frontend={"repository":"legacy/frontend"}'
+assert_legacy_values_rejected 'image.backend' \
+  --set-json 'image.backend={"repository":"legacy/backend"}'
+assert_legacy_values_rejected 'resources.frontend' \
+  --set-json 'resources.frontend={"requests":{"cpu":"100m"}}'
+assert_legacy_values_rejected 'resources.backend' \
+  --set-json 'resources.backend={"requests":{"cpu":"100m"}}'
+assert_legacy_values_rejected 'env.frontend' \
+  --set-json 'env={"frontend":[{"name":"TZ","value":"UTC"}]}'
+assert_legacy_values_rejected 'env.backend' \
+  --set-json 'env={"backend":[{"name":"TZ","value":"UTC"}]}'
+assert_legacy_values_rejected 'frontend.proxyTimeout' \
+  --set-string 'frontend.proxyTimeout=65s'
+assert_legacy_values_rejected 'frontend.livenessProbe' \
+  --set-json 'frontend.livenessProbe={"enabled":true}'
+assert_legacy_values_rejected 'frontend.readinessProbe' \
+  --set-json 'frontend.readinessProbe={"enabled":true}'
+assert_legacy_values_rejected 'backend.grpc' \
+  --set-json 'backend.grpc={"timeout":"60s"}'
+assert_legacy_values_rejected 'backend.readinessProbe' \
+  --set-json 'backend.readinessProbe={"enabled":true}'
+assert_legacy_values_rejected 'service.legacyBackendPort' \
+  --set 'service.legacyBackendPort=true'
+
+for validation_mode in schema template; do
+  if [[ "${validation_mode}" == template ]]; then
+    if [[ "${helm_supports_skip_schema}" != true ]]; then
+      continue
+    fi
+    if full_legacy_output="$(helm template test "${work_dir}/hami-webui" \
+      --namespace hami-webui-test \
+      --skip-schema-validation \
+      --values "${legacy_values_fixture}" 2>&1)"; then
+      echo "Complete Chart 1.3 values were accepted in ${validation_mode} validation mode" >&2
+      exit 1
+    fi
+  elif full_legacy_output="$(helm template test "${work_dir}/hami-webui" \
+    --namespace hami-webui-test \
+    --values "${legacy_values_fixture}" 2>&1)"; then
+    echo "Complete Chart 1.3 values were accepted in ${validation_mode} validation mode" >&2
+    exit 1
+  fi
+
+  for legacy_field in \
+    'image.frontend' \
+    'image.backend' \
+    'resources.frontend' \
+    'resources.backend' \
+    'env.frontend' \
+    'env.backend' \
+    'frontend.proxyTimeout' \
+    'frontend.livenessProbe' \
+    'frontend.readinessProbe' \
+    'backend.grpc' \
+    'backend.readinessProbe' \
+    'service.legacyBackendPort'; do
+    if ! grep -Fq "${legacy_field}" <<<"${full_legacy_output}"; then
+      echo "Complete Chart 1.3 rejection omitted ${legacy_field} in ${validation_mode} validation mode" >&2
+      echo "${full_legacy_output}" >&2
+      exit 1
+    fi
+  done
+done
+
+echo "Chart lint, single-container, migration, and image reference checks passed."

@@ -2,7 +2,7 @@
 
 HAMi-WebUI can be served below a URL prefix such as `/hami/` and embedded as a
 whole application in an internal platform. The prefix and framing policy are
-runtime settings: the frontend image does not need to be rebuilt.
+runtime settings: the application image does not need to be rebuilt.
 
 HAMi-WebUI remains a single-cluster, read-only UI. It does not provide login,
 RBAC, or a multi-cluster gateway. Put an authenticated Ingress or identity-aware
@@ -29,7 +29,7 @@ ingress:
           pathType: Prefix
 ```
 
-The official Go frontend accepts `/hami/`, its SPA deep links, static assets,
+The official Go application accepts `/hami/`, its SPA deep links, static assets,
 and `/hami/api/vgpu/v1/*`. The unprefixed `/health_check` endpoint remains
 available for Kubernetes probes. HAMi-WebUI deliberately does not trust
 `X-Forwarded-Prefix`; configure a non-stripping proxy instead.
@@ -84,15 +84,20 @@ HAMi-WebUI.
 
 ## Upgrade and rollback boundary
 
-Runtime base paths and application-managed framing require an official Go
-frontend image from a release that documents these values. Released Chart
-versions through v1.3.0 used the previous Node image; that image and arbitrary
-custom frontend images may ignore these environment variables and are supported
-only at `/` unless they implement the same contract.
+Chart 2 keeps `frontend.basePath` and `frontend.frameAncestors`, but replaces the
+Chart 1.x frontend/backend image pair with one application image. Do not reuse a
+Chart 1.x values file during this major upgrade. Create a fresh Chart 2 values
+file and follow the [Helm upgrade procedure](helm/index.md#upgrade-from-chart-13-to-20).
+
+Released Chart versions through v1.3.0 used the previous Node frontend image.
+That image and arbitrary custom frontend images may ignore these runtime
+settings and are supported only at `/` unless they implement the same contract.
+Rollback to Chart 1.3 must therefore restore the complete Helm revision, not
+only an old frontend image inside the Chart 2 single-image deployment.
 
 If a deployment relies on the application framing policy, configure an
 equivalent policy at the authenticated proxy before rolling back to an older
-frontend image.
+Chart release.
 
 For the underlying browser behavior, see the W3C
 [Content Security Policy specification](https://www.w3.org/TR/CSP3/#directive-frame-ancestors).
