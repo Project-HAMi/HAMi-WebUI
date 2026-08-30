@@ -2,11 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
-import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
-import path from 'path'
-
-// vite-plugin-svg-icons 2.0.1 imports fast-glob without declaring it. Keep the
-// explicit Web devDependency until the plugin fixes its package metadata.
+import { createSvgIconsPlugin } from './build/svg-icons-plugin.mjs'
 
 const versionedAPIPrefix = '/api/vgpu/v1'
 const apiProxyContext = '^/api/vgpu/v1(?:/|[?]|$)'
@@ -47,10 +43,7 @@ export default defineConfig(() => {
       vue(),
       vueJsx(),
       createSvgIconsPlugin({
-        // The parent directory is scanned recursively; listing menu separately
-        // would emit duplicate symbol IDs for every menu icon.
-        iconDirs: [path.resolve(process.cwd(), 'src/icons/svg')],
-        symbolId: 'icon-[name]',
+        iconDir: fileURLToPath(new URL('./src/icons/svg', import.meta.url)),
       }),
     ],
     resolve: {

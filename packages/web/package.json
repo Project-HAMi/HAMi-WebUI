@@ -5,12 +5,13 @@
   "scripts": {
     "start": "vite",
     "start:dev": "vite",
-    "lint": "eslint --ext .js,.mjs,.vue src test vite.config.js",
+    "lint": "eslint --ext .js,.mjs,.vue build src test vite.config.js",
     "build": "vite build",
     "dev": "vite",
     "build:vite": "vite build",
-    "test": "pnpm run test:dev-proxy && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
+    "test": "pnpm run test:dev-proxy && pnpm run test:svg-icons && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
     "test:dev-proxy": "node --test test/vite-dev-proxy.contract.test.mjs",
+    "test:svg-icons": "node --test test/svg-icons-plugin.test.mjs",
     "test:metrics": "node --test src/hooks/request-state.test.mjs projects/vgpu/components/tab-top-state.test.mjs projects/vgpu/hooks/instant-vector-state.test.mjs projects/vgpu/hooks/range-vector-query-state.test.mjs projects/vgpu/metrics/query-contract.test.mjs projects/vgpu/metrics/range-vector-state.test.mjs projects/vgpu/metrics/tooltip-html.test.mjs projects/vgpu/views/monitor/overview/metric-config.test.mjs projects/vgpu/views/monitor/overview/overview-state.test.mjs projects/vgpu/views/card/admin/allocation-percent.test.mjs",
     "test:workload": "node --test projects/vgpu/views/task/admin/workload-identity.test.mjs",
     "test:ui-contracts": "node --test projects/vgpu/views/card/admin/node-detail-location.test.mjs"
@@ -56,12 +57,11 @@
     "eslint-config-prettier": "^8.3.0",
     "eslint-plugin-prettier": "^4.0.0",
     "eslint-plugin-vue": "^8.0.3",
-    "fast-glob": "^3.3.3",
     "mockjs": "^1.1.0",
     "prettier": "^2.4.1",
     "sass": "^1.32.7",
-    "vite": "^6.4.3",
-    "vite-plugin-svg-icons": "^2.0.1"
+    "svgo": "4.1.0",
+    "vite": "^6.4.3"
   },
   "browserslist": [
     "> 1%",
