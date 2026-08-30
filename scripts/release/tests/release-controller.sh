@@ -35,7 +35,9 @@ helm show values hami-webui/hami-webui \\
   --version "\${CHART_VERSION}" > values.yaml
 helm install fixture hami-webui/hami-webui \\
   --version "\${CHART_VERSION}" \\
-  --values values.yaml
+  --values values.yaml \\
+  --set externalPrometheus.enabled=true \\
+  --set-string externalPrometheus.address="http://prometheus.example.invalid:9090"
 \`\`\`
 EOF
 }
@@ -65,6 +67,19 @@ yq -e '
     select(.with."persist-credentials" == false)] |
   length == 1
 ' .github/workflows/release.yaml >/dev/null
+
+bootstrap_package_step="$(yq -r '
+  .jobs."bootstrap-oci-prepare".steps[] |
+  select(.name == "Package one auditable non-stable version") |
+  .run
+' .github/workflows/release.yaml)"
+verification_args_reference="\"\${prometheus_verification_args[@]}\""
+if ! grep -Fq 'externalPrometheus.enabled=true' <<<"${bootstrap_package_step}" ||
+  ! grep -Fq 'externalPrometheus.address=http://prometheus.oci-bootstrap.svc.cluster.local:9090' <<<"${bootstrap_package_step}" ||
+  [[ "$(grep -Fc "${verification_args_reference}" <<<"${bootstrap_package_step}")" -ne 2 ]]; then
+  echo "OCI bootstrap lint and render must use one explicit Prometheus verification mode" >&2
+  exit 1
+fi
 
 # Development and candidate publication must build the same unified target and
 # publish only the two canonical registry references.

@@ -73,17 +73,53 @@ Allow the release namespace to be overridden for multi-namespace deployments in 
 {{- end -}}
 
 {{/*
-Resolve the Prometheus address. When the embedded stack is enabled, use the
-dependency chart's own helpers so its naming and override rules cannot drift.
+Require one explicit Prometheus ownership mode. A guessed in-cluster address
+can let the Pod become Ready while every metrics query points at a Service that
+does not exist, so an unconfigured or ambiguous mode must fail at render time.
+*/}}
+{{- define "hami-webui.validatePrometheusConfiguration" -}}
+{{- $external := default (dict) .Values.externalPrometheus -}}
+{{- $stack := default (dict) (index .Values "kube-prometheus-stack") -}}
+{{- $externalEnabled := default false (get $external "enabled") -}}
+{{- $stackEnabled := default false (get $stack "enabled") -}}
+{{- if and $externalEnabled $stackEnabled -}}
+{{- fail "externalPrometheus.enabled and kube-prometheus-stack.enabled are mutually exclusive; select exactly one Prometheus mode" -}}
+{{- end -}}
+{{- if not (or $externalEnabled $stackEnabled) -}}
+{{- fail "Prometheus is not configured; enable externalPrometheus with an explicit address or enable kube-prometheus-stack" -}}
+{{- end -}}
+{{- if $externalEnabled -}}
+{{- $address := trim (default "" (get $external "address")) -}}
+{{- if empty $address -}}
+{{- fail "externalPrometheus.address is required when externalPrometheus.enabled=true" -}}
+{{- end -}}
+{{- if not (regexMatch "^https?://[^[:space:]]+$" $address) -}}
+{{- fail "externalPrometheus.address must be an absolute http:// or https:// URL without whitespace" -}}
+{{- end -}}
+{{- $parsedAddress := urlParse $address -}}
+{{- if empty (get $parsedAddress "hostname") -}}
+{{- fail "externalPrometheus.address must include a hostname" -}}
+{{- end -}}
+{{- end -}}
+{{- if $stackEnabled -}}
+{{- $prometheus := default (dict) (get $stack "prometheus") -}}
+{{- if and (hasKey $prometheus "enabled") (not (get $prometheus "enabled")) -}}
+{{- fail "kube-prometheus-stack.prometheus.enabled must remain true when kube-prometheus-stack.enabled=true" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Resolve the Prometheus address. When the dependency stack is enabled, use its
+own helpers so release-name, namespace and port overrides cannot drift.
 */}}
 {{- define "hami-webui.prometheusAddress" -}}
+{{- include "hami-webui.validatePrometheusConfiguration" . -}}
 {{- if .Values.externalPrometheus.enabled -}}
 {{- .Values.externalPrometheus.address -}}
 {{- else if (index .Values "kube-prometheus-stack").enabled -}}
 {{- $stack := index .Subcharts "kube-prometheus-stack" -}}
 {{- printf "http://%s-prometheus.%s.svc.cluster.local:%v" (include "kube-prometheus-stack.fullname" $stack) (include "kube-prometheus-stack.namespace" $stack) $stack.Values.prometheus.service.port -}}
-{{- else -}}
-{{- printf "http://%s-kube-prometh-prometheus.%s.svc.cluster.local:9090" (include "hami-webui.fullname" .) (include "hami-webui.namespace" .) -}}
 {{- end -}}
 {{- end -}}
 

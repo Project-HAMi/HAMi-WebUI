@@ -28,8 +28,13 @@ lock_after="$(release_sha256_file "${work_dir}/hami-webui/Chart.lock")"
 [[ "${lock_before}" == "${lock_after}" ]] || \
   release_die "helm dependency build changed Chart.lock"
 
-helm lint "${work_dir}/hami-webui"
-helm template release-verification "${work_dir}/hami-webui" >/dev/null
+prometheus_verification_args=(
+  --set 'externalPrometheus.enabled=true'
+  --set-string 'externalPrometheus.address=http://prometheus.release-verification.svc.cluster.local:9090'
+)
+helm lint "${work_dir}/hami-webui" "${prometheus_verification_args[@]}"
+helm template release-verification "${work_dir}/hami-webui" \
+  "${prometheus_verification_args[@]}" >/dev/null
 helm package "${work_dir}/hami-webui" --destination "${output_dir}"
 
 version="$(yq -r '.version' "${work_dir}/hami-webui/Chart.yaml")"
