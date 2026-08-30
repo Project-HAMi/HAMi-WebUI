@@ -175,24 +175,12 @@
       }
 
       .avatar {
-        display: flex;
-        width: 40px;
-        height: 40px;
-        box-sizing: border-box;
-        padding: 10px;
-        justify-content: center;
-        align-items: center;
-        flex-shrink: 0;
-        border-radius: 8px;
-        background: #fff;
-        border: none;
-        box-shadow: 0 2px 8px #0205080a, 0 6px 20px #02050814;
         margin-right: 14px;
         color: #64748b;
 
         .svg-icon {
-          width: 14px;
-          height: 14px;
+          width: 20px;
+          height: 20px;
         }
       }
 

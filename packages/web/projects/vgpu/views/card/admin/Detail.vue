@@ -12,11 +12,18 @@
           <div class="title">{{ $t('card.detail.detailInfo') }}</div>
           <div class="basic-info-row">
             <div class="basic-info-card">
-              <div class="basic-info-title" @click="handleToNodeDetail">
+              <RouterLink
+                v-if="nodeDetailLocation"
+                :to="nodeDetailLocation"
+                class="basic-info-title basic-info-node-link"
+              >
                 <span class="text">{{ detail.nodeName || '--' }}</span>
                 <span class="basic-info-share">
                   <svg-icon icon="jump" />
                 </span>
+              </RouterLink>
+              <div v-else class="basic-info-title">
+                <span class="text">{{ detail.nodeName || '--' }}</span>
               </div>
               <div class="basic-info-subtitle">{{ $t('card.node') }}</div>
             </div>
@@ -276,7 +283,7 @@
 
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
-import { useRoute, useRouter } from 'vue-router';
+import { RouterLink, useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import { onMounted, ref, watch, computed } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
@@ -295,13 +302,19 @@ import {
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
+import { buildNodeDetailLocation } from './node-detail-location.mjs';
 
 const route = useRoute();
-const router = useRouter();
 const { t } = useI18n();
 
 const detail = ref({});
 const nodeUid = ref('');
+const nodeDetailLocation = computed(() =>
+  buildNodeDetailLocation({
+    uid: nodeUid.value,
+    nodeName: detail.value?.nodeName,
+  }),
+);
 const CARD_TYPE_ICON_MAP = {
   NVIDIA: 'gpu-nvidia',
   MXC: 'gpu-nvidia',
@@ -574,11 +587,6 @@ const fetchLineData = async () => {
   });
 };
 
-const handleToNodeDetail = () => {
-  if (!nodeUid.value) return;
-  router.push(`/admin/vgpu/node/admin/${nodeUid.value}?nodeName=${detail.value?.nodeName || ''}`);
-};
-
 onMounted(async () => {
   const res = await cardApi.getCardDetail({ uid: route.params.uuid });
   detail.value = { ...detail.value, ...res };
@@ -669,6 +677,40 @@ watch(
   .basic-info-share {
     display: inline-flex;
     align-items: center;
+  }
+
+  .basic-info-node-link {
+    align-self: flex-start;
+    max-width: 100%;
+    border-radius: 3px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.2s ease;
+
+    .text {
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      text-underline-offset: 3px;
+      transition: text-decoration-color 0.2s ease;
+    }
+
+    .basic-info-share {
+      transition: color 0.2s ease;
+    }
+
+    &:hover,
+    &:focus-visible {
+      color: var(--el-color-primary);
+
+      .text {
+        text-decoration-color: currentColor;
+      }
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
+    }
   }
 
   .basic-info-subtitle {
