@@ -2,20 +2,27 @@
 
 [English](README.md) | [简体中文](README_ZH.md) | 日本語
 
-HAMi プロジェクトをベースとした、GPU リソースの管理・監視のためのオープンソースプラットフォーム
+[HAMi](https://github.com/Project-HAMi/HAMi) が管理する異種アクセラレータ向けの、オープンソースかつシングルクラスタ対応の可観測性 UI
 
-[![License](https://img.shields.io/github/license/Project-HAMi/HAMi)](LICENSE)
+[![License](https://img.shields.io/github/license/Project-HAMi/HAMi-WebUI)](LICENSE)
 
-HAMi-WebUI は [HAMi](https://github.com/Project-HAMi/HAMi) オープンソースプロジェクトをベースに構築されています。直感的な Web インターフェースを提供することで HAMi の機能を拡張し、各ノードにおける GPU リソースの割り当てと使用状況を可視化・管理できます。タスクや GPU の詳細ビューに対応しており、チームがリソース消費を効率的に監視できるようにします。
+HAMi-WebUI は、Kubernetes ノード上のアクセラレータのインベントリ、割り当て状態、および利用可能なベンダーテレメトリを可視化します。主な機能は次のとおりです。
 
-- **リソース概要:** ノードや GPU の使用状況を含む、すべてのリソースの包括的なビューを提供します。すべてのノードと GPU のステータスを素早く把握できます。
-- **ノード管理:** ノードのステータス、リソース使用状況、可用性など、詳細なノード情報を確認できます。
-- **GPU 管理:** 各ノードの GPU 使用状況を可視化し、演算能力とメモリの割り当て・使用状況を詳細に表示します。
-- **タスク管理:** タスクとそのリソース消費を追跡します。タスクの作成時刻、ステータス、GPU 割り当てなどを確認できます。
+- **クラスタ概要：** 検出されたアクセラレータの容量、割り当て、取得可能な使用率指標を確認します。
+- **ノードインベントリ：** アクセラレータノード、デバイス、およびリソース状態を確認します。
+- **アクセラレータ可視性：** デバイスごとの割り当てとベンダーテレメトリを確認します。
+- **ワークロード可視性：** 現在観測されている HAMi ワークロード（Pod/コンテナ）へのデバイス割り当てと、対象デバイスで利用可能な監視データを確認します。
+
+現在の連携対象は、NVIDIA GPU、Huawei Ascend 910B/310P、Hygon DCU、Cambricon MLU、および MetaX GPU/sGPU です。表示できるメトリクスは、デバイス種別ごとの HAMi 連携と exporter によって異なります。
+
+## スコープとセキュリティ境界
+
+HAMi-WebUI は読み取り専用です。リソースのスケジューリング、ワークロードの作成や変更、ノードの変更、組み込み認証やユーザー RBAC、マルチクラスタ集約は行いません。クラスタごとに 1 インスタンスをデプロイし、信頼されたネットワーク内だけで利用する場合を除き、認証付き Ingress またはプロキシで保護してください。
 
 ## はじめに
 
 - [インストールガイド](docs/installation/helm/index.md)
+- [URL プレフィックスとプラットフォームへの埋め込み](docs/installation/embedding.md)
 
 ## コントリビューション
 
@@ -23,14 +30,11 @@ HAMi-WebUI への貢献に興味がある方は：
 
 - まず[コントリビューションガイド](CONTRIBUTING.md)をお読みください。
 - [開発者ガイド](docs/contribute/developer-guide.md)に従ってローカル環境をセットアップしてください。
-- [初心者向けの Issue](https://github.com/Project-HAMi/HAMi-WebUI/issues?q=is%3Aopen+is%3Aissue+label%3A%22beginner+friendly%22) を確認してみてください。
+- [Good first issue](https://github.com/Project-HAMi/HAMi-WebUI/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) を確認してみてください。
 
 ## コミュニティ
 
-- 定例ミーティング: 毎週金曜日 16:00 UTC+8（中国語）。[タイムゾーンを変換](https://www.thetimezoneconverter.com/?t=14%3A30&tz=GMT%2B8&)
-  - [議事録とアジェンダ](https://docs.google.com/document/d/1YC6hco03_oXbF9IOUPJ29VWEddmITIKIfSmBX8JtGBw/edit#heading=h.g61sgp7w0d0c)
-  - [ミーティングリンク](https://meeting.tencent.com/dm/Ntiwq1BICD1P)
-- [Slack](https://join.slack.com/t/hami-hsf3791/shared_invite/zt-2gcteqiph-Ls8Atnpky6clrspCAQ_eGQ) コミュニティに参加してください。
+HAMi-WebUI は HAMi コミュニティの共通チャンネルを利用しています。最新のコミュニティミーティング、Discord、Slack、およびメーリングリストについては、[HAMi のコミュニティ案内](https://github.com/Project-HAMi/HAMi/blob/master/README_ja.md#コミュニティ) を参照してください。
 
 ## ライセンス
 

@@ -24,6 +24,7 @@ brew install git
 brew install go
 brew install node@24
 brew install protobuf
+export PATH="$(brew --prefix node@24)/bin:$PATH"
 corepack enable
 ```
 
@@ -66,6 +67,11 @@ Node.js and pnpm remain build and test dependencies for the Vue application.
 They are not present in the production image.
 
 ### Backend development
+
+The backend reads the active kubeconfig context and
+[`server/config/config.yaml`](../../server/config/config.yaml). Select a
+development cluster you are authorized to inspect and configure a reachable
+Prometheus address before starting it.
 
 Generate the API code and start the backend from the repository root:
 
