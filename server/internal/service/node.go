@@ -42,15 +42,14 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 	}
 
 	// Fetch containers once (StatisticsByDeviceId used to re-list per device) and
-	// pull the per-node core/memory totals in two queries keyed by node, instead
-	// of two PromQL per node. This is what made /v1/nodes take 3-4s — and it is
-	// also called for the workload page's node filter dropdown.
+	// pull the per-node normalized compute baseline in one query keyed by node.
+	// Memory capacity already comes from DeviceInfo.Devmem, HAMi's registered
+	// schedulable value, so querying the exporter's delayed copy would be redundant.
 	containers, err := s.pod.ListAllContainers(ctx)
 	if err != nil {
 		return nil, err
 	}
 	coreByNode := s.queryNodeGauge(ctx, "avg(sum(hami_core_size) by (node, instance)) by (node)")
-	memByNode := s.queryNodeGauge(ctx, "avg(sum(hami_memory_size) by (node, instance)) by (node)")
 
 	var res = &pb.NodesReply{List: []*pb.NodeReply{}}
 	for _, node := range nodes {
@@ -59,10 +58,6 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 		if v, ok := coreByNode[node.Name]; ok {
 			nodeReply.CoreTotal = v
 		}
-		if v, ok := memByNode[node.Name]; ok {
-			nodeReply.MemoryTotal = v
-		}
-
 		if filters.Ip != "" && filters.Ip != nodeReply.Ip {
 			continue
 		}

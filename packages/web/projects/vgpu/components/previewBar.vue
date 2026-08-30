@@ -57,6 +57,7 @@ import { getPreviewBarPie } from '~/vgpu/components/config';
 import { onMounted, ref, computed } from 'vue';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
+import { buildGroupedResourceTopQueries } from '~/vgpu/metrics/query-contract.mjs';
 
 const props = defineProps({
   title: {
@@ -74,6 +75,9 @@ import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
 
 const isNodeType = computed(() => props.type === 'node');
+const resourceTopQueries = computed(() =>
+  buildGroupedResourceTopQueries(props.type),
+);
 
 const nodeComputeTop5 = computed(() => ({
   title: t('dashboard.nodeComputeTop5'),
@@ -83,14 +87,14 @@ const nodeComputeTop5 = computed(() => ({
       key: 'alloc',
       nameKey: props.type,
       data: [],
-      query: `topk(5, sum(hami_container_vcore_allocated{}) by (${props.type}) / sum(hami_core_size{}) by (${props.type}) * 100)`,
+      query: resourceTopQueries.value.computeAllocation,
     },
     {
       tab: t('dashboard.usageRateLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
-      query: `topk(5, avg(hami_core_util_avg) by (${props.type}))`,
+      query: resourceTopQueries.value.computeUsage,
     },
   ],
 }));
@@ -103,14 +107,14 @@ const nodeMemoryTop5 = computed(() => ({
       key: 'alloc',
       nameKey: props.type,
       data: [],
-      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
+      query: resourceTopQueries.value.memoryAllocation,
     },
     {
       tab: t('dashboard.usageRateLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
-      query: `topk(5, sum(hami_memory_used) by (${props.type}) / sum(hami_memory_size) by (${props.type}) * 100)`,
+      query: resourceTopQueries.value.memoryUsage,
     },
   ],
 }));
@@ -123,14 +127,14 @@ const gpuComputeTop5 = computed(() => ({
       key: 'alloc',
       nameKey: props.type,
       data: [],
-      query: `topk(5, sum(hami_container_vcore_allocated{}) by (${props.type}) / sum(hami_core_size{}) by (${props.type}) * 100)`,
+      query: resourceTopQueries.value.computeAllocation,
     },
     {
       tab: t('dashboard.usageRateLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
-      query: `topk(5, avg(hami_core_util_avg) by (${props.type}))`,
+      query: resourceTopQueries.value.computeUsage,
     },
   ],
 }));
@@ -143,14 +147,14 @@ const gpuMemoryTop5 = computed(() => ({
       key: 'alloc',
       nameKey: props.type,
       data: [],
-      query: `topk(5, sum(hami_container_vmemory_allocated{}) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
+      query: resourceTopQueries.value.memoryAllocation,
     },
     {
       tab: t('dashboard.usageRateLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
-      query: `topk(5, sum(hami_memory_used) by (${props.type}) / sum(hami_memory_size{}) by (${props.type}) * 100)`,
+      query: resourceTopQueries.value.memoryUsage,
     },
   ],
 }));

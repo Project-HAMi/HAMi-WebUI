@@ -188,11 +188,17 @@ import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import { computed, onMounted, ref } from 'vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
+import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import VChart from 'vue-echarts';
 import nodeApi from '~/vgpu/api/node';
 import { getRangeOptions } from './getOptions';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
+import {
+  buildComputeAllocationQueries,
+  buildMemoryAllocationQueries,
+  buildMemoryUsageQueries,
+} from '~/vgpu/metrics/query-contract.mjs';
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -204,14 +210,24 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
+const nodeMetricSelector = 'node=~"$node"';
+const computeAllocationQueries = buildComputeAllocationQueries({
+  selector: nodeMetricSelector,
+});
+const memoryAllocationQueries = buildMemoryAllocationQueries({
+  selector: nodeMetricSelector,
+});
+const memoryUsageQueries = buildMemoryUsageQueries({
+  selector: nodeMetricSelector,
+});
 
 const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.computeAllocRate',
     percent: 0,
-    query: `avg(sum(hami_container_vcore_allocated{node=~"$node"}) by (instance))`,
-    totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
-    percentQuery: `avg(sum(hami_container_vcore_allocated{node=~"$node"}) by (instance)) / avg(sum(hami_core_size{node=~"$node"}) by (instance)) *100`,
+    query: computeAllocationQueries.query,
+    totalQuery: computeAllocationQueries.totalQuery,
+    percentQuery: computeAllocationQueries.percentQuery,
     total: 0,
     used: 0,
     unit: ' ',
@@ -219,9 +235,9 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.memAllocRate',
     percent: 0,
-    query: `avg(sum(hami_container_vmemory_allocated{node=~"$node"}) by (instance)) / 1024`,
-    totalQuery: `avg(sum(hami_memory_size{node=~"$node"}) by (instance)) / 1024`,
-    percentQuery: `(avg(sum(hami_container_vmemory_allocated{node=~"$node"}) by (instance)) / 1024) /(avg(sum(hami_memory_size{node=~"$node"}) by (instance)) / 1024) *100`,
+    query: memoryAllocationQueries.query,
+    totalQuery: memoryAllocationQueries.totalQuery,
+    percentQuery: memoryAllocationQueries.percentQuery,
     total: 0,
     used: 0,
     unit: 'GiB',
@@ -239,9 +255,9 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.memUsageRate',
     percent: 0,
-    query: `avg(sum(hami_memory_used{node=~"$node"}) by (instance)) / 1024`,
-    totalQuery: `avg(sum(hami_memory_size{node=~"$node"}) by (instance))/1024`,
-    percentQuery: `(avg(sum(hami_memory_used{node=~"$node"}) by (instance)) / 1024)/(avg(sum(hami_memory_size{node=~"$node"}) by (instance))/1024)*100`,
+    query: memoryUsageQueries.query,
+    totalQuery: memoryUsageQueries.totalQuery,
+    percentQuery: memoryUsageQueries.percentQuery,
     total: 0,
     used: 0,
     unit: 'GiB',
@@ -261,37 +277,32 @@ const gaugeConfig = computed(() =>
   })),
 );
 
+const readGaugeField = (index, field) =>
+  readReadyMetricField(gaugeConfig.value?.[index], field);
+
 const computePowerTotal = computed(() => {
-  const total = Number(gaugeConfig.value?.[0]?.total);
-  return Number.isFinite(total) ? roundToDecimal(total, 1) : undefined;
+  const total = readGaugeField(0, 'total');
+  return total === undefined ? undefined : roundToDecimal(total, 1);
 });
 
 const gpuMemoryTotal = computed(() => {
-  const total = Number(gaugeConfig.value?.[1]?.total);
-  return Number.isFinite(total) ? roundToDecimal(total, 1) : undefined;
+  const total = readGaugeField(1, 'total');
+  return total === undefined ? undefined : roundToDecimal(total, 1);
 });
 
 const computeAllocPercentRaw = computed(() => {
   if (detail.value?.isExternal) return undefined;
-  const percent = Number(gaugeConfig.value?.[0]?.percent);
-  return Number.isFinite(percent) ? percent : undefined;
+  return readGaugeField(0, 'percent');
 });
 
-const computeUsagePercentRaw = computed(() => {
-  const percent = Number(gaugeConfig.value?.[2]?.percent);
-  return Number.isFinite(percent) ? percent : undefined;
-});
+const computeUsagePercentRaw = computed(() => readGaugeField(2, 'percent'));
 
 const memoryAllocPercentRaw = computed(() => {
   if (detail.value?.isExternal) return undefined;
-  const percent = Number(gaugeConfig.value?.[1]?.percent);
-  return Number.isFinite(percent) ? percent : undefined;
+  return readGaugeField(1, 'percent');
 });
 
-const memoryUsagePercentRaw = computed(() => {
-  const percent = Number(gaugeConfig.value?.[3]?.percent);
-  return Number.isFinite(percent) ? percent : undefined;
-});
+const memoryUsagePercentRaw = computed(() => readGaugeField(3, 'percent'));
 
 const clampPercent = (v) => Math.max(0, Math.min(100, v));
 const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));

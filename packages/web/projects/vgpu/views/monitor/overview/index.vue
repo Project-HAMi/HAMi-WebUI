@@ -206,7 +206,7 @@ import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
 import {
-  createNodeAllocationTopQueries,
+  createNodeTopQueries,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
 
@@ -514,6 +514,8 @@ const nodes = computed(() => [
   },
 ]);
 
+const nodeTopQueries = createNodeTopQueries();
+
 const nodeComputeTop5 = computed(() => ({
   title: t('dashboard.nodeComputeTop5'),
   key: 'compute',
@@ -523,14 +525,14 @@ const nodeComputeTop5 = computed(() => ({
       key: 'alloc',
       nameKey: 'node',
       data: [],
-      query: createNodeAllocationTopQueries().compute,
+      query: nodeTopQueries.computeAllocation,
     },
     {
       tab: t('dashboard.usageRateLegend'),
       key: 'usage',
       data: [],
       nameKey: 'node',
-      query: 'topk(5, avg(hami_core_util_avg) by (node))',
+      query: nodeTopQueries.computeUsage,
     },
   ],
 }));
@@ -544,14 +546,14 @@ const nodeMemoryTop5 = computed(() => ({
       key: 'alloc',
       nameKey: 'node',
       data: [],
-      query: createNodeAllocationTopQueries().memory,
+      query: nodeTopQueries.memoryAllocation,
     },
     {
       tab: t('dashboard.usageRateLegend'),
       key: 'usage',
       nameKey: 'node',
       data: [],
-      query: 'topk(5, avg(hami_memory_used) by (node) / avg(hami_memory_size) by (node) * 100)',
+      query: nodeTopQueries.memoryUsage,
     },
   ],
 }));

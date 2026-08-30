@@ -35,12 +35,11 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		return nil, err
 	}
 
-	// Pull hami_core_size / hami_memory_size for ALL devices in two queries keyed
-	// by device_uuid, instead of two PromQL per device. The old per-device fanout
-	// meant ~2*N serial instant queries against Prometheus / VictoriaMetrics
-	// (300+ at large scale), which made the card list spin for several seconds.
+	// Pull the normalized compute baseline for all devices in one query keyed by
+	// device_uuid. Memory capacity already comes from DeviceInfo.Devmem, HAMi's
+	// registered schedulable value, so querying the exporter's delayed copy would
+	// be redundant.
 	coreSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_core_size) by (device_uuid)", "device_uuid")
-	memSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_memory_size) by (device_uuid)", "device_uuid")
 
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
 	for _, device := range deviceInfos {
@@ -74,9 +73,6 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 
 		if v, ok := coreSizeByUUID[device.Id]; ok {
 			gpu.CoreTotal = v
-		}
-		if v, ok := memSizeByUUID[device.Id]; ok {
-			gpu.MemoryTotal = v
 		}
 		res.List = append(res.List, gpu)
 	}
