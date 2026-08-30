@@ -16,6 +16,8 @@ helm repo add nvidia-dcgm https://nvidia.github.io/dcgm-exporter/helm-charts
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 
 cp -R "${repo_root}/charts/hami-webui" "${work_dir}/hami-webui"
+cp "${repo_root}/scripts/chart/tests/render-install-notes.yaml" \
+  "${work_dir}/hami-webui/templates/test-install-notes.yaml"
 helm dependency build --skip-refresh "${work_dir}/hami-webui"
 
 prometheus_test_address='http://prometheus.monitoring.svc.cluster.local:9090'
@@ -76,6 +78,7 @@ dcgm_service_monitor_render="$(helm template test "${work_dir}/hami-webui" \
   --show-only charts/dcgm-exporter/templates/service-monitor.yaml)"
 default_deployment_render="$(render_template templates/deployment.yaml)"
 default_config_render="$(render_template templates/configmap.yaml)"
+default_install_notes_render="$(render_template templates/test-install-notes.yaml)"
 
 deployment_containers="$(awk '
   /^      containers:$/ { in_containers = 1; next }
@@ -160,6 +163,13 @@ if [[ "$(service_port_names <<<"${web_service_render}")" != "http" ]] ||
   ! grep -Fq 'targetPort: http' <<<"${web_service_render}" ||
   grep -Fq 'targetPort: metrics' <<<"${web_service_render}"; then
   echo "Primary Service must expose only the supported Web entry on port 3000" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Visit http://127.0.0.1:3000/ to use HAMi-WebUI' <<<"${default_install_notes_render}" ||
+  ! grep -Fq 'kubectl --namespace hami-webui-test port-forward service/test-hami-webui 3000:http' <<<"${default_install_notes_render}" ||
+  grep -Fq 'POD_NAME=' <<<"${default_install_notes_render}"; then
+  echo "ClusterIP install notes must forward the named Service port and show the effective public URL" >&2
   exit 1
 fi
 if [[ "$(service_port_names <<<"${backend_service_render}")" != "backend-http" ]] ||
@@ -574,24 +584,151 @@ if grep -Fq 'name: HAMI_WEBUI_PROXY_TIMEOUT' <<<"${default_deployment_render}"; 
 fi
 
 base_path_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'frontend.basePath=/gpu-ui/')"
+  --set-string 'frontend.basePath=gpu-ui')"
 grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_render}" | grep -Fq 'value: "/gpu-ui/"'
+
+base_path_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set-string 'frontend.basePath=gpu-ui')"
+grep -Fq 'Visit http://127.0.0.1:3000/gpu-ui/ to use HAMi-WebUI' <<<"${base_path_notes_render}"
+
+namespace_override_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set-string 'namespaceOverride=runtime-ns' \
+  --set-string 'frontend.basePath=/gpu-ui/')"
+grep -Fq 'kubectl --namespace runtime-ns port-forward service/test-hami-webui 3000:http' <<<"${namespace_override_notes_render}"
+if grep -Fq 'kubectl --namespace hami-webui-test' <<<"${namespace_override_notes_render}"; then
+  echo "Install notes ignored namespaceOverride" >&2
+  exit 1
+fi
+
+node_port_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set-string 'service.type=NodePort' \
+  --set-string 'frontend.basePath=/gpu-ui/')"
+grep -Fq 'echo "http://$NODE_IP:$NODE_PORT/gpu-ui/"' <<<"${node_port_notes_render}"
+
+load_balancer_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set-string 'service.type=LoadBalancer' \
+  --set-string 'frontend.basePath=/gpu-ui/')"
+grep -Fq 'echo "http://$SERVICE_HOST:3000/gpu-ui/"' <<<"${load_balancer_notes_render}"
+
+ingress_render="$(render_template templates/ingress.yaml \
+  --set 'ingress.enabled=true' \
+  --set-string 'frontend.basePath=/gpu-ui/' \
+  --set-string 'ingress.hosts[0].host=ui.example.com' \
+  --set-string 'ingress.hosts[0].paths[0].path=/gpu-ui' \
+  --set-string 'ingress.hosts[0].paths[0].pathType=Prefix')"
+grep -Fq 'path: /gpu-ui' <<<"${ingress_render}"
+grep -Fq 'pathType: Prefix' <<<"${ingress_render}"
+
+default_ingress_render="$(render_template templates/ingress.yaml \
+  --set 'ingress.enabled=true')"
+grep -Fq 'path: /' <<<"${default_ingress_render}"
+grep -Fq 'pathType: Prefix' <<<"${default_ingress_render}"
+
+ingress_119_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --kube-version 1.19.0 \
+  --set 'ingress.enabled=true' \
+  --show-only templates/ingress.yaml)"
+grep -Fq 'apiVersion: networking.k8s.io/v1' <<<"${ingress_119_render}"
+grep -Fq 'pathType: Prefix' <<<"${ingress_119_render}"
+
+if helm template test "${work_dir}/hami-webui" \
+  --kube-version 1.18.20 >/dev/null 2>&1; then
+  echo "Chart rendered below its Kubernetes 1.19 dependency and Ingress contract" >&2
+  exit 1
+fi
+
+broader_ingress_render="$(render_template templates/ingress.yaml \
+  --set 'ingress.enabled=true' \
+  --set-string 'frontend.basePath=/gpu-ui/' \
+  --set-string 'ingress.hosts[0].paths[0].path=/' \
+  --set-string 'ingress.hosts[0].paths[0].pathType=Prefix')"
+grep -Fq 'path: /' <<<"${broader_ingress_render}"
+
+multi_path_ingress_render="$(render_template templates/ingress.yaml \
+  --set 'ingress.enabled=true' \
+  --set-string 'frontend.basePath=/gpu-ui/' \
+  --set-string 'ingress.hosts[0].paths[0].path=/gpu-ui' \
+  --set-string 'ingress.hosts[0].paths[0].pathType=Prefix' \
+  --set-string 'ingress.hosts[0].paths[1].path=/health_check' \
+  --set-string 'ingress.hosts[0].paths[1].pathType=Exact')"
+grep -Fq 'path: /health_check' <<<"${multi_path_ingress_render}"
+grep -Fq 'pathType: Exact' <<<"${multi_path_ingress_render}"
+
+ingress_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set 'ingress.enabled=true' \
+  --set-string 'frontend.basePath=/gpu-ui/' \
+  --set-string 'ingress.hosts[0].host=ui.example.com' \
+  --set-string 'ingress.hosts[0].paths[0].path=/gpu-ui' \
+  --set-string 'ingress.hosts[0].paths[0].pathType=Prefix' \
+  --set-string 'ingress.hosts[1].host=ui-internal.example.com' \
+  --set-string 'ingress.hosts[1].paths[0].path=/' \
+  --set-string 'ingress.hosts[1].paths[0].pathType=Prefix' \
+  --set-string 'ingress.tls[0].secretName=ui-tls' \
+  --set-string 'ingress.tls[0].hosts[0]=ui.example.com')"
+grep -Fq 'https://ui.example.com/gpu-ui/' <<<"${ingress_notes_render}"
+grep -Fq 'http://ui-internal.example.com/gpu-ui/' <<<"${ingress_notes_render}"
+
+hostless_ingress_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set 'ingress.enabled=true' \
+  --set-string 'frontend.basePath=/gpu-ui/' \
+  --set-string 'ingress.hosts[0].host=' \
+  --set-string 'ingress.hosts[0].paths[0].path=/gpu-ui' \
+  --set-string 'ingress.hosts[0].paths[0].pathType=Prefix')"
+grep -Fq 'export INGRESS_ADDRESS=$(kubectl get ingress --namespace hami-webui-test test-hami-webui' <<<"${hostless_ingress_notes_render}"
+grep -Fq 'Open $INGRESS_ADDRESS at path /gpu-ui/' <<<"${hostless_ingress_notes_render}"
+if grep -Fq '%!s' <<<"${hostless_ingress_notes_render}"; then
+  echo "Hostless Ingress rendered an invalid formatted URL" >&2
+  exit 1
+fi
+
+wildcard_ingress_notes_render="$(render_template templates/test-install-notes.yaml \
+  --set 'ingress.enabled=true' \
+  --set-string 'frontend.basePath=/gpu-ui/' \
+  --set-string 'ingress.hosts[0].host=*.example.com' \
+  --set-string 'ingress.hosts[0].paths[0].path=/gpu-ui' \
+  --set-string 'ingress.hosts[0].paths[0].pathType=Prefix' \
+  --set-string 'ingress.tls[0].secretName=wildcard-tls' \
+  --set-string 'ingress.tls[0].hosts[0]=*.example.com')"
+grep -Fq "Choose a concrete hostname matching *.example.com, then visit https://<matching-host>/gpu-ui/" <<<"${wildcard_ingress_notes_render}"
+
+for invalid_ingress_args in \
+  '--set ingress.enabled=true --set-string frontend.basePath=/ --set-string ingress.hosts[0].paths[0].path=/gpu-ui --set-string ingress.hosts[0].paths[0].pathType=Prefix' \
+  '--set ingress.enabled=true --set-string frontend.basePath=/gpu-ui/ --set-string ingress.hosts[0].paths[0].path=/other --set-string ingress.hosts[0].paths[0].pathType=Prefix' \
+  '--set ingress.enabled=true --set-string frontend.basePath=/gpu-ui/ --set-string ingress.hosts[0].paths[0].path=// --set-string ingress.hosts[0].paths[0].pathType=Prefix' \
+  '--set ingress.enabled=true --set-string frontend.basePath=/gpu-ui/ --set-string ingress.hosts[0].paths[0].path=/gpu-ui --set-string ingress.hosts[0].paths[0].pathType=Exact' \
+  '--set ingress.enabled=true --set-string frontend.basePath=/gpu-ui/ --set-string ingress.hosts[0].paths[0].path=/gpu-ui --set-string ingress.hosts[0].paths[0].pathType=ImplementationSpecific' \
+  '--set ingress.enabled=true --set-string frontend.basePath=/gpu-ui/ --set-string ingress.hosts[0].paths[0].path=/gpu-ui --set-string ingress.hosts[0].paths[0].pathType=Prefix --set-string ingress.hosts[0].paths[1].path=/health_check' \
+  '--set ingress.enabled=true --set-string frontend.basePath=/gpu-ui/ --set-string ingress.hosts[0].paths[0].path=/gpu-ui --set-string ingress.hosts[0].paths[0].pathType=Prefix --set-string ingress.hosts[0].paths[1].path=/health_check --set-string ingress.hosts[0].paths[1].pathType=Unknown'; do
+  read -r -a invalid_ingress_options <<<"${invalid_ingress_args}"
+  if helm template test "${work_dir}/hami-webui" "${invalid_ingress_options[@]}" >/dev/null 2>&1; then
+    echo "An Ingress that cannot portably route the configured public base path was accepted" >&2
+    exit 1
+  fi
+done
 
 if helm template test "${work_dir}/hami-webui" \
   --set-json 'frontend.basePath=123' >/dev/null 2>&1; then
   echo "Non-string frontend.basePath was accepted" >&2
   exit 1
 fi
-
-base_path_env_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'frontend.basePath=/ignored/' \
-  --set-string 'env[0].name=HAMI_WEBUI_BASE_PATH' \
-  --set-string 'env[0].value=/from-env/')"
-if [[ "$(grep -c 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_env_render}")" -ne 1 ]]; then
-  echo "Explicit base-path environment override was duplicated" >&2
+if helm template test "${work_dir}/hami-webui" \
+  --set-json 'frontend.basePath=false' >/dev/null 2>&1; then
+  echo "Boolean frontend.basePath was accepted" >&2
   exit 1
 fi
-grep -A1 -F 'name: HAMI_WEBUI_BASE_PATH' <<<"${base_path_env_render}" | grep -Fq 'value: /from-env/'
+if helm template test "${work_dir}/hami-webui" \
+  --set-string 'frontend.basePath=/gpu-ui//nested/' >/dev/null 2>&1; then
+  echo "Invalid frontend.basePath segments were accepted" >&2
+  exit 1
+fi
+
+if helm template test "${work_dir}/hami-webui" \
+  --set-string 'env[0].name=HAMI_WEBUI_BASE_PATH' \
+  --set-string 'env[0].value=/from-env/' >/dev/null 2>&1; then
+  echo "Generic env bypassed the dedicated frontend.basePath contract" >&2
+  exit 1
+fi
 
 frame_none_render="$(helm template test "${work_dir}/hami-webui" \
   --set-json 'frontend.frameAncestors=[]')"
@@ -602,12 +739,10 @@ frame_allow_render="$(helm template test "${work_dir}/hami-webui" \
 grep -A1 -F 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_allow_render}" | \
   grep -Fq 'value: "[\"'"'"'self'"'"'\",\"https://portal.example.com\"]"'
 
-frame_env_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-json 'frontend.frameAncestors=[]' \
+if helm template test "${work_dir}/hami-webui" \
   --set-string 'env[0].name=HAMI_WEBUI_FRAME_ANCESTORS_JSON' \
-  --set-string 'env[0].value=["https://portal.internal"]')"
-if [[ "$(grep -c 'name: HAMI_WEBUI_FRAME_ANCESTORS_JSON' <<<"${frame_env_render}")" -ne 1 ]]; then
-  echo "Explicit frame-ancestors environment override was duplicated" >&2
+  --set-string 'env[0].value=["https://portal.internal"]' >/dev/null 2>&1; then
+  echo "Generic env bypassed the dedicated frontend.frameAncestors contract" >&2
   exit 1
 fi
 

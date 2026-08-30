@@ -1,4 +1,5 @@
 {{- include "hami-webui.validateChart2Values" . -}}
+{{- include "hami-webui.validatePublicEntry" . -}}
 {{- $podAnnotations := mergeOverwrite (dict) (default (dict) .Values.podAnnotations) (dict "checksum/config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum)) -}}
 {{- $env := default (list) .Values.env -}}
 {{- $frontendSettings := default (dict) .Values.frontend -}}
@@ -7,17 +8,7 @@
 {{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
 {{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
 {{- $mountPrometheusTLS := and (get $externalPrometheus "enabled") (ne $prometheusTLSSecret "") -}}
-{{- $basePathOverridden := false -}}
-{{- $frameAncestorsOverridden := false -}}
-{{- range $env -}}
-{{- if eq (get . "name") "HAMI_WEBUI_BASE_PATH" -}}
-{{- $basePathOverridden = true -}}
-{{- end -}}
-{{- if eq (get . "name") "HAMI_WEBUI_FRAME_ANCESTORS_JSON" -}}
-{{- $frameAncestorsOverridden = true -}}
-{{- end -}}
-{{- end -}}
-{{- $basePath := default "/" (get $frontendSettings "basePath") -}}
+{{- $basePath := include "hami-webui.frontendBasePath" . -}}
 {{- $frameAncestorsConfigured := hasKey $frontendSettings "frameAncestors" -}}
 {{- $frameAncestors := get $frontendSettings "frameAncestors" -}}
 {{- $probes := default (dict) .Values.probes -}}
@@ -60,11 +51,9 @@ spec:
           image: {{ include "hami-webui.image" (dict "image" .Values.image "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            {{- if not $basePathOverridden }}
             - name: HAMI_WEBUI_BASE_PATH
               value: {{ $basePath | quote }}
-            {{- end }}
-            {{- if and (not $frameAncestorsOverridden) $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") }}
+            {{- if and $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") }}
             - name: HAMI_WEBUI_FRAME_ANCESTORS_JSON
               value: {{ toJson $frameAncestors | quote }}
             {{- end }}

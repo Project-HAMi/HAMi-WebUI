@@ -143,6 +143,11 @@ not.
 The application can serve the SPA below a configured base path and emit a
 validated CSP `frame-ancestors` policy. These are runtime settings, not Vite
 build variables. The unprefixed `/health_check` remains stable for Chart probes.
+When installing with Helm, use `frontend.basePath` and
+`frontend.frameAncestors`; the Chart owns the corresponding generated
+environment variables so its Ingress checks and access notes describe the
+actual runtime. Direct image and local binary users can continue using the
+environment variables above.
 
 ### Chart 2 Service and probe topology
 

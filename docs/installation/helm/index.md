@@ -38,7 +38,9 @@ To install HAMi-WebUI using Helm, ensure you meet these requirements:
    scrape path documented below does not. Self-contained mode provisions the
    API, Operator, and CRDs together.
 
-4. Helm > 3.0
+4. Kubernetes >= 1.19 and Helm > 3.0. The Kubernetes minimum matches the
+   bundled monitoring dependencies and guarantees the stable Ingress
+   `pathType: Prefix` contract.
 
 ## Install HAMi-WebUI using Helm
 
@@ -365,12 +367,14 @@ they no longer find a target in Chart 2.
 2. Run the following command to do a port-forwarding of the HAMi-WebUI service on port `3000` in your localhost.
 
    ```bash
-   kubectl port-forward service/my-hami-webui 3000:3000 --namespace=kube-system
+   kubectl port-forward service/my-hami-webui 3000:http --namespace=kube-system
    ```
 
    For more information about port-forwarding, refer to [Use Port Forwarding to Access Applications in a Cluster](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/).
 
-3. Navigate to `localhost:3000` in your browser.
+3. Navigate to `http://localhost:3000/` in your browser. If
+   `frontend.basePath` is configured, append that normalized path instead; the
+   `helm install` and `helm get notes` output prints the exact URL.
 
    The HAMi-WebUI resources-overview page appears.
 

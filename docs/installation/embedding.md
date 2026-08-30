@@ -10,8 +10,12 @@ proxy in front of deployments that are not already on a trusted network.
 
 ## Configure the public path and parent origins
 
-Configure the same prefix in the Web entry and Ingress. The proxy must preserve
-the prefix when forwarding the request.
+Treat `frontend.basePath` as the application's public URL. Configure a
+Kubernetes `Prefix` path that covers it and preserve the prefix when forwarding
+the request. The least surprising configuration uses the same path, with an
+optional trailing slash difference such as `/hami` and `/hami/`. A broader
+segment prefix such as `/` also works on a dedicated host; a narrower or
+unrelated prefix does not.
 
 ```yaml
 frontend:
@@ -33,6 +37,12 @@ The official Go application accepts `/hami/`, its SPA deep links, static assets,
 and `/hami/api/vgpu/v1/*`. The unprefixed `/health_check` endpoint remains
 available for Kubernetes probes. HAMi-WebUI deliberately does not trust
 `X-Forwarded-Prefix`; configure a non-stripping proxy instead.
+
+For Helm installs, use `frontend.basePath` and `frontend.frameAncestors`
+directly. The Chart reserves their generated `HAMI_WEBUI_*` environment
+variables so the Deployment, Ingress validation, and post-install URL cannot
+silently disagree. Those environment variables remain available when running
+the application image without Helm.
 
 The embedding platform can then use a normal iframe:
 

@@ -63,7 +63,9 @@ ingress:
     - host: chart-example.local
       paths:
         - path: /
-          pathType: ImplementationSpecific
+          # Prefix is required so SPA deep links, assets, and API routes share
+          # the same portable, non-stripped path contract.
+          pathType: Prefix
   tls: []
   #  - secretName: chart-example-tls
   #    hosts:
@@ -77,6 +79,10 @@ resources:
     cpu: 250m
     memory: 750Mi
 
+# Additional environment variables for the application container. Configure
+# the public path and iframe policy through frontend.*; the Chart reserves the
+# corresponding HAMI_WEBUI_* variables so rendered access instructions cannot
+# drift from the running application.
 env:
   - name: TZ
     value: "Asia/Shanghai"
@@ -177,8 +183,8 @@ externalPrometheus:
 
 # Public Web-entry runtime settings.
 frontend:
-  # Public URL prefix served by the official Go Web entry. Keep the Ingress
-  # path identical and do not configure the proxy to strip this prefix.
+  # Public URL prefix served by the official Go Web entry. A configured
+  # Ingress Prefix must cover this path and must not strip or rewrite it.
   basePath: "/"
   # Framing policy for whole-SPA embedding. null preserves the Chart 1.x
   # behavior (no application framing header), [] blocks every parent, and a
