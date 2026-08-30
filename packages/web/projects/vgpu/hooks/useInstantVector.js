@@ -8,6 +8,7 @@ import {
   PARSED_QUERY_STATUS,
   readInstantValue,
   requiresMetricCapacity,
+  resetMetricQueryState,
   restoreMetricState,
   resolveMetricStatus,
   setMetricErrorState,
@@ -66,16 +67,19 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
           parsedQueryStatus === PARSED_QUERY_STATUS.PENDING ||
           parsedTotalQueryStatus === PARSED_QUERY_STATUS.PENDING
         ) {
-          metric.refreshing = false;
+          resetMetricQueryState(metric, config, {
+            requestId,
+            status: METRIC_STATUS.LOADING,
+          });
           return;
         }
         if (
           parsedQueryStatus === PARSED_QUERY_STATUS.INVALID ||
           parsedTotalQueryStatus === PARSED_QUERY_STATUS.INVALID
         ) {
-          resolveRequest(metric, {
-            status: METRIC_STATUS.INVALID,
+          resetMetricQueryState(metric, config, {
             requestId,
+            status: METRIC_STATUS.INVALID,
           });
           return;
         }

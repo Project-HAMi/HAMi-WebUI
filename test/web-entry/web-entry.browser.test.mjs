@@ -13,10 +13,43 @@ const basePath = '/gpu-ui/'
 const deepRoute = `${basePath}admin/vgpu/monitor/overview`
 const servers = []
 const processes = []
+const backendRequestCounts = new Map()
+const responseGates = new Map()
 
 let backend
 let backendURL
 let browser
+
+function countBackendRequest(key) {
+  const count = (backendRequestCounts.get(key) ?? 0) + 1
+  backendRequestCounts.set(key, count)
+  return count
+}
+
+function createResponseGate(key) {
+  let release
+  const promise = new Promise((resolve) => {
+    release = resolve
+  })
+  const gate = { promise, release }
+  responseGates.set(key, gate)
+  return gate
+}
+
+async function waitForResponseGate(key) {
+  await responseGates.get(key)?.promise
+}
+
+async function readJSONBody(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  if (chunks.length === 0) return undefined
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    return undefined
+  }
+}
 
 function escapeAttribute(value) {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
@@ -375,14 +408,149 @@ async function assertChartRuntime(target) {
   await page.close()
 }
 
+function trackMonitorRequests(page) {
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().includes('/v1/monitor/query/')) {
+      requests.push(request.url())
+    }
+  })
+  return requests
+}
+
+async function assertMissingDetail(target, route) {
+  const page = await browser.newPage()
+  const monitorRequests = trackMonitorRequests(page)
+  try {
+    await page.goto(`${target}${route}`, { waitUntil: 'domcontentloaded' })
+    await page.locator('[data-testid="detail-page-missing"]').waitFor()
+    assert.equal(
+      await page.locator('[data-testid="detail-page-error"]').count(),
+      0
+    )
+    await delay(100)
+    assert.equal(
+      monitorRequests.length,
+      0,
+      `Missing detail issued monitor requests: ${route}`
+    )
+  } finally {
+    await page.close()
+  }
+}
+
 before(async() => {
-  backend = http.createServer((req, res) => {
-    req.resume()
-    const pathname = new URL(req.url, 'http://backend.local').pathname
+  backend = http.createServer(async(req, res) => {
+    const body = await readJSONBody(req)
+    const requestURL = new URL(req.url, 'http://backend.local')
+    const { pathname } = requestURL
     const now = Math.floor(Date.now() / 1000)
     let payload = { code: 0, data: {}, list: [], total: 0 }
 
-    if (pathname === '/v1/nodes') {
+    if (pathname === '/v1/gpu') {
+      const uid = requestURL.searchParams.get('uid') ?? ''
+      const requestKey = `gpu:${uid}`
+      countBackendRequest(requestKey)
+      await waitForResponseGate(requestKey)
+      payload = uid === 'gpu-missing'
+        ? {
+            uuid: '',
+            nodeName: '',
+            type: '',
+            vgpuUsed: 0,
+            vgpuTotal: 0,
+            coreUsed: 0,
+            coreTotal: 0,
+            memoryUsed: 0,
+            memoryTotal: 0,
+            nodeUid: '',
+            health: false,
+            mode: ''
+          }
+        : {
+            uuid: uid,
+            nodeName: 'node-1',
+            type: 'NVIDIA',
+            vgpuUsed: 0,
+            vgpuTotal: 1,
+            coreUsed: 0,
+            coreTotal: 100,
+            memoryUsed: 0,
+            memoryTotal: 16_384,
+            nodeUid: 'node-1',
+            health: true,
+            mode: ''
+          }
+    } else if (pathname === '/v1/node') {
+      const uid = requestURL.searchParams.get('uid') ?? ''
+      const requestKey = `node:${uid}`
+      const attempt = countBackendRequest(requestKey)
+      if (uid === 'node-retry' && attempt === 1) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          code: 503,
+          reason: 'TEMPORARILY_UNAVAILABLE',
+          message: 'temporary node lookup failure'
+        }))
+        return
+      }
+      payload = {
+        uid,
+        name: uid,
+        ip: '192.0.2.10',
+        isSchedulable: true,
+        isReady: true,
+        type: ['NVIDIA'],
+        vgpuUsed: 0,
+        vgpuTotal: 1,
+        coreUsed: 0,
+        coreTotal: 100,
+        memoryUsed: 0,
+        memoryTotal: 16_384,
+        cardCnt: 1
+      }
+    } else if (pathname === '/v1/container') {
+      const name = requestURL.searchParams.get('name') ?? ''
+      const podUid = requestURL.searchParams.get('podUid') ?? ''
+      countBackendRequest(`container:${podUid}:${name}`)
+      payload = name === 'missing-worker'
+        ? {
+            name: '',
+            status: '',
+            appName: '',
+            nodeName: '',
+            allocatedDevices: 0,
+            allocatedCores: 0,
+            allocatedMem: 0,
+            type: '',
+            createTime: '',
+            startTime: '',
+            endTime: '',
+            podUid: '',
+            nodeUid: '',
+            resourcePool: '',
+            flavor: '',
+            priority: '',
+            namespace: '',
+            deviceIds: [],
+            images: []
+          }
+        : {
+            name,
+            status: 'success',
+            appName: 'job-1',
+            nodeName: 'node-1',
+            allocatedDevices: 1,
+            allocatedCores: 100,
+            allocatedMem: 1024,
+            type: 'NVIDIA',
+            podUid,
+            nodeUid: 'node-1',
+            namespace: 'default',
+            deviceIds: ['gpu-1'],
+            images: ['example.invalid/worker:latest']
+          }
+    } else if (pathname === '/v1/nodes') {
       payload = {
         code: 0,
         list: [{ name: 'node-1', uid: 'node-1', isExternal: false, isSchedulable: true }],
@@ -397,6 +565,11 @@ before(async() => {
     } else if (pathname === '/v1/containers') {
       payload = { code: 0, items: [{ name: 'worker', podName: 'job-1' }], total: 1 }
     } else if (pathname === '/v1/monitor/query/instant-vector') {
+      if (body?.query?.includes('gpu-metric-new')) {
+        const requestKey = 'monitor:gpu-metric-new'
+        countBackendRequest(requestKey)
+        await waitForResponseGate(requestKey)
+      }
       payload = {
         code: 0,
         data: [{
@@ -410,6 +583,11 @@ before(async() => {
         }]
       }
     } else if (pathname === '/v1/monitor/query/range-vector') {
+      if (body?.query?.includes('gpu-metric-new')) {
+        const requestKey = 'monitor:gpu-metric-new'
+        countBackendRequest(requestKey)
+        await waitForResponseGate(requestKey)
+      }
       payload = {
         code: 0,
         data: [{
@@ -498,6 +676,144 @@ test('runtime base path and framing policy work in Chromium', async(t) => {
     await assertFrameBlocked(topParent, target)
   })
 }, { timeout: 120_000 })
+
+test('detail pages expose truthful asynchronous resource states', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+
+  await t.test('delayed card detail shows a busy skeleton before monitoring starts', async() => {
+    const requestKey = 'gpu:gpu-delayed'
+    const gate = createResponseGate(requestKey)
+    const page = await browser.newPage()
+    const monitorRequests = trackMonitorRequests(page)
+    try {
+      await page.goto(
+        `${target}${basePath}admin/vgpu/card/admin/gpu-delayed`,
+        { waitUntil: 'domcontentloaded' }
+      )
+      await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
+      await waitUntil(
+        () => (backendRequestCounts.get(requestKey) ?? 0) > 0,
+        'Delayed card detail request did not reach the backend'
+      )
+      assert.equal(
+        await page.locator('.detail-page-state').getAttribute('aria-busy'),
+        'true'
+      )
+      assert.equal(
+        monitorRequests.length,
+        0,
+        'Monitoring started before the card identity resolved'
+      )
+
+      gate.release()
+      await page.locator('[data-testid="detail-page-skeleton"]').waitFor({
+        state: 'detached'
+      })
+      assert.equal(
+        await page.locator('.detail-page-state').getAttribute('aria-busy'),
+        'false'
+      )
+      await page.locator('.layout-title').filter({ hasText: 'gpu-delayed' }).waitFor()
+      await waitUntil(
+        () => monitorRequests.length > 0,
+        'Monitoring did not start after the card detail resolved'
+      )
+    } finally {
+      gate.release()
+      responseGates.delete(requestKey)
+      await page.close()
+    }
+  })
+
+  await t.test('zero-value card and task replies are missing, not malformed', async(t) => {
+    await t.test('card', () => assertMissingDetail(
+      target,
+      `${basePath}admin/vgpu/card/admin/gpu-missing`
+    ))
+    await t.test('task', () => assertMissingDetail(
+      target,
+      `${basePath}admin/vgpu/task/admin/detail?name=missing-worker&podUid=pod-missing`
+    ))
+  })
+
+  await t.test('a failed node detail can be retried', async() => {
+    const requestKey = 'node:node-retry'
+    const initialAttempts = backendRequestCounts.get(requestKey) ?? 0
+    const page = await browser.newPage()
+    try {
+      await page.goto(
+        `${target}${basePath}admin/vgpu/node/admin/node-retry?nodeName=node-retry`,
+        { waitUntil: 'domcontentloaded' }
+      )
+      await page.locator('[data-testid="detail-page-error"]').waitFor()
+      assert.equal(
+        (backendRequestCounts.get(requestKey) ?? 0) - initialAttempts,
+        1
+      )
+
+      await page.locator('[data-testid="detail-page-retry"]').click()
+      await page.locator(
+        '.detail-page-state[data-detail-state="ready"]'
+      ).waitFor()
+      await page.locator('.layout-title').filter({ hasText: 'node-retry' }).waitFor()
+      assert.equal(
+        (backendRequestCounts.get(requestKey) ?? 0) - initialAttempts,
+        2
+      )
+    } finally {
+      await page.close()
+    }
+  })
+
+  await t.test('route changes never expose metrics from the previous card', async() => {
+    const requestKey = 'monitor:gpu-metric-new'
+    const gate = createResponseGate(requestKey)
+    const page = await browser.newPage()
+    try {
+      await page.goto(
+        `${target}${basePath}admin/vgpu/card/admin/gpu-metric-old`,
+        { waitUntil: 'domcontentloaded' }
+      )
+      await page.locator(
+        '.detail-page-state[data-detail-state="ready"]'
+      ).waitFor()
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('.resource-card-footer-percent')]
+          .some((element) => element.textContent?.trim() !== '--')
+      )
+
+      await page.evaluate(async() => {
+        const app = document.querySelector('#app')?.__vue_app__
+        await app?.config.globalProperties.$router.push(
+          '/admin/vgpu/card/admin/gpu-metric-new'
+        )
+      })
+      await page.locator('.layout-title').filter({ hasText: 'gpu-metric-new' }).waitFor()
+      await page.locator(
+        '.detail-page-state[data-detail-state="ready"]'
+      ).waitFor()
+      await waitUntil(
+        () => (backendRequestCounts.get(requestKey) ?? 0) > 0,
+        'New card monitoring request did not reach the backend'
+      )
+
+      assert.deepEqual(
+        await page.locator('.resource-card-footer-percent').allTextContents(),
+        ['--', '--', '--', '--']
+      )
+
+      gate.release()
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('.resource-card-footer-percent')]
+          .some((element) => element.textContent?.trim() !== '--')
+      )
+    } finally {
+      gate.release()
+      responseGates.delete(requestKey)
+      await page.close()
+    }
+  })
+}, { timeout: 90_000 })
 
 test('ECharts runtime renders, updates and handles interaction in Chromium', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })

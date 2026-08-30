@@ -46,6 +46,32 @@ export const readReadyMetricField = (metric, field) => {
   return Number.isFinite(value) ? value : undefined;
 };
 
+const METRIC_SAMPLE_FIELDS = ['count', 'used', 'total', 'percent'];
+
+export const resetMetricQueryState = (
+  metric,
+  config,
+  { requestId, status },
+) => {
+  metric.data = config.data;
+  for (const field of METRIC_SAMPLE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(config, field)) {
+      metric[field] = config[field];
+    } else {
+      delete metric[field];
+    }
+  }
+  delete metric.hasData;
+  delete metric.totalHasData;
+  metric.status = status;
+  metric.hasResolved = status !== METRIC_STATUS.LOADING;
+  metric.refreshing = false;
+  metric.error = null;
+  metric.refreshError = null;
+  metric.requestId = requestId;
+  return metric;
+};
+
 export const snapshotMetricState = (metric) => ({
   status: metric.status,
   hasData: metric.hasData,

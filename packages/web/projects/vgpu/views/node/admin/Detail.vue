@@ -2,11 +2,12 @@
   <div>
     <page-header
       :title="$t('node.detail.title')"
-      :name="detail.name"
+      :name="headerName"
       :status="headerStatusDisplay.text"
       :status-icon="headerStatusDisplay.icon"
     />
 
+    <detail-page-state :status="detailStatus" @retry="retryDetail">
     <section class="node-overview-wrap">
       <div class="node-overview-panel">
         <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
@@ -179,14 +180,21 @@
         </div>
       </block-box>
     </div>
+    </detail-page-state>
   </div>
 </template>
 
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
+import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import {
+  classifyDetailPayload,
+} from '~/vgpu/hooks/detail-resource-state.mjs';
+import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import VChart from 'vue-echarts';
@@ -203,7 +211,29 @@ import {
 const route = useRoute();
 const { t, locale } = useI18n();
 
-const detail = ref({});
+const nodeSource = computed(() => String(route.params.uid || ''));
+const requestedNodeName = computed(() => {
+  const value = route.query.nodeName;
+  return Array.isArray(value) ? value[0] : value;
+});
+const {
+  data: detail,
+  status: detailStatus,
+  retry: retryDetail,
+} = useDetailResource({
+  source: nodeSource,
+  request: (uid) => nodeApi.getNodeDetail({ uid }),
+  classify: (payload, uid) =>
+    classifyDetailPayload(payload, {
+      identityKeys: ['uid', 'name'],
+      expectedIdentity: { uid },
+    }),
+});
+const headerName = computed(() =>
+  detailStatus.value === REQUEST_STATUS.READY
+    ? detail.value.name
+    : requestedNodeName.value || nodeSource.value,
+);
 
 const end = new Date();
 const start = new Date();
@@ -266,7 +296,13 @@ const _gaugeConfigBase = [
 
 const gaugeData = useInstantVector(
   _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
-  (query) => query.replaceAll(`$node`, detail.value.name),
+  (query) =>
+    query.replaceAll(
+      `$node`,
+      detailStatus.value === REQUEST_STATUS.READY
+        ? detail.value.name
+        : 'undefined',
+    ),
   times,
 );
 
@@ -350,12 +386,15 @@ const gpuMemoryTotalText = computed(() => {
   return v === undefined ? '--' : `${Number(v).toFixed(2)} GiB`;
 });
 
-const headerStatusDisplay = computed(() =>
-  getNodeStatusDisplay({
+const headerStatusDisplay = computed(() => {
+  if (detailStatus.value !== REQUEST_STATUS.READY) {
+    return { icon: '', text: '' };
+  }
+  return getNodeStatusDisplay({
     isSchedulable: detail.value?.isSchedulable,
     isExternal: detail.value?.isExternal,
-  }),
-);
+  });
+});
 
 const getNodeStatusDisplay = ({ isSchedulable, isExternal }) => {
   if (isExternal || isSchedulable === undefined || isSchedulable === null) {
@@ -433,13 +472,6 @@ const detailColumnGroups = computed(() => {
   return [columns.slice(0, mid), columns.slice(mid)];
 });
 
-const refresh = async () => {
-  detail.value = await nodeApi.getNodeDetail({ uid: route.params.uid });
-};
-
-onMounted(async () => {
-  await refresh();
-});
 </script>
 
 <style scoped lang="scss">
