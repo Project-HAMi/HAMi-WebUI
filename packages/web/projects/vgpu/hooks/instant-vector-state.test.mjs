@@ -3,13 +3,32 @@ import test from 'node:test';
 
 import {
   calculateMetricPercent,
+  classifyParsedQuery,
   METRIC_STATUS,
+  PARSED_QUERY_STATUS,
   readInstantValue,
   readReadyMetricField,
+  restoreMetricState,
   requiresMetricCapacity,
   resolveMetricStatus,
   setMetricErrorState,
+  snapshotMetricState,
 } from './instant-vector-state.mjs';
+
+test('unresolved query dependencies remain pending instead of invalid', () => {
+  assert.equal(
+    classifyParsedQuery('sum(metric{node="undefined"})'),
+    PARSED_QUERY_STATUS.PENDING,
+  );
+  assert.equal(
+    classifyParsedQuery(undefined),
+    PARSED_QUERY_STATUS.INVALID,
+  );
+  assert.equal(
+    classifyParsedQuery('sum(metric{node="worker-1"})'),
+    PARSED_QUERY_STATUS.READY,
+  );
+});
 
 test('an empty instant vector is distinct from a real zero sample', () => {
   assert.deepEqual(readInstantValue({ data: [] }), {
@@ -92,6 +111,40 @@ test('query errors remain unknown instead of becoming missing data', () => {
   assert.equal(capacityMetric.totalHasData, undefined);
   assert.equal(capacityMetric.percent, 0);
   assert.equal(capacityMetric.total, 0);
+});
+
+test('a scalar commit does not overwrite a concurrent range refresh', () => {
+  const metric = {
+    status: METRIC_STATUS.READY,
+    hasData: true,
+    totalHasData: true,
+    count: 0,
+    used: 0,
+    total: 800,
+    percent: 0,
+    data: [{ timestamp: 1000, value: 0 }],
+  };
+  const snapshot = snapshotMetricState(metric);
+
+  Object.assign(metric, {
+    count: 400,
+    used: 400,
+    total: 0,
+    percent: 100,
+  });
+  metric.data = [{ timestamp: 2000, value: 25 }];
+  restoreMetricState(metric, snapshot);
+
+  assert.deepEqual(metric, {
+    status: METRIC_STATUS.READY,
+    hasData: true,
+    totalHasData: true,
+    count: 0,
+    used: 0,
+    total: 800,
+    percent: 0,
+    data: [{ timestamp: 2000, value: 25 }],
+  });
 });
 
 test('metric status keeps missing, invalid and zero-capacity states distinct', () => {

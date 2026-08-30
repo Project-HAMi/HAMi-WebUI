@@ -28,6 +28,8 @@ export default {
     details: 'Details',
     formValidationFailed: 'Form validation failed!',
     requestError: 'Request error',
+    refreshFailedShowingPreviousResult:
+      'Refresh failed. Showing the previous query result.',
     tip: 'Tip',
     copySuccess: 'Copy successful',
     copyFailed: 'Copy failed',

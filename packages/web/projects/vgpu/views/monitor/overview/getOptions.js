@@ -8,6 +8,7 @@ import {
 import nodeApi from '~/vgpu/api/node';
 import { MessagePlugin } from 'tdesign-vue-next';
 import i18n from '@/locales';
+import { selectRangeAxisData } from './overview-state.mjs';
 
 export const getResourceStatus = (statusConfig) => {
   return {
@@ -530,7 +531,7 @@ export const getLineOptions = ({
 };
 
 export const getRangeOptions = (data) => {
-  if (!data || !data[0] || !data[0].data) {
+  if (!Array.isArray(data) || !data.length) {
     return {
       animation: true,
       series: [],
@@ -541,6 +542,7 @@ export const getRangeOptions = (data) => {
     ...item,
     data: normalizeRangeValues(item.data),
   }));
+  const axisData = selectRangeAxisData(normalizedData);
 
   return {
     animation: true,
@@ -597,7 +599,7 @@ export const getRangeOptions = (data) => {
     ],
     xAxis: {
       type: 'category',
-      data: normalizedData[0].data.map((item) => timeParse(item.timestamp)),
+      data: axisData.map((item) => timeParse(item.timestamp)),
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');

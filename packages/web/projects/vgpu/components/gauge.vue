@@ -1,5 +1,5 @@
 <template>
-  <div class="gauge-card">
+  <div class="gauge-card" :aria-busy="status === 'loading'">
     <div class="gauge-card__title">
       <span>{{ title }}</span>
       <t-tooltip
@@ -29,14 +29,27 @@
       </span>
     </div>
     <div class="gauge-card__value">
-      <template v-if="isReady">
+      <t-skeleton
+        v-if="status === 'loading'"
+        animation="gradient"
+        :row-col="[{ width: '44%', height: '28px' }]"
+        aria-hidden="true"
+      />
+      <template v-else-if="isReady">
         <span class="gauge-card__number">{{ numericPercent.toFixed(1) }}</span>
         <span class="gauge-card__unit">{{ gaugeUnit || '%' }}</span>
       </template>
       <span v-else class="gauge-card__number gauge-card__number--empty">—</span>
     </div>
+    <t-skeleton
+      v-if="status === 'loading'"
+      animation="gradient"
+      :row-col="[{ width: '100%', height: '4px' }]"
+      class="gauge-card__progress gauge-card__progress-skeleton"
+      aria-hidden="true"
+    />
     <t-progress
-      v-if="showProgress && isReady"
+      v-else-if="showProgress && isReady"
       theme="line"
       :percentage="Math.min(100, Math.max(0, numericPercent))"
       :color="progressColor"
@@ -46,7 +59,13 @@
       aria-hidden="true"
     />
     <div class="gauge-card__detail" v-if="!hideInfo">
-      <template v-if="isReady">
+      <t-skeleton
+        v-if="status === 'loading'"
+        animation="gradient"
+        :row-col="[{ width: '68%', height: '16px' }]"
+        aria-hidden="true"
+      />
+      <template v-else-if="isReady">
         <span>{{ detailLabel }}</span>
         <span>: </span>
         <b v-if="detailMode === 'value'">{{
@@ -63,7 +82,6 @@
       <span v-else-if="status === 'error'">{{
         $t('dashboard.metricQueryFailed')
       }}</span>
-      <span v-else-if="status === 'loading'">{{ $t('common.loading') }}</span>
       <span v-else-if="status === 'invalid'">{{
         $t('dashboard.metricInvalid')
       }}</span>
@@ -72,6 +90,13 @@
       }}</span>
       <span v-else>{{ $t('dashboard.metricNoData') }}</span>
     </div>
+    <span
+      v-if="status === 'loading'"
+      class="gauge-card__sr-only"
+      role="status"
+    >
+      {{ $t('common.loading') }}
+    </span>
   </div>
 </template>
 
@@ -208,6 +233,10 @@ const progressColor = computed(() => {
 
   &__progress {
     margin-bottom: 8px;
+  }
+
+  &__progress-skeleton {
+    min-height: 4px;
   }
 
   &__detail {

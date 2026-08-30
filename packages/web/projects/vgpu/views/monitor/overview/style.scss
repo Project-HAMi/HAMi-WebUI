@@ -61,6 +61,41 @@
     min-height: 0;
   }
 
+  .card-type-skeleton {
+    flex: 1;
+    min-height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .overview-state {
+    flex: 1;
+    min-height: 96px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #939ea9;
+    font-size: 12px;
+    text-align: center;
+
+    &--chart {
+      min-height: 250px;
+    }
+  }
+
+  .overview-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   &-bottom {
     display: flex;
     flex-direction: column;
@@ -208,6 +243,20 @@
           color: inherit;
         }
       }
+
+      .resource-count-skeleton {
+        width: 100%;
+        min-height: 28px;
+      }
+
+      .resource-state-text {
+        min-height: 28px;
+        display: flex;
+        align-items: center;
+        color: #939ea9;
+        font-size: 12px;
+        line-height: 18px;
+      }
     }
 
     .resource-overview-nav-icon {
@@ -284,6 +333,65 @@
       color: #939ea9;
       transition: color 0.2s;
     }
+  }
+
+  .node-overview-skeleton {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .range-chart-skeleton,
+  .workload-table-skeleton {
+    min-height: 250px;
+  }
+
+  .range-chart-content {
+    position: relative;
+    min-height: 250px;
+  }
+
+  .range-status-list {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    right: 4px;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    pointer-events: none;
+  }
+
+  .range-refresh-status,
+  .range-partial-status {
+    max-width: 100%;
+    padding: 3px 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: rgb(255 255 255 / 92%);
+    color: #697886;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .range-refresh-status {
+
+    &--error {
+      color: #b45309;
+      background: #fffbeb;
+    }
+  }
+
+  .range-partial-status {
+    background: #fffbeb;
+    color: #b45309;
+  }
+
+  .workload-distribution-content {
+    min-height: 250px;
   }
 
   .workload-distribution-tip-icon {
