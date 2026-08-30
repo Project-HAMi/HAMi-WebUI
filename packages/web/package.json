@@ -27,7 +27,7 @@
     "echarts": "5.4.3",
     "element-plus": "^2.4.1",
     "generate-avatar": "1.4.10",
-    "js-cookie": "3.0.5",
+    "js-cookie": "3.0.8",
     "lodash": "^4.17.21",
     "normalize.css": "^8.0.1",
     "nprogress": "0.2.0",
