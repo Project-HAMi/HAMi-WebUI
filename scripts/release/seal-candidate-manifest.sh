@@ -21,10 +21,10 @@ release_validate_commit "${source_sha}"
 expected_tag="candidate-${source_sha:0:12}-${run_id}-${run_attempt}"
 [[ "${candidate_tag}" == "${expected_tag}" ]] || \
   release_die "candidate tag does not bind the source, run, and attempt"
-[[ -f "${parts_dir}/frontend.json" && -f "${parts_dir}/backend.json" ]] || \
-  release_die "frontend and backend candidate metadata are both required"
-[[ "$(find "${parts_dir}" -maxdepth 1 -name '*.json' -type f | wc -l | tr -d ' ')" == "2" ]] || \
-  release_die "candidate metadata must contain exactly two JSON parts"
+[[ -f "${parts_dir}/webui.json" ]] || \
+  release_die "unified webui candidate metadata is required"
+[[ "$(find "${parts_dir}" -maxdepth 1 -name '*.json' -type f | wc -l | tr -d ' ')" == "1" ]] || \
+  release_die "candidate metadata must contain exactly one JSON part"
 
 jq -e -s \
   --arg repository "${repository}" \
@@ -32,13 +32,13 @@ jq -e -s \
   --arg candidate_tag "${candidate_tag}" \
   --arg run_id "${run_id}" \
   --arg run_attempt "${run_attempt}" '
-    if length != 2 or
+    if length != 1 or
        any(.[]; .sourceSha != $source_sha or .candidateTag != $candidate_tag) or
-       ([.[].component] | sort != ["backend", "frontend"]) or
+       [.[].component] != ["webui"] or
        any(.[]; (.registries | keys | sort) != ["dockerhub", "ghcr"])
     then error("candidate image metadata is incomplete or inconsistent")
     else {
-      schemaVersion: 1,
+      schemaVersion: 2,
       repository: $repository,
       workflow: ".github/workflows/release.yaml",
       sourceSha: $source_sha,
@@ -49,7 +49,7 @@ jq -e -s \
         .[$image.component] = $image.registries))
     }
     end
-  ' "${parts_dir}/frontend.json" "${parts_dir}/backend.json" >"${output_path}"
+  ' "${parts_dir}/webui.json" >"${output_path}"
 
 jq -e . "${output_path}" >/dev/null
-echo "Candidate manifest sealed from exactly two image records."
+echo "Candidate manifest sealed from exactly one image record."

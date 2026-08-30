@@ -44,6 +44,27 @@ yq -e '
   length == 1
 ' .github/workflows/release.yaml >/dev/null
 
+# Development and candidate publication must build the same unified target and
+# publish only the two canonical registry references.
+yq -e '
+  [.jobs."publish-development-image".steps[] |
+    select(.uses == "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a") |
+    select(.with.context == "." and .with.target == "unified") |
+    select((.with.tags | split("\n") | map(select(. != "")) | sort | join(",")) ==
+      "ghcr.io/project-hami/hami-webui:main,projecthami/hami-webui:main")] |
+  length == 1
+' .github/workflows/ci.yaml >/dev/null
+
+# shellcheck disable=SC2016
+yq -e '
+  [.jobs."candidate-images".steps[] |
+    select(.uses == "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a") |
+    select(.with.context == "." and .with.target == "unified") |
+    select((.with.tags | split("\n") | map(select(. != "")) | sort | join(",")) ==
+      "ghcr.io/project-hami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }},projecthami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }}")] |
+  length == 1
+' .github/workflows/release.yaml >/dev/null
+
 # Build a minimal two-commit repository so the contract test exercises the
 # candidate-to-release comparison rather than relying on this checkout's history.
 contract_repo="${work_dir}/contract-repo"
@@ -61,7 +82,7 @@ jq -n \
   --arg source_sha "${candidate_sha}" \
   --arg digest "${digest_a}" '
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       repository: "Project-HAMi/HAMi-WebUI",
       workflow: ".github/workflows/release.yaml",
       sourceSha: $source_sha,
@@ -69,13 +90,9 @@ jq -n \
       runId: "42",
       runAttempt: "1",
       images: {
-        frontend: {
-          dockerhub: {repository: "projecthami/hami-webui-fe-oss", ref: ("projecthami/hami-webui-fe-oss:candidate-" + $source_sha[0:12] + "-42-1"), digest: $digest},
-          ghcr: {repository: "ghcr.io/project-hami/hami-webui-fe-oss", ref: ("ghcr.io/project-hami/hami-webui-fe-oss:candidate-" + $source_sha[0:12] + "-42-1"), digest: $digest}
-        },
-        backend: {
-          dockerhub: {repository: "projecthami/hami-webui-be-oss", ref: ("projecthami/hami-webui-be-oss:candidate-" + $source_sha[0:12] + "-42-1"), digest: $digest},
-          ghcr: {repository: "ghcr.io/project-hami/hami-webui-be-oss", ref: ("ghcr.io/project-hami/hami-webui-be-oss:candidate-" + $source_sha[0:12] + "-42-1"), digest: $digest}
+        webui: {
+          dockerhub: {repository: "projecthami/hami-webui", ref: ("projecthami/hami-webui:candidate-" + $source_sha[0:12] + "-42-1"), digest: $digest},
+          ghcr: {repository: "ghcr.io/project-hami/hami-webui", ref: ("ghcr.io/project-hami/hami-webui:candidate-" + $source_sha[0:12] + "-42-1"), digest: $digest}
         }
       }
     }
@@ -86,17 +103,11 @@ jq -n \
 candidate_parts="${work_dir}/candidate-parts"
 mkdir -p "${candidate_parts}"
 jq '{
-  component: "frontend",
+  component: "webui",
   sourceSha,
   candidateTag,
-  registries: .images.frontend
-}' "${contract_repo}/candidate.json" >"${candidate_parts}/frontend.json"
-jq '{
-  component: "backend",
-  sourceSha,
-  candidateTag,
-  registries: .images.backend
-}' "${contract_repo}/candidate.json" >"${candidate_parts}/backend.json"
+  registries: .images.webui
+}' "${contract_repo}/candidate.json" >"${candidate_parts}/webui.json"
 bash "${release_dir}/seal-candidate-manifest.sh" \
   "${candidate_parts}" "${work_dir}/sealed-candidate.json" \
   Project-HAMi/HAMi-WebUI "${candidate_sha}" \
@@ -107,23 +118,21 @@ cmp "${work_dir}/expected-candidate.json" "${work_dir}/actual-candidate.json"
 
 cp -R "${candidate_parts}" "${work_dir}/bad-candidate-parts"
 jq '.sourceSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
-  "${work_dir}/bad-candidate-parts/backend.json" >"${work_dir}/bad-backend.json"
-mv "${work_dir}/bad-backend.json" "${work_dir}/bad-candidate-parts/backend.json"
+  "${work_dir}/bad-candidate-parts/webui.json" >"${work_dir}/bad-webui.json"
+mv "${work_dir}/bad-webui.json" "${work_dir}/bad-candidate-parts/webui.json"
 require_failure "inconsistent candidate image metadata" \
   bash "${release_dir}/seal-candidate-manifest.sh" \
     "${work_dir}/bad-candidate-parts" "${work_dir}/bad-candidate.json" \
     Project-HAMi/HAMi-WebUI "${candidate_sha}" \
     "candidate-${candidate_sha:0:12}-42-1" 42 1
 
-VERSION=1.2.1 DIGEST="${digest_a}" yq -i '
+VERSION=2.0.1 DIGEST="${digest_a}" yq -i '
   .version = strenv(VERSION) |
   .appVersion = strenv(VERSION)
 ' "${contract_repo}/charts/hami-webui/Chart.yaml"
-VERSION=1.2.1 DIGEST="${digest_a}" yq -i '
-  .image.frontend.tag = "v" + strenv(VERSION) |
-  .image.backend.tag = "v" + strenv(VERSION) |
-  .image.frontend.digest = strenv(DIGEST) |
-  .image.backend.digest = strenv(DIGEST)
+VERSION=2.0.1 DIGEST="${digest_a}" yq -i '
+  .image.tag = "v" + strenv(VERSION) |
+  .image.digest = strenv(DIGEST)
 ' "${contract_repo}/charts/hami-webui/values.yaml"
 git -C "${contract_repo}" add charts
 git -C "${contract_repo}" commit -qm 'allowed release metadata'
@@ -134,6 +143,53 @@ release_sha="$(git -C "${contract_repo}" rev-parse HEAD)"
   GITHUB_REPOSITORY=Project-HAMi/HAMi-WebUI \
     bash "${release_dir}/verify-release-contract.sh" candidate.json 42 "${release_sha}"
 )
+
+# The single-image manifest is a new contract. A legacy schema must fail closed
+# instead of being interpreted with missing or ambiguous image identities.
+jq '.schemaVersion = 1' "${contract_repo}/candidate.json" \
+  >"${contract_repo}/legacy-candidate.json"
+(
+  cd "${contract_repo}"
+  require_failure "legacy candidate manifest schema" \
+    env GITHUB_REPOSITORY=Project-HAMi/HAMi-WebUI \
+    bash "${release_dir}/verify-release-contract.sh" legacy-candidate.json 42 "${release_sha}"
+)
+
+# The controller must not reinterpret a Chart 1.x two-container values shape as
+# a partially populated unified image contract.
+cp -R "${contract_repo}" "${work_dir}/legacy-chart-values"
+yq -i '
+  .image = {
+    "frontend": {
+      "repository": "projecthami/hami-webui-fe-oss",
+      "tag": "v1.3.0",
+      "digest": .image.digest
+    },
+    "backend": {
+      "repository": "projecthami/hami-webui-be-oss",
+      "tag": "v1.3.0",
+      "digest": .image.digest
+    }
+  }
+' "${work_dir}/legacy-chart-values/charts/hami-webui/values.yaml"
+git -C "${work_dir}/legacy-chart-values" add charts/hami-webui/values.yaml
+git -C "${work_dir}/legacy-chart-values" commit -qm 'legacy two-image values'
+legacy_chart_sha="$(git -C "${work_dir}/legacy-chart-values" rev-parse HEAD)"
+require_failure "Chart 1.x two-image values" \
+  verify_contract_in_repo "${work_dir}/legacy-chart-values" "${legacy_chart_sha}"
+
+# A root image object alone is not enough to hide a breaking Chart migration
+# under a 1.x version number.
+cp -R "${contract_repo}" "${work_dir}/legacy-chart-major"
+VERSION=1.9.0 yq -i '
+  .version = strenv(VERSION) |
+  .appVersion = strenv(VERSION)
+' "${work_dir}/legacy-chart-major/charts/hami-webui/Chart.yaml"
+git -C "${work_dir}/legacy-chart-major" add charts/hami-webui/Chart.yaml
+git -C "${work_dir}/legacy-chart-major" commit -qm 'legacy chart major'
+legacy_major_sha="$(git -C "${work_dir}/legacy-chart-major" rev-parse HEAD)"
+require_failure "Chart major version below 2" \
+  verify_contract_in_repo "${work_dir}/legacy-chart-major" "${legacy_major_sha}"
 
 # A non-release default under an allowed file path must still invalidate the
 # already-built candidate.
@@ -178,7 +234,7 @@ require_failure "tampered canonical bundle" \
   bash "${release_dir}/verify-bundle.sh" "${work_dir}/tampered-bundle"
 
 # Exercise the all-destination preflight without any network writes. Command
-# fixtures model four available candidates and entirely absent stable targets.
+# fixtures model two available registry manifests and absent stable targets.
 preflight_bundle="${work_dir}/preflight-bundle"
 pages="${work_dir}/pages"
 mock_bin="${work_dir}/mock-bin"
@@ -199,13 +255,9 @@ jq -n \
         chart: {file: "hami-webui-9.9.9.tgz", sha256: $chart_sha}
       },
       images: {
-        frontend: {
-          dockerhub: {repository: "docker.example/frontend", digest: $digest},
-          ghcr: {repository: "ghcr.example/frontend", digest: $digest}
-        },
-        backend: {
-          dockerhub: {repository: "docker.example/backend", digest: $digest},
-          ghcr: {repository: "ghcr.example/backend", digest: $digest}
+        webui: {
+          dockerhub: {repository: "projecthami/hami-webui", digest: $digest},
+          ghcr: {repository: "ghcr.io/project-hami/hami-webui", digest: $digest}
         }
       }
     }
@@ -236,6 +288,25 @@ else
   exit 1
 fi
 MOCK_DOCKER
+cat >"${mock_bin}/curl" <<'MOCK_CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >>"${MOCK_LOG}"
+if [[ "${MOCK_DOCKERHUB_MISSING:-false}" == "true" ]]; then
+  echo 'curl: (22) The requested URL returned error: 404' >&2
+  exit 22
+fi
+is_private=false
+[[ "${MOCK_DOCKERHUB_PRIVATE:-false}" != "true" ]] || is_private=true
+jq -n --argjson is_private "${is_private}" '
+  {
+    namespace: "projecthami",
+    name: "hami-webui",
+    is_private: $is_private,
+    status: 1
+  }
+'
+MOCK_CURL
 cat >"${mock_bin}/helm" <<'MOCK_HELM'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -260,7 +331,26 @@ cat >"${mock_bin}/gh" <<'MOCK_GH'
 #!/usr/bin/env bash
 set -euo pipefail
 echo "$*" >>"${MOCK_LOG}"
-if [[ "$*" == *'/packages/container/charts%2Fhami-webui'* ]]; then
+if [[ "$*" == *'/packages/container/hami-webui'* ]]; then
+  [[ "${MOCK_WEBUI_PACKAGE_MISSING:-false}" != "true" ]] || {
+    echo 'HTTP 404: not found' >&2
+    exit 1
+  }
+  visibility="public"
+  repository="Project-HAMi/HAMi-WebUI"
+  [[ "${MOCK_WEBUI_PACKAGE_PRIVATE:-false}" != "true" ]] || visibility="private"
+  [[ "${MOCK_WEBUI_PACKAGE_UNLINKED:-false}" != "true" ]] || repository=""
+  jq -n \
+    --arg visibility "${visibility}" \
+    --arg repository "${repository}" '
+      {
+        name: "hami-webui",
+        package_type: "container",
+        visibility: $visibility,
+        repository: {full_name: $repository}
+      }
+    '
+elif [[ "$*" == *'/packages/container/charts%2Fhami-webui'* ]]; then
   visibility="public"
   repository="Project-HAMi/HAMi-WebUI"
   [[ "${MOCK_OCI_PACKAGE_PRIVATE:-false}" != "true" ]] || visibility="private"
@@ -340,14 +430,43 @@ else
   printf '[]\n'
 fi
 MOCK_GH
-chmod +x "${mock_bin}/docker" "${mock_bin}/helm" "${mock_bin}/gh"
+chmod +x "${mock_bin}/docker" "${mock_bin}/curl" "${mock_bin}/helm" "${mock_bin}/gh"
+
+PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" \
+  bash "${release_dir}/verify-image-publication-targets.sh" \
+    Project-HAMi/HAMi-WebUI projecthami/hami-webui hami-webui
+
+require_failure "missing Docker Hub publication target" \
+  env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" MOCK_DOCKERHUB_MISSING=true \
+  bash "${release_dir}/verify-image-publication-targets.sh" \
+    Project-HAMi/HAMi-WebUI projecthami/hami-webui hami-webui
+
+require_failure "private Docker Hub publication target" \
+  env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" MOCK_DOCKERHUB_PRIVATE=true \
+  bash "${release_dir}/verify-image-publication-targets.sh" \
+    Project-HAMi/HAMi-WebUI projecthami/hami-webui hami-webui
+
+require_failure "missing GHCR publication target" \
+  env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" MOCK_WEBUI_PACKAGE_MISSING=true \
+  bash "${release_dir}/verify-image-publication-targets.sh" \
+    Project-HAMi/HAMi-WebUI projecthami/hami-webui hami-webui
+
+require_failure "private GHCR publication target" \
+  env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" MOCK_WEBUI_PACKAGE_PRIVATE=true \
+  bash "${release_dir}/verify-image-publication-targets.sh" \
+    Project-HAMi/HAMi-WebUI projecthami/hami-webui hami-webui
+
+require_failure "unlinked GHCR publication target" \
+  env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" MOCK_WEBUI_PACKAGE_UNLINKED=true \
+  bash "${release_dir}/verify-image-publication-targets.sh" \
+    Project-HAMi/HAMi-WebUI projecthami/hami-webui hami-webui
 
 PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" \
   bash "${release_dir}/preflight-publication.sh" \
     "${preflight_bundle}" Project-HAMi/HAMi-WebUI "${pages}" \
     https://project-hami.github.io/HAMi-WebUI
-[[ "$(grep -c '@sha256:' "${mock_log}")" == "4" ]]
-[[ "$(grep -c ':v9.9.9' "${mock_log}")" == "4" ]]
+[[ "$(grep -c '@sha256:' "${mock_log}")" == "2" ]]
+[[ "$(grep -c ':v9.9.9' "${mock_log}")" == "2" ]]
 
 require_failure "private OCI parent package" \
   env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" MOCK_OCI_PACKAGE_PRIVATE=true \
@@ -496,7 +615,7 @@ rm -f "${tag_state}"
 PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" \
   MOCK_TAG_STATE="${tag_state}" MOCK_TAG_SHA="${release_sha}" \
   bash "${release_dir}/reserve-release-tag.sh" \
-    Project-HAMi/HAMi-WebUI v1.2.1 "${release_sha}"
+    Project-HAMi/HAMi-WebUI v2.0.1 "${release_sha}"
 [[ "$(cat "${tag_state}")" == "${release_sha}" ]]
 [[ "$(grep -c -- '--method POST' "${mock_log}")" == "1" ]]
 
@@ -504,7 +623,7 @@ PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" \
 PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" \
   MOCK_TAG_STATE="${tag_state}" MOCK_TAG_SHA="${release_sha}" \
   bash "${release_dir}/reserve-release-tag.sh" \
-    Project-HAMi/HAMi-WebUI v1.2.1 "${release_sha}"
+    Project-HAMi/HAMi-WebUI v2.0.1 "${release_sha}"
 if grep -q -- '--method POST' "${mock_log}"; then
   echo "existing exact release tag was created again" >&2
   exit 1
@@ -515,7 +634,7 @@ require_failure "conflicting release tag" \
   env PATH="${mock_bin}:${PATH}" MOCK_LOG="${mock_log}" \
   MOCK_TAG_STATE="${tag_state}" MOCK_TAG_SHA="${release_sha}" \
   bash "${release_dir}/reserve-release-tag.sh" \
-    Project-HAMi/HAMi-WebUI v1.2.1 "${release_sha}"
+    Project-HAMi/HAMi-WebUI v2.0.1 "${release_sha}"
 
 rm -f "${tag_state}"
 require_failure "release tag creation rejected by ruleset" \
@@ -523,7 +642,7 @@ require_failure "release tag creation rejected by ruleset" \
   MOCK_TAG_STATE="${tag_state}" MOCK_TAG_SHA="${release_sha}" \
   MOCK_TAG_CREATE_FAIL=true \
   bash "${release_dir}/reserve-release-tag.sh" \
-    Project-HAMi/HAMi-WebUI v1.2.1 "${release_sha}"
+    Project-HAMi/HAMi-WebUI v2.0.1 "${release_sha}"
 
 # Recheck the tag and exact draft asset set immediately before the final
 # publication mutation. A stale target_commitish is not sufficient when a tag

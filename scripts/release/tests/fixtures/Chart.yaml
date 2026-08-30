@@ -2,8 +2,8 @@ apiVersion: v2
 name: hami-webui
 description: Release contract fixture
 type: application
-version: 1.2.0
-appVersion: "1.2.0"
+version: 2.0.0
+appVersion: "2.0.0"
 dependencies:
   - name: fixture
     version: 1.0.0

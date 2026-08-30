@@ -14,7 +14,7 @@ ghcr_repository="${5:?GHCR repository is required}"
 output_path="${6:?output path is required}"
 
 release_validate_commit "${source_sha}"
-[[ "${component}" == "frontend" || "${component}" == "backend" ]] || \
+[[ "${component}" == "webui" ]] || \
   release_die "unexpected image component: ${component}"
 [[ "${candidate_tag}" == candidate-* ]] || release_die "candidate tag must start with candidate-"
 
