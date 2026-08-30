@@ -92,9 +92,6 @@ importers:
       vue-i18n:
         specifier: '9'
         version: 9.14.5(vue@3.5.25(typescript@5.9.3))
-      vue-native-websocket-vue3:
-        specifier: ^3.1.7
-        version: 3.1.8(core-js@3.47.0)(vue@3.5.25(typescript@5.9.3))
       vue-router:
         specifier: ^4.0.3
         version: 4.6.4(vue@3.5.25(typescript@5.9.3))
@@ -2951,12 +2948,6 @@ packages:
     resolution: {integrity: sha512-0jQ9Em3ymWngyiIkj0+c/k7WgaPO+TNzjKSNq9BvBQaKJECqn9cd9fL4tkDhB5G1QBskGl9YxxbDAhgbFtpe2g==}
     engines: {node: '>= 16'}
     peerDependencies:
-      vue: ^3.0.0
-
-  vue-native-websocket-vue3@3.1.8:
-    resolution: {integrity: sha512-Ck5g//zndFvFWlddhWeKTbbe4wbbZBegMMf49XLrhc3+hHlfBLn2xDC7wsEb0uMFCfiXGiQEqzfl8YQ8qBQeIQ==}
-    peerDependencies:
-      core-js: ^3.6.5
       vue: ^3.0.0
 
   vue-router@4.6.4:
@@ -6138,12 +6129,6 @@ snapshots:
       '@intlify/core-base': 9.14.5
       '@intlify/shared': 9.14.5
       '@vue/devtools-api': 6.6.4
-      vue: 3.5.25(typescript@5.9.3)
-
-  vue-native-websocket-vue3@3.1.8(core-js@3.47.0)(vue@3.5.25(typescript@5.9.3)):
-    dependencies:
-      core-js: 3.47.0
-      file-entry-cache: 6.0.1
       vue: 3.5.25(typescript@5.9.3)
 
   vue-router@4.6.4(vue@3.5.25(typescript@5.9.3)):
