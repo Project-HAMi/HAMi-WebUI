@@ -186,7 +186,8 @@ export const getTopOptions = ({ core, memory }) => {
       right: '4%',
       bottom: '1%',
       top: '10%',
-      containLabel: true,
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel',
     },
     xAxis: {
       type: 'value',

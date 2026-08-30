@@ -493,7 +493,8 @@ const nodeWorkloadDistributionOptions = computed(() => {
       right: 25,
       top: 20,
       bottom: 8,
-      containLabel: true,
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel',
     },
     xAxis: {
       type: 'category',

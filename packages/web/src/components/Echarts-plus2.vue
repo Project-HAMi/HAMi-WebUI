@@ -4,7 +4,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
-import * as echarts from 'echarts';
+import { init as initEcharts } from '@/plugins/echarts';
 
 const props = defineProps({
   options: Object,
@@ -26,7 +26,7 @@ watch(
 );
 
 onMounted(() => {
-  echartsed.value = echarts.init(echartsRef.value);
+  echartsed.value = initEcharts(echartsRef.value);
   nextTick(() => {
     resizeObserver.observe(echartsRef.value);
   });

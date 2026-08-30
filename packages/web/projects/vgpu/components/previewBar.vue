@@ -6,9 +6,11 @@
         class="nodeCard"
       >
         <div class="pie">
-          <echarts-plus
-            :options="getPreviewBarPie(pieData, props)"
-            :onClick="handlePieClick"
+          <VChart
+            ref="pieChartRef"
+            :option="getPreviewBarPie(pieData, props)"
+            :autoresize="true"
+            @click="onPieClick"
           />
         </div>
 
@@ -52,9 +54,9 @@
 
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
-import EchartsPlus from '@/components/Echarts-plus.vue';
 import { getPreviewBarPie } from '~/vgpu/components/config';
 import { onMounted, ref, computed } from 'vue';
+import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import { buildGroupedResourceTopQueries } from '~/vgpu/metrics/query-contract.mjs';
@@ -73,6 +75,11 @@ const props = defineProps({
 });
 import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
+const pieChartRef = ref();
+
+const onPieClick = (params) => {
+  props.handlePieClick?.(params, pieChartRef.value);
+};
 
 const isNodeType = computed(() => props.type === 'node');
 const resourceTopQueries = computed(() =>
