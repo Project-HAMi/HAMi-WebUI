@@ -27,7 +27,8 @@ jobs:
           filters: |
             chart:
               - 'charts/**'
-              - 'scripts/verify-chart.sh'
+              - 'scripts/chart/**'
+              - 'scripts/verify-chart*.sh'
               - '.github/workflows/pr-chart.yaml'
 
   verify:
@@ -51,11 +52,54 @@ jobs:
       - name: Verify chart
         run: bash scripts/verify-chart.sh
 
+  upgrade:
+    name: Chart 1.3 upgrade and rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: changes
+    if: needs.changes.outputs.chart == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build current unified image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          target: unified
+          platforms: linux/amd64
+          load: true
+          tags: hami-webui:chart-upgrade-smoke
+          cache-from: type=gha,scope=chart-upgrade
+          cache-to: type=gha,mode=max,scope=chart-upgrade
+      - name: Install pinned Kind
+        shell: bash
+        run: |
+          set -euo pipefail
+          kind_version=v0.27.0
+          kind_sha256=a6875aaea358acf0ac07786b1a6755d08fd640f4c79b7a2e46681cc13f49a04b
+          kind_bin="${RUNNER_TEMP}/bin/kind"
+          mkdir -p "$(dirname "${kind_bin}")"
+          curl --fail --silent --show-error --location \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${kind_version}/kind-linux-amd64" \
+            --output "${kind_bin}"
+          echo "${kind_sha256}  ${kind_bin}" | sha256sum --check
+          chmod 0755 "${kind_bin}"
+          dirname "${kind_bin}" >>"${GITHUB_PATH}"
+      - name: Verify upgrade and rollback contract
+        run: bash scripts/verify-chart-upgrade.sh hami-webui chart-upgrade-smoke
+
   pr-chart-required:
     runs-on: ubuntu-latest
     needs:
       - changes
       - verify
+      - upgrade
     if: always()
     steps:
       - name: Aggregate chart check results
@@ -70,6 +114,10 @@ jobs:
           fi
           if [[ "${{ needs.verify.result }}" != "success" ]]; then
             echo "Chart checks did not complete successfully: ${{ needs.verify.result }}"
+            exit 1
+          fi
+          if [[ "${{ needs.upgrade.result }}" != "success" ]]; then
+            echo "Chart upgrade checks did not complete successfully: ${{ needs.upgrade.result }}"
             exit 1
           fi
           echo "All chart checks passed."

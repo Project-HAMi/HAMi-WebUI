@@ -1,0 +1,183 @@
+# Complete values from the post-v1.3 Chart 1 transition immediately before the
+# Chart 2 migration. Keep this fixture intact: it exercises every removed
+# Chart 1 key and proves that reusing an old values set fails with one actionable
+# migration error instead of silently rendering a mixed Pod.
+
+replicaCount: 1
+
+vendorNodeSelectors:
+  NVIDIA: gpu=on
+  Ascend: ascend=on
+  DCU: dcu=on
+  MLU: mlu=on
+  Metax: metax-tech.com/gpu.installed=true
+
+image:
+  frontend:
+    repository: projecthami/hami-webui-fe-oss
+    pullPolicy: IfNotPresent
+    tag: "v1.3.0"
+    digest: "sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e"
+  backend:
+    repository: projecthami/hami-webui-be-oss
+    pullPolicy: IfNotPresent
+    tag: "v1.3.0"
+    digest: "sha256:7057047c7c2f7838cd190b3dc7263d503bbcf5d8e52642bc703227d137bc029d"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 3000
+  legacyBackendPort: true
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+
+resources:
+  frontend:
+    limits:
+      cpu: 200m
+      memory: 500Mi
+    requests:
+      cpu: 200m
+      memory: 500Mi
+  backend:
+    limits:
+      cpu: 50m
+      memory: 250Mi
+    requests:
+      cpu: 50m
+      memory: 250Mi
+
+env:
+  frontend:
+    - name: TZ
+      value: "Asia/Shanghai"
+  backend:
+    - name: TZ
+      value: "Asia/Shanghai"
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  honorLabels: false
+  additionalLabels:
+    jobRelease: hami-webui-prometheus
+  relabelings: []
+
+hamiServiceMonitor:
+  enabled: true
+  interval: 15s
+  honorLabels: true
+  additionalLabels:
+    jobRelease: hami-webui-prometheus
+  svcNamespace: kube-system
+  relabelings: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+dcgm-exporter:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    honorLabels: false
+    additionalLabels:
+      jobRelease: hami-webui-prometheus
+  nodeSelector:
+    gpu: "on"
+
+kube-prometheus-stack:
+  enabled: false
+  crds:
+    enabled: false
+  defaultRules:
+    create: false
+  alertmanager:
+    enabled: false
+  grafana:
+    enabled: false
+  kubernetesServiceMonitors:
+    enabled: false
+  nodeExporter:
+    enabled: false
+  kube-state-metrics:
+    prometheus:
+      monitor:
+        additionalLabels:
+          jobRelease: hami-webui-prometheus
+  prometheusOperator:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      serviceMonitorSelector:
+        matchLabels:
+          jobRelease: hami-webui-prometheus
+
+externalPrometheus:
+  enabled: false
+  address: "http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"
+  timeout: "1m"
+  tls:
+    insecureSkipVerify: false
+    serverName: ""
+    existingSecret: ""
+    caKey: ""
+    certKey: ""
+    keyKey: ""
+
+frontend:
+  basePath: "/"
+  frameAncestors: null
+  proxyTimeout: "65s"
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 1
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+backend:
+  http:
+    timeout: "60s"
+  grpc:
+    timeout: "60s"
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 60
+
+metricsExporter:
+  interval: "30s"
+  timeout: "60s"

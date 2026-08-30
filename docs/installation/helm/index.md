@@ -2,11 +2,13 @@
 
 This topic includes instructions for installing and running HAMi-WebUI on Kubernetes using Helm Charts.
 
-The WebUI can only be accessed by your localhost, so you need to connect your localhost to the cluster by configuring `~/.kube/config` 
+The examples below use `kubectl port-forward` for local access. Configure
+`~/.kube/config` so `kubectl` and Helm can reach the target cluster.
 
 [Helm](https://helm.sh/) is an open-source command line tool used for managing Kubernetes applications. It is a graduate project in the [CNCF Landscape](https://www.cncf.io/projects/helm/).
 
-The HAMi-WebUI open-source community offers Helm Charts for running it on Kubernetes. Please be aware that the code is provided without any warranties. If you encounter any problems, you can report them to the [Official GitHub repository](https://github.com/hami-webui/helm-charts/).
+The HAMi-WebUI community publishes a Helm chart for Kubernetes. Report problems
+in the [HAMi-WebUI repository](https://github.com/Project-HAMi/HAMi-WebUI/issues).
 
 ## Prerequisites
 
@@ -57,7 +59,63 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
    kubectl get pods -n kube-system | grep webui
    ```
 
-   You should get the expected both 'hami-webui' and 'hami-webui-dcgm-exporter' in running state if installation is successful.
+   By default, a successful Chart 2 installation has one Ready HAMi-WebUI Pod;
+   every HAMi-WebUI Pod contains one application container. When the bundled
+   dcgm-exporter is enabled, its DaemonSet schedules Pods on nodes matching its
+   node selector.
+
+### Upgrade from Chart 1.3 to 2.0
+
+Chart 2 replaces the Chart 1.x frontend/backend image pair with one application
+image and one container. This is an intentional major-version boundary: do not
+pass a Chart 1.x values file to Chart 2 and do not use `--reuse-values`.
+
+First save the values and revision used by the current release:
+
+```bash
+helm get values my-hami-webui --namespace kube-system --output yaml > values-v1-backup.yaml
+helm history my-hami-webui --namespace kube-system
+```
+
+Create a new `values-v2.yaml` from the Chart 2 defaults, then copy only the
+settings you still need. Chart 2 supports external Prometheus and TLS settings,
+ServiceMonitor labels, Ingress, scheduling, security contexts,
+`frontend.basePath`, and `frontend.frameAncestors`; copy only settings that are
+actually present in your deployment.
+
+Do not copy these Chart 1.x settings:
+
+- `image.frontend` or `image.backend`; configure the flat `image` value;
+- `resources.frontend` or `resources.backend`; choose one `resources` budget;
+- `env.frontend` or `env.backend`; use the single `env` list;
+- container-specific probes; use the top-level `probes` settings; or
+- `frontend.proxyTimeout`, `backend.grpc`, or `service.legacyBackendPort`, which
+  no longer apply to the in-process API and single-container Service topology.
+
+After Chart 2.0.0 is published, upgrade with Helm defaults reset so removed
+values cannot leak from release history:
+
+```bash
+helm upgrade my-hami-webui hami-webui/hami-webui \
+  --namespace kube-system \
+  --version 2.0.0 \
+  --reset-values \
+  --values values-v2.yaml \
+  --wait
+```
+
+Chart 2 rejects known Chart 1.x value shapes instead of silently ignoring them.
+If rollback is needed, restore the complete previous Helm revision—not an old
+frontend or backend image inside the Chart 2 Pod:
+
+```bash
+helm rollback my-hami-webui <CHART-1-REVISION> \
+  --namespace kube-system \
+  --wait
+```
+
+That rollback restores the Chart 1.3 templates, values, and two-image runtime
+together. Use `--reset-values` again when moving forward to Chart 2.
 
 ### HTTPS external Prometheus
 
@@ -85,8 +143,8 @@ externalPrometheus:
 When Prometheus requires mutual TLS, add the client certificate and key to the
 same Secret and configure `certKey` and `keyKey` together. `serverName` is
 available when certificate verification must use a name different from the URL
-host. Secret contents are mounted only into the backend container; they are not
-copied into the rendered ConfigMap.
+host. Secret contents are mounted only into the HAMi-WebUI application
+container; they are not copied into the rendered ConfigMap.
 
 `insecureSkipVerify: true` remains available only as an explicit temporary
 escape hatch. It disables certificate-chain and host-name verification and
@@ -124,48 +182,40 @@ If the same Prometheus selects both this chart's ServiceMonitor and HAMi's
 built-in device-plugin ServiceMonitor (`prometheus.enabled` in the HAMi chart),
 the endpoint is scraped twice. Configure that Prometheus to select only one.
 
-### Backend service boundary
+### Single-container service boundary
 
-HAMi-WebUI exposes the supported browser API through the same-origin Web entry
-on the primary Service. The backend listener on port `8000` also serves raw API,
-`/readyz`, `/metrics`, and Swagger endpoints, so the chart creates a separate
-ClusterIP Service with a generated `*-backend` name (for example,
-`my-hami-webui-backend`) for backend discovery and Prometheus scraping.
+Chart 2 runs the SPA, browser API, metrics collector, and Kubernetes providers
+in one Go process and one container. The process keeps two listeners:
 
-For Chart 1.x upgrade compatibility, the primary Service still includes port
-`8000` by default. The port is deprecated and can be removed from the primary
-Service without affecting WebUI traffic or the included ServiceMonitor:
+- port `3000` is exposed by the primary Service and is the supported browser
+  entry for the SPA and `/api/vgpu/v1/*`;
+- port `8000` is exposed only through the generated internal `*-backend`
+  ClusterIP Service for `/readyz`, `/metrics`, and diagnostics.
 
-```yaml
-service:
-  legacyBackendPort: false
-```
+The port `8000` listener also contains implementation-level API and Swagger
+routes. It is not a public compatibility contract or an authorization boundary.
+The primary Service no longer exposes it, and Chart 2 removes
+`service.legacyBackendPort`.
 
-Set this to `false` for `NodePort` and `LoadBalancer` Services unless an existing
-integration still connects directly to the raw backend. Move in-cluster clients
-to the generated backend Service on port `8000`. For local diagnostics, forward
-that Service instead of changing the primary Service type:
+For local diagnostics, forward the internal Service instead of changing the
+primary Service type:
 
 ```bash
 kubectl port-forward service/my-hami-webui-backend 8000:8000 --namespace=kube-system
 ```
 
-Use NetworkPolicy or an equivalent cluster policy when backend access must also
-be restricted inside the cluster; a ClusterIP Service is a discovery boundary,
-not an authorization boundary.
+ClusterIP controls discovery and exposure through the primary Service; it does
+not by itself authorize callers inside the cluster.
 
-The included ServiceMonitor now selects only the backend Service, so retaining
-the compatibility port does not double-scrape Pods. It preserves the existing
-Prometheus `job` label through an explicit Service label; the generated `service`
-target label changes to the generated backend Service name. Update custom rules
-that match `service` before upgrading.
+The included ServiceMonitor selects only the internal Service and preserves the
+existing Prometheus `job` label through an explicit Service label. The generated
+`service` target label is the generated internal Service name. Update custom
+rules that match `service` before upgrading.
 
 Custom ServiceMonitors that still select the primary Service—whether by
 `component: hami-webui` or only the common name and instance labels—and port
-`metrics` must move to `component: backend` and port `backend-http`. Otherwise
-they can duplicate the included ServiceMonitor while the compatibility port is
-enabled, and stop finding a target when it is disabled. The compatibility port
-will be removed from the primary Service in Chart 2.0.0.
+`metrics` must move to `component: backend` and port `backend-http`; otherwise
+they no longer find a target in Chart 2.
 
 ### Access HAMi-WebUI
 
@@ -201,8 +251,7 @@ It is important to view the HAMi-WebUI server logs while troubleshooting any iss
 To check the HAMi-WebUI logs, run the following command:
 
 ```bash
-kubectl logs --namespace=hami deploy/my-hami-webui -c hami-webui-fe-oss
-kubectl logs --namespace=hami deploy/my-hami-webui -c hami-webui-be-oss
+kubectl logs --namespace=kube-system deployment/my-hami-webui
 ```
 
 For more information about accessing Kubernetes application logs, refer to [Pods](https://kubernetes.io/docs/reference/kubectl/cheatsheet/#interacting-with-running-pods) and [Deployments](https://kubernetes.io/docs/reference/kubectl/cheatsheet/#interacting-with-deployments-and-services).
@@ -212,16 +261,11 @@ For more information about accessing Kubernetes application logs, refer to [Pods
 
 To uninstall the HAMi-WebUI deployment, run the command:
 
-`helm uninstall <RELEASE-NAME> <NAMESPACE-NAME>`
+`helm uninstall <RELEASE-NAME> --namespace <NAMESPACE-NAME>`
 
 ```bash
-helm uninstall my-hami-webui -n hami
+helm uninstall my-hami-webui --namespace kube-system
 ```
 
-This deletes all of the objects from the given namespace hami.
-
-If you want to delete the namespace `hami`, then run the command:
-
-```bash
-kubectl delete namespace hami
-```
+This deletes the objects managed by that Helm release. It does not delete the
+namespace.

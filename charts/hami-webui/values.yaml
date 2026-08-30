@@ -12,21 +12,16 @@ vendorNodeSelectors:
   Metax: metax-tech.com/gpu.installed=true
 
 image:
-  frontend:
-    repository: projecthami/hami-webui-fe-oss
-    pullPolicy: IfNotPresent
-    # Overrides the image tag whose default is the chart appVersion (CI uses the git tag name).
-    tag: "v1.3.0"
-    # When set, digest takes precedence over tag and renders repository@digest.
-    digest: "sha256:b40bbec2b963932545a8b7ac15efef3ec087c76dce4da0ea4c3659fa2abd695e"
-  backend:
-    repository: projecthami/hami-webui-be-oss
-    pullPolicy: IfNotPresent
-    tag: "v1.3.0"
-    # When set, digest takes precedence over tag and renders repository@digest.
-    digest: "sha256:7057047c7c2f7838cd190b3dc7263d503bbcf5d8e52642bc703227d137bc029d"
+  repository: projecthami/hami-webui
+  pullPolicy: IfNotPresent
+  # Overrides the image tag. When empty, a semantic chart appVersion uses its
+  # matching v-prefixed release tag (with '+' mapped to '_', as OCI tags do not
+  # allow '+'); other appVersions are used unchanged.
+  tag: "main"
+  # When set, digest takes precedence over tag and renders repository@digest.
+  digest: ""
 
-# Image pull secrets used by both containers in the WebUI Pod.
+# Image pull secrets used by the WebUI Pod.
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
@@ -57,11 +52,6 @@ securityContext: {}
 service:
   type: ClusterIP
   port: 3000
-  # Chart 1.x compatibility only. Port 8000 exposes the raw backend API,
-  # readiness, metrics, and Swagger endpoints through the primary Service.
-  # Disable it when only the supported Web entry should be reachable.
-  # This option is deprecated and will be removed in Chart 2.0.0.
-  legacyBackendPort: true
 
 ingress:
   enabled: false
@@ -80,38 +70,16 @@ ingress:
   #      - chart-example.local
 
 resources:
-  frontend:
-    limits:
-      cpu: 200m
-      memory: 500Mi
-    requests:
-      cpu: 200m
-      memory: 500Mi
-  backend:
-    limits:
-      cpu: 50m
-      memory: 250Mi
-    requests:
-      cpu: 50m
-      memory: 250Mi
-    # We usually recommend not to specify default resources and to leave this as a conscious
-    # choice for the user. This also increases chances charts run on environments with little
-    # resources, such as Minikube. If you do want to specify resources, uncomment the following
-    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-    # limits:
-    #   cpu: 100m
-    #   memory: 128Mi
-    # requests:
-    #   cpu: 100m
-    #   memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 750Mi
+  requests:
+    cpu: 250m
+    memory: 750Mi
 
 env:
-  frontend:
-    - name: TZ
-      value: "Asia/Shanghai"
-  backend:
-    - name: TZ
-      value: "Asia/Shanghai"
+  - name: TZ
+    value: "Asia/Shanghai"
 
 serviceMonitor:
   enabled: true
@@ -195,8 +163,7 @@ externalPrometheus:
     certKey: ""
     keyKey: ""
 
-# Web-entry runtime settings and health probes. The probes report the frontend
-# container's own health; backend readiness is gated separately below.
+# Public Web-entry runtime settings.
 frontend:
   # Public URL prefix served by the official Go Web entry. Keep the Ingress
   # path identical and do not configure the proxy to strip this prefix.
@@ -206,46 +173,35 @@ frontend:
   # non-empty list allows only the listed origins. The first release accepts
   # only "'self'" and exact http(s) origins.
   frameAncestors: null
-  # Keep this longer than backend.http.timeout so the backend owns normal API
-  # deadline responses. The previous Node frontend safely ignores this value.
-  proxyTimeout: "65s"
-  # /health_check reports whether the Web entry itself can serve traffic. It is
-  # intentionally independent from backend readiness; the backend probe below
-  # still keeps the Pod out of Service endpoints until informer caches sync.
-  livenessProbe:
-    enabled: true
-    initialDelaySeconds: 5
-    periodSeconds: 10
-    timeoutSeconds: 3
-    failureThreshold: 6
-  readinessProbe:
-    enabled: true
-    initialDelaySeconds: 1
-    periodSeconds: 5
-    timeoutSeconds: 3
-    failureThreshold: 3
 
-# Kratos server timeouts. These bound the deadline placed on each incoming HTTP/gRPC
-# request context. They no longer affect /metrics generation (which runs in the background),
-# but they still gate the page-side APIs, some of which legitimately take a few seconds
-# against a large Prometheus / VictoriaMetrics cluster.
+# Kratos API timeout. This bounds each incoming API request context without
+# affecting background metric collection.
 backend:
   http:
     timeout: "60s"
-  grpc:
-    timeout: "60s"
-  # Readiness probe on the backend's /readyz. The backend only starts listening
-  # after its k8s informer caches have synced, so gating the pod on /readyz keeps
-  # it out of the Service until the backend can serve — this prevents the Web entry
-  # from hitting "connection refused" against the not-yet-listening backend
-  # during startup. failureThreshold * periodSeconds should comfortably exceed the
-  # worst-case informer sync time on a large cluster.
-  readinessProbe:
+
+# The unified process starts both listeners only after Kubernetes informer
+# caches have synced. The startup budget allows five minutes for that initial
+# sync; subsequent probes verify the public Web entry.
+probes:
+  startup:
     enabled: true
-    initialDelaySeconds: 5
+    initialDelaySeconds: 0
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 60
+  readiness:
+    enabled: true
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    enabled: true
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 6
 
 # Background /metrics collector. The collector runs independently of Prometheus scrape;
 # scrapes only serialize the in-memory registry, so they are O(1) and immune to scrape
@@ -256,9 +212,6 @@ metricsExporter:
   # Hard cap on a single refresh cycle. Should be >= externalPrometheus.timeout and < interval * 2.
   timeout: "60s"
 
-# The frontend axios client timeout (default 60000ms) is compiled into the JS
-# bundle at image build time from the VITE_APP_REQUEST_TIMEOUT env var. To
-# change it for a deployed cluster you need to rebuild packages/web with a
-# different VITE_APP_REQUEST_TIMEOUT
-# (set in packages/web/.env.production before building the frontend image). It
-# cannot be tuned through this values.yaml.
+# The browser API timeout (default 60000ms) is compiled into the JavaScript
+# bundle from VITE_APP_REQUEST_TIMEOUT. Changing it requires rebuilding the
+# unified image; it cannot be tuned through this values file.

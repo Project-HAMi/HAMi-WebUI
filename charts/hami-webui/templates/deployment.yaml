@@ -1,42 +1,29 @@
+{{- include "hami-webui.validateChart2Values" . -}}
 {{- $podAnnotations := mergeOverwrite (dict) (default (dict) .Values.podAnnotations) (dict "checksum/config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum)) -}}
-{{- $frontendEnv := default (list) .Values.env.frontend -}}
+{{- $env := default (list) .Values.env -}}
 {{- $frontendSettings := default (dict) .Values.frontend -}}
 {{- include "hami-webui.validatePrometheusTLS" . -}}
 {{- $externalPrometheus := default (dict) .Values.externalPrometheus -}}
 {{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
 {{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
 {{- $mountPrometheusTLS := and (get $externalPrometheus "enabled") (ne $prometheusTLSSecret "") -}}
-{{- $frontendProxyTimeoutOverridden := false -}}
-{{- $frontendBasePathOverridden := false -}}
-{{- $frontendFrameAncestorsOverridden := false -}}
-{{- range $frontendEnv -}}
-{{- if eq (get . "name") "HAMI_WEBUI_PROXY_TIMEOUT" -}}
-{{- $frontendProxyTimeoutOverridden = true -}}
-{{- end -}}
+{{- $basePathOverridden := false -}}
+{{- $frameAncestorsOverridden := false -}}
+{{- range $env -}}
 {{- if eq (get . "name") "HAMI_WEBUI_BASE_PATH" -}}
-{{- $frontendBasePathOverridden = true -}}
+{{- $basePathOverridden = true -}}
 {{- end -}}
 {{- if eq (get . "name") "HAMI_WEBUI_FRAME_ANCESTORS_JSON" -}}
-{{- $frontendFrameAncestorsOverridden = true -}}
+{{- $frameAncestorsOverridden = true -}}
 {{- end -}}
 {{- end -}}
-{{- $basePathConfigured := hasKey $frontendSettings "basePath" -}}
-{{- $basePath := get $frontendSettings "basePath" -}}
-{{- if and (not $frontendBasePathOverridden) $basePathConfigured (ne (toJson $basePath) "null") (not (kindIs "string" $basePath)) -}}
-{{- fail "frontend.basePath must be a string" -}}
-{{- end -}}
+{{- $basePath := default "/" (get $frontendSettings "basePath") -}}
 {{- $frameAncestorsConfigured := hasKey $frontendSettings "frameAncestors" -}}
 {{- $frameAncestors := get $frontendSettings "frameAncestors" -}}
-{{- if and (not $frontendFrameAncestorsOverridden) $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") (not (kindIs "slice" $frameAncestors)) -}}
-{{- fail "frontend.frameAncestors must be null or a list" -}}
-{{- end -}}
-{{- if and (not $frontendFrameAncestorsOverridden) (kindIs "slice" $frameAncestors) -}}
-{{- range $source := $frameAncestors -}}
-{{- if not (kindIs "string" $source) -}}
-{{- fail "frontend.frameAncestors entries must be strings" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
+{{- $probes := default (dict) .Values.probes -}}
+{{- $startupProbe := default (dict) (get $probes "startup") -}}
+{{- $readinessProbe := default (dict) (get $probes "readiness") -}}
+{{- $livenessProbe := default (dict) (get $probes "liveness") -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,87 +54,62 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: {{ .Chart.Name }}-fe-oss
+        - name: hami-webui
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: {{ include "hami-webui.image" (dict "name" "frontend" "image" .Values.image.frontend "appVersion" .Chart.AppVersion) | quote }}
-          imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          image: {{ include "hami-webui.image" (dict "image" .Values.image "appVersion" .Chart.AppVersion) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            {{- if not $frontendProxyTimeoutOverridden }}
-            - name: HAMI_WEBUI_PROXY_TIMEOUT
-              value: {{ default "65s" (get (default (dict) .Values.frontend) "proxyTimeout") | quote }}
-            {{- end }}
-            {{- if not $frontendBasePathOverridden }}
+            {{- if not $basePathOverridden }}
             - name: HAMI_WEBUI_BASE_PATH
-              value: {{ default "/" $basePath | quote }}
+              value: {{ $basePath | quote }}
             {{- end }}
-            {{- if and (not $frontendFrameAncestorsOverridden) $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") }}
+            {{- if and (not $frameAncestorsOverridden) $frameAncestorsConfigured (ne (toJson $frameAncestors) "null") }}
             - name: HAMI_WEBUI_FRAME_ANCESTORS_JSON
               value: {{ toJson $frameAncestors | quote }}
             {{- end }}
-            {{- with $frontendEnv }}
+            {{- with $env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
             - name: http
               containerPort: 3000
               protocol: TCP
-          {{- with .Values.frontend }}
-          {{- with .livenessProbe }}
-          {{- if .enabled }}
+            - name: metrics
+              containerPort: 8000
+              protocol: TCP
+          {{- if (get $startupProbe "enabled") }}
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: {{ default 0 (get $startupProbe "initialDelaySeconds") }}
+            periodSeconds: {{ default 5 (get $startupProbe "periodSeconds") }}
+            timeoutSeconds: {{ default 3 (get $startupProbe "timeoutSeconds") }}
+            failureThreshold: {{ default 60 (get $startupProbe "failureThreshold") }}
+          {{- end }}
+          {{- if (get $readinessProbe "enabled") }}
+          readinessProbe:
+            httpGet:
+              path: /health_check
+              port: http
+            initialDelaySeconds: {{ default 0 (get $readinessProbe "initialDelaySeconds") }}
+            periodSeconds: {{ default 5 (get $readinessProbe "periodSeconds") }}
+            timeoutSeconds: {{ default 3 (get $readinessProbe "timeoutSeconds") }}
+            failureThreshold: {{ default 3 (get $readinessProbe "failureThreshold") }}
+          {{- end }}
+          {{- if (get $livenessProbe "enabled") }}
           livenessProbe:
             httpGet:
               path: /health_check
               port: http
-            initialDelaySeconds: {{ .initialDelaySeconds }}
-            periodSeconds: {{ .periodSeconds }}
-            timeoutSeconds: {{ .timeoutSeconds }}
-            failureThreshold: {{ .failureThreshold }}
-          {{- end }}
-          {{- end }}
-          {{- with .readinessProbe }}
-          {{- if .enabled }}
-          readinessProbe:
-            httpGet:
-              path: /health_check
-              port: http
-            initialDelaySeconds: {{ .initialDelaySeconds }}
-            periodSeconds: {{ .periodSeconds }}
-            timeoutSeconds: {{ .timeoutSeconds }}
-            failureThreshold: {{ .failureThreshold }}
-          {{- end }}
-          {{- end }}
+            initialDelaySeconds: {{ default 0 (get $livenessProbe "initialDelaySeconds") }}
+            periodSeconds: {{ default 10 (get $livenessProbe "periodSeconds") }}
+            timeoutSeconds: {{ default 3 (get $livenessProbe "timeoutSeconds") }}
+            failureThreshold: {{ default 6 (get $livenessProbe "failureThreshold") }}
           {{- end }}
           resources:
-            {{- toYaml .Values.resources.frontend | nindent 12 }}
-        - name: {{ .Chart.Name }}-be-oss
-          securityContext:
-                  {{- toYaml .Values.securityContext | nindent 12 }}
-          image: {{ include "hami-webui.image" (dict "name" "backend" "image" .Values.image.backend "appVersion" .Chart.AppVersion) | quote }}
-          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
-          env:
-            {{- toYaml .Values.env.backend | nindent 12 }}
-          ports:
-            - name: metrics
-              containerPort: 8000
-              protocol: TCP
-          command:
-            - "/apps/server"
-          args:
-            - "--conf"
-            - "/apps/config/config.yaml"
-          {{- if .Values.backend.readinessProbe.enabled }}
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: metrics
-            initialDelaySeconds: {{ .Values.backend.readinessProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.backend.readinessProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.backend.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.backend.readinessProbe.failureThreshold }}
-          {{- end }}
-          resources:
-            {{- toYaml .Values.resources.backend | nindent 12 }}
+            {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /apps/config/

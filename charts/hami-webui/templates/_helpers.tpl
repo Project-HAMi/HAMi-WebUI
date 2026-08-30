@@ -7,20 +7,23 @@ Expand the name of the chart.
 
 {{/*
 Render an image reference. A verified manifest digest takes precedence over a
-mutable tag; tag remains the backwards-compatible default for normal installs.
+mutable tag.
 */}}
 {{- define "hami-webui.image" -}}
-{{- $repository := required (printf "image.%s.repository is required" .name) .image.repository -}}
+{{- $repository := required "image.repository is required" .image.repository -}}
 {{- $digest := default "" .image.digest -}}
 {{- if $digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
-{{- fail (printf "image.%s.digest must be a sha256 digest" .name) -}}
+{{- fail "image.digest must be a sha256 digest" -}}
 {{- end -}}
 {{- printf "%s@%s" $repository $digest -}}
 {{- else -}}
 {{- $appVersion := required "Chart.appVersion is required when an image digest is not set" .appVersion -}}
-{{- $defaultTag := ternary $appVersion (printf "v%s" $appVersion) (hasPrefix "v" $appVersion) -}}
-{{- $tag := default $defaultTag .image.tag -}}
+{{- $fallbackTag := $appVersion -}}
+{{- if regexMatch "^[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$" $appVersion -}}
+{{- $fallbackTag = printf "v%s" (replace "+" "_" $appVersion) -}}
+{{- end -}}
+{{- $tag := default $fallbackTag .image.tag -}}
 {{- printf "%s:%s" $repository $tag -}}
 {{- end -}}
 {{- end -}}
@@ -154,20 +157,35 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Keep the Chart 1.x backend port when the value is absent from reused values.
-Do not use Helm's default function here: an explicit false is considered empty.
+Reject Chart 1.x split-container values as one actionable migration error.
+The schema intentionally permits these shapes so Helm does not mask this
+message before template evaluation.
 */}}
-{{- define "hami-webui.legacyBackendPortEnabled" -}}
-{{- $serviceSettings := default (dict) .Values.service -}}
-{{- $legacyBackendPort := true -}}
-{{- if hasKey $serviceSettings "legacyBackendPort" -}}
-{{- $configuredLegacyBackendPort := get $serviceSettings "legacyBackendPort" -}}
-{{- if not (kindIs "bool" $configuredLegacyBackendPort) -}}
-{{- fail "service.legacyBackendPort must be a boolean" -}}
+{{- define "hami-webui.validateChart2Values" -}}
+{{- $legacy := list -}}
+{{- $sections := dict
+      "image" (list "frontend" "backend")
+      "resources" (list "frontend" "backend")
+      "env" (list "frontend" "backend")
+      "frontend" (list "proxyTimeout" "livenessProbe" "readinessProbe")
+      "backend" (list "grpc" "readinessProbe")
+      "service" (list "legacyBackendPort") -}}
+{{- range $sectionName, $keys := $sections -}}
+{{- $section := get $.Values $sectionName -}}
+{{- if kindIs "map" $section -}}
+{{- range $key := $keys -}}
+{{- if hasKey $section $key -}}
+{{- $legacy = append $legacy (printf "%s.%s" $sectionName $key) -}}
 {{- end -}}
-{{- $legacyBackendPort = $configuredLegacyBackendPort -}}
 {{- end -}}
-{{- $legacyBackendPort -}}
+{{- end -}}
+{{- end -}}
+{{- if $legacy -}}
+{{- fail (printf "HAMi-WebUI Chart 2.0 no longer accepts Chart 1.x split-container values: %s. Migrate to the flat image, resources, env, and probes settings; when upgrading from Chart 1.x, create a fresh Chart 2 values file and pass it together with --reset-values" (join ", " (sortAlpha $legacy))) -}}
+{{- end -}}
+{{- if not (kindIs "slice" .Values.env) -}}
+{{- fail "env must be a list of Kubernetes environment variables" -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

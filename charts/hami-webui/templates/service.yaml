@@ -1,4 +1,4 @@
-{{- $legacyBackendPort := eq (include "hami-webui.legacyBackendPortEnabled" .) "true" -}}
+{{- include "hami-webui.validateChart2Values" . -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,12 +14,6 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    {{- if $legacyBackendPort }}
-    - port: 8000
-      targetPort: metrics
-      protocol: TCP
-      name: metrics
-    {{- end }}
   selector:
     {{- include "hami-webui.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: "hami-webui"
