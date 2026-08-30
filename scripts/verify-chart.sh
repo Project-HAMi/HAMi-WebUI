@@ -38,6 +38,26 @@ service_port_names() {
 web_service_render="$(render_template templates/service.yaml)"
 backend_service_render="$(render_template templates/backend-service.yaml)"
 service_monitor_render="$(render_template templates/servicemonitor.yaml)"
+default_deployment_render="$(render_template templates/deployment.yaml)"
+
+if grep -Fq '      imagePullSecrets:' <<<"${default_deployment_render}"; then
+  echo "An empty imagePullSecrets value must not render a Pod field" >&2
+  exit 1
+fi
+
+private_registry_deployment_render="$(render_template templates/deployment.yaml \
+  --set-string 'imagePullSecrets[0].name=private-registry' \
+  --set-string 'imagePullSecrets[1].name=backup-registry')"
+image_pull_secrets_block="$(awk '
+  /^      imagePullSecrets:$/ { in_secrets = 1; print; next }
+  in_secrets && /^        - name:/ { print; next }
+  in_secrets { exit }
+' <<<"${private_registry_deployment_render}")"
+expected_image_pull_secrets_block=$'      imagePullSecrets:\n        - name: private-registry\n        - name: backup-registry'
+if [[ "${image_pull_secrets_block}" != "${expected_image_pull_secrets_block}" ]]; then
+  echo "Configured imagePullSecrets were not rendered on the WebUI Pod" >&2
+  exit 1
+fi
 
 if [[ "$(service_port_names <<<"${web_service_render}")" != $'http\nmetrics' ]]; then
   echo "Primary Service must preserve the Chart 1.x backend compatibility port by default" >&2
