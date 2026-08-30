@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { chromium } from 'playwright'
 
+import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -188,12 +189,17 @@ async function loadAllowedFrame(parentURL, expectedFrameURL, { checkAPI = false 
       referencedSymbolTag: referencedSymbol?.tagName.toLowerCase(),
       renderedHeight: renderedBox?.height ?? 0,
       renderedWidth: renderedBox?.width ?? 0,
+      symbolIDs,
       symbolCount: symbolIDs.length,
       uniqueSymbolCount: new Set(symbolIDs).size
     }
   })
   assert.equal(svgSprite.present, true, 'SVG sprite root was not registered')
-  assert.equal(svgSprite.symbolCount, 210, 'SVG sprite is missing source icons')
+  assert.deepEqual(
+    [...svgSprite.symbolIDs].sort(),
+    [...expectedIconIds].sort(),
+    'SVG sprite does not match the retained icon catalog'
+  )
   assert.equal(
     svgSprite.uniqueSymbolCount,
     svgSprite.symbolCount,
