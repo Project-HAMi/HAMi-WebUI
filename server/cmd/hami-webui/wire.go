@@ -22,7 +22,7 @@ func initApp(configPath string, web webConfig, ctx context.Context) (*kratos.App
 		internal.ProviderSet,
 		data.ProviderSet,
 		biz.ProviderSet,
-		server.ProviderSet,
+		server.NewHTTPServer,
 		service.ProviderSet,
 		exporter.ProviderSet,
 		newWebServer,
