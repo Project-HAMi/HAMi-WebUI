@@ -14,7 +14,7 @@ service Card {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "显卡列表";
+      summary: "List accelerators";
     };
   }
 
@@ -24,7 +24,7 @@ service Card {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "显卡类型";
+      summary: "List accelerator types";
     };
   }
 
@@ -33,7 +33,7 @@ service Card {
       get: "/v1/gpu"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "显卡详情";
+      summary: "Get accelerator details";
     };
   }
 }
