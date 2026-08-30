@@ -197,6 +197,54 @@ func TestDeviceMemoryQueriesConvertVendorUnitsToMiB(t *testing.T) {
 	}
 }
 
+func TestDeviceAdditionalInfoKeepsUnknownDriverVersionEmpty(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     string
+		metric       map[string]string
+		wantQuery    string
+		wantDeviceNo string
+	}{
+		{
+			name:         "Ascend",
+			provider:     biz.AscendGPUDevice,
+			metric:       map[string]string{"id": "7"},
+			wantQuery:    `npu_chip_info_power{vdie_id="device-1"}`,
+			wantDeviceNo: "ascend-7",
+		},
+		{
+			name:         "Hygon",
+			provider:     biz.HygonGPUDevice,
+			metric:       map[string]string{"minor_number": "3"},
+			wantQuery:    `dcu_power_usage{device_id="device-1"}`,
+			wantDeviceNo: "dcu-3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			querier := &fakeInstantQuerier{responses: []*pb.InstantResponse{{
+				Data: []*pb.Sample{{Metric: tt.metric}},
+			}}}
+			generator := &MetricsGenerator{monitorService: querier}
+
+			info, err := generator.queryDeviceAdditional(context.Background(), tt.provider, "device-1")
+			if err != nil {
+				t.Fatalf("queryDeviceAdditional() error = %v", err)
+			}
+			if len(querier.queries) != 1 || querier.queries[0] != tt.wantQuery {
+				t.Fatalf("queries = %q, want [%q]", querier.queries, tt.wantQuery)
+			}
+			if info.DriverVersion != "" {
+				t.Fatalf("driver version = %q, want empty", info.DriverVersion)
+			}
+			if info.DeviceNo != tt.wantDeviceNo {
+				t.Fatalf("device number = %q, want %q", info.DeviceNo, tt.wantDeviceNo)
+			}
+		})
+	}
+}
+
 func TestGenerateDeviceMetricsSeparatesPhysicalAndSchedulableMemory(t *testing.T) {
 	const (
 		deviceID      = "GPU-physical-contract"
