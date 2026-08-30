@@ -150,7 +150,7 @@
       </div>
     </section>
 
-    <trend-time-filter v-model="times" />
+    <TrendTimeFilter v-model="times" />
 
     <div class="line-box">
       <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
@@ -186,6 +186,8 @@
 
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
+import EllipsisText from '@/components/EllipsisText.vue';
+import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
@@ -419,7 +421,7 @@ const detailColumns = computed(() => [
     label: t('node.detail.nodeUuid'),
     value: 'uid',
     render: ({ uid }) => (
-      <ellipsis-text text={uid || '--'} mode="middle" tooltip="always" />
+      <EllipsisText text={uid || '--'} mode="middle" tooltip="always" />
     ),
   },
   {

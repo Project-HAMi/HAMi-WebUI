@@ -193,7 +193,7 @@
       </ul>
     </block-box>
 
-    <trend-time-filter v-model="times" />
+    <TrendTimeFilter v-model="times" />
     <div class="line-box">
       <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
         <div class="trend-chart">
@@ -284,6 +284,7 @@
 
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
+import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { RouterLink, useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';

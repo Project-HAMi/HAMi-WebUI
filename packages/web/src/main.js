@@ -12,7 +12,6 @@ import '@/styles/index.scss'; // global css
 import installIcons from '@/icons';
 import Message from '@/components/Message/index.js';
 import Confirm from '@/components/Confirm/index.js';
-import components from '@/components';
 import '@/styles/element/index.scss';
 
 import i18n from '@/locales';
@@ -22,7 +21,5 @@ app.use(i18n);
 installElementPlus(app);
 installTDesign(app);
 installIcons(app);
-
-app.use(components);
 
 app.use(store).use(router).use(Confirm).use(Message).mount('#app');

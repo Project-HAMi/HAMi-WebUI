@@ -38,7 +38,7 @@
             </div>
             <div class="basic-info-card">
               <div class="basic-info-card-title node-link" @click="handleNodeJump">
-                <ellipsis-text :text="detail.nodeName || '--'" mode="middle" tooltip="always" />
+                <EllipsisText :text="detail.nodeName || '--'" mode="middle" tooltip="always" />
                 <svg-icon icon="jump" />
               </div>
               <div class="basic-info-card-sub-title">{{ $t('task.node') }}</div>
@@ -88,13 +88,13 @@
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.podName') }}</span>
               <span class="summary-item-value">
-                <ellipsis-text :text="detail.appName || '--'" mode="middle" tooltip="always" />
+                <EllipsisText :text="detail.appName || '--'" mode="middle" tooltip="always" />
               </span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
               <span class="summary-item-value">
-                <ellipsis-text :text="detail.name || '--'" mode="middle" tooltip="always" />
+                <EllipsisText :text="detail.name || '--'" mode="middle" tooltip="always" />
               </span>
             </div>
             <div class="summary-item">
@@ -166,7 +166,7 @@
     </div>
   </block-box>
 
-  <trend-time-filter
+  <TrendTimeFilter
     v-if="supportsTaskMonitoring"
     v-model="times"
   />
@@ -192,6 +192,8 @@
 
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
+import EllipsisText from '@/components/EllipsisText.vue';
+import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import { useRoute, useRouter } from 'vue-router';
 import { ref, watch, computed } from 'vue';
