@@ -6,10 +6,11 @@
     "lint": "eslint --ext .js,.mjs,.vue build src test vite.config.js",
     "build": "vite build",
     "dev": "vite",
-    "test": "pnpm run test:dev-proxy && pnpm run test:svg-icons && pnpm run test:echarts-runtime && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
+    "test": "pnpm run test:dev-proxy && pnpm run test:svg-icons && pnpm run test:echarts-runtime && pnpm run test:i18n && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
     "test:dev-proxy": "node --test test/vite-dev-proxy.contract.test.mjs",
     "test:svg-icons": "node --test test/svg-icons-plugin.test.mjs",
     "test:echarts-runtime": "node --test test/echarts-runtime.test.mjs",
+    "test:i18n": "node --test test/locale-resolution.test.mjs",
     "test:metrics": "node --test src/hooks/request-state.test.mjs projects/vgpu/components/tab-top-state.test.mjs projects/vgpu/hooks/detail-resource-state.test.mjs projects/vgpu/hooks/use-detail-resource.test.mjs projects/vgpu/hooks/instant-vector-state.test.mjs projects/vgpu/hooks/range-vector-query-state.test.mjs projects/vgpu/metrics/query-contract.test.mjs projects/vgpu/metrics/range-vector-state.test.mjs projects/vgpu/metrics/tooltip-html.test.mjs projects/vgpu/views/monitor/overview/metric-config.test.mjs projects/vgpu/views/monitor/overview/overview-state.test.mjs projects/vgpu/views/monitor/overview/workload-distribution.test.mjs projects/vgpu/views/card/admin/allocation-percent.test.mjs",
     "test:workload": "node --test projects/vgpu/views/task/admin/workload-identity.test.mjs",
     "test:ui-contracts": "node --test projects/vgpu/views/card/admin/node-detail-location.test.mjs"

@@ -677,6 +677,36 @@ test('runtime base path and framing policy work in Chromium', async(t) => {
   })
 }, { timeout: 120_000 })
 
+test('browser language selects English without leaking active Chinese UI text', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+
+  try {
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('.lang-text').filter({ hasText: 'English' }).waitFor()
+
+    const requestsCard = page.locator('.task-top-box .home-block').nth(1)
+    await requestsCard.locator('.title')
+      .filter({ hasText: 'Workload Requests Top5' })
+      .waitFor()
+    await requestsCard.locator('.t-radio-button')
+      .filter({ hasText: 'vGPU' })
+      .click()
+    const value = requestsCard.locator('.tab-top-value').first()
+    await value.waitFor()
+    assert.equal((await value.textContent()).trim(), '0.4 slots')
+
+    await page.goto(`${target}${basePath}401`, { waitUntil: 'domcontentloaded' })
+    await page.getByText('You do not have permission to access this page').waitFor()
+    assert.equal((await page.locator('body').textContent()).includes('gif来源'), false)
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
 test('detail pages expose truthful asynchronous resource states', async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
 

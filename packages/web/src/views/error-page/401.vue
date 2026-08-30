@@ -6,7 +6,6 @@
     <el-row>
       <el-col :span="12">
         <h1 class="text-jumbo text-ginormous">{{ $t('error.401.oops') }}</h1>
-        gif来源<a href="https://zh.airbnb.com/" target="_blank">airbnb</a> 页面
         <h2>{{ $t('error.401.noPermission') }}</h2>
         <h6>{{ $t('error.401.contactLeader') }}</h6>
         <ul class="list-unstyled">
