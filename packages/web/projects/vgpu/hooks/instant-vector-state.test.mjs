@@ -8,6 +8,7 @@ import {
   PARSED_QUERY_STATUS,
   readInstantValue,
   readReadyMetricField,
+  resetMetricQueryState,
   restoreMetricState,
   requiresMetricCapacity,
   resolveMetricStatus,
@@ -72,6 +73,47 @@ test('detail values only expose ready samples while preserving a real zero', () 
     ),
     undefined,
   );
+});
+
+test('an unresolved identity clears samples from the previous query', () => {
+  const config = {
+    count: 0,
+    used: 0,
+    total: 100,
+    percent: 0,
+    data: [],
+  };
+  const metric = {
+    ...config,
+    count: 42,
+    used: 42,
+    total: 80,
+    percent: 52.5,
+    data: [[1, 42]],
+    hasData: true,
+    totalHasData: true,
+    status: METRIC_STATUS.READY,
+    hasResolved: true,
+    refreshing: true,
+    error: new Error('stale'),
+    refreshError: new Error('stale refresh'),
+    requestId: 3,
+  };
+
+  resetMetricQueryState(metric, config, {
+    requestId: 4,
+    status: METRIC_STATUS.LOADING,
+  });
+
+  assert.deepEqual(metric, {
+    ...config,
+    status: METRIC_STATUS.LOADING,
+    hasResolved: false,
+    refreshing: false,
+    error: null,
+    refreshError: null,
+    requestId: 4,
+  });
 });
 
 test('percentages require a finite positive capacity', () => {

@@ -7,7 +7,10 @@
   >
     <template #titleSuffix>
       <ElPopover
-        v-if="detail.status === 'unknown' || detail.status === 'failed'"
+        v-if="
+          detailStatus === REQUEST_STATUS.READY &&
+          (detail.status === 'unknown' || detail.status === 'failed')
+        "
         placement="top"
         trigger="hover"
         popper-style="width: 180px"
@@ -21,6 +24,8 @@
       </ElPopover>
     </template>
   </page-header>
+
+  <detail-page-state :status="detailStatus" @retry="retryDetail">
 
   <div class="task-top">
     <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block">
@@ -162,14 +167,14 @@
   </block-box>
 
   <trend-time-filter
-    v-if="detail.type && (detail.type.startsWith('NVIDIA') || detail.type.startsWith('MXC'))"
+    v-if="supportsTaskMonitoring"
     v-model="times"
   />
 
   <div class="task-trend-row">
     <block-box v-for="{ title, data } in lineConfigView" :key="title" :title="title">
       <div class="trend-chart">
-        <template v-if="detail.type && !detail.type.startsWith('NVIDIA') && !detail.type.startsWith('MXC')">
+        <template v-if="primaryDeviceType && !supportsTaskMonitoring">
           <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
         </template>
         <template v-else>
@@ -182,12 +187,14 @@
       </div>
     </block-box>
   </div>
+  </detail-page-state>
 </template>
 
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import { useRoute, useRouter } from 'vue-router';
-import { onMounted, ref, watch, computed } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { Tooltip as TTooltip } from 'tdesign-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 
@@ -203,13 +210,40 @@ import VChart from 'vue-echarts';
 import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
 import { METRIC_STATUS } from '~/vgpu/hooks/instant-vector-state.mjs';
+import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
+import useDetailResource from '~/vgpu/hooks/useDetailResource';
 
 const route = useRoute();
 const router = useRouter();
 const { t, locale } = useI18n();
 
-const detail = ref({});
-const workloadDisplayName = computed(() => formatWorkloadName(detail.value));
+const normalizeRouteQuery = (value) => {
+  const normalized = Array.isArray(value) ? value[0] : value;
+  return typeof normalized === 'string' ? normalized.trim() : '';
+};
+const requestedIdentity = computed(() => ({
+  name: normalizeRouteQuery(route.query.name),
+  podUid: normalizeRouteQuery(route.query.podUid),
+}));
+const {
+  data: detail,
+  status: detailStatus,
+  retry: retryDetail,
+} = useDetailResource({
+  source: requestedIdentity,
+  isValidSource: ({ name, podUid } = {}) => Boolean(name && podUid),
+  request: ({ name, podUid }) => taskApi.getTaskDetail({ name, podUid }),
+  classify: (payload, identity) => classifyDetailPayload(payload, {
+    identityKeys: ['name', 'podUid'],
+    expectedIdentity: identity,
+  }),
+});
+const workloadDisplayName = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY
+    ? formatWorkloadName(detail.value)
+    : requestedIdentity.value.name || '--'
+));
 const nodeUid = ref('');
 const cardTypeById = ref({});
 
@@ -243,6 +277,18 @@ const getStatusDisplay = (status) => {
 
 const safeDeviceIds = computed(() => (
   Array.isArray(detail.value?.deviceIds) ? detail.value.deviceIds : []
+));
+const primaryDeviceType = computed(() => {
+  const primaryDeviceId = safeDeviceIds.value[0];
+  return (
+    (primaryDeviceId && cardTypeById.value?.[primaryDeviceId]) ||
+    detail.value?.type ||
+    ''
+  );
+});
+const supportsTaskMonitoring = computed(() => (
+  primaryDeviceType.value.startsWith('NVIDIA') ||
+  primaryDeviceType.value.startsWith('MXC')
 ));
 const gpuModelList = computed(() => {
   if (!safeDeviceIds.value.length) return [];
@@ -334,11 +380,13 @@ const resourceOverviewData = useInstantVector(
         `count(kube_pod_container_info{namespace="$namespace", pod=~"$pod", container="$container"})`,
     },
   ],
-  (query) =>
-    query
+  (query) => {
+    if (detailStatus.value !== REQUEST_STATUS.READY) return 'undefined';
+    return query
       .replaceAll(`$container`, detail.value.name || '')
       .replaceAll(`$namespace`, detail.value.namespace || '')
-      .replaceAll(`$pod`, detail.value.appName || ''),
+      .replaceAll(`$pod`, detail.value.appName || '');
+  },
 );
 const toNumOrUndefined = (v) => {
   const n = Number(v);
@@ -396,7 +444,11 @@ const lineConfig = ref([
   },
 ]);
 
-const headerStatusDisplay = computed(() => getStatusDisplay(detail.value?.status));
+const headerStatusDisplay = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY
+    ? getStatusDisplay(detail.value?.status)
+    : { text: '', icon: '' }
+));
 
 const lineConfigView = computed(() =>
   lineConfig.value.map((item) => ({
@@ -405,63 +457,114 @@ const lineConfigView = computed(() =>
   })),
 );
 
+let lineRequestGeneration = 0;
+const clearLineData = () => {
+  lineConfig.value.forEach((item) => {
+    item.data = [];
+  });
+};
 const fetchLineData = async () => {
+  const generation = ++lineRequestGeneration;
+  if (
+    detailStatus.value !== REQUEST_STATUS.READY ||
+    !supportsTaskMonitoring.value
+  ) {
+    clearLineData();
+    return;
+  }
 
-  lineConfig.value.map((item, index) =>
-    cardApi
-      .getRangeVector({
+  const { name, namespace, appName } = detail.value;
+  const [rangeStart, rangeEnd] = times.value || [];
+  if (!name || !namespace || !appName || !rangeStart || !rangeEnd) {
+    clearLineData();
+    return;
+  }
+
+  const results = await Promise.all(lineConfig.value.map(async (item) => {
+    try {
+      const res = await cardApi.getRangeVector({
         range: {
-          start: timeParse(times.value[0]),
-          end: timeParse(times.value[1]),
-          step: calculatePrometheusStep(times.value[0], times.value[1]),
+          start: timeParse(rangeStart),
+          end: timeParse(rangeEnd),
+          step: calculatePrometheusStep(rangeStart, rangeEnd),
         },
         query: item.query
-          .replaceAll(`$container`, detail.value.name)
-          .replaceAll(`$namespace`, detail.value.namespace)
-          .replaceAll(`$pod`, detail.value.appName),
-      })
-      .then((res) => {
-        lineConfig.value[index].data = res.data[0]?.values || [];
-      }),
-  );
+          .replaceAll(`$container`, name)
+          .replaceAll(`$namespace`, namespace)
+          .replaceAll(`$pod`, appName),
+      });
+      return { ok: true, data: res.data[0]?.values || [] };
+    } catch {
+      return { ok: false };
+    }
+  }));
+
+  if (
+    generation !== lineRequestGeneration ||
+    detailStatus.value !== REQUEST_STATUS.READY
+  ) return;
+
+  results.forEach((result, index) => {
+    if (result.ok) lineConfig.value[index].data = result.data;
+  });
 };
 
-watch(detail, async () => {
-  fetchLineData();
-});
+watch(
+  [detailStatus, detail, times, primaryDeviceType],
+  () => {
+    void fetchLineData();
+  },
+  { deep: true, immediate: true },
+);
 
-watch(times, () => {
-  fetchLineData();
-});
+let enrichmentGeneration = 0;
+watch(
+  [detailStatus, detail],
+  ([status, currentDetail]) => {
+    const generation = ++enrichmentGeneration;
+    nodeUid.value = '';
+    cardTypeById.value = {};
+    if (status !== REQUEST_STATUS.READY) return;
 
-onMounted(async () => {
-  const { name, podUid } = route.query;
-  detail.value = await taskApi.getTaskDetail({ name, podUid });
-  const cards = await cardApi.getCardListReq({filters: {}});
-  cardTypeById.value = (cards.list || []).reduce((acc, item) => {
-    if (item?.uuid) acc[item.uuid] = item?.type || '--';
-    if (item?.id) acc[item.id] = item?.type || '--';
-    return acc;
-  }, {});
-  const foundCard = cards.list.find((item) => item.uuid === detail.value.deviceIds[0]);
-  if (foundCard) {
-    detail.value.type = foundCard.type;
-  }
+    const isCurrent = () => (
+      generation === enrichmentGeneration &&
+      detailStatus.value === REQUEST_STATUS.READY &&
+      detail.value?.name === currentDetail?.name &&
+      detail.value?.podUid === currentDetail?.podUid
+    );
 
-  const initialNodeUid = detail.value.nodeUid || detail.value.node_uid || '';
-  nodeUid.value = initialNodeUid;
+    nodeUid.value = currentDetail.nodeUid || currentDetail.node_uid || '';
 
-  const nodeName = detail.value.nodeName || detail.value.node_name || '';
-  if (!nodeUid.value && nodeName) {
-    try {
-      const { list = [] } = await nodeApi.getNodes({ filters: {} });
-      const node = list.find((item) => item?.name === nodeName);
-      nodeUid.value = node?.uid || '';
-    } catch {
-      nodeUid.value = '';
+    void (async () => {
+      try {
+        const cards = await cardApi.getCardListReq({ filters: {} });
+        if (!isCurrent()) return;
+        cardTypeById.value = (cards.list || []).reduce((acc, item) => {
+          if (item?.uuid && item?.type) acc[item.uuid] = item.type;
+          if (item?.id && item?.type) acc[item.id] = item.type;
+          return acc;
+        }, {});
+      } catch {
+        // Device enrichment is optional; keep the core detail usable.
+      }
+    })();
+
+    const nodeName = currentDetail.nodeName || currentDetail.node_name || '';
+    if (!nodeUid.value && nodeName) {
+      void (async () => {
+        try {
+          const { list = [] } = await nodeApi.getNodes({ filters: {} });
+          if (!isCurrent()) return;
+          const node = list.find((item) => item?.name === nodeName);
+          nodeUid.value = node?.uid || '';
+        } catch {
+          // Node enrichment is optional; keep the core detail usable.
+        }
+      })();
     }
-  }
-});
+  },
+  { deep: true, immediate: true },
+);
 </script>
 
 <style scoped lang="scss">

@@ -2,10 +2,11 @@
   <div>
     <page-header
       :title="$t('card.detail.title')"
-      :name="detail.uuid"
+      :name="headerName"
       :status="headerStatusDisplay.text"
       :status-icon="headerStatusDisplay.icon"
     />
+    <detail-page-state :status="detailStatus" @retry="retryDetail">
     <block-box class="node-block">
       <div class="card-detail">
         <div class="card-detail-left">
@@ -277,7 +278,7 @@
         </div>
       </block-box>
     </div>
-
+    </detail-page-state>
   </div>
 </template>
 
@@ -285,10 +286,14 @@
 import PageHeader from '@/components/PageHeader.vue';
 import { RouterLink, useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
-import { onMounted, ref, watch, computed } from 'vue';
+import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import { ref, watch, computed } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
+import useDetailResource from '~/vgpu/hooks/useDetailResource.js';
+import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
@@ -307,7 +312,29 @@ import { buildNodeDetailLocation } from './node-detail-location.mjs';
 const route = useRoute();
 const { t } = useI18n();
 
-const detail = ref({});
+const routeCardUuid = computed(() => route.params.uuid);
+const {
+  data: detail,
+  status: detailStatus,
+  retry: retryDetail,
+} = useDetailResource({
+  source: routeCardUuid,
+  request: (uuid) => cardApi.getCardDetail({ uid: uuid }),
+  classify: (payload, uuid) =>
+    classifyDetailPayload(payload, {
+      identityKeys: ['uuid'],
+      expectedIdentity: { uuid },
+    }),
+});
+const isDetailReady = computed(
+  () => detailStatus.value === REQUEST_STATUS.READY,
+);
+const detailCardUuid = computed(() =>
+  isDetailReady.value ? detail.value.uuid : undefined,
+);
+const headerName = computed(() =>
+  isDetailReady.value ? detail.value.uuid : routeCardUuid.value || '',
+);
 const nodeUid = ref('');
 const nodeDetailLocation = computed(() =>
   buildNodeDetailLocation({
@@ -345,7 +372,11 @@ const getCardStatusDisplay = ({ health, isExternal }) => {
   }
   return { icon: 'status-unschedulable', text: t('card.abnormal') };
 };
-const headerStatusDisplay = computed(() => getCardStatusDisplay(detail.value || {}));
+const headerStatusDisplay = computed(() =>
+  isDetailReady.value
+    ? getCardStatusDisplay(detail.value || {})
+    : { icon: '', text: '' },
+);
 
 const end = new Date();
 const start = new Date();
@@ -420,7 +451,7 @@ const _gaugeConfigBase = [
 
 const gaugeData = useInstantVector(
   _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
-  (query) => query.replaceAll(`$device_uuid`, route.params.uuid),
+  (query) => query.replaceAll(`$device_uuid`, detailCardUuid.value),
   times,
 );
 
@@ -554,62 +585,95 @@ const lineToolsView = computed(() =>
   })),
 );
 
+let lineRequestGeneration = 0;
+const resetLineData = () => {
+  lineTools.value.forEach((item) => {
+    item.data = [];
+    item.percent = undefined;
+  });
+};
+
 const fetchLineData = async () => {
-  lineTools.value.map((item, index) => {
-    cardApi
+  const generation = ++lineRequestGeneration;
+  const uuid = detailCardUuid.value;
+  if (!uuid) {
+    resetLineData();
+    return;
+  }
+
+  const requests = lineTools.value.flatMap((item, index) => {
+    const query = item.query.replaceAll(`$device_uuid`, uuid);
+    const rangeRequest = cardApi
       .getRangeVector({
         range: {
           start: timeParse(times.value[0]),
           end: timeParse(times.value[1]),
           step: calculatePrometheusStep(times.value[0], times.value[1]),
         },
-        query: item.query.replaceAll(`$device_uuid`, route.params.uuid),
+        query,
       })
       .then((res) => {
-        const first = res.data?.[0];
-        const metric = first?.metric;
-        if (metric) {
-          const { device_no, driver_version } = metric;
-          if (device_no && driver_version) {
-            detail.value = { ...detail.value, device_no, driver_version };
-          }
-        }
-        lineTools.value[index].data = first?.values || [];
+        if (generation !== lineRequestGeneration) return;
+        lineTools.value[index].data = res.data?.[0]?.values || [];
+      })
+      .catch(() => {
+        if (generation !== lineRequestGeneration) return;
+        lineTools.value[index].data = [];
       });
 
-    cardApi
-      .getInstantVector({
-        query: item.query.replaceAll(`$device_uuid`, route.params.uuid),
-      })
+    const instantRequest = cardApi
+      .getInstantVector({ query })
       .then((res) => {
+        if (generation !== lineRequestGeneration) return;
         lineTools.value[index].percent = res.data?.[0]?.value;
+      })
+      .catch(() => {
+        if (generation !== lineRequestGeneration) return;
+        lineTools.value[index].percent = undefined;
       });
+
+    return [rangeRequest, instantRequest];
   });
+
+  await Promise.all(requests);
 };
 
-onMounted(async () => {
-  const res = await cardApi.getCardDetail({ uid: route.params.uuid });
-  detail.value = { ...detail.value, ...res };
+let nodeEnrichmentGeneration = 0;
+watch(
+  () => [
+    detailStatus.value,
+    detail.value?.uuid,
+    detail.value?.nodeUid,
+    detail.value?.node_uid,
+    detail.value?.nodeName,
+  ],
+  async ([status, , directNodeUid, legacyNodeUid, nodeName]) => {
+    const generation = ++nodeEnrichmentGeneration;
+    nodeUid.value = '';
+    if (status !== REQUEST_STATUS.READY) return;
 
-  nodeUid.value = res?.nodeUid || res?.node_uid || '';
-  if (!nodeUid.value && res?.nodeName) {
+    const resolvedNodeUid = directNodeUid || legacyNodeUid || '';
+    if (resolvedNodeUid) {
+      nodeUid.value = resolvedNodeUid;
+      return;
+    }
+    if (!nodeName) return;
+
     try {
       const { list = [] } = await nodeApi.getNodes({ filters: {} });
-      const node = list.find((item) => item?.name === res.nodeName);
+      if (generation !== nodeEnrichmentGeneration) return;
+      const node = list.find((item) => item?.name === nodeName);
       nodeUid.value = node?.uid || '';
     } catch {
-      nodeUid.value = '';
+      if (generation === nodeEnrichmentGeneration) {
+        nodeUid.value = '';
+      }
     }
-  }
-});
-
-watch(
-  times,
-  () => {
-    fetchLineData();
   },
   { immediate: true },
 );
+
+watch([times, detailCardUuid], fetchLineData, { immediate: true });
 </script>
 
 <style scoped lang="scss">
