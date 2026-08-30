@@ -5,6 +5,7 @@ import {
   formatRangeTooltipValue,
   normalizeRangeValues,
 } from '../../../metrics/range-vector-state.mjs';
+import { formatCardTypeTooltip } from '../../../metrics/tooltip-html.mjs';
 import nodeApi from '~/vgpu/api/node';
 import { MessagePlugin } from 'tdesign-vue-next';
 import i18n from '@/locales';
@@ -326,8 +327,7 @@ export const getCardOptions = (list, chartWidth) => {
       confine: true,
       formatter: (params) => {
         const unit = i18n.global.t('common.unitSheet');
-        const suffix = unit ? ` ${unit}` : '';
-        return `${params.name}: ${params.value}${suffix}`;
+        return formatCardTypeTooltip(params, unit);
       },
     },
     color: CARD_PIE_COLORS,
