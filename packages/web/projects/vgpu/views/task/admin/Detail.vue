@@ -202,6 +202,7 @@ import { getLineOptions } from '~/vgpu/components/config';
 import VChart from 'vue-echarts';
 import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
+import { METRIC_STATUS } from '~/vgpu/hooks/instant-vector-state.mjs';
 
 const route = useRoute();
 const router = useRouter();
@@ -355,7 +356,7 @@ const resourceOverviewTexts = computed(() => {
       const value = toNumOrUndefined(metric.count);
       return value === undefined ? '--' : formatter(value);
     }
-    if (metric?.hasData === false && hasContainerInfo) {
+    if (metric?.status === METRIC_STATUS.MISSING && hasContainerInfo) {
       return t('common.notLimited');
     }
     return '--';

@@ -15,7 +15,7 @@
             </RouterLink>
           </template>
           <div class="card-overview">
-            <div v-for="item in cardGaugeConfig" :key="item.title">
+            <div v-for="item in cardGaugeConfig" :key="item.id">
               <Gauge v-bind="item" />
             </div>
           </div>
@@ -206,8 +206,8 @@ import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
 import {
-  createComputeUsageGaugeConfig,
   createNodeAllocationTopQueries,
+  createOverviewGaugeConfigs,
 } from './metric-config.mjs';
 
 const router = useRouter();
@@ -389,58 +389,7 @@ const fetchNodeWorkloadDistribution = () => {
     });
 };
 
-// Use a base config object for non-reactive parts or keep useInstantVector
-// But useInstantVector likely returns a ref. We need to update titles.
-// Since useInstantVector is a custom hook, let's see if we can wrap the titles in computed or update them.
-// For simplicity in this refactor without changing the hook, let's update the titles in a watcher or computed wrapper.
-// Actually, let's just redefine the config inside a computed that returns the full object if the hook allows,
-// OR better: let the hook run once, and we wrap the result to override titles.
-// However, useInstantVector likely executes queries.
-// Let's use the existing `cardGaugeConfig` but update its titles reactively.
-
-const _cardGaugeConfig = useInstantVector([
-  {
-    title: 'vgpuAllocRate', // Use keys here
-    percent: 0,
-    query: `avg(sum (hami_container_vgpu_allocated) by (instance))`,
-    totalQuery: `avg(sum (hami_vgpu_count) by (instance))`,
-    percentQuery: `avg(sum (hami_container_vgpu_allocated) by (instance))/avg(sum (hami_vgpu_count) by (instance)) *100`,
-    total: 0,
-    used: 0,
-    unit: t('common.unitCount'),
-  },
-  {
-    title: 'computeAllocRate',
-    percent: 0,
-    query: `avg(sum(hami_container_vcore_allocated) by (instance))`,
-    totalQuery: `avg(sum(hami_core_size) by (instance))`,
-    percentQuery: `avg(sum(hami_container_vcore_allocated) by (instance))/avg(sum(hami_core_size) by (instance)) *100`,
-    total: 0,
-    used: 0,
-    unit: ' ',
-  },
-  {
-    title: 'memAllocRate',
-    percent: 0,
-    query: `avg(sum(hami_container_vmemory_allocated) by (instance)) / 1024`,
-    totalQuery: `avg(sum(hami_memory_size) by (instance)) / 1024`,
-    percentQuery: `(avg(sum(hami_container_vmemory_allocated) by (instance)) / 1024 )/(avg(sum(hami_memory_size) by (instance)) / 1024) *100 `,
-    total: 0,
-    used: 0,
-    unit: 'GiB',
-  },
-  createComputeUsageGaugeConfig(),
-  {
-    title: 'memUsageRate',
-    percent: 0,
-    query: `avg(sum(hami_memory_used) by (instance)) / 1024`,
-    totalQuery: `avg(sum(hami_memory_size) by (instance))/1024`,
-    percentQuery: `(avg(sum(hami_memory_used) by (instance)) / 1024)/(avg(sum(hami_memory_size) by (instance))/1024)*100`,
-    total: 0,
-    used: 0,
-    unit: 'GiB',
-  },
-]);
+const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs());
 
 const clusterResourceConfig = useInstantVector([
   {
@@ -456,9 +405,15 @@ const clusterResourceConfig = useInstantVector([
 ]);
 
 const cardGaugeConfig = computed(() => {
-  return _cardGaugeConfig.value.map(item => ({
+  return _cardGaugeConfig.value.map((item) => ({
     ...item,
-    title: t(`dashboard.${item.title}`)
+    title: t(item.titleKey),
+    description: t(item.descriptionKey),
+    detailLabel: t(item.detailLabelKey),
+    unit: item.unitKey ? t(item.unitKey) : item.unit,
+    metricHelpLabel: t('dashboard.metricHelpLabel', {
+      metric: t(item.titleKey),
+    }),
   }));
 });
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createComputeUsageGaugeConfig,
   createNodeAllocationTopQueries,
+  createOverviewGaugeConfigs,
 } from './metric-config.mjs';
 
 test('compute utilization is treated as an already-normalized percentage', () => {
@@ -13,6 +14,72 @@ test('compute utilization is treated as an already-normalized percentage', () =>
   assert.equal(config.totalQuery, undefined);
   assert.match(config.query, /hami_core_util/);
   assert.equal((41 / config.total) * 100, 41);
+});
+
+test('overview gauges declare display semantics independently of translated titles', () => {
+  const configs = createOverviewGaugeConfigs();
+
+  assert.deepEqual(
+    configs.map(({ titleKey, detailMode, displayDivisor = 1 }) => ({
+      titleKey,
+      detailMode,
+      displayDivisor,
+    })),
+    [
+      {
+        titleKey: 'dashboard.vgpuAllocRate',
+        detailMode: 'ratio',
+        displayDivisor: 1,
+      },
+      {
+        titleKey: 'dashboard.computeAllocRate',
+        detailMode: 'ratio',
+        displayDivisor: 100,
+      },
+      {
+        titleKey: 'dashboard.memAllocRate',
+        detailMode: 'ratio',
+        displayDivisor: 1,
+      },
+      {
+        titleKey: 'dashboard.computeUsageRate',
+        detailMode: 'value',
+        displayDivisor: 1,
+      },
+      {
+        titleKey: 'dashboard.memUsageRate',
+        detailMode: 'ratio',
+        displayDivisor: 1,
+      },
+    ],
+  );
+});
+
+test('allocation gauges preserve their current capacity contracts', () => {
+  const [vgpu, compute, memory] = createOverviewGaugeConfigs();
+
+  assert.match(vgpu.totalQuery, /hami_vgpu_count/);
+  assert.match(compute.totalQuery, /hami_core_size/);
+  assert.doesNotMatch(compute.totalQuery, /hami_vcore_size/);
+  assert.match(memory.totalQuery, /hami_memory_size/);
+  assert.doesNotMatch(memory.totalQuery, /hami_vmemory_size/);
+});
+
+test('an idle cluster reports zero allocation when capacity is present', () => {
+  const [vgpu, compute, memory] = createOverviewGaugeConfigs();
+
+  assert.match(vgpu.query, /or \(avg\(sum\(hami_vgpu_count\)/);
+  assert.match(compute.query, /or \(avg\(sum\(hami_core_size\)/);
+  assert.match(memory.query, /or \(avg\(sum\(hami_memory_size\)/);
+});
+
+test('memory utilization capacity only includes reporting devices', () => {
+  const memoryUtilization = createOverviewGaugeConfigs().at(-1);
+
+  assert.match(
+    memoryUtilization.totalQuery,
+    /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
+  );
 });
 
 test('node allocation rankings include every device and fully idle nodes', () => {
