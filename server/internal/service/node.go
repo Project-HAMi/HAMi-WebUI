@@ -27,7 +27,10 @@ func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.Summa
 }
 
 func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*pb.DeviceSummaryReply, error) {
-	filters := req.Filters
+	filters := req.GetFilters()
+	if filters == nil {
+		filters = &pb.GetSummaryReq_Filters{}
+	}
 	var res = &pb.DeviceSummaryReply{}
 	t, err := s.summary.GetGPUSummary(ctx, filters.DeviceId, filters.NodeUid, filters.Type)
 	copier.Copy(&res, &t)
@@ -35,7 +38,10 @@ func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*p
 }
 
 func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (*pb.NodesReply, error) {
-	filters := req.Filters
+	filters := req.GetFilters()
+	if filters == nil {
+		filters = &pb.GetAllNodesReq_Filters{}
+	}
 	nodes, err := s.uc.ListAllNodes(ctx)
 	if err != nil {
 		return nil, err
