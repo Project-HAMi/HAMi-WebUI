@@ -29,7 +29,9 @@ func TestParseOptionsUsesDocumentedDefaults(t *testing.T) {
 		config.web.listenAddress != defaultWebListenAddress ||
 		config.web.staticDir != defaultStaticDir ||
 		config.web.basePath != defaultBasePath ||
-		config.web.frameAncestors != nil {
+		config.web.frameAncestors != nil ||
+		config.healthcheck ||
+		config.healthcheckURL != defaultHealthcheckURL {
 		t.Fatalf("defaults = %+v", config)
 	}
 }
@@ -42,6 +44,7 @@ func TestParseOptionsFlagsOverrideEnvironment(t *testing.T) {
 		"HAMI_WEBUI_STATIC_DIR":           "/env/public",
 		"HAMI_WEBUI_BASE_PATH":            "/env-ui/",
 		"HAMI_WEBUI_FRAME_ANCESTORS_JSON": `[]`,
+		"HAMI_WEBUI_HEALTHCHECK_URL":      "http://health-from-env/health_check",
 	}
 	lookup := func(key string) (string, bool) {
 		value, ok := environment[key]
@@ -53,6 +56,8 @@ func TestParseOptionsFlagsOverrideEnvironment(t *testing.T) {
 		"--static-dir=/flag/public",
 		"--base-path=/flag-ui/",
 		`--frame-ancestors-json=["'self'"]`,
+		"--healthcheck",
+		"--healthcheck-url=http://health-from-flag/health_check",
 	}, lookup)
 	if err != nil {
 		t.Fatalf("parseOptions: %v", err)
@@ -63,6 +68,66 @@ func TestParseOptionsFlagsOverrideEnvironment(t *testing.T) {
 		config.web.basePath != "/flag-ui/" ||
 		len(config.web.frameAncestors) != 1 || config.web.frameAncestors[0] != "'self'" {
 		t.Fatalf("flags did not override environment: %+v", config)
+	}
+	if !config.healthcheck || config.healthcheckURL != "http://health-from-flag/health_check" {
+		t.Fatalf("health-check flags did not override environment: %+v", config)
+	}
+}
+
+func TestPerformHealthcheckRequiresSuccessStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{name: "success", status: http.StatusNoContent},
+		{name: "redirect", status: http.StatusFound, wantErr: true},
+		{name: "client error", status: http.StatusNotFound, wantErr: true},
+		{name: "server error", status: http.StatusServiceUnavailable, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+			defer server.Close()
+			if err := performHealthcheck(server.URL); (err != nil) != tt.wantErr {
+				t.Fatalf("performHealthcheck error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestHealthcheckModeDoesNotInitializeApplication(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	lookup := func(key string) (string, bool) {
+		if key == "HAMI_WEBUI_HEALTHCHECK_URL" {
+			return server.URL, true
+		}
+		return "", false
+	}
+	if err := run([]string{"--healthcheck", "--conf=/does/not/exist"}, lookup); err != nil {
+		t.Fatalf("health check initialized application dependencies: %v", err)
+	}
+}
+
+func TestHealthcheckRejectsCredentialsWithoutExposingThem(t *testing.T) {
+	t.Parallel()
+
+	const secret = "do-not-print-this"
+	err := performHealthcheck("http://user:" + secret + "@backend/health_check")
+	if err == nil {
+		t.Fatal("performHealthcheck accepted credentials")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("health-check error exposed URL credentials")
 	}
 }
 
