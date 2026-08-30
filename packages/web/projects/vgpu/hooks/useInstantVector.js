@@ -1,9 +1,22 @@
 import cardApi from '~/vgpu/api/card';
-import { onMounted, ref, watch, watchEffect } from 'vue';
+import { ref, watch, watchEffect } from 'vue';
 import { timeParse, calculatePrometheusStep } from '@/utils';
+import {
+  calculateMetricPercent,
+  METRIC_STATUS,
+  readInstantValue,
+  requiresMetricCapacity,
+  resolveMetricStatus,
+  setMetricErrorState,
+} from './instant-vector-state.mjs';
 
 const useInstantVector = (configs, parseQuery = (query) => query, times) => {
-  const data = ref(configs);
+  const data = ref(
+    configs.map((config) => ({
+      ...config,
+      status: METRIC_STATUS.LOADING,
+    })),
+  );
 
   const safeParseQuery = (q) => {
     try {
@@ -16,56 +29,86 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
 
   const fetchInstantData = async () => {
     const reqs = configs.map(
-      async ({ query, totalQuery, percentQuery, cntQuery }, index) => {
+      async (config, index) => {
+        const { query, totalQuery, percentQuery } = config;
+        const metric = data.value[index];
+        const requiresCapacity = requiresMetricCapacity(config);
+        metric.status = METRIC_STATUS.LOADING;
         const parsedQuery = query ? safeParseQuery(query) : undefined;
         if (!parsedQuery || parsedQuery.includes('undefined')) {
           return;
         }
-        if (query) {
-          const usedData = await cardApi.getInstantVector({
-            query: parsedQuery,
+        try {
+          let usedStatus = METRIC_STATUS.MISSING;
+          let totalStatus;
+          if (query) {
+            const usedData = await cardApi.getInstantVector({
+              query: parsedQuery,
+            });
+            const usedSample = readInstantValue(usedData);
+
+            // Preserve whether Prometheus returned a real sample. A zero sample
+            // is valid; an empty vector means that the metric is unavailable.
+            metric.hasData = usedSample.status === METRIC_STATUS.READY;
+            metric.count = usedSample.value;
+            metric.used = usedSample.value;
+            usedStatus = usedSample.status;
+          }
+
+          if (totalQuery) {
+            const parsedTotalQuery = safeParseQuery(totalQuery);
+            if (!parsedTotalQuery || parsedTotalQuery.includes('undefined')) {
+              return;
+            }
+            const totalData = await cardApi.getInstantVector({
+              query: parsedTotalQuery,
+            });
+            const totalSample = readInstantValue(totalData);
+            totalStatus = totalSample.status;
+            metric.totalHasData = totalSample.status === METRIC_STATUS.READY;
+            metric.total = totalSample.value;
+          }
+
+          metric.status = resolveMetricStatus({
+            usedStatus,
+            totalStatus,
+            total: metric.total,
+            requiresCapacity,
           });
 
-          // Preserve whether Prometheus returned a series. Some consumers need
-          // to distinguish a real zero from an empty vector (for example, an
-          // existing container with no CPU or memory limit).
-          const hasData = usedData.data.length > 0;
-          const used = hasData ? usedData.data[0]?.value : 0;
-          data.value[index].hasData = hasData;
-          data.value[index].count = used;
-          data.value[index].used = used;
-        }
+          if (requiresCapacity) {
+            const percent = calculateMetricPercent(metric.used, metric.total);
+            metric.percent = percent ?? 0;
+          }
 
-        if (totalQuery) {
-          const parsedTotalQuery = safeParseQuery(totalQuery);
-          if (!parsedTotalQuery || parsedTotalQuery.includes('undefined')) {
-            return;
-          }
-          const totalData = await cardApi.getInstantVector({
-            query: parsedTotalQuery,
-          });
-          if (totalData.data[0]) {
-            data.value[index].total = totalData.data[0].value;
-          }
-        }
-        if (data.value[index].total !== 0) {
-            data.value[index].percent = data.value[index].used / data.value[index].total * 100;
-        }
-        if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
-          const parsedPercentQuery = safeParseQuery(percentQuery);
-          if (!parsedPercentQuery || parsedPercentQuery.includes('undefined')) {
-            return;
-          }
-          const percentData = await cardApi.getRangeVector({
-            query: parsedPercentQuery,
-            range: {
-                start: timeParse(times.value[0]),
-                end: timeParse(times.value[1]),
-              step: calculatePrometheusStep(times.value[0], times.value[1]),
-            },
-          });
+          if (percentQuery && times?.value?.[0] && times?.value?.[1]) {
+            const parsedPercentQuery = safeParseQuery(percentQuery);
+            if (
+              !parsedPercentQuery ||
+              parsedPercentQuery.includes('undefined')
+            ) {
+              return;
+            }
+            try {
+              const percentData = await cardApi.getRangeVector({
+                query: parsedPercentQuery,
+                range: {
+                  start: timeParse(times.value[0]),
+                  end: timeParse(times.value[1]),
+                  step: calculatePrometheusStep(times.value[0], times.value[1]),
+                },
+              });
 
-          data.value[index].data = percentData.data[0]?.values || [];
+              metric.data = percentData.data[0]?.values || [];
+            } catch {
+              metric.data = [];
+            }
+          }
+        } catch {
+          setMetricErrorState(metric, {
+            hasTotal: Boolean(totalQuery),
+            requiresCapacity,
+          });
         }
       },
     );

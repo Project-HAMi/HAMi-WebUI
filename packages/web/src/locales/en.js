@@ -68,11 +68,29 @@ export default {
     viewAllGpuResources: 'View all GPU resources',
     viewAllNodes: 'View all nodes',
     viewAllGpuTypes: 'View all GPU types',
-    vgpuAllocRate: 'vGPU Alloc',
-    computeAllocRate: 'Compute Alloc',
-    memAllocRate: 'Memory Alloc',
-    computeUsageRate: 'Compute Usage',
+    vgpuAllocRate: 'vGPU Allocation',
+    computeAllocRate: 'Compute Allocation',
+    memAllocRate: 'Memory Allocation',
+    computeUsageRate: 'Compute Utilization',
     memUsageRate: 'Memory Usage',
+    vgpuAllocRateDescription:
+      'Allocated vGPU slots divided by the schedulable slots registered by HAMi. Slot capacity comes from device splitting and is not the physical accelerator count.',
+    computeAllocRateDescription:
+      'Allocated vCore divided by the physical compute baseline (100 per accelerator). Values above 100% indicate compute overcommit.',
+    memAllocRateDescription:
+      'Accelerator memory allocated to workloads divided by the schedulable memory registered by HAMi. With memory overcommit, the denominator includes expanded virtual capacity.',
+    computeUsageRateDescription:
+      'Equal-weight average of provider-native, device-level compute utilization across reporting devices. Definitions may differ by provider; this is not compute allocation.',
+    memUsageRateDescription:
+      'Used memory divided by HAMi-registered memory capacity across devices reporting memory-use data. With memory overcommit, this is not physical memory occupancy.',
+    metricHelpLabel: 'View metric definition for {metric}',
+    metricNoData: 'No metric data',
+    metricInvalid: 'Invalid metric value',
+    metricNoCapacity: 'No available capacity',
+    metricQueryFailed: 'Query failed',
+    deviceAverage: 'Reporting-device average',
+    vgpuSlotUnit: 'slots',
+    acceleratorEquivalentUnit: 'card eq.',
     computePowerTotal: 'Compute Power Total',
     node: 'Node',
     nodeTotal: 'Total Nodes',

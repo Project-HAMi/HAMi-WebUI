@@ -71,8 +71,26 @@ export default {
     vgpuAllocRate: 'vGPU 分配率',
     computeAllocRate: '算力分配率',
     memAllocRate: '显存分配率',
-    computeUsageRate: '算力使用率',
+    computeUsageRate: '算力利用率',
     memUsageRate: '显存使用率',
+    vgpuAllocRateDescription:
+      '已分配 vGPU 槽位 ÷ HAMi 注册的可调度槽位。槽位容量来自设备拆分配置，不等于物理加速卡数量。',
+    computeAllocRateDescription:
+      '已分配给工作负载的 vCore ÷ 物理算力基准（每张加速卡按 100 计）。超过 100% 表示算力超配。',
+    memAllocRateDescription:
+      '已分配给工作负载的显存 ÷ HAMi 注册的可调度显存。启用显存超配时，分母包含扩展后的虚拟容量。',
+    computeUsageRateDescription:
+      '所有已上报设备的厂商原生设备级算力利用率等权平均。不同厂商口径可能不同；它不是算力分配率。',
+    memUsageRateDescription:
+      '已上报显存使用数据的设备，其已用显存 ÷ HAMi 注册容量。启用显存超配时，该值不等于物理显存占用率。',
+    metricHelpLabel: '查看{metric}指标说明',
+    metricNoData: '暂无指标数据',
+    metricInvalid: '指标值无效',
+    metricNoCapacity: '无可用容量',
+    metricQueryFailed: '查询失败',
+    deviceAverage: '上报设备平均',
+    vgpuSlotUnit: '槽位',
+    acceleratorEquivalentUnit: '卡等效',
     computePowerTotal: '算力总量',
     node: '节点',
     nodeTotal: '节点总数',
