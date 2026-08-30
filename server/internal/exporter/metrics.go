@@ -51,7 +51,7 @@ var (
 
 	HamiVMemoryScaling = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_vmemory_scaling",
-		Help: "GPU virtual memory Scaling",
+		Help: "HAMi-registered schedulable memory divided by vendor-reported physical memory",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiVgpuCount = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -61,7 +61,7 @@ var (
 
 	HamiVmemorySize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_vmemory_size",
-		Help: "Total vMemory size",
+		Help: "HAMi-registered schedulable device memory, unit is 'MiB'",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiVcoreSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -71,17 +71,17 @@ var (
 
 	HamiMemoryUsed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_memory_used",
-		Help: "Actual memory usage, unit is 'MB' ",
+		Help: "Vendor-reported used physical device memory, unit is 'MiB'",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiMemorySize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_memory_size",
-		Help: "Actual memory size, unit is 'MB' ",
+		Help: "Vendor-reported total physical device memory, unit is 'MiB'",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiMemoryUtil = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_memory_util",
-		Help: "Actual Memory Util percent 0-100",
+		Help: "Vendor-reported used physical memory divided by total physical memory, percent 0-100",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiCoreSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{

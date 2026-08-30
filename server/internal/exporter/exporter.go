@@ -13,7 +13,6 @@ import (
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/metax"
-	"vgpu/internal/provider/mlu"
 	"vgpu/internal/service"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -28,6 +27,8 @@ var ProviderSet = wire.NewSet(
 const (
 	defaultGenerateInterval = 30 * time.Second
 	defaultGenerateTimeout  = 60 * time.Second
+	bytesPerKiB             = 1024
+	bytesPerMiB             = bytesPerKiB * 1024
 )
 
 var (
@@ -253,17 +254,17 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		// 超配比指标
 		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiCoreSize, 100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		deviceMemUsed, err := s.deviceMemUsed(ctx, provider, device.Id)
-		if err == nil {
+		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)
+		if memoryUsedErr == nil {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-			if device.Devmem > 0 {
-				s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/float32(device.Devmem))), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-			}
 		}
-		s.set(HamiMemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		deviceMemSize, err := s.deviceMemTotal(ctx, provider, device.Id)
-		if err == nil && deviceMemSize > 0 {
+		deviceMemSize, memorySizeErr := s.deviceMemTotal(ctx, provider, device.Id)
+		if memorySizeErr == nil && deviceMemSize > 0 {
+			s.set(HamiMemorySize, float64(deviceMemSize), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			if memoryUsedErr == nil {
+				s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			}
 		}
 		actualCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
 		if err == nil {
@@ -468,14 +469,7 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	if err != nil {
 		return val, err
 	}
-	if provider == biz.CambriconGPUDevice {
-		val = val / mlu.CambriconMemUnit
-	} else if provider == biz.HygonGPUDevice {
-		val = val / 1024 / 1024
-	} else if provider == biz.MetaxGPUDevice {
-		val = val / 1024
-	}
-	return val, err
+	return deviceMemoryToMiB(provider, val), nil
 }
 
 // 卡显存总量
@@ -495,16 +489,22 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	val, err := s.queryInstantVal(ctx, query)
+	val, err := s.queryRequiredInstantVal(ctx, query)
 	if err != nil {
 		return val, err
 	}
-	if provider == biz.CambriconGPUDevice || provider == biz.MetaxGPUDevice {
-		val = val / 1024
-	} else if provider == biz.HygonGPUDevice {
-		val = val / 1024 / 1024
+	return deviceMemoryToMiB(provider, val), nil
+}
+
+func deviceMemoryToMiB(provider string, value float32) float32 {
+	switch provider {
+	case biz.CambriconGPUDevice, biz.HygonGPUDevice:
+		return value / bytesPerMiB
+	case biz.MetaxGPUDevice:
+		return value / bytesPerKiB
+	default:
+		return value
 	}
-	return val, err
 }
 
 // 卡算力利用率

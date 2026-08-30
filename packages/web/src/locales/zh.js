@@ -82,7 +82,7 @@ export default {
     computeUsageRateDescription:
       '所有已上报设备的厂商原生设备级算力利用率等权平均。不同厂商口径可能不同；它不是算力分配率。',
     memUsageRateDescription:
-      '已上报显存使用数据的设备，其已用显存 ÷ HAMi 注册容量。启用显存超配时，该值不等于物理显存占用率。',
+      '同时上报物理显存已用量和物理容量的设备，其已用量 ÷ 物理容量。缺少任一遥测值的设备不参与计算；它不是显存分配率。',
     metricHelpLabel: '查看{metric}指标说明',
     metricNoData: '暂无指标数据',
     metricInvalid: '指标值无效',
@@ -103,7 +103,7 @@ export default {
     cpuCoreUnit: 'Core',
     systemMemoryTotal: '内存总量',
     memory: '显存',
-    memoryTotal: 'GPU 显存总量',
+    memoryTotal: '可调度 GPU 显存',
     schedulable: '可调度',
     unschedulable: '禁止调度',
     allocated: '已分配',
