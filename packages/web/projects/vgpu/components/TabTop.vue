@@ -85,7 +85,10 @@ import {
   resolveRequest,
   startRequest,
 } from '@/hooks/request-state.mjs';
-import { readRankingRows } from './tab-top-state.mjs';
+import {
+  formatRankingValue,
+  readRankingRows,
+} from './tab-top-state.mjs';
 
 const props = defineProps({
   title: String,
@@ -115,13 +118,6 @@ const handleClick = (params) => {
   }
 };
 
-const formatValue = (value, unit) => {
-  const num = Number(value) || 0;
-  const fixed = num.toFixed(0);
-  const unitText = unit && unit.trim() ? ` ${unit.trim()}` : '';
-  return `${fixed}${unitText}`;
-};
-
 const displayItems = computed(() => {
   const config = currentConfig.value.find(
     (item) => item.key === tabActive.value,
@@ -149,7 +145,7 @@ const displayItems = computed(() => {
       ...item,
       index: index + 1,
       percentage: getPercentage(item.value),
-      valueDisplay: formatValue(item.value, unit),
+      valueDisplay: formatRankingValue(item.value, unit),
     }));
 });
 

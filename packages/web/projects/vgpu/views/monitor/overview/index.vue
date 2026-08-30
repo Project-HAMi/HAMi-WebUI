@@ -366,6 +366,7 @@ import {
   handleChartClick,
   getRangeOptions,
 } from './getOptions';
+import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
 import Block from './Block.vue';
 import './style.scss';
 import { RouterLink, useRouter } from 'vue-router';
@@ -462,83 +463,10 @@ const nodeWorkloadTop5TableData = computed(() =>
 );
 
 const nodeWorkloadDistributionOptions = computed(() => {
-  const rows = nodeWorkloadDistributionState.data || [];
-  const bucketSize = 10;
-  const maxValue = rows.length ? Math.max(...rows.map((item) => Number(item.value) || 0)) : 0;
-  const bucketCount = Math.max(1, Math.floor(maxValue / bucketSize) + 1);
-
-  const xData = Array.from({ length: bucketCount }, (_, idx) => {
-    const start = idx * bucketSize;
-    const end = start + bucketSize - 1;
-    return `${start}-${end}`;
+  return createWorkloadDistributionOptions({
+    rows: nodeWorkloadDistributionState.data,
+    translate: t,
   });
-  const yData = new Array(bucketCount).fill(0);
-
-  rows.forEach((item) => {
-    const value = Number(item.value) || 0;
-    const bucketIdx = Math.min(Math.floor(value / bucketSize), bucketCount - 1);
-    yData[bucketIdx] += 1;
-  });
-  return {
-    tooltip: {
-      trigger: 'item',
-      formatter: (item) => {
-        if (!item) return '';
-        const unit = t('common.unitCount');
-        return `${t('dashboard.workloadRange')}: ${item.name}<br/>${t('dashboard.nodeTotal')}: ${Number(item.value || 0)}${unit}`;
-      },
-    },
-    grid: {
-      left: 25,
-      right: 25,
-      top: 20,
-      bottom: 8,
-      outerBoundsMode: 'same',
-      outerBoundsContain: 'axisLabel',
-    },
-    xAxis: {
-      type: 'category',
-      data: xData,
-      axisTick: {
-        alignWithLabel: true,
-      },
-      axisLabel: {
-        color: '#697886',
-      },
-    },
-    dataZoom: [
-      {
-        type: 'inside',
-        xAxisIndex: 0,
-        filterMode: 'none',
-      },
-    ],
-    yAxis: {
-      type: 'value',
-      minInterval: 1,
-      max: 5,
-      axisLine: {
-        show: false,
-      },
-      axisTick: {
-        show: false,
-      },
-      axisLabel: {
-        color: '#697886',
-      },
-    },
-    series: [
-      {
-        data: yData,
-        type: 'bar',
-        barWidth: 24,
-        barCategoryGap: '75',
-        itemStyle: {
-          color: '#5B8FF9',
-        },
-      },
-    ],
-  };
 });
 
 // These page-specific vectors share request-state mechanics without introducing
