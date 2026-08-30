@@ -1,5 +1,10 @@
 import { timeParse } from '@/utils';
 import { cloneDeep } from 'lodash';
+import {
+  buildRangeLineSeries,
+  formatRangeTooltipValue,
+  normalizeRangeValues,
+} from '../../../metrics/range-vector-state.mjs';
 import nodeApi from '~/vgpu/api/node';
 import { MessagePlugin } from 'tdesign-vue-next';
 import i18n from '@/locales';
@@ -285,7 +290,14 @@ export const handleChartClick = async (params, router) => {
   }
 };
 
-const CARD_PIE_COLORS = ['#76B900', '#9FCB98', '#F59E0B', '#4F8F87', '#14B8A6', '#6B7280'];
+const CARD_PIE_COLORS = [
+  '#76B900',
+  '#9FCB98',
+  '#F59E0B',
+  '#4F8F87',
+  '#14B8A6',
+  '#6B7280',
+];
 
 export const getCardOptions = (list, chartWidth) => {
   const data = list.reduce((all, current) => {
@@ -525,6 +537,11 @@ export const getRangeOptions = (data) => {
     };
   }
 
+  const normalizedData = data.map((item) => ({
+    ...item,
+    data: normalizeRangeValues(item.data),
+  }));
+
   return {
     animation: true,
     legend: {
@@ -540,15 +557,23 @@ export const getRangeOptions = (data) => {
       formatter: function (params) {
         if (!Array.isArray(params) || params.length === 0) return '';
 
-        let result = `<div style="margin-bottom:5px;">${params[0]?.name ?? ''}</div>`;
+        let result = `<div style="margin-bottom:5px;">${
+          params[0]?.name ?? ''
+        }</div>`;
         for (let i = 0; i < params.length; i++) {
           const item = params[i];
-          const raw = Array.isArray(item?.value) ? item.value[item.value.length - 1] : item?.value;
-          const num = Number(raw);
-          const value = Number.isFinite(num) ? `${num.toFixed(3)}%` : '-';
+          const raw = Array.isArray(item?.value)
+            ? item.value[item.value.length - 1]
+            : item?.value;
+          const value = formatRangeTooltipValue(raw, {
+            digits: 3,
+            unit: '%',
+          });
           result += `
             <div style="display:flex;align-items:center;font-size:14px;line-height:22px;">
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${item?.color || '#5B8FF9'};margin-right:5px;"></span>
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${
+                item?.color || '#5B8FF9'
+              };margin-right:5px;"></span>
               <span>${item?.seriesName || '-'}:&nbsp;</span>
               <span style="font-weight:bold;">${value}</span>
             </div>
@@ -572,7 +597,7 @@ export const getRangeOptions = (data) => {
     ],
     xAxis: {
       type: 'category',
-      data: data[0].data.map((item) => timeParse(+item.timestamp)),
+      data: normalizedData[0].data.map((item) => timeParse(item.timestamp)),
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');
@@ -594,31 +619,32 @@ export const getRangeOptions = (data) => {
         },
       },
     },
-    series: data.map((item) => ({
-      ...item,
-      type: 'line',
-      // areaStyle: {
-      //   normal: {
-      //     color: {
-      //       type: 'linear',
-      //       x: 0, // 渐变起始点 0%
-      //       y: 0, // 渐变起始点 0%
-      //       x2: 0, // 渐变结束点 100%
-      //       y2: 1, // 渐变结束点 100%
-      //       colorStops: [
-      //         {
-      //           offset: 0,
-      //           color: 'rgba(34, 139, 34, 0.16)', // 渐变起始颜色
-      //         },
-      //         {
-      //           offset: 1,
-      //           color: 'rgba(34, 139, 34, 0.00)', // 渐变结束颜色
-      //         },
-      //       ],
-      //       global: false, // 缺省为 false
-      //     },
-      //   },
-      // },
-    })),
+    series: normalizedData.map((item) =>
+      buildRangeLineSeries({
+        ...item,
+        // areaStyle: {
+        //   normal: {
+        //     color: {
+        //       type: 'linear',
+        //       x: 0, // 渐变起始点 0%
+        //       y: 0, // 渐变起始点 0%
+        //       x2: 0, // 渐变结束点 100%
+        //       y2: 1, // 渐变结束点 100%
+        //       colorStops: [
+        //         {
+        //           offset: 0,
+        //           color: 'rgba(34, 139, 34, 0.16)', // 渐变起始颜色
+        //         },
+        //         {
+        //           offset: 1,
+        //           color: 'rgba(34, 139, 34, 0.00)', // 渐变结束颜色
+        //         },
+        //       ],
+        //       global: false, // 缺省为 false
+        //     },
+        //   },
+        // },
+      }),
+    ),
   };
 };

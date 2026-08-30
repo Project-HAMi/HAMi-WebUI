@@ -1,5 +1,10 @@
 import { timeParse } from '@/utils';
 import i18n from '@/locales';
+import {
+  buildRangeLineSeries,
+  formatRangeTooltipValue,
+  normalizeRangeValues,
+} from '../metrics/range-vector-state.mjs';
 
 export default ({ percent, title, unit = '%' }) => {
   const value = percent.toFixed(1);
@@ -219,7 +224,14 @@ export const getTopOptions = ({ core, memory }) => {
   };
 };
 
-export const getLineOptions = ({ data = [], unit = '%', seriesName, animation = true }) => {
+export const getLineOptions = ({
+  data = [],
+  unit = '%',
+  seriesName,
+  animation = true,
+}) => {
+  const normalizedData = normalizeRangeValues(data);
+
   return {
     animation,
     tooltip: {
@@ -234,15 +246,24 @@ export const getLineOptions = ({ data = [], unit = '%', seriesName, animation = 
       formatter: function (params) {
         if (!Array.isArray(params) || params.length === 0) return '';
 
-        let result = `<div style="margin-bottom:5px;">${params[0]?.name ?? ''}</div>`;
+        let result = `<div style="margin-bottom:5px;">${
+          params[0]?.name ?? ''
+        }</div>`;
         for (let i = 0; i < params.length; i++) {
           const item = params[i];
-          const raw = Array.isArray(item?.value) ? item.value[item.value.length - 1] : item?.value;
-          const num = Number(raw);
-          const value = Number.isFinite(num) ? `${num.toFixed(1)} ${unit}` : '-';
+          const raw = Array.isArray(item?.value)
+            ? item.value[item.value.length - 1]
+            : item?.value;
+          const value = formatRangeTooltipValue(raw, {
+            digits: 1,
+            unit,
+            separator: ' ',
+          });
           result += `
             <div style="display:flex;align-items:center;font-size:14px;line-height:22px;">
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${item?.color || '#5B8FF9'};margin-right:5px;"></span>
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background-color:${
+                item?.color || '#5B8FF9'
+              };margin-right:5px;"></span>
               <span>${item?.seriesName || '-'}:&nbsp;</span>
               <span style="font-weight:bold;">${value}</span>
             </div>
@@ -266,7 +287,7 @@ export const getLineOptions = ({ data = [], unit = '%', seriesName, animation = 
     ],
     xAxis: {
       type: 'category',
-      data: data.map((item) => timeParse(+item.timestamp)),
+      data: normalizedData.map((item) => timeParse(item.timestamp)),
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');
@@ -277,21 +298,21 @@ export const getLineOptions = ({ data = [], unit = '%', seriesName, animation = 
       type: 'value',
     },
     series: [
-      {
-        name: seriesName || '',
-        data: data.map((item) => {
-          return item.value.toFixed(1);
-        }),
-        type: 'line',
-        lineStyle: {
-          width: 3,
-          color: '#5B8FF9',
+      buildRangeLineSeries(
+        {
+          name: seriesName || '',
+          data: normalizedData,
+          lineStyle: {
+            width: 3,
+            color: '#5B8FF9',
+          },
+          itemStyle: {
+            color: '#5B8FF9',
+            borderColor: '#5B8FF9',
+          },
         },
-        itemStyle: {
-          color: '#5B8FF9',
-          borderColor: '#5B8FF9',
-        },
-      },
+        { digits: 1 },
+      ),
     ],
   };
 };
