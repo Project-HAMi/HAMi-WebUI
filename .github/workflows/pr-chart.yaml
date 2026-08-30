@@ -29,6 +29,7 @@ jobs:
               - 'charts/**'
               - 'scripts/chart/**'
               - 'scripts/verify-chart*.sh'
+              - 'scripts/verify-install-docs.sh'
               - '.github/workflows/pr-chart.yaml'
 
   verify:

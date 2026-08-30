@@ -14,6 +14,9 @@ chart_dir="${4:-charts/hami-webui}"
 release_require_command git
 release_require_command jq
 release_require_command yq
+bash "${script_dir}/../verify-install-docs.sh" \
+  "${chart_dir}" \
+  "${script_dir}/../../docs/installation/helm/index.md"
 release_validate_commit "${release_sha}"
 [[ "${candidate_run_id}" =~ ^[0-9]+$ ]] || release_die "candidate run id must be numeric"
 jq -e . "${candidate_manifest}" >/dev/null

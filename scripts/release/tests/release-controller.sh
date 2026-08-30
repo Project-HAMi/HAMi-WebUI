@@ -18,6 +18,28 @@ require_failure() {
   fi
 }
 
+write_chart_readme_fixture() {
+  local version="$1"
+  local output="$2"
+  local badge_version="${version//-/--}"
+
+  cat >"${output}" <<EOF
+# HAMi-WebUI release fixture
+
+![Version: ${version}](https://img.shields.io/badge/Version-${badge_version}-informational?style=flat-square)
+![AppVersion: ${version}](https://img.shields.io/badge/AppVersion-${badge_version}-informational?style=flat-square)
+
+\`\`\`console
+CHART_VERSION="X.Y.Z"
+helm show values hami-webui/hami-webui \\
+  --version "\${CHART_VERSION}" > values.yaml
+helm install fixture hami-webui/hami-webui \\
+  --version "\${CHART_VERSION}" \\
+  --values values.yaml
+\`\`\`
+EOF
+}
+
 verify_contract_in_repo() {
   local repository_dir="$1"
   local release_sha="$2"
@@ -134,6 +156,8 @@ VERSION=2.0.1 DIGEST="${digest_a}" yq -i '
   .image.tag = "v" + strenv(VERSION) |
   .image.digest = strenv(DIGEST)
 ' "${contract_repo}/charts/hami-webui/values.yaml"
+write_chart_readme_fixture 2.0.1 \
+  "${contract_repo}/charts/hami-webui/README.md"
 git -C "${contract_repo}" add charts
 git -C "${contract_repo}" commit -qm 'allowed release metadata'
 release_sha="$(git -C "${contract_repo}" rev-parse HEAD)"
@@ -185,7 +209,11 @@ VERSION=1.9.0 yq -i '
   .version = strenv(VERSION) |
   .appVersion = strenv(VERSION)
 ' "${work_dir}/legacy-chart-major/charts/hami-webui/Chart.yaml"
-git -C "${work_dir}/legacy-chart-major" add charts/hami-webui/Chart.yaml
+write_chart_readme_fixture 1.9.0 \
+  "${work_dir}/legacy-chart-major/charts/hami-webui/README.md"
+git -C "${work_dir}/legacy-chart-major" add \
+  charts/hami-webui/Chart.yaml \
+  charts/hami-webui/README.md
 git -C "${work_dir}/legacy-chart-major" commit -qm 'legacy chart major'
 legacy_major_sha="$(git -C "${work_dir}/legacy-chart-major" rev-parse HEAD)"
 require_failure "Chart major version below 2" \

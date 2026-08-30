@@ -29,6 +29,10 @@ jobs:
             release:
               - '.github/workflows/release.yaml'
               - '.github/workflows/pr-release.yaml'
+              - 'charts/hami-webui/Chart.yaml'
+              - 'charts/hami-webui/README.md'
+              - 'docs/installation/helm/index.md'
+              - 'scripts/verify-install-docs.sh'
               - 'scripts/release/**'
               - 'docs/releasing.md'
 
@@ -55,7 +59,10 @@ jobs:
         run: actionlint .github/workflows/release.yaml .github/workflows/pr-release.yaml
 
       - name: Check release shell scripts
-        run: shellcheck scripts/release/*.sh scripts/release/tests/*.sh
+        run: shellcheck scripts/verify-install-docs.sh scripts/release/*.sh scripts/release/tests/*.sh
+
+      - name: Verify version-matched installation documentation
+        run: bash scripts/verify-install-docs.sh
 
       - name: Run deterministic release contract tests
         run: bash scripts/release/tests/release-controller.sh

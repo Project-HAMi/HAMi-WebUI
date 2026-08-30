@@ -10,6 +10,8 @@ export HELM_CONFIG_HOME="${work_dir}/helm/config"
 export HELM_CACHE_HOME="${work_dir}/helm/cache"
 export HELM_DATA_HOME="${work_dir}/helm/data"
 
+bash "${repo_root}/scripts/verify-install-docs.sh"
+
 helm repo add nvidia-dcgm https://nvidia.github.io/dcgm-exporter/helm-charts
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 

@@ -13,17 +13,29 @@ _See [helm repo](https://helm.sh/docs/helm/helm_repo/) for command documentation
 
 ## Installing the Chart
 
-Before deploying, ensure that you configure the `values.yaml` file to match your cluster’s requirements. For detailed instructions, refer to the [Configuration Guide for HAMi-WebUI Helm Chart](#configuration-guide-for-hamiwebui-helm-chart)
-> _**Important**_: You must adjust the values.yaml before proceeding with the deployment.
-
-Download the `values.yaml` file from the Helm Charts repository:
-
-https://github.com/Project-HAMi/HAMi-WebUI/blob/main/charts/hami-webui/values.yaml
-
+Choose a released Chart version first. This README follows the Chart source in
+its branch, while the published Helm repository may contain an older release.
+Never combine `values.yaml` from `main` with a different Chart version.
 
 ```console
-helm install my-hami-webui hami-webui/hami-webui --create-namespace --namespace hami -f values.yaml
+helm search repo hami-webui/hami-webui --versions
+# Replace X.Y.Z with the version you want to install.
+CHART_VERSION="X.Y.Z"
+helm show values hami-webui/hami-webui \
+  --version "${CHART_VERSION}" > values.yaml
+# Review and edit values.yaml for your cluster before installing it.
+helm install my-hami-webui hami-webui/hami-webui \
+  --version "${CHART_VERSION}" \
+  --create-namespace \
+  --namespace hami \
+  --values values.yaml
 ```
+
+Using `helm show values` and `helm install` with the same explicit version keeps
+the configuration schema and the installed templates together. For the selected
+release, treat the comments in the retrieved values file as authoritative. The
+[configuration guide below](#configuration-guide-for-hamiwebui-helm-chart)
+describes the Chart version shown at the top of this README.
 
 Chart 2 deploys one `projecthami/hami-webui` image and one container. When
 upgrading from Chart 1.3, create a fresh Chart 2 values file and use

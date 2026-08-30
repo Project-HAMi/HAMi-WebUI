@@ -10,6 +10,11 @@ The examples below use `kubectl port-forward` for local access. Configure
 The HAMi-WebUI community publishes a Helm chart for Kubernetes. Report problems
 in the [HAMi-WebUI repository](https://github.com/Project-HAMi/HAMi-WebUI/issues).
 
+> This page follows the Chart source in the current Git branch. The published
+> Helm repository may contain an older release. Always select a Chart version
+> explicitly and use the values packaged with that same version;
+> `values.yaml` from `main` is not compatible with every released Chart.
+
 ## Prerequisites
 
 To install HAMi-WebUI using Helm, ensure you meet these requirements:
@@ -41,17 +46,35 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
 
    ```bash
    helm repo add hami-webui https://project-hami.github.io/HAMi-WebUI
+   helm repo update
+   helm search repo hami-webui/hami-webui --versions
    ```
 
-2. Deploy HAMi-WebUI using following command:
+2. Select the release you want to install, set its version, and retrieve the
+   defaults from that exact package:
 
    ```bash
-   helm install my-hami-webui hami-webui/hami-webui --set externalPrometheus.enabled=true --set externalPrometheus.address="http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090" -n kube-system
+   # Replace X.Y.Z with a version listed by helm search.
+   CHART_VERSION="X.Y.Z"
+   helm show values hami-webui/hami-webui \
+     --version "${CHART_VERSION}" > values.yaml
    ```
 
-   > _**Important**_: You need to replace the value of 'externalPrometheus.address' to your prometheus address inside cluster
+   Review and edit `values.yaml` for your cluster, then install the same version:
 
-   You can set other fields in [values.yaml](https://github.com/Project-HAMi/HAMi-WebUI/blob/main/charts/hami-webui/values.yaml) during installation according to configuration [document](https://github.com/Project-HAMi/HAMi-WebUI/blob/main/charts/hami-webui/README.md#values)
+   ```bash
+   : "${CHART_VERSION:?Set CHART_VERSION to the version used to generate values.yaml}"
+   helm install my-hami-webui hami-webui/hami-webui \
+     --version "${CHART_VERSION}" \
+     --namespace kube-system \
+     --values values.yaml \
+     --set externalPrometheus.enabled=true \
+     --set-string externalPrometheus.address="http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
+   ```
+
+   This example uses an existing Prometheus. Replace
+   `externalPrometheus.address` with its in-cluster HTTP API address. Do not copy
+   the `main` values file into an installation of an older release.
 
 3. Run the following command to verify the installation:
 
