@@ -9,10 +9,11 @@
     "build": "vite build",
     "dev": "vite",
     "build:vite": "vite build",
-    "test": "pnpm run test:dev-proxy && pnpm run test:metrics && pnpm run test:workload",
+    "test": "pnpm run test:dev-proxy && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
     "test:dev-proxy": "node --test test/vite-dev-proxy.contract.test.mjs",
     "test:metrics": "node --test projects/vgpu/hooks/instant-vector-state.test.mjs projects/vgpu/metrics/query-contract.test.mjs projects/vgpu/metrics/range-vector-state.test.mjs projects/vgpu/views/monitor/overview/metric-config.test.mjs projects/vgpu/views/card/admin/allocation-percent.test.mjs",
-    "test:workload": "node --test projects/vgpu/views/task/admin/workload-identity.test.mjs"
+    "test:workload": "node --test projects/vgpu/views/task/admin/workload-identity.test.mjs",
+    "test:ui-contracts": "node --test projects/vgpu/views/card/admin/node-detail-location.test.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.1.0",

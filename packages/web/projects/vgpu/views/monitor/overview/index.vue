@@ -33,7 +33,7 @@
                 class="resource-overview-item"
                 :class="{ 'is-clickable': !!to }"
               >
-                <div class="avatar">
+                <div class="avatar vgpu-table-name-icon-card">
                   <svg-icon :icon="icon" />
                 </div>
                 <div class="main">
