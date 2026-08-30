@@ -8,12 +8,38 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  unified-image-changes:
+    name: Detect unified image changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      unified: ${{ steps.filter.outputs.unified == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            unified:
+              - '.browserslistrc'
+              - '.dockerignore'
+              - '.github/workflows/ci.yaml'
+              - 'Dockerfile'
+              - 'Makefile'
+              - 'package.json'
+              - 'packages/web/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'scripts/precompress-web-assets.mjs'
+              - 'server/**'
+              - 'test/unified-image/**'
+
   validate-images:
     name: Build ${{ matrix.name }} image
     if: github.event_name == 'pull_request'
@@ -146,12 +172,105 @@ jobs:
           docker stop --time 5 "${container}" >/dev/null
           [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container}")" == "0" ]]
 
+  unified-runtime-smoke:
+    name: Smoke unified image runtime
+    if: needs.unified-image-changes.outputs.unified == 'true'
+    needs: unified-image-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build unified image (amd64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          target: unified
+          platforms: linux/amd64
+          load: true
+          tags: hami-webui:unified-runtime-smoke-amd64
+          cache-from: type=gha,scope=unified-runtime
+          cache-to: type=gha,mode=max,scope=unified-runtime
+
+      - name: Build unified image (arm64)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          target: unified
+          platforms: linux/arm64
+          load: true
+          tags: hami-webui:unified-runtime-smoke-arm64
+          cache-from: type=gha,scope=unified-runtime
+          cache-to: type=gha,mode=max,scope=unified-runtime
+
+      - name: Start pinned Kubernetes API
+        shell: bash
+        run: |
+          set -euo pipefail
+          kind_version=v0.27.0
+          kind_sha256=a6875aaea358acf0ac07786b1a6755d08fd640f4c79b7a2e46681cc13f49a04b
+          kind_bin="${RUNNER_TEMP}/bin/kind"
+          mkdir -p "$(dirname "${kind_bin}")"
+          curl --fail --silent --show-error --location \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${kind_version}/kind-linux-amd64" \
+            --output "${kind_bin}"
+          echo "${kind_sha256}  ${kind_bin}" | sha256sum --check
+          chmod 0755 "${kind_bin}"
+          dirname "${kind_bin}" >>"${GITHUB_PATH}"
+
+          "${kind_bin}" create cluster \
+            --name hami-webui-unified-smoke \
+            --image kindest/node:v1.30.10@sha256:4de75d0e82481ea846c0ed1de86328d821c1e6a6a91ac37bf804e5313670e507 \
+            --wait 120s
+          "${kind_bin}" get kubeconfig \
+            --name hami-webui-unified-smoke \
+            --internal >"${RUNNER_TEMP}/hami-webui-unified-smoke.kubeconfig"
+          chmod 0600 "${RUNNER_TEMP}/hami-webui-unified-smoke.kubeconfig"
+
+      - name: Test amd64 runtime
+        run: |
+          test/unified-image/runtime-smoke.sh \
+            hami-webui:unified-runtime-smoke-amd64 \
+            linux/amd64 \
+            kind \
+            "${RUNNER_TEMP}/hami-webui-unified-smoke.kubeconfig"
+
+      - name: Test arm64 runtime
+        run: |
+          test/unified-image/runtime-smoke.sh \
+            hami-webui:unified-runtime-smoke-arm64 \
+            linux/arm64 \
+            kind \
+            "${RUNNER_TEMP}/hami-webui-unified-smoke.kubeconfig"
+
+      - name: Delete smoke cluster
+        if: always()
+        shell: bash
+        run: |
+          if [[ -x "${RUNNER_TEMP}/bin/kind" ]]; then
+            "${RUNNER_TEMP}/bin/kind" delete cluster --name hami-webui-unified-smoke
+          fi
+
   pr-images-required:
     name: pr-images-required
     if: github.event_name == 'pull_request' && always()
     needs:
+      - unified-image-changes
       - validate-images
       - frontend-runtime-smoke
+      - unified-runtime-smoke
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate image build results
@@ -162,6 +281,15 @@ jobs:
           fi
           if [[ "${{ needs.frontend-runtime-smoke.result }}" != "success" ]]; then
             echo "Frontend runtime smoke did not complete successfully: ${{ needs.frontend-runtime-smoke.result }}"
+            exit 1
+          fi
+          if [[ "${{ needs.unified-image-changes.result }}" != "success" ]]; then
+            echo "Unified image change detection did not complete successfully: ${{ needs.unified-image-changes.result }}"
+            exit 1
+          fi
+          if [[ "${{ needs.unified-image-changes.outputs.unified }}" == "true" && \
+                "${{ needs.unified-runtime-smoke.result }}" != "success" ]]; then
+            echo "Unified image runtime smoke did not complete successfully: ${{ needs.unified-runtime-smoke.result }}"
             exit 1
           fi
           echo "All image builds passed."

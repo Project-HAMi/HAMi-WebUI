@@ -3,6 +3,7 @@
 PNPM ?= pnpm
 DOCKER ?= docker
 DOCKER_IMAGE ?= hami-webui-frontend
+UNIFIED_DOCKER_IMAGE ?= hami-webui
 VERSION ?= dev
 PLATFORM ?=
 DOCKER_PLATFORM_FLAG := $(if $(strip $(PLATFORM)),--platform $(PLATFORM),)
@@ -20,6 +21,7 @@ help:
 		'  make build-web-entry        Build the production Go Web entry' \
 		'  make verify                 Run all frontend and Web-entry checks' \
 		'  make build-image            Build a local frontend image' \
+		'  make build-unified-image    Build the candidate single-process image' \
 		'' \
 		'Use PLATFORM=linux/amd64 (or linux/arm64) for an explicit image platform.'
 
@@ -71,3 +73,9 @@ verify: lint test verify-vite-env build build-web-entry
 .PHONY: build-image
 build-image:
 	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) -t $(DOCKER_IMAGE):$(VERSION) .
+
+# The unified image remains an explicit development target until the Chart and
+# release controller migrate to the single-image contract.
+.PHONY: build-unified-image
+build-unified-image:
+	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) --target unified -t $(UNIFIED_DOCKER_IMAGE):$(VERSION) .

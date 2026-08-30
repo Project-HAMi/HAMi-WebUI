@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -30,6 +31,8 @@ const (
 	defaultStaticDir        = "/apps/public"
 	defaultBasePath         = "/"
 	defaultFrameAncestors   = "null"
+	defaultHealthcheckURL   = "http://127.0.0.1:3000/health_check"
+	healthcheckTimeout      = 3 * time.Second
 	defaultRequestTimeout   = 60 * time.Second
 )
 
@@ -50,8 +53,10 @@ type webConfig struct {
 }
 
 type options struct {
-	configPath string
-	web        webConfig
+	configPath     string
+	web            webConfig
+	healthcheck    bool
+	healthcheckURL string
 }
 
 func main() {
@@ -65,6 +70,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 	config, err := parseOptions(args, lookupEnv)
 	if err != nil {
 		return fmt.Errorf("invalid command-line options: %w", err)
+	}
+	if config.healthcheck {
+		return performHealthcheck(config.healthcheckURL)
 	}
 	ctx := context.Background()
 	app, cleanup, err := initApp(config.configPath, config.web, ctx)
@@ -88,6 +96,8 @@ func parseOptions(args []string, lookupEnv func(string) (string, bool)) (options
 	flags.StringVar(&config.web.staticDir, "static-dir", envOrDefault(lookupEnv, "HAMI_WEBUI_STATIC_DIR", defaultStaticDir), "SPA static directory")
 	flags.StringVar(&config.web.basePath, "base-path", envOrDefault(lookupEnv, "HAMI_WEBUI_BASE_PATH", defaultBasePath), "external URL base path")
 	flags.StringVar(&frameAncestorsJSON, "frame-ancestors-json", envOrDefault(lookupEnv, "HAMI_WEBUI_FRAME_ANCESTORS_JSON", defaultFrameAncestors), "JSON array of allowed iframe ancestors, [] to deny all, or null to omit")
+	flags.BoolVar(&config.healthcheck, "healthcheck", false, "check the running Web entry and exit")
+	flags.StringVar(&config.healthcheckURL, "healthcheck-url", envOrDefault(lookupEnv, "HAMI_WEBUI_HEALTHCHECK_URL", defaultHealthcheckURL), "health-check URL")
 	if err := flags.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -98,6 +108,35 @@ func parseOptions(args []string, lookupEnv func(string) (string, bool)) (options
 		return options{}, errors.New("frame ancestors must be null or a JSON array of allowed sources")
 	}
 	return config, nil
+}
+
+func performHealthcheck(rawURL string) error {
+	target, err := url.Parse(rawURL)
+	if err != nil || target.Host == "" || (target.Scheme != "http" && target.Scheme != "https") || target.User != nil || target.Fragment != "" {
+		return errors.New("health check configuration is invalid")
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target.String(), nil)
+	if err != nil {
+		return errors.New("health check configuration is invalid")
+	}
+	client := &http.Client{
+		Timeout: healthcheckTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return errors.New("HAMi-WebUI health check failed")
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return errors.New("HAMi-WebUI health check returned a non-success status")
+	}
+	return nil
 }
 
 func envOrDefault(lookupEnv func(string) (string, bool), key, fallback string) string {
