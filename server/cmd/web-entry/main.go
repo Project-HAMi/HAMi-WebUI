@@ -108,9 +108,9 @@ func run(args []string, lookupEnv func(string) (string, bool)) error {
 		return errors.New("cannot open Web-entry listener")
 	}
 	server, err := webentry.NewHTTPServer(webentry.HTTPServerConfig{
-		Address:      config.listenAddress,
-		Handler:      handler,
-		ProxyTimeout: proxyTimeout,
+		Address:        config.listenAddress,
+		Handler:        handler,
+		RequestTimeout: proxyTimeout,
 	})
 	if err != nil {
 		_ = listener.Close()

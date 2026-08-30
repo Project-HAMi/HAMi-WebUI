@@ -21,29 +21,30 @@ const (
 // the configured graceful-shutdown window and were forcefully disconnected.
 var ErrShutdownTimeout = errors.New("graceful shutdown timed out")
 
-// HTTPServerConfig defines the bounded public HTTP server. ProxyTimeout is used
-// to keep the outer HTTP deadline longer than the upstream proxy deadline.
+// HTTPServerConfig defines the bounded public HTTP server. RequestTimeout is
+// used to keep the outer HTTP deadline longer than the application handler's
+// own deadline, whether that handler is a reverse proxy or an in-process API.
 type HTTPServerConfig struct {
-	Address      string
-	Handler      http.Handler
-	ProxyTimeout time.Duration
+	Address        string
+	Handler        http.Handler
+	RequestTimeout time.Duration
 }
 
 // NewHTTPServer constructs an HTTP server with explicit slow-client and idle
 // connection bounds. It does not open a listener.
 func NewHTTPServer(config HTTPServerConfig) (*http.Server, error) {
-	if config.ProxyTimeout <= 0 {
-		return nil, errors.New("proxy timeout must be positive")
+	if config.RequestTimeout <= 0 {
+		return nil, errors.New("request timeout must be positive")
 	}
 	const maxDuration = time.Duration(1<<63 - 1)
-	if config.ProxyTimeout > maxDuration-defaultReadTimeout-requestTimeoutMargin {
-		return nil, errors.New("proxy timeout is too large")
+	if config.RequestTimeout > maxDuration-defaultReadTimeout-requestTimeoutMargin {
+		return nil, errors.New("request timeout is too large")
 	}
 	handler := config.Handler
 	if handler == nil {
 		handler = http.NotFoundHandler()
 	}
-	writeTimeout := defaultReadTimeout + config.ProxyTimeout + requestTimeoutMargin
+	writeTimeout := defaultReadTimeout + config.RequestTimeout + requestTimeoutMargin
 	return &http.Server{
 		Addr:              config.Address,
 		Handler:           handler,

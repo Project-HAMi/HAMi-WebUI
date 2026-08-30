@@ -14,9 +14,9 @@ func TestNewHTTPServerUsesBoundedTimeouts(t *testing.T) {
 	t.Parallel()
 
 	server, err := NewHTTPServer(HTTPServerConfig{
-		Address:      ":3000",
-		Handler:      http.NotFoundHandler(),
-		ProxyTimeout: 65 * time.Second,
+		Address:        ":3000",
+		Handler:        http.NotFoundHandler(),
+		RequestTimeout: 65 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewHTTPServer: %v", err)
@@ -44,8 +44,8 @@ func TestServeShutsDownGracefully(t *testing.T) {
 		_, _ = io.WriteString(w, "done")
 	})
 	server, err := NewHTTPServer(HTTPServerConfig{
-		Handler:      handler,
-		ProxyTimeout: time.Second,
+		Handler:        handler,
+		RequestTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewHTTPServer: %v", err)
@@ -101,8 +101,8 @@ func TestServeBoundsGracefulShutdown(t *testing.T) {
 		<-releaseRequest
 	})
 	server, err := NewHTTPServer(HTTPServerConfig{
-		Handler:      handler,
-		ProxyTimeout: time.Second,
+		Handler:        handler,
+		RequestTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatalf("NewHTTPServer: %v", err)
@@ -143,7 +143,7 @@ func TestServeBoundsGracefulShutdown(t *testing.T) {
 	}
 }
 
-func TestNewHTTPServerRejectsInvalidProxyTimeout(t *testing.T) {
+func TestNewHTTPServerRejectsInvalidRequestTimeout(t *testing.T) {
 	t.Parallel()
 
 	if _, err := NewHTTPServer(HTTPServerConfig{}); err == nil {
