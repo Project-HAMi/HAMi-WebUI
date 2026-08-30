@@ -61,6 +61,11 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["/apps/web-entry"]
 
+# Preserve an explicit standalone Web-entry target for focused development and
+# reproducing the old frontend runtime. The application image remains the
+# final, implicit build target below.
+FROM frontend-runtime AS frontend
+
 FROM go-base AS unified-builder
 
 ARG BUILDARCH
@@ -71,7 +76,7 @@ ARG PROTOC_SHA256_ARM64=1de522032a8b194002fe35cab86d747848238b5e4de4f99648372079
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
 ARG UNZIP_VERSION=6.0-28
 
-# Match the pinned backend toolchain while the released backend image remains
+# Match the pinned backend toolchain while the standalone backend image remains
 # independently buildable from server/Dockerfile.
 RUN sed -i -E \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
@@ -122,7 +127,3 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["/apps/hami-webui"]
 CMD ["--conf", "/apps/config/config.yaml"]
-
-# Keep the released frontend image as the implicit Docker build target until
-# the Chart and release controller migrate atomically in their own PRs.
-FROM frontend-runtime AS frontend
