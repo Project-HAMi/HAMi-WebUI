@@ -58,6 +58,54 @@ func TestTaskCoreUsedKeepsLegacyEmptyBehaviorForOtherProviders(t *testing.T) {
 	}
 }
 
+func TestDeviceUsageMetricsDistinguishMissingFromIdle(t *testing.T) {
+	tests := []struct {
+		name  string
+		query func(*MetricsGenerator) (float32, error)
+	}{
+		{
+			name: "memory",
+			query: func(generator *MetricsGenerator) (float32, error) {
+				return generator.deviceMemUsed(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+			},
+		},
+		{
+			name: "compute",
+			query: func(generator *MetricsGenerator) (float32, error) {
+				return generator.deviceCoreUtil(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" missing", func(t *testing.T) {
+			generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{}}}}
+			_, err := tt.query(generator)
+			if !errors.Is(err, errNoMetricData) {
+				t.Fatalf("expected errNoMetricData, got %v", err)
+			}
+		})
+
+		t.Run(tt.name+" idle", func(t *testing.T) {
+			generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: 0}}}}}}
+			value, err := tt.query(generator)
+			if err != nil || value != 0 {
+				t.Fatalf("idle sample = (%v, %v), want (0, nil)", value, err)
+			}
+		})
+	}
+}
+
+func TestDeviceUsageMetricsRejectNonFiniteSamples(t *testing.T) {
+	for _, value := range []float32{float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))} {
+		generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: value}}}}}}
+		_, err := generator.deviceCoreUtil(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+		if !errors.Is(err, errNoMetricData) {
+			t.Fatalf("expected errNoMetricData for %v, got %v", value, err)
+		}
+	}
+}
+
 func TestNvidiaContainerCoreMetrics(t *testing.T) {
 	tests := []struct {
 		name      string
