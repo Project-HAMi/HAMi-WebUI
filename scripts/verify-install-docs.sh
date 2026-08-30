@@ -60,6 +60,13 @@ for install_doc in "${chart_readme}" "${install_guide}"; do
           printf "helm install must define or require CHART_VERSION in the same code block: %s\n", document > "/dev/stderr"
           failed = 1
         }
+        external_mode = index(block, "--set externalPrometheus.enabled=true") > 0 && \
+          index(block, "--set-string externalPrometheus.address=") > 0
+        managed_mode = index(block, "--set kube-prometheus-stack.enabled=true") > 0
+        if (external_mode == managed_mode) {
+          printf "helm install must select exactly one explicit Prometheus mode in %s\n", document > "/dev/stderr"
+          failed = 1
+        }
       }
       in_block = 0
       next
@@ -81,4 +88,4 @@ for install_doc in "${chart_readme}" "${install_guide}"; do
   ' "${install_doc}"
 done
 
-echo "Version-matched Helm installation documentation is valid."
+echo "Version-matched Helm installation and Prometheus mode documentation is valid."

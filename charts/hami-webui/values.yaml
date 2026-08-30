@@ -81,6 +81,9 @@ env:
   - name: TZ
     value: "Asia/Shanghai"
 
+# ServiceMonitor resources require Prometheus Operator CRDs. In raw/manual
+# scrape mode, disable this block, hamiServiceMonitor, and the dcgm-exporter
+# ServiceMonitor together, then configure equivalent scrape jobs yourself.
 serviceMonitor:
   enabled: true
   interval: 15s
@@ -90,6 +93,10 @@ serviceMonitor:
   relabelings: []
 
 hamiServiceMonitor:
+  # Keep this monitor by default and leave HAMi's prometheus.enabled=false. It
+  # preserves workload labels; disable it only when another selected monitor
+  # owns the same endpoint and is confirmed to set honorLabels: true, or when
+  # using raw/manual scrape configuration.
   enabled: true
   interval: 15s
   # Preserve HAMi's namespace/pod/container workload labels when they collide
@@ -117,6 +124,9 @@ dcgm-exporter:
   nodeSelector:
     gpu: "on"
 
+# Prometheus ownership is explicit: enable exactly one of this dependency and
+# externalPrometheus. The defaults intentionally enable neither so Helm fails
+# with an actionable message until the installer chooses a real backend.
 kube-prometheus-stack:
   enabled: false
   crds:
@@ -146,8 +156,10 @@ kube-prometheus-stack:
 
 externalPrometheus:
   enabled: false
-  # If externalPrometheus.enabled is true, this address will be used
-  address: "http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"
+  # Required when enabled. Use the real in-cluster HTTP API address of an
+  # existing Prometheus or VictoriaMetrics instance; the Chart does not guess
+  # release names or namespaces.
+  address: ""
   # Single PromQL upstream timeout (sent to Prometheus / VictoriaMetrics as the &timeout= parameter).
   timeout: "1m"
   tls:

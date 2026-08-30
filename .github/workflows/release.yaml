@@ -73,8 +73,13 @@ jobs:
           lock_before="$(sha256sum charts/hami-webui/Chart.lock | awk '{print $1}')"
           helm dependency build charts/hami-webui --skip-refresh
           [[ "$(sha256sum charts/hami-webui/Chart.lock | awk '{print $1}')" == "${lock_before}" ]]
-          helm lint charts/hami-webui
-          helm template oci-bootstrap charts/hami-webui >/dev/null
+          prometheus_verification_args=(
+            --set 'externalPrometheus.enabled=true'
+            --set-string 'externalPrometheus.address=http://prometheus.oci-bootstrap.svc.cluster.local:9090'
+          )
+          helm lint charts/hami-webui "${prometheus_verification_args[@]}"
+          helm template oci-bootstrap charts/hami-webui \
+            "${prometheus_verification_args[@]}" >/dev/null
           mkdir bootstrap-bundle
           helm package charts/hami-webui \
             --version "${version}" \

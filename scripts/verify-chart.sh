@@ -17,7 +17,37 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 
 cp -R "${repo_root}/charts/hami-webui" "${work_dir}/hami-webui"
 helm dependency build --skip-refresh "${work_dir}/hami-webui"
-helm lint --strict "${work_dir}/hami-webui"
+
+prometheus_test_address='http://prometheus.monitoring.svc.cluster.local:9090'
+if default_prometheus_output="$(helm template test "${work_dir}/hami-webui" 2>&1)"; then
+  echo "Chart defaults unexpectedly guessed a Prometheus backend" >&2
+  exit 1
+fi
+if ! grep -Fq 'Prometheus is not configured' <<<"${default_prometheus_output}"; then
+  echo "Unconfigured Prometheus mode did not return an actionable error" >&2
+  echo "${default_prometheus_output}" >&2
+  exit 1
+fi
+
+helm lint --strict "${work_dir}/hami-webui" \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string "externalPrometheus.address=${prometheus_test_address}"
+
+# Most assertions below exercise unrelated Chart contracts. Give the temporary
+# test copy one explicit external Prometheus mode while leaving the shipped
+# defaults unconfigured and fail-closed.
+test_values_tmp="${work_dir}/values.yaml.tmp"
+awk -v address="${prometheus_test_address}" '
+  $0 == "externalPrometheus:" { in_external = 1; print; next }
+  in_external && $0 == "  enabled: false" { print "  enabled: true"; next }
+  in_external && $0 ~ /^  address:/ {
+    print "  address: \"" address "\""
+    in_external = 0
+    next
+  }
+  { print }
+' "${work_dir}/hami-webui/values.yaml" >"${test_values_tmp}"
+mv "${test_values_tmp}" "${work_dir}/hami-webui/values.yaml"
 
 render_template() {
   local template="$1"
@@ -40,6 +70,10 @@ service_port_names() {
 web_service_render="$(render_template templates/service.yaml)"
 backend_service_render="$(render_template templates/backend-service.yaml)"
 service_monitor_render="$(render_template templates/servicemonitor.yaml)"
+hami_service_monitor_render="$(render_template templates/hamiservicemonitor.yaml)"
+dcgm_service_monitor_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --show-only charts/dcgm-exporter/templates/service-monitor.yaml)"
 default_deployment_render="$(render_template templates/deployment.yaml)"
 default_config_render="$(render_template templates/configmap.yaml)"
 
@@ -165,6 +199,13 @@ if ! grep -Fq 'app.kubernetes.io/component: "backend"' <<<"${service_monitor_spe
   echo "ServiceMonitor must select only the internal backend Service" >&2
   exit 1
 fi
+if ! grep -Fq 'jobRelease: hami-webui-prometheus' <<<"${service_monitor_render}" ||
+  ! grep -Fq 'jobRelease: hami-webui-prometheus' <<<"${hami_service_monitor_render}" ||
+  ! grep -Fq 'jobRelease: hami-webui-prometheus' <<<"${dcgm_service_monitor_render}" ||
+  ! grep -Fq 'honorLabels: true' <<<"${hami_service_monitor_render}"; then
+  echo "Prometheus Operator mode did not render the aligned scrape labels and HAMi label contract" >&2
+  exit 1
+fi
 
 load_balancer_web_service="$(render_template templates/service.yaml \
   --set 'service.type=LoadBalancer')"
@@ -193,6 +234,7 @@ assert_internal_prometheus_address() {
 
   local -a render_args=(
     --namespace "${release_namespace}"
+    --set 'externalPrometheus.enabled=false'
     --set 'kube-prometheus-stack.enabled=true'
     --set 'kube-prometheus-stack.prometheus.enabled=true'
     "$@"
@@ -227,10 +269,12 @@ assert_internal_prometheus_address test hami-webui-test \
 
 prometheus_render="$(helm template test "${work_dir}/hami-webui" \
   --namespace hami-webui-test \
+  --set 'externalPrometheus.enabled=false' \
   --set 'kube-prometheus-stack.enabled=true' \
   --show-only charts/kube-prometheus-stack/templates/prometheus/prometheus.yaml)"
 kube_state_metrics_render="$(helm template test "${work_dir}/hami-webui" \
   --namespace hami-webui-test \
+  --set 'externalPrometheus.enabled=false' \
   --set 'kube-prometheus-stack.enabled=true' \
   --show-only charts/kube-prometheus-stack/charts/kube-state-metrics/templates/servicemonitor.yaml)"
 selector_label='jobRelease: hami-webui-prometheus'
@@ -244,11 +288,104 @@ external_address='http://external-prometheus.observability.svc.cluster.local:909
 external_render="$(helm template test "${work_dir}/hami-webui" \
   --set 'externalPrometheus.enabled=true' \
   --set-string "externalPrometheus.address=${external_address}" \
-  --set 'kube-prometheus-stack.enabled=true' \
-  --set 'kube-prometheus-stack.prometheus.enabled=true' \
   --show-only templates/configmap.yaml)"
 grep -Fq "address: ${external_address}" <<<"${external_render}"
 grep -Fq 'insecure_skip_verify: false' <<<"${external_render}"
+
+assert_prometheus_mode_rejected() {
+  local expected_message="$1"
+  shift
+  local output
+
+  if output="$(helm template test "${work_dir}/hami-webui" "$@" 2>&1)"; then
+    echo "Invalid Prometheus mode was accepted: ${expected_message}" >&2
+    exit 1
+  fi
+  if ! grep -Fq "${expected_message}" <<<"${output}"; then
+    echo "Prometheus mode rejection did not explain: ${expected_message}" >&2
+    echo "${output}" >&2
+    exit 1
+  fi
+}
+
+assert_prometheus_mode_rejected 'Prometheus is not configured' \
+  --set 'externalPrometheus.enabled=false' \
+  --set 'kube-prometheus-stack.enabled=false'
+assert_prometheus_mode_rejected 'mutually exclusive' \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string "externalPrometheus.address=${external_address}" \
+  --set 'kube-prometheus-stack.enabled=true'
+assert_prometheus_mode_rejected 'externalPrometheus.address is required' \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address='
+assert_prometheus_mode_rejected 'absolute http:// or https:// URL' \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=prometheus.monitoring.svc:9090'
+assert_prometheus_mode_rejected 'externalPrometheus.address must include a hostname' \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=http:///api/v1'
+assert_prometheus_mode_rejected 'externalPrometheus.address must include a hostname' \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=http://:9090'
+assert_prometheus_mode_rejected 'kube-prometheus-stack.prometheus.enabled must remain true' \
+  --set 'externalPrometheus.enabled=false' \
+  --set 'kube-prometheus-stack.enabled=true' \
+  --set 'kube-prometheus-stack.prometheus.enabled=false'
+
+raw_prometheus_render="$(helm template test "${work_dir}/hami-webui" \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string "externalPrometheus.address=${external_address}" \
+  --set 'serviceMonitor.enabled=false' \
+  --set 'hamiServiceMonitor.enabled=false' \
+  --set 'dcgm-exporter.serviceMonitor.enabled=false')"
+if grep -Fq 'kind: ServiceMonitor' <<<"${raw_prometheus_render}" ||
+  ! grep -Fq 'kind: DaemonSet' <<<"${raw_prometheus_render}" ||
+  ! grep -Fq "address: ${external_address}" <<<"${raw_prometheus_render}"; then
+  echo "Manual-scrape mode did not remove only the Operator custom resources" >&2
+  exit 1
+fi
+
+existing_operator_args=(
+  --namespace hami-webui-test
+  --include-crds
+  --set 'externalPrometheus.enabled=false'
+  --set 'kube-prometheus-stack.enabled=true'
+)
+existing_operator_render="$(helm template test "${work_dir}/hami-webui" \
+  "${existing_operator_args[@]}")"
+if ! grep -Eq '^kind: Prometheus$' <<<"${existing_operator_render}" ||
+  grep -Eq '^kind: CustomResourceDefinition$' <<<"${existing_operator_render}" ||
+  helm template test "${work_dir}/hami-webui" \
+    "${existing_operator_args[@]}" \
+    --show-only charts/kube-prometheus-stack/templates/prometheus-operator/deployment.yaml \
+    >/dev/null 2>&1; then
+  echo "Existing-Operator mode rendered the wrong Prometheus ownership resources" >&2
+  exit 1
+fi
+
+self_contained_args=(
+  --namespace hami-webui-test
+  --include-crds
+  --set 'externalPrometheus.enabled=false'
+  --set 'kube-prometheus-stack.enabled=true'
+  --set 'kube-prometheus-stack.crds.enabled=true'
+  --set 'kube-prometheus-stack.prometheusOperator.enabled=true'
+)
+self_contained_render="$(helm template test "${work_dir}/hami-webui" \
+  "${self_contained_args[@]}")"
+self_contained_prometheus_render="$(helm template test "${work_dir}/hami-webui" \
+  "${self_contained_args[@]}" \
+  --show-only charts/kube-prometheus-stack/templates/prometheus/prometheus.yaml)"
+self_contained_operator_render="$(helm template test "${work_dir}/hami-webui" \
+  "${self_contained_args[@]}" \
+  --show-only charts/kube-prometheus-stack/templates/prometheus-operator/deployment.yaml)"
+if ! grep -Eq '^kind: CustomResourceDefinition$' <<<"${self_contained_render}" ||
+  ! grep -Eq '^kind: Prometheus$' <<<"${self_contained_prometheus_render}" ||
+  ! grep -Eq '^kind: Deployment$' <<<"${self_contained_operator_render}" ||
+  ! grep -Fq 'app: kube-prometheus-stack-operator' <<<"${self_contained_operator_render}"; then
+  echo "Self-contained Prometheus mode omitted CRDs, Operator, or Prometheus" >&2
+  exit 1
+fi
 
 external_deployment_render="$(render_template templates/deployment.yaml \
   --set 'externalPrometheus.enabled=true' \
@@ -311,8 +448,10 @@ grep -Fq 'insecure_skip_verify: true' <<<"${prometheus_insecure_render}"
 
 disabled_tls_render="$(helm template test "${work_dir}/hami-webui" \
   --namespace hami-webui-test \
+  --set 'externalPrometheus.enabled=false' \
   --set-string 'externalPrometheus.tls.existingSecret=unused-tls' \
   --set-string 'externalPrometheus.tls.caKey=ca.pem' \
+  --set 'kube-prometheus-stack.enabled=true' \
   --show-only templates/configmap.yaml \
   --show-only templates/deployment.yaml)"
 if grep -Eq 'prometheus-tls|insecure_skip_verify|unused-tls|ca\.pem' <<<"${disabled_tls_render}"; then

@@ -32,7 +32,11 @@ To install HAMi-WebUI using Helm, ensure you meet these requirements:
 | <= v1.1.0 | >= 2.4.0, < 2.9.0 | old labels: `deviceuuid`, `devicetype`, `podnamespace`, `podname`, `ctrname` | For existing HAMi deployments before the metrics rename |
 | v1.1.1+ | >= 2.9.0 | new labels: `device_uuid`, `device_type`, `namespace`, `pod`, `container` | Required after the HAMi 2.9.0 metrics rename |
 
-3. Prometheus > 2.8.0
+3. External mode requires a reachable Prometheus-compatible HTTP API
+   (Prometheus > 2.8.0 or VictoriaMetrics). Using the Chart's `ServiceMonitor`
+   resources also requires a running Prometheus Operator and its CRD; the raw
+   scrape path documented below does not. Self-contained mode provisions the
+   API, Operator, and CRDs together.
 
 4. Helm > 3.0
 
@@ -64,28 +68,40 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
 
    ```bash
    : "${CHART_VERSION:?Set CHART_VERSION to the version used to generate values.yaml}"
+   PROMETHEUS_ADDRESS="http://<prometheus-service>.<namespace>.svc.cluster.local:9090"
+   PROMETHEUS_RELEASE="<kube-prometheus-stack-release>"
    helm install my-hami-webui hami-webui/hami-webui \
      --version "${CHART_VERSION}" \
      --namespace kube-system \
      --values values.yaml \
      --set externalPrometheus.enabled=true \
-     --set-string externalPrometheus.address="http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
+     --set-string externalPrometheus.address="${PROMETHEUS_ADDRESS}" \
+     --set-string serviceMonitor.additionalLabels.release="${PROMETHEUS_RELEASE}" \
+     --set-string hamiServiceMonitor.additionalLabels.release="${PROMETHEUS_RELEASE}" \
+     --set-string dcgm-exporter.serviceMonitor.additionalLabels.release="${PROMETHEUS_RELEASE}"
    ```
 
-   This example uses an existing Prometheus. Replace
-   `externalPrometheus.address` with its in-cluster HTTP API address. Do not copy
-   the `main` values file into an installation of an older release.
+   Replace both placeholders. This example uses an existing
+   kube-prometheus-stack release whose default selector is
+   `release=<Helm release>`. If your Prometheus uses another selector, apply its
+   labels to all three ServiceMonitors instead. Its
+   `serviceMonitorNamespaceSelector` must include the HAMi-WebUI namespace.
+   Do not copy the `main` values file into an older Chart release.
 
-3. Run the following command to verify the installation:
+3. Verify both the workload and the scrape contract:
 
    ```bash
    kubectl get pods -n kube-system | grep webui
+   kubectl get servicemonitor -n kube-system \
+     -l app.kubernetes.io/instance=my-hami-webui
    ```
 
-   By default, a successful Chart 2 installation has one Ready HAMi-WebUI Pod;
+   A successful Chart 2 installation has one Ready HAMi-WebUI Pod;
    every HAMi-WebUI Pod contains one application container. When the bundled
    dcgm-exporter is enabled, its DaemonSet schedules Pods on nodes matching its
-   node selector.
+   node selector. Pod readiness does not prove that an external Prometheus has
+   selected or scraped these ServiceMonitors; use the query checks in
+   [Prometheus scrape configuration](#prometheus-scrape-configuration).
 
 ### Upgrade from Chart 1.3 to 2.0
 
@@ -140,6 +156,45 @@ helm rollback my-hami-webui <CHART-1-REVISION> \
 That rollback restores the Chart 1.3 templates, values, and two-image runtime
 together. Use `--reset-values` again when moving forward to Chart 2.
 
+### Select a Prometheus ownership mode
+
+Chart 2 requires exactly one Prometheus mode. Helm rejects an installation when
+neither mode is configured, when both are enabled, or when external mode has no
+absolute HTTP(S) address. This prevents a healthy-looking Pod from querying a
+guessed Service that the Chart never created.
+
+The recommended production path is an independently managed Prometheus and
+Prometheus Operator. Enable `externalPrometheus` as shown in the installation
+command, then make the Operator's Prometheus resource select all three generated
+ServiceMonitors and their namespaces. Keep this Chart's `hamiServiceMonitor`
+enabled and leave the HAMi Chart's `prometheus.enabled=false` default: this
+monitor sets `honorLabels: true`. Disable it only when another selected monitor
+owns the same endpoint and is confirmed to preserve those workload labels.
+
+For a self-contained evaluation cluster with no existing Prometheus or
+Operator, use:
+
+```yaml
+externalPrometheus:
+  enabled: false
+kube-prometheus-stack:
+  enabled: true
+  crds:
+    enabled: true
+  prometheusOperator:
+    enabled: true
+```
+
+This mode installs cluster-scoped CRDs and an Operator as part of the WebUI
+release. Helm does not upgrade or delete CRDs as ordinary release resources, so
+manage the monitoring stack as a separate release for long-lived production
+clusters.
+
+If a compatible Operator and CRDs already exist but a separate Prometheus
+instance is desired, enable only `kube-prometheus-stack.enabled`; the Chart's
+defaults deliberately leave that dependency's CRDs and Operator disabled. The
+existing Operator must watch the HAMi-WebUI namespace.
+
 ### HTTPS external Prometheus
 
 HAMi-WebUI verifies HTTPS certificates with the container's system trust store
@@ -178,7 +233,14 @@ silently skipped it for every HTTPS Prometheus endpoint. Before upgrading an
 installation that relies on an untrusted self-signed certificate, configure its
 CA as shown above or explicitly opt into the temporary insecure setting.
 
-### Prometheus scrape labels
+### Prometheus scrape configuration
+
+ServiceMonitor objects are discovery requests, not proof of collection. The
+running Prometheus resource must select their labels through
+`serviceMonitorSelector` and must select the HAMi-WebUI namespace through
+`serviceMonitorNamespaceSelector`. A common kube-prometheus-stack installation
+selects `release=<its Helm release>`; the first-install command above applies
+that label to all three generated ServiceMonitors.
 
 HAMi's vgpu-monitor exposes workload identity as `namespace`, `pod`, and
 `container`. When Prometheus adds scrape-target labels with the same names and
@@ -201,9 +263,64 @@ scrape_configs:
 `Prometheus.spec.overrideHonorLabels: true` forces
 `honorLabels` off for every ServiceMonitor, including this one.
 
-If the same Prometheus selects both this chart's ServiceMonitor and HAMi's
-built-in device-plugin ServiceMonitor (`prometheus.enabled` in the HAMi chart),
-the endpoint is scraped twice. Configure that Prometheus to select only one.
+If the same Prometheus selects both this Chart's monitor and HAMi's built-in
+device-plugin ServiceMonitor, the endpoint is scraped twice. The HAMi monitor
+does not currently set `honorLabels: true`, so prefer this Chart's monitor and
+leave HAMi's `prometheus.enabled=false`. Use another owner only after confirming
+that its monitor preserves the workload labels, and select exactly one.
+
+For a Prometheus installation without the Operator, keep external mode enabled
+but turn off every Operator custom resource:
+
+```yaml
+externalPrometheus:
+  enabled: true
+  address: "http://<prometheus-address>:9090"
+serviceMonitor:
+  enabled: false
+hamiServiceMonitor:
+  enabled: false
+dcgm-exporter:
+  serviceMonitor:
+    enabled: false
+```
+
+The manually managed scrape configuration must collect all of these targets:
+
+- the generated `my-hami-webui-backend` Service on port `8000`, path `/metrics`;
+- HAMi's device-plugin monitor Service on `monitorport`, path `/metrics`, with
+  `honor_labels: true`;
+- kube-state-metrics for Kubernetes CPU and memory capacity; and
+- every vendor exporter or monitor used by the enabled hardware providers. The
+  consumed metric families include `DCGM_*` for NVIDIA, `npu_*` for Ascend,
+  `dcu_*`/`vdcu_*` for DCU, `mlu_*` for MLU, and `mx_*` for MetaX.
+
+Service names and discovery labels depend on the releases already installed in
+the cluster, so the Chart cannot safely write this external configuration. Raw
+scraping is therefore an advanced, user-managed path.
+
+After installation, query the selected Prometheus rather than relying only on
+Pod readiness. At minimum verify:
+
+```promql
+hami_vgpu_count or hami_core_size
+kube_node_status_allocatable
+```
+
+Then query a metric that matches the installed hardware:
+
+| Hardware | Example query |
+| --- | --- |
+| NVIDIA | `DCGM_FI_DEV_GPU_UTIL` |
+| Ascend | `npu_chip_info_utilization` |
+| DCU | `dcu_utilizationrate` |
+| MLU | `mlu_utilization` |
+| MetaX | `mx_gpu_usage` |
+
+For NVIDIA, also query `hami_container_device_utilization_ratio` while a HAMi
+workload is active. It is NVIDIA container telemetry, not a cross-vendor
+installation check. Missing applicable series means the address, selector,
+namespace selector, scrape ownership, or vendor exporter is still incomplete.
 
 ### Single-container service boundary
 

@@ -234,6 +234,8 @@ hamiServiceMonitor:
 kube-prometheus-stack:
   enabled: false
 externalPrometheus:
+  enabled: true
+  address: http://prometheus.invalid
   timeout: 1s
 metricsExporter:
   interval: 3600s

@@ -1,6 +1,6 @@
 # HAMi-WebUI
 
-![Version: 2.0.0-rc.0](https://img.shields.io/badge/Version-2.0.0--rc.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: main](https://img.shields.io/badge/AppVersion-main-informational?style=flat-square)
+![Version: 2.0.0-rc.1](https://img.shields.io/badge/Version-2.0.0--rc.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: main](https://img.shields.io/badge/AppVersion-main-informational?style=flat-square)
 
 ## Get Repo Info
 
@@ -24,11 +24,14 @@ CHART_VERSION="X.Y.Z"
 helm show values hami-webui/hami-webui \
   --version "${CHART_VERSION}" > values.yaml
 # Review and edit values.yaml for your cluster before installing it.
+PROMETHEUS_ADDRESS="http://prometheus.monitoring.svc.cluster.local:9090"
 helm install my-hami-webui hami-webui/hami-webui \
   --version "${CHART_VERSION}" \
   --create-namespace \
   --namespace hami \
-  --values values.yaml
+  --values values.yaml \
+  --set externalPrometheus.enabled=true \
+  --set-string externalPrometheus.address="${PROMETHEUS_ADDRESS}"
 ```
 
 Using `helm show values` and `helm install` with the same explicit version keeps
@@ -36,6 +39,11 @@ the configuration schema and the installed templates together. For the selected
 release, treat the comments in the retrieved values file as authoritative. The
 [configuration guide below](#configuration-guide-for-hamiwebui-helm-chart)
 describes the Chart version shown at the top of this README.
+
+The command above assumes an existing Prometheus and Prometheus Operator. Its
+Prometheus resource must select the ServiceMonitors created by this Chart. See
+[Prometheus modes](#2-about-prometheus) before installing into a new cluster or
+one that uses raw scrape configuration.
 
 Chart 2 deploys one `projecthami/hami-webui` image and one container. When
 upgrading from Chart 1.3, create a fresh Chart 2 values file and use
@@ -68,13 +76,13 @@ The command removes all the Kubernetes components associated with the chart and 
 | dcgm-exporter.enabled | bool | `true`                                                                             |  |
 | dcgm-exporter.nodeSelector.gpu | string | `"on"`                                                                             |  |
 | dcgm-exporter.serviceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
-| dcgm-exporter.serviceMonitor.enabled | bool | `true`                                                                             |  |
+| dcgm-exporter.serviceMonitor.enabled | bool | `true`                                                                             | Create a DCGM ServiceMonitor; disable in raw/manual scrape mode. |
 | dcgm-exporter.serviceMonitor.honorLabels | bool | `false`                                                                            |  |
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
 | env[0].name | string | `"TZ"` | Default environment variable name for the single application container. Replace the list to add other variables. |
 | env[0].value | string | `"Asia/Shanghai"` | Default timezone value. |
-| externalPrometheus.address | string | `"http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"` | Prometheus or VictoriaMetrics HTTP API address. |
-| externalPrometheus.enabled | bool | `false`                                                                            | Use an existing metrics backend instead of the bundled address. |
+| externalPrometheus.address | string | `""` | Required Prometheus or VictoriaMetrics HTTP API address when external mode is enabled. |
+| externalPrometheus.enabled | bool | `false`                                                                            | Use an existing metrics backend. Exactly one of this value and `kube-prometheus-stack.enabled` must be true. |
 | externalPrometheus.timeout | string | `"1m"` | Timeout sent with each upstream PromQL request. |
 | externalPrometheus.tls.insecureSkipVerify | bool | `false` | Disable HTTPS certificate verification. Use only as a temporary break-glass setting. |
 | externalPrometheus.tls.serverName | string | `""` | Optional certificate name override for the HTTPS endpoint. |
@@ -86,7 +94,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | frontend.frameAncestors | list or null | `null` | CSP framing allowlist. `null` preserves existing behavior, `[]` blocks framing, and a list allows explicit parents. |
 | fullnameOverride | string | `""`                                                                               |  |
 | hamiServiceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
-| hamiServiceMonitor.enabled | bool | `true`                                                                             |  |
+| hamiServiceMonitor.enabled | bool | `true`                                                                             | Preferred HAMi device-plugin monitor. Disable only when another selected monitor preserves workload labels with `honorLabels: true`, or in raw/manual mode. |
 | hamiServiceMonitor.honorLabels | bool | `true`                                                                            | Keep HAMi's workload namespace/pod/container labels when they collide with Prometheus scrape-target labels. |
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
@@ -106,7 +114,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | kube-prometheus-stack.alertmanager.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.crds.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.defaultRules.create | bool | `false`                                                                            |  |
-| kube-prometheus-stack.enabled | bool | `false`                                                                            |  |
+| kube-prometheus-stack.enabled | bool | `false`                                                                            | Create a dedicated Prometheus through the dependency Chart. Mutually exclusive with `externalPrometheus.enabled`. |
 | kube-prometheus-stack.grafana.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.kube-state-metrics.prometheus.monitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          | Allow the bundled Prometheus to scrape kube-state-metrics for cluster CPU and memory totals. |
 | kube-prometheus-stack.kubernetesServiceMonitors.enabled | bool | `false`                                                                            |  |
@@ -147,7 +155,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | serviceAccount.create | bool | `true`                                                                             |  |
 | serviceAccount.name | string | `""`                                                                               |  |
 | serviceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
-| serviceMonitor.enabled | bool | `true`                                                                             |  |
+| serviceMonitor.enabled | bool | `true`                                                                             | Create a ServiceMonitor for HAMi-WebUI metrics; requires Prometheus Operator CRDs. |
 | serviceMonitor.honorLabels | bool | `false`                                                                            |  |
 | serviceMonitor.interval | string | `"15s"`                                                                            |  |
 | serviceMonitor.relabelings | list | `[]`                                                                               |  |
@@ -178,9 +186,10 @@ This ensures that the existing `dcgm-exporter` instance is used, preventing conf
 
 ### 2. About `Prometheus`
 
-#### Scenario 1: If an existing Prometheus is available in your cluster
+HAMi-WebUI does not guess a Prometheus release name or namespace. Select exactly
+one mode; rendering fails when neither or both are enabled.
 
-If your cluster already has a working Prometheus instance, you can enable the external Prometheus configuration and provide the correct address:
+For the recommended existing-Prometheus path, provide its real HTTP API address:
 
 ```yaml
 externalPrometheus:
@@ -188,73 +197,20 @@ externalPrometheus:
   address: "<your-prometheus-address>"
 ```
 
-Here, replace <your-prometheus-address> with the actual domain or internal Ingress address for your Prometheus instance.
-
-HTTPS certificates are verified by default. For an endpoint signed by a private
-CA, create a Secret and reference its data key instead of placing PEM material
-in values:
-
-```yaml
-externalPrometheus:
-  enabled: true
-  address: "https://prometheus.example.com"
-  tls:
-    existingSecret: "prometheus-ca"
-    caKey: "ca.crt"
-```
-
-See the [installation guide](../../docs/installation/helm/index.md#https-external-prometheus)
-for Secret creation, mTLS, and the upgrade boundary.
-
-#### Scenario 2: If no Prometheus or Operator is installed in the cluster
-
-If there is no existing Prometheus or Prometheus Operator in your cluster, you can enable the kube-prometheus-stack to deploy Prometheus:
+For a self-contained evaluation cluster, enable the dependency together with
+its Operator and CRDs:
 
 ```yaml
 kube-prometheus-stack:
   enabled: true
   crds:
     enabled: true
-  ...
   prometheusOperator:
     enabled: true
-  ...
 ```
 
-#### Scenario 3: If Prometheus and Operator already exist, but a separate Prometheus instance is needed
-If your cluster has Prometheus and Prometheus Operator, but you want to use a separate instance without affecting the existing setup, modify the configuration as follows:
-
-```yaml
-kube-prometheus-stack:
-  enabled: true
-  ...
-```
-This allows you to reuse the existing Operator and CRDs while deploying a new Prometheus instance.
-
-### 3. About `jobRelease` Labels
-
-If deploying a completely new Prometheus, you can leave the default `jobRelease: hami-webui-prometheus` unchanged.
-
-***However, if you are integrating with an existing Prometheus instance and modifying the `prometheusSpec.serviceMonitorSelector.matchLabels`, ensure that **all** corresponding `...ServiceMonitor.additionalLabels` are updated to reflect the correct label.***
-
-For example, if you modify:
-
-```yaml
-prometheus:
-  prometheusSpec:
-    serviceMonitorSelector:
-      matchLabels:
-        <jobRelease-label-key>: <jobRelease-label-value>
-```
-
-You must also modify all ...ServiceMonitor.additionalLabels in your values.yaml file to match:
-
-```yaml
-...ServiceMonitor:
-  additionalLabels:
-    <jobRelease-label-key>: <jobRelease-label-value>
-```
-
-This includes `kube-prometheus-stack.kube-state-metrics.prometheus.monitor.additionalLabels`.
-
-This ensures that Prometheus will correctly discover all the ServiceMonitor configurations based on the updated labels.
+The external path requires a running Prometheus Operator and matching
+ServiceMonitor label/namespace selectors. The self-contained path creates
+cluster-scoped resources. Raw scraping, reuse of an existing Operator, HTTPS
+trust, duplicate-target prevention, and verification queries are documented in
+the [installation guide](../../docs/installation/helm/index.md#select-a-prometheus-ownership-mode).
