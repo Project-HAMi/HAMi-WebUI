@@ -11,7 +11,16 @@ KRATOS_VERSION ?= v2.0.0-20240322155018-41971ffa647a
 PROTOC_GEN_GO_VERSION ?= v1.34.2
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.4.0
 PROTOC_GEN_GO_HTTP_VERSION ?= v2.0.0-20240322155018-41971ffa647a
+PROTOC_GEN_GO_ERRORS_VERSION ?= v2.0.0-20240322155018-41971ffa647a
 PROTOC_GEN_OPENAPI_VERSION ?= v0.6.9
+PROTO_TOOLS = \
+	protoc \
+	kratos \
+	protoc-gen-go \
+	protoc-gen-go-grpc \
+	protoc-gen-go-http \
+	protoc-gen-go-errors \
+	protoc-gen-openapi
 
 # 1. Install Go dependencies
 .PHONY: install-deps
@@ -22,14 +31,27 @@ install-deps:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
 	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-http/v2@$(PROTOC_GEN_GO_HTTP_VERSION)
+	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-errors/v2@$(PROTOC_GEN_GO_ERRORS_VERSION)
 	go install github.com/google/gnostic/cmd/protoc-gen-openapi@$(PROTOC_GEN_OPENAPI_VERSION)
 
 # 2. Generate proto and wire files
 .PHONY: generate
 generate: generate-proto generate-wire
 
+# Kratos otherwise runs `kratos upgrade`, resolving every generator from @latest.
+.PHONY: check-proto-tools
+check-proto-tools:
+	@set -eu; missing=""; \
+	for tool in $(PROTO_TOOLS); do \
+		if ! command -v "$$tool" >/dev/null 2>&1; then missing="$$missing $$tool"; fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "missing required protobuf tools:$$missing; install them before generating code (Go tools: 'make install-deps')" >&2; \
+		exit 1; \
+	fi
+
 .PHONY: generate-proto
-generate-proto:
+generate-proto: check-proto-tools
 	kratos proto client .
 
 .PHONY: generate-wire
