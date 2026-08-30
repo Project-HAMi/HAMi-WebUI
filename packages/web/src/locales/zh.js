@@ -314,16 +314,6 @@ export default {
       containerName: '容器名称',
     }
   },
-  login: {
-    title: '账号登录',
-    username: '请输入账号',
-    password: '请输入密码',
-    forgotPassword: '忘记密码？',
-    loginButton: '登录',
-    usernameRequired: '请输入账号',
-    passwordRequired: '请输入密码',
-    loading: 'Loading',
-  },
   error: {
     404: {
       oops: 'OOPS!',

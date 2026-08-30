@@ -318,16 +318,6 @@ export default {
       containerName: 'Container Name',
     }
   },
-  login: {
-    title: 'Account Login',
-    username: 'Please enter username',
-    password: 'Please enter password',
-    forgotPassword: 'Forgot password?',
-    loginButton: 'Login',
-    usernameRequired: 'Please enter username',
-    passwordRequired: 'Please enter password',
-    loading: 'Loading',
-  },
   error: {
     404: {
       oops: 'OOPS!',
