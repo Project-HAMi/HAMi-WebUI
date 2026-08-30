@@ -11,9 +11,8 @@ import (
 // Why this exists: the old reset()+populate cycle (called from a synchronous HTTP
 // handler) was safe because scrape only ever observed the fully-populated state.
 // Once the cycle moved to a background goroutine, every Prometheus scrape that
-// landed between reset() and the end of populate saw partial / empty data, which
-// surfaces in the UI as "vGPU 分配率有时有数据，有时没有数据" — series flickering
-// in and out at scrape boundaries.
+// landed between reset() and the end of populate saw partial / empty data. The
+// resulting series flickered in and out of the UI at scrape boundaries.
 //
 // The fix: instead of wiping the GaugeVec at the start of each cycle, every Set
 // goes through MetricsGenerator.set, which both writes the value AND records the

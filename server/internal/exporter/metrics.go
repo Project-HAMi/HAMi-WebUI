@@ -5,42 +5,42 @@ import (
 )
 
 func init() {
-	// 卡维度指标
-	prometheus.MustRegister(HamiVCoreScaling)            // 算力超分倍数
-	prometheus.MustRegister(HamiVMemoryScaling)          // 显存超分倍数
-	prometheus.MustRegister(HamiVgpuCount)               // 虚拟vgpu设备数
-	prometheus.MustRegister(HamiVmemorySize)             // 虚拟显存大小(MB)
-	prometheus.MustRegister(HamiVcoreSize)               // 虚拟算力大小
-	prometheus.MustRegister(HamiMemorySize)              // 真实显存总量(MB)
-	prometheus.MustRegister(HamiMemoryUsed)              // 真实显存已使用(MB)
-	prometheus.MustRegister(HamiMemoryUtil)              // 真实显存利用率
-	prometheus.MustRegister(HamiCoreSize)                // 真实算力总量
-	prometheus.MustRegister(HamiCoreUsed)                // 真实算力已使用
-	prometheus.MustRegister(HamiCoreUtil)                // 真实算力利用率
-	prometheus.MustRegister(HamiCoreUsedAvg)             // 真实算力已使用周期平均
-	prometheus.MustRegister(HamiCoreUtilAvg)             // 真实算力利用率周期平均
-	prometheus.MustRegister(HamiDeviceTemperature)       // 显卡温度
-	prometheus.MustRegister(HamiDeviceMemoryTemperature) // 显存温度
-	prometheus.MustRegister(HamiDevicePower)             // 显卡功耗
-	prometheus.MustRegister(HamiDeviceFanSpeedP)         // 风扇转速（百分比）
-	prometheus.MustRegister(HamiDeviceFanSpeedR)         // 风扇转速（每分钟转速）
-	prometheus.MustRegister(HamiDeviceHardwareHealth)    // 显卡健康状态
+	// Device metrics.
+	prometheus.MustRegister(HamiVCoreScaling)
+	prometheus.MustRegister(HamiVMemoryScaling)
+	prometheus.MustRegister(HamiVgpuCount)
+	prometheus.MustRegister(HamiVmemorySize)
+	prometheus.MustRegister(HamiVcoreSize)
+	prometheus.MustRegister(HamiMemorySize)
+	prometheus.MustRegister(HamiMemoryUsed)
+	prometheus.MustRegister(HamiMemoryUtil)
+	prometheus.MustRegister(HamiCoreSize)
+	prometheus.MustRegister(HamiCoreUsed)
+	prometheus.MustRegister(HamiCoreUtil)
+	prometheus.MustRegister(HamiCoreUsedAvg)
+	prometheus.MustRegister(HamiCoreUtilAvg)
+	prometheus.MustRegister(HamiDeviceTemperature)
+	prometheus.MustRegister(HamiDeviceMemoryTemperature)
+	prometheus.MustRegister(HamiDevicePower)
+	prometheus.MustRegister(HamiDeviceFanSpeedP)
+	prometheus.MustRegister(HamiDeviceFanSpeedR)
+	prometheus.MustRegister(HamiDeviceHardwareHealth)
 
-	// 任务维度指标
-	prometheus.MustRegister(HamiContainerVgpuAllocated)    // 任务申请的vgpu设备数
-	prometheus.MustRegister(HamiContainerVmemoryAllocated) // 任务申请的vmemory
-	prometheus.MustRegister(HamiContainerVcoreAllocated)   // 任务申请的vcore
-	prometheus.MustRegister(HamiContainerMemoryUsed)       // 任务实际使用的显存大小（MB）
-	prometheus.MustRegister(HamiContainerMemoryUtil)       // 任务实际使用的显存占任务申请的比例
-	prometheus.MustRegister(HamiContainerCoreUsed)         // 任务算力使用量（厂商语义；NVIDIA 为活跃分配 vCore 估算）
-	prometheus.MustRegister(HamiContainerCoreUtil)         // 任务算力利用率（NVIDIA 为已分配算力活跃度）
+	// Container metrics.
+	prometheus.MustRegister(HamiContainerVgpuAllocated)
+	prometheus.MustRegister(HamiContainerVmemoryAllocated)
+	prometheus.MustRegister(HamiContainerVcoreAllocated)
+	prometheus.MustRegister(HamiContainerMemoryUsed)
+	prometheus.MustRegister(HamiContainerMemoryUtil)
+	prometheus.MustRegister(HamiContainerCoreUsed)
+	prometheus.MustRegister(HamiContainerCoreUtil)
 
-	// 资源池维度指标
-	prometheus.MustRegister(HamiPoolVcoreSize)   // 资源池总算力大小
-	prometheus.MustRegister(HamiPoolVgpuCount)   // 资源池总vgpu设备数
-	prometheus.MustRegister(HamiPoolVmemorySize) // 资源池总显存大小
+	// Resource pool metrics.
+	prometheus.MustRegister(HamiPoolVcoreSize)
+	prometheus.MustRegister(HamiPoolVgpuCount)
+	prometheus.MustRegister(HamiPoolVmemorySize)
 
-	prometheus.MustRegister(HamiSystemComponentHealth) // 系统组件健康状态
+	prometheus.MustRegister(HamiSystemComponentHealth)
 }
 
 var (
