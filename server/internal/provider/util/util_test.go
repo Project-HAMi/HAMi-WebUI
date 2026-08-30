@@ -32,78 +32,6 @@ func init() {
 	inRequestDevices["NVIDIA"] = "hami.io/vgpu-devices-to-allocate"
 }
 
-//func TestEmptyContainerDevicesCoding(t *testing.T) {
-//	cd1 := ContainerDevices{}
-//	s := EncodeContainerDevices(cd1)
-//	fmt.Println(s)
-//	cd2, _ := DecodeContainerDevices(s)
-//	assert.DeepEqual(t, cd1, cd2)
-//}
-
-//func TestEmptyPodDeviceCoding(t *testing.T) {
-//	pd1 := PodDevices{}
-//	s := EncodePodDevices(inRequestDevices, pd1)
-//	fmt.Println(s)
-//	pd2, _ := DecodePodDevices(inRequestDevices, s)
-//	assert.DeepEqual(t, pd1, pd2)
-//}
-
-//func TestPodDevicesCoding(t *testing.T) {
-//	tests := []struct {
-//		name string
-//		args PodDevices
-//	}{
-//		{
-//			name: "one pod one container use zero device",
-//			args: PodDevices{
-//				"NVIDIA": PodSingleDevice{},
-//			},
-//		},
-//		{
-//			name: "one pod one container use one device",
-//			args: PodDevices{
-//				"NVIDIA": PodSingleDevice{
-//					ContainerDevices{
-//						ContainerDevice{0, "UUID1", "Type1", 1000, 30},
-//					},
-//				},
-//			},
-//		},
-//		{
-//			name: "one pod two container, every container use one device",
-//			args: PodDevices{
-//				"NVIDIA": PodSingleDevice{
-//					ContainerDevices{
-//						ContainerDevice{0, "UUID1", "Type1", 1000, 30},
-//					},
-//					ContainerDevices{
-//						ContainerDevice{0, "UUID1", "Type1", 1000, 30},
-//					},
-//				},
-//			},
-//		},
-//		{
-//			name: "one pod one container use two devices",
-//			args: PodDevices{
-//				"NVIDIA": PodSingleDevice{
-//					ContainerDevices{
-//						ContainerDevice{0, "UUID1", "Type1", 1000, 30},
-//						ContainerDevice{0, "UUID2", "Type1", 1000, 30},
-//					},
-//				},
-//			},
-//		},
-//	}
-//	for _, test := range tests {
-//		t.Run(test.name, func(t *testing.T) {
-//			//s := EncodePodDevices(inRequestDevices, test.args)
-//			//fmt.Println(s)
-//			//got, _ := DecodePodDevices(inRequestDevices, s)
-//			//assert.DeepEqual(t, test.args, got)
-//		})
-//	}
-//}
-
 func Test_test(t *testing.T) {
 	var deviceInfos PodDevices
 	log.Info("deviceInfos is ", deviceInfos == nil)
@@ -111,9 +39,6 @@ func Test_test(t *testing.T) {
 }
 
 func Test_DecodePodDevices(t *testing.T) {
-	//DecodePodDevices(checklist map[string]string, annos map[string]string) (PodDevices, error)
-	//InRequestDevices["NVIDIA"] = "hami.io/vgpu-devices-to-allocate"
-	//SupportDevices["DCU"] = "hami.io/vgpu-devices-allocated"
 	SupportDevices["NVIDIA"] = "hami.io/vgpu-devices-allocated"
 	tests := []struct {
 		name string
@@ -287,7 +212,7 @@ func Test_DecodePodDevices(t *testing.T) {
 				checklist: SupportDevices,
 				annos: map[string]string{
 					InRequestDevices["DCU"]: ";,,0,0:;",
-					// 这两行最终只有一个生效, 因为key的名字一样
+					// Both device types use the same annotation key, so the latter entry wins.
 					SupportDevices["DCU"]:    "GPU-962d9630-a4ef-dc16-a50d-111111111111,DCU,1000,10:GPU-962d9630-a4ef-dc16-a50d-222222222222,DCU,2000,20:;GPU-962d9630-a4ef-dc16-a50d-222222222222,NVIDIA,3000,30:GPU-962d9630-a4ef-dc16-a50d-222222222222,NVIDIA,3000,30:GPU-962d9630-a4ef-dc16-a50d-333333333333,NVIDIA,3000,30:;,,0,0:;",
 					SupportDevices["NVIDIA"]: "GPU-962d9630-a4ef-dc16-a50d-111111111111,DCU,1000,10:GPU-962d9630-a4ef-dc16-a50d-222222222222,DCU,2000,20:;GPU-962d9630-a4ef-dc16-a50d-222222222222,NVIDIA,3000,30:GPU-962d9630-a4ef-dc16-a50d-222222222222,NVIDIA,3000,30:GPU-962d9630-a4ef-dc16-a50d-333333333333,NVIDIA,3000,30:;,,0,0:;",
 				},
@@ -344,9 +269,6 @@ func Test_DecodePodDevices(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			//got, gotErr := DecodePodDevices(test.args.checklist, test.args.annos, )
-			//assert.DeepEqual(t, test.wantErr, gotErr)
-			//assert.DeepEqual(t, test.want, got)
 		})
 	}
 }

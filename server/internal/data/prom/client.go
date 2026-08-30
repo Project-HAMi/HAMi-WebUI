@@ -34,7 +34,7 @@ func NewClient(address string, timeout time.Duration, auth string) (*Client, err
 			auth: auth,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // 忽略 SSL 证书验证
+					InsecureSkipVerify: true,
 				},
 			},
 		},
@@ -53,7 +53,7 @@ func (c *Client) Conn() (api.Client, error) {
 	return c.client, nil
 }
 
-// Query 查询单点时刻指标值
+// Query evaluates query at the current time.
 func (c *Client) Query(ctx context.Context, query string) (model.Value, error) {
 	v1api := v1.NewAPI(c.client)
 	result, warnings, err := v1api.Query(ctx, query, time.Now(), v1.WithTimeout(c.timeout))
@@ -68,7 +68,7 @@ func (c *Client) Query(ctx context.Context, query string) (model.Value, error) {
 	return result, nil
 }
 
-// QueryRange 查询时间范围内指标变化趋势数据
+// QueryRange evaluates query over the supplied time range.
 func (c *Client) QueryRange(ctx context.Context, query string, r v1.Range) (model.Value, error) {
 	v1api := v1.NewAPI(c.client)
 	result, warnings, err := v1api.QueryRange(ctx, query, r, v1.WithTimeout(c.timeout))

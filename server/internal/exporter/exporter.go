@@ -79,12 +79,12 @@ type MetricsGenerator struct {
 	cacheTime time.Time
 }
 
-// roundToTwoDecimal 将浮点数保留两位小数
+// roundToTwoDecimal rounds value to two decimal places.
 func roundToTwoDecimal(value float64) float64 {
 	return float64(math.Round(value*100) / 100)
 }
 
-// roundToOneDecimal 将浮点数保留一位小数并进行四舍五入
+// roundToOneDecimal rounds value to one decimal place.
 func roundToOneDecimal(value float64) float64 {
 	return math.Round(value*10) / 10
 }
@@ -231,7 +231,7 @@ func (s *MetricsGenerator) GenerateMetrics(ctx context.Context) error {
 	return nil
 }
 
-// 卡维度指标
+// GenerateDeviceMetrics refreshes device-level metrics from inventory and provider telemetry.
 func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	deviceInfos, err := s.nodeUsecase.ListAllDevices(ctx)
 	if err != nil {
@@ -239,7 +239,6 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	}
 	for _, device := range deviceInfos {
 		provider := device.Provider
-		// 查询device的驱动版本以及设备号
 		deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
 		var driver, deviceNo = "", ""
 		if err == nil && deviceAdditional != nil {
@@ -247,11 +246,9 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			deviceNo = deviceAdditional.DeviceNo
 		}
 
-		// 分配率指标
 		s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		// 超配比指标
 		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiCoreSize, 100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)
@@ -313,7 +310,8 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 		if c.ContainerDevices[0].Type != metax.MetaxGPUDevice {
 			continue
 		}
-		// 从containerDevice获取的device uuid暂时无法和真正的device uuid对应上，这里计算任务总的分配率和使用率
+		// MetaX allocation UUIDs cannot currently be correlated with telemetry UUIDs,
+		// so this path pairs the two lists by index and emits telemetry identities.
 		var core []int32
 		var memory []int32
 		for _, cd := range c.ContainerDevices {
@@ -331,7 +329,6 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 			continue
 		}
 		reportLen := min(len(res.Data), len(c.ContainerDevices))
-		// 一条metric对应一张卡
 		for i := range reportLen {
 			deviceUUID := res.Data[i].Metric["uuid"]
 			deviceType := res.Data[i].Metric["modelName"]
@@ -362,7 +359,7 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 	}
 }
 
-// 任务维度指标
+// GenerateContainerMetrics refreshes workload-level allocation and usage metrics.
 func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 	deviceInfos, err := s.nodeUsecase.ListAllDevices(ctx)
 	if err != nil {
@@ -396,7 +393,6 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			s.set(HamiContainerVgpuAllocated, float64(vGPU), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
-			// 查询任务在当前设备下的算力利用率
 			used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index, core)
 			if err == nil {
 				s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
@@ -448,7 +444,6 @@ func (s *MetricsGenerator) queryRequiredInstantVal(ctx context.Context, query st
 	return val, nil
 }
 
-// 卡显存已使用量
 func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -472,7 +467,6 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	return deviceMemoryToMiB(provider, val), nil
 }
 
-// 卡显存总量
 func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -507,14 +501,11 @@ func deviceMemoryToMiB(provider string, value float32) float32 {
 	}
 }
 
-// 卡算力利用率
 func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
-		//query = fmt.Sprintf("avg(avg_over_time(DCGM_FI_DEV_GPU_UTIL{UUID=\"%s\"}[1m]))", deviceUUID)
 		query = fmt.Sprintf("DCGM_FI_DEV_GPU_UTIL{UUID=\"%s\"}", deviceUUID)
-		//query = fmt.Sprintf("(%s * (sum_over_time(%s[5m:]) / count_over_time(( %s !=0)[5m:])) / %s) > 0 or %s", queryTemplate, queryTemplate, queryTemplate, queryTemplate, queryTemplate)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization{uuid=\"%s\"})", deviceUUID)
 	case biz.AscendGPUDevice:
@@ -529,7 +520,6 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 	return s.queryRequiredInstantVal(ctx, query)
 }
 
-// 任务算力利用率
 func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
 	query := ""
 	switch provider {
@@ -609,7 +599,6 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 	return used, util, nil
 }
 
-// 任务显存使用量
 func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
 	query := ""
 	switch provider {
@@ -632,7 +621,6 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	return s.queryInstantVal(ctx, query)
 }
 
-// GPU温度
 func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -652,7 +640,6 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 	return s.queryInstantVal(ctx, query)
 }
 
-// 显存温度
 func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -668,7 +655,6 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 	return s.queryInstantVal(ctx, query)
 }
 
-// 功耗
 func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -693,7 +679,6 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 	return power, err
 }
 
-// 硬件健康
 func (s *MetricsGenerator) gpuHardwareHealth(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -705,7 +690,6 @@ func (s *MetricsGenerator) gpuHardwareHealth(ctx context.Context, provider, devi
 	return s.queryInstantVal(ctx, query)
 }
 
-// 风扇转速
 func (s *MetricsGenerator) fanSpeed(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
@@ -722,11 +706,10 @@ func (s *MetricsGenerator) fanSpeed(ctx context.Context, provider, deviceUUID st
 }
 
 type DeviceAdditionalInfo struct {
-	DriverVersion string // 驱动版本
-	DeviceNo      string // 设备号
+	DriverVersion string
+	DeviceNo      string
 }
 
-// 设备的驱动版本、设备号等信息
 func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, deviceUUID string) (*DeviceAdditionalInfo, error) {
 	query := ""
 	switch provider {
