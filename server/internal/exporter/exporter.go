@@ -256,9 +256,11 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		deviceMemUsed, err := s.deviceMemUsed(ctx, provider, device.Id)
 		if err == nil {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			if device.Devmem > 0 {
+				s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/float32(device.Devmem))), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			}
 		}
 		s.set(HamiMemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/float32(device.Devmem))), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		deviceMemSize, err := s.deviceMemTotal(ctx, provider, device.Id)
 		if err == nil && deviceMemSize > 0 {
 			s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
@@ -434,6 +436,17 @@ func (s *MetricsGenerator) queryInstantValWithPresence(ctx context.Context, quer
 	return 0, false, nil
 }
 
+func (s *MetricsGenerator) queryRequiredInstantVal(ctx context.Context, query string) (float32, error) {
+	val, present, err := s.queryInstantValWithPresence(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	if !present || math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
+		return 0, errNoMetricData
+	}
+	return val, nil
+}
+
 // 卡显存已使用量
 func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
@@ -451,7 +464,7 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	val, err := s.queryInstantVal(ctx, query)
+	val, err := s.queryRequiredInstantVal(ctx, query)
 	if err != nil {
 		return val, err
 	}
@@ -513,7 +526,7 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 // 任务算力利用率
