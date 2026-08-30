@@ -182,6 +182,18 @@ externalPrometheus:
   address: "http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"
   # Single PromQL upstream timeout (sent to Prometheus / VictoriaMetrics as the &timeout= parameter).
   timeout: "1m"
+  tls:
+    # HTTPS certificates are verified by default. Use this only as a temporary
+    # escape hatch when a CA cannot yet be supplied.
+    insecureSkipVerify: false
+    # Optional certificate name override for HTTPS endpoints.
+    serverName: ""
+    # Mount trust material from an existing Secret. Set caKey for a private CA;
+    # set certKey and keyKey together when the endpoint requires mTLS.
+    existingSecret: ""
+    caKey: ""
+    certKey: ""
+    keyKey: ""
 
 # Web-entry runtime settings and health probes. The probes report the frontend
 # container's own health; backend readiness is gated separately below.

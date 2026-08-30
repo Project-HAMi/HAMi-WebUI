@@ -85,6 +85,48 @@ dependency chart's own helpers so its naming and override rules cannot drift.
 {{- end -}}
 
 {{/*
+Validate the HTTPS trust material used by an external Prometheus endpoint.
+Secret values are mounted as files; only their key names appear in rendered
+configuration.
+*/}}
+{{- define "hami-webui.validatePrometheusTLS" -}}
+{{- $external := default (dict) .Values.externalPrometheus -}}
+{{- $rawTLS := get $external "tls" -}}
+{{- if and $rawTLS (not (kindIs "map" $rawTLS)) -}}
+{{- fail "externalPrometheus.tls must be a map" -}}
+{{- end -}}
+{{- $tls := default (dict) $rawTLS -}}
+{{- range $field := list "serverName" "existingSecret" "caKey" "certKey" "keyKey" -}}
+{{- if and (hasKey $tls $field) (not (kindIs "string" (get $tls $field))) -}}
+{{- fail (printf "externalPrometheus.tls.%s must be a string" $field) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (hasKey $tls "insecureSkipVerify") (not (kindIs "bool" (get $tls "insecureSkipVerify"))) -}}
+{{- fail "externalPrometheus.tls.insecureSkipVerify must be a boolean" -}}
+{{- end -}}
+{{- $secretName := default "" (get $tls "existingSecret") -}}
+{{- $caKey := default "" (get $tls "caKey") -}}
+{{- $certKey := default "" (get $tls "certKey") -}}
+{{- $keyKey := default "" (get $tls "keyKey") -}}
+{{- if .Values.externalPrometheus.enabled -}}
+{{- if ne (empty $certKey) (empty $keyKey) -}}
+{{- fail "externalPrometheus.tls.certKey and keyKey must be configured together" -}}
+{{- end -}}
+{{- if and (empty $secretName) (or $caKey $certKey $keyKey) -}}
+{{- fail "externalPrometheus.tls.existingSecret is required when a TLS key is configured" -}}
+{{- end -}}
+{{- if and $secretName (not (or $caKey $certKey $keyKey)) -}}
+{{- fail "externalPrometheus.tls must reference at least one key from existingSecret" -}}
+{{- end -}}
+{{- range $key := list $caKey $certKey $keyKey -}}
+{{- if and $key (not (regexMatch "^[A-Za-z0-9._-]+$" $key)) -}}
+{{- fail (printf "externalPrometheus TLS Secret key %q is invalid" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "hami-webui.chart" -}}

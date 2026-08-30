@@ -44,7 +44,7 @@ func TestRequestsTreatMissingFiltersAsEmpty(t *testing.T) {
 	}}}
 	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
-	promClient, err := prom.NewClient(prometheus.URL, time.Second, "")
+	promClient, err := prom.NewClient(prometheus.URL, time.Second, "", prom.TLSConfig{})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

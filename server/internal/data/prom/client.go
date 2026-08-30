@@ -2,13 +2,13 @@ package prom
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 )
 
@@ -17,27 +17,46 @@ type Client struct {
 	timeout time.Duration
 }
 
-type CustomTransport struct {
+type TLSConfig struct {
+	CAFile             string
+	CertFile           string
+	KeyFile            string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+type authorizationRoundTripper struct {
 	auth string
-	*http.Transport
+	next http.RoundTripper
 }
 
-func (t *CustomTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Authorization", t.auth)
-	return t.Transport.RoundTrip(req)
+func (t *authorizationRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header = req.Header.Clone()
+	clone.Header.Set("Authorization", t.auth)
+	return t.next.RoundTrip(clone)
 }
 
-func NewClient(address string, timeout time.Duration, auth string) (*Client, error) {
+func NewClient(address string, timeout time.Duration, auth string, tlsConfig TLSConfig) (*Client, error) {
+	httpConfig := promconfig.DefaultHTTPClientConfig
+	httpConfig.TLSConfig = promconfig.TLSConfig{
+		CAFile:             tlsConfig.CAFile,
+		CertFile:           tlsConfig.CertFile,
+		KeyFile:            tlsConfig.KeyFile,
+		ServerName:         tlsConfig.ServerName,
+		InsecureSkipVerify: tlsConfig.InsecureSkipVerify,
+	}
+	roundTripper, err := promconfig.NewRoundTripperFromConfig(httpConfig, "hami-webui-prometheus")
+	if err != nil {
+		return nil, fmt.Errorf("create Prometheus HTTP transport: %w", err)
+	}
+	if auth != "" {
+		roundTripper = &authorizationRoundTripper{auth: auth, next: roundTripper}
+	}
+
 	client, err := api.NewClient(api.Config{
-		Address: address,
-		RoundTripper: &CustomTransport{
-			auth: auth,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
-			},
-		},
+		Address:      address,
+		RoundTripper: roundTripper,
 	})
 	if err != nil {
 		fmt.Printf("Error creating client: %v\n", err)

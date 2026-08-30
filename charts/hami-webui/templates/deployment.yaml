@@ -1,6 +1,11 @@
 {{- $podAnnotations := mergeOverwrite (dict) (default (dict) .Values.podAnnotations) (dict "checksum/config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum)) -}}
 {{- $frontendEnv := default (list) .Values.env.frontend -}}
 {{- $frontendSettings := default (dict) .Values.frontend -}}
+{{- include "hami-webui.validatePrometheusTLS" . -}}
+{{- $externalPrometheus := default (dict) .Values.externalPrometheus -}}
+{{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
+{{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
+{{- $mountPrometheusTLS := and (get $externalPrometheus "enabled") (ne $prometheusTLSSecret "") -}}
 {{- $frontendProxyTimeoutOverridden := false -}}
 {{- $frontendBasePathOverridden := false -}}
 {{- $frontendFrameAncestorsOverridden := false -}}
@@ -146,6 +151,11 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /apps/config/
+            {{- if $mountPrometheusTLS }}
+            - name: prometheus-tls
+              mountPath: /apps/prometheus-tls/
+              readOnly: true
+            {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -162,3 +172,21 @@ spec:
         - name: config
           configMap:
             name: {{ include "hami-webui.fullname" . }}-config
+        {{- if $mountPrometheusTLS }}
+        - name: prometheus-tls
+          secret:
+            secretName: {{ $prometheusTLSSecret | quote }}
+            items:
+              {{- with (get $prometheusTLS "caKey") }}
+              - key: {{ . | quote }}
+                path: ca.crt
+              {{- end }}
+              {{- with (get $prometheusTLS "certKey") }}
+              - key: {{ . | quote }}
+                path: tls.crt
+              {{- end }}
+              {{- with (get $prometheusTLS "keyKey") }}
+              - key: {{ . | quote }}
+                path: tls.key
+              {{- end }}
+        {{- end }}
