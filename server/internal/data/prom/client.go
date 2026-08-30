@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	promconfig "github.com/prometheus/common/config"
@@ -15,6 +16,7 @@ import (
 type Client struct {
 	client  api.Client
 	timeout time.Duration
+	log     *log.Helper
 }
 
 type TLSConfig struct {
@@ -37,7 +39,7 @@ func (t *authorizationRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	return t.next.RoundTrip(clone)
 }
 
-func NewClient(address string, timeout time.Duration, auth string, tlsConfig TLSConfig) (*Client, error) {
+func NewClient(address string, timeout time.Duration, auth string, tlsConfig TLSConfig, logger log.Logger) (*Client, error) {
 	httpConfig := promconfig.DefaultHTTPClientConfig
 	httpConfig.TLSConfig = promconfig.TLSConfig{
 		CAFile:             tlsConfig.CAFile,
@@ -59,12 +61,12 @@ func NewClient(address string, timeout time.Duration, auth string, tlsConfig TLS
 		RoundTripper: roundTripper,
 	})
 	if err != nil {
-		fmt.Printf("Error creating client: %v\n", err)
-		return nil, fmt.Errorf("error creating client: %v", err)
+		return nil, fmt.Errorf("create Prometheus client: %w", err)
 	}
 	return &Client{
-		client,
-		timeout,
+		client:  client,
+		timeout: timeout,
+		log:     log.NewHelper(log.With(logger, "module", "prometheus-client")),
 	}, nil
 }
 
@@ -77,12 +79,15 @@ func (c *Client) Query(ctx context.Context, query string) (model.Value, error) {
 	v1api := v1.NewAPI(c.client)
 	result, warnings, err := v1api.Query(ctx, query, time.Now(), v1.WithTimeout(c.timeout))
 	if err != nil {
-		fmt.Printf("Error querying Prometheus: %v\n", err)
-		return result, fmt.Errorf("error querying Prometheus: %v", err)
+		return result, fmt.Errorf("query Prometheus: %w", err)
 	}
 	if len(warnings) > 0 {
-		fmt.Printf("Warnings: %v\n", warnings)
-		return result, fmt.Errorf("warnings: %v", warnings)
+		c.log.WithContext(ctx).Warnw(
+			"msg", "Prometheus query completed with warnings",
+			"operation", "instant",
+			"warning_count", len(warnings),
+			"warnings", []string(warnings),
+		)
 	}
 	return result, nil
 }
@@ -92,12 +97,15 @@ func (c *Client) QueryRange(ctx context.Context, query string, r v1.Range) (mode
 	v1api := v1.NewAPI(c.client)
 	result, warnings, err := v1api.QueryRange(ctx, query, r, v1.WithTimeout(c.timeout))
 	if err != nil {
-		fmt.Printf("Error querying Prometheus: %v\n", err)
-		return result, fmt.Errorf("error querying Prometheus: %v", err)
+		return result, fmt.Errorf("query Prometheus range: %w", err)
 	}
 	if len(warnings) > 0 {
-		fmt.Printf("Warnings: %v\n", warnings)
-		return result, fmt.Errorf("warnings: %v", warnings)
+		c.log.WithContext(ctx).Warnw(
+			"msg", "Prometheus query completed with warnings",
+			"operation", "range",
+			"warning_count", len(warnings),
+			"warnings", []string(warnings),
+		)
 	}
 	return result, nil
 }

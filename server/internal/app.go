@@ -40,7 +40,7 @@ func NewLogger() log.Logger {
 	)
 }
 
-func NewPromClient(c *conf.Bootstrap) *prom.Client {
+func NewPromClient(c *conf.Bootstrap, logger log.Logger) *prom.Client {
 	timeout, err := time.ParseDuration(c.Prometheus.Timeout)
 	if err != nil {
 		panic(err)
@@ -55,7 +55,7 @@ func NewPromClient(c *conf.Bootstrap) *prom.Client {
 			InsecureSkipVerify: c.Prometheus.Tls.InsecureSkipVerify,
 		}
 	}
-	client, err := prom.NewClient(c.Prometheus.Address, timeout, c.Prometheus.Auth, tlsConfig)
+	client, err := prom.NewClient(c.Prometheus.Address, timeout, c.Prometheus.Auth, tlsConfig, logger)
 	if err != nil {
 		panic(err)
 	}
