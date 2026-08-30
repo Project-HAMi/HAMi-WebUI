@@ -55,7 +55,7 @@ jest.config.*
 # Charts
 charts
 
-# Only the Web-asset build helper is part of the frontend image context.
+# Only the Web-asset build helper is part of the application image context.
 scripts/*
 !scripts/precompress-web-assets.mjs
 

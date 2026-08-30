@@ -160,20 +160,20 @@ bootstrap from the ongoing ability to serve the Web entry.
 
 ## Build a Docker image
 
-Build the same unified target used by development publication and release
-candidates:
+Build the same application image used by development publication, Chart 2, and
+release candidates:
 
 ```bash
-make build-unified-image
+make build-image
 ```
 
-The resulting image is tagged `hami-webui:dev`. Override
-`UNIFIED_DOCKER_IMAGE`, `VERSION`, or `PLATFORM` when a local integration
-environment needs another tag or architecture:
+The resulting image is tagged `hami-webui:dev`. Override `DOCKER_IMAGE`,
+`VERSION`, or `PLATFORM` when a local integration environment needs another tag
+or architecture:
 
 ```bash
-make build-unified-image \
-  UNIFIED_DOCKER_IMAGE=my-registry/hami-webui \
+make build-image \
+  DOCKER_IMAGE=my-registry/hami-webui \
   VERSION=test \
   PLATFORM=linux/amd64
 ```

@@ -1,4 +1,4 @@
-name: Build Development Images
+name: Build HAMi-WebUI Image
 
 on:
   push:
@@ -40,140 +40,8 @@ jobs:
               - 'server/**'
               - 'test/unified-image/**'
 
-  validate-images:
-    name: Build ${{ matrix.name }} image
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: frontend
-            context: .
-            repository: hami-webui-fe-oss
-          - name: backend
-            context: ./server
-            repository: hami-webui-be-oss
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Build image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ${{ matrix.context }}
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: projecthami/${{ matrix.repository }}:pr-${{ github.event.pull_request.number }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-
-  frontend-runtime-smoke:
-    name: Smoke frontend image runtime (${{ matrix.arch }})
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-          - arch: arm64
-            platform: linux/arm64
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up QEMU
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
-        with:
-          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
-
-      - name: Build frontend image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          platforms: ${{ matrix.platform }}
-          load: true
-          tags: hami-webui-frontend:runtime-smoke-${{ matrix.arch }}
-          cache-from: type=gha,scope=frontend-runtime-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=frontend-runtime-${{ matrix.arch }}
-
-      - name: Verify non-root read-only runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          image=hami-webui-frontend:runtime-smoke-${{ matrix.arch }}
-          container=hami-webui-frontend-runtime-smoke-${{ matrix.arch }}
-          curl_local=(curl --noproxy '*')
-          trap 'docker rm --force "${container}" >/dev/null 2>&1 || true' EXIT
-
-          [[ "$(docker image inspect --format '{{.Config.User}}' "${image}")" == "65532:65532" ]]
-          docker run --detach \
-            --platform '${{ matrix.platform }}' \
-            --name "${container}" \
-            --read-only \
-            --cap-drop ALL \
-            --security-opt no-new-privileges \
-            --publish 127.0.0.1::3000 \
-            "${image}"
-
-          port="$(docker port "${container}" 3000/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n 1)"
-          for _ in {1..30}; do
-            if "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/health_check" >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/health_check" >/dev/null
-          "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/" | grep -Fq '<div id="app"></div>'
-          [[ "$("${curl_local[@]}" --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/static/contract-missing.js")" == "404" ]]
-
-          docker stop --time 5 "${container}" >/dev/null
-          [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container}")" == "0" ]]
-
-          docker rm "${container}" >/dev/null
-          container="${container}-base-path"
-          docker run --detach \
-            --platform '${{ matrix.platform }}' \
-            --name "${container}" \
-            --read-only \
-            --cap-drop ALL \
-            --security-opt no-new-privileges \
-            --env 'HAMI_WEBUI_BASE_PATH=/gpu-ui/' \
-            --env "HAMI_WEBUI_FRAME_ANCESTORS_JSON=[\"'self'\",\"https://portal.example.com\"]" \
-            --publish 127.0.0.1::3000 \
-            "${image}"
-
-          port="$(docker port "${container}" 3000/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n 1)"
-          for _ in {1..30}; do
-            if "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/health_check" >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          "${curl_local[@]}" --fail --silent --show-error "http://127.0.0.1:${port}/gpu-ui/" | grep -Fq '<base data-hami-webui-base href="/gpu-ui/">'
-          "${curl_local[@]}" --silent --show-error --head "http://127.0.0.1:${port}/gpu-ui/" | tr -d '\r' | \
-            grep -Fq "Content-Security-Policy: frame-ancestors 'self' https://portal.example.com"
-          [[ "$("${curl_local[@]}" --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${port}/")" == "404" ]]
-
-          docker stop --time 5 "${container}" >/dev/null
-          [[ "$(docker inspect --format '{{.State.ExitCode}}' "${container}")" == "0" ]]
-
   unified-runtime-smoke:
-    name: Smoke unified image runtime
+    name: Smoke application image runtime
     if: needs.unified-image-changes.outputs.unified == 'true'
     needs: unified-image-changes
     runs-on: ubuntu-latest
@@ -193,22 +61,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
-      - name: Build unified image (amd64)
+      - name: Build application image (amd64)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          target: unified
           platforms: linux/amd64
           load: true
           tags: hami-webui:unified-runtime-smoke-amd64
           cache-from: type=gha,scope=unified-runtime
           cache-to: type=gha,mode=max,scope=unified-runtime
 
-      - name: Build unified image (arm64)
+      - name: Build application image (arm64)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          target: unified
           platforms: linux/arm64
           load: true
           tags: hami-webui:unified-runtime-smoke-arm64
@@ -268,21 +134,11 @@ jobs:
     if: github.event_name == 'pull_request' && always()
     needs:
       - unified-image-changes
-      - validate-images
-      - frontend-runtime-smoke
       - unified-runtime-smoke
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate image build results
         run: |
-          if [[ "${{ needs.validate-images.result }}" != "success" ]]; then
-            echo "Image builds did not complete successfully: ${{ needs.validate-images.result }}"
-            exit 1
-          fi
-          if [[ "${{ needs.frontend-runtime-smoke.result }}" != "success" ]]; then
-            echo "Frontend runtime smoke did not complete successfully: ${{ needs.frontend-runtime-smoke.result }}"
-            exit 1
-          fi
           if [[ "${{ needs.unified-image-changes.result }}" != "success" ]]; then
             echo "Unified image change detection did not complete successfully: ${{ needs.unified-image-changes.result }}"
             exit 1
@@ -292,7 +148,7 @@ jobs:
             echo "Unified image runtime smoke did not complete successfully: ${{ needs.unified-runtime-smoke.result }}"
             exit 1
           fi
-          echo "All image builds passed."
+          echo "Application image checks passed."
 
   publish-development-image:
     name: Publish unified development image

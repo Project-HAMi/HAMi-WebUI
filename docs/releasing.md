@@ -10,11 +10,6 @@ publishing: the protected `release` environment must exist and its
 `STABLE_RELEASES_ENABLED` variable must be set to `true` after the repository,
 registry, and release acceptance gates below are configured.
 
-The unified image contract lands before the Chart 2 migration by design. Until
-that follow-up changes the production chart from `image.frontend` and
-`image.backend` to the single `image` value, release-contract verification
-fails closed and no stable release can be published.
-
 ## What “atomic” means here
 
 Docker Hub, GHCR, GitHub Pages, and GitHub Releases do not share a transaction.
