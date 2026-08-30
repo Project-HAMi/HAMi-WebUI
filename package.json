@@ -20,7 +20,7 @@
     "verify:vite-env": "node scripts/verify-vite-env-boundary.mjs"
   },
   "devDependencies": {
-    "axios": "^1.6.5",
+    "axios": "1.18.0",
     "eslint": "^8.57.0",
     "playwright": "1.62.1"
   }
