@@ -3,7 +3,6 @@ import {
   mkdtemp,
   mkdir,
   readdir,
-  readFile,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -18,6 +17,7 @@ import {
   createSvgIconsPlugin,
   createSvgSymbolId,
 } from '../build/svg-icons-plugin.mjs';
+import { expectedIconIds } from './expected-icon-catalog.mjs';
 
 const webRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -74,9 +74,10 @@ test('the repository icon catalog compiles completely and deterministically', as
   const second = await buildSvgSprite(iconDir);
   const symbols = extractSymbols(first.sprite);
 
-  assert.equal(sourceFiles.length, 210);
+  assert.equal(sourceFiles.length, expectedIconIds.length);
   assert.deepEqual(first.files, sourceFiles);
   assert.deepEqual(first.symbolIds, expectedIds);
+  assert.deepEqual([...first.symbolIds].sort(), [...expectedIconIds].sort());
   assert.equal(new Set(first.symbolIds).size, sourceFiles.length);
   assert.equal(symbols.length, sourceFiles.length);
   assert.equal(
@@ -84,10 +85,6 @@ test('the repository icon catalog compiles completely and deterministically', as
     true,
   );
   assert.equal(first.sprite, second.sprite);
-  assert.equal(first.symbolIds.includes('icon-resource-pool'), true);
-  assert.equal(first.symbolIds.includes('icon-menu/resource-pool'), true);
-  assert.equal(first.symbolIds.includes('icon-ACTIVE copy'), true);
-
   const globalIds = new Set();
   for (const { id, markup } of symbols) {
     const localIds = extractIds(markup);
@@ -107,35 +104,22 @@ test('the repository icon catalog compiles completely and deterministically', as
       );
     }
   }
-
-  const vastLogo = symbols.find(({ id }) => id === 'icon-logo-vast')?.markup;
-  assert.match(vastLogo, /<pattern\b/);
-  assert.match(vastLogo, /xlink:href="#icon-logo-vast_[^"]+"/);
-  assert.match(vastLogo, /xlink:href="data:image\/png;base64,/);
-
-  const alarmHistory = symbols.find(
-    ({ id }) => id === 'icon-alarm-history',
-  )?.markup;
-  assert.match(alarmHistory, /<linearGradient\b/);
-  assert.match(alarmHistory, /fill="url\(#icon-alarm-history_[^)]+\)"/);
 });
 
 test('symbol compilation preserves the existing rendering contract and removes scripts', async () => {
-  const missingViewBoxFile = path.join(iconDir, '404.svg');
   const missingViewBox = compileSvgSymbol(
-    await readFile(missingViewBoxFile, 'utf8'),
-    missingViewBoxFile,
-    'icon-404',
+    '<svg width="128" height="128"><path d="M0 0h1v1z"/></svg>',
+    'missing-view-box.svg',
+    'icon-missing-view-box',
   );
   assert.match(missingViewBox, /^<symbol\b/);
   assert.match(missingViewBox, /viewBox="0 0 128 128"/);
   assert.doesNotMatch(missingViewBox, /\b(?:width|height)="/);
 
-  const currentColorFile = path.join(iconDir, 'home-avatar.svg');
   const currentColor = compileSvgSymbol(
-    await readFile(currentColorFile, 'utf8'),
-    currentColorFile,
-    'icon-home-avatar',
+    '<svg viewBox="0 0 1 1"><path stroke="#324558" d="M0 0h1v1z"/></svg>',
+    'current-color.svg',
+    'icon-current-color',
   );
   assert.match(currentColor, /stroke="currentColor"/);
 
@@ -147,6 +131,44 @@ test('symbol compilation preserves the existing rendering contract and removes s
   assert.match(unsafe, /viewBox="0 0 10 20"/);
   assert.match(unsafe, /<path\b/);
   assert.doesNotMatch(unsafe, /script|onload|onclick|javascript:/i);
+});
+
+test('sprite compilation namespaces complex internal references', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'hami-svg-icons-'));
+  temporaryDirectories.push(directory);
+  await writeFile(
+    path.join(directory, 'gradient.svg'),
+    '<svg viewBox="0 0 10 10"><style>.paint{fill:url(#gradient)}</style><defs><linearGradient id="gradient"><stop/></linearGradient></defs><path class="paint" d="M0 0h10v10z"/></svg>',
+  );
+  await writeFile(
+    path.join(directory, 'pattern.svg'),
+    '<svg viewBox="0 0 10 10" xmlns:xlink="http://www.w3.org/1999/xlink"><defs><image id="image" width="1" height="1" xlink:href="data:image/png;base64,AAAA"/><pattern id="paint" width="1" height="1"><use xlink:href="#image"/></pattern></defs><rect width="10" height="10" fill="url(#paint)"/></svg>',
+  );
+
+  const { sprite } = await buildSvgSprite(directory);
+  const symbols = extractSymbols(sprite);
+  const gradient = symbols.find(({ id }) => id === 'icon-gradient')?.markup;
+  const pattern = symbols.find(({ id }) => id === 'icon-pattern')?.markup;
+
+  assert.match(gradient, /<linearGradient\b/);
+  assert.match(
+    gradient,
+    /\bstyle="[^"]*url\(#icon-gradient_[^)]+\)[^"]*"/,
+  );
+  assert.match(pattern, /<pattern\b/);
+  assert.match(pattern, /xlink:href="#icon-pattern_[^"]+"/);
+  assert.match(pattern, /xlink:href="data:image\/png;base64,AAAA"/);
+
+  for (const { id, markup } of symbols) {
+    const localIds = extractIds(markup);
+    for (const reference of extractReferences(markup)) {
+      assert.equal(
+        localIds.has(reference),
+        true,
+        `${id} has an unresolved internal reference to ${reference}`,
+      );
+    }
+  }
 });
 
 test('sanitized internal ID prefixes cannot collide silently', async () => {
@@ -173,7 +195,17 @@ test('sanitized internal ID prefixes cannot collide silently', async () => {
 });
 
 test('the Vite plugin registers every source file and reloads SVG changes', async () => {
-  const plugin = createSvgIconsPlugin({ iconDir });
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'hami-svg-icons-'));
+  temporaryDirectories.push(directory);
+  const nestedDirectory = path.join(directory, 'nested');
+  await mkdir(nestedDirectory);
+  const alphaFile = path.join(directory, 'alpha.svg');
+  const betaFile = path.join(nestedDirectory, 'beta.svg');
+  const source = '<svg viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>';
+  await writeFile(alphaFile, source);
+  await writeFile(betaFile, source);
+
+  const plugin = createSvgIconsPlugin({ iconDir: directory });
   const resolvedId = plugin.resolveId('virtual:svg-icons-register');
   const watchedFiles = [];
   const moduleCode = await plugin.load.call(
@@ -182,9 +214,10 @@ test('the Vite plugin registers every source file and reloads SVG changes', asyn
   );
 
   assert.equal(plugin.resolveId('unrelated-module'), null);
-  assert.equal(watchedFiles.length, 210);
+  assert.deepEqual(watchedFiles, [alphaFile, betaFile]);
   assert.match(moduleCode, /__svg__icons__dom__/);
-  assert.match(moduleCode, /<symbol[^>]+id=\\?"icon-more\\?"/);
+  assert.match(moduleCode, /<symbol[^>]+id=\\?"icon-alpha\\?"/);
+  assert.match(moduleCode, /<symbol[^>]+id=\\?"icon-nested\/beta\\?"/);
 
   const listeners = new Map();
   const invalidatedModules = [];
@@ -203,12 +236,12 @@ test('the Vite plugin registers every source file and reloads SVG changes', asyn
     ws: { send: (message) => messages.push(message) },
   });
 
-  assert.deepEqual(watchedDirectories, [iconDir]);
+  assert.deepEqual(watchedDirectories, [directory]);
   for (const event of ['add', 'change', 'unlink']) {
-    listeners.get(event)(path.join(iconDir, `${event}.svg`));
+    listeners.get(event)(path.join(directory, `${event}.svg`));
   }
-  listeners.get('change')(path.join(iconDir, 'not-an-icon.txt'));
-  listeners.get('change')(path.join(path.dirname(iconDir), 'outside.svg'));
+  listeners.get('change')(path.join(directory, 'not-an-icon.txt'));
+  listeners.get('change')(path.join(path.dirname(directory), 'outside.svg'));
 
   assert.deepEqual(invalidatedModules, [
     virtualModule,
