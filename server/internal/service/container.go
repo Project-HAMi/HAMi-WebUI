@@ -55,7 +55,10 @@ func matchesWorkloadName(podName, containerName, filter string) bool {
 }
 
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {
-	filters := req.Filters
+	filters := req.GetFilters()
+	if filters == nil {
+		filters = &pb.GetAllContainersReq_Filters{}
+	}
 	containers, err := s.pod.ListAllContainers(ctx)
 	if err != nil {
 		return nil, err
