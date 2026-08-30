@@ -83,7 +83,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | image.frontend.pullPolicy | string | `"IfNotPresent"`                                                                   |  |
 | image.frontend.repository | string | `"projecthami/hami-webui-fe-oss"`                                                  |  |
 | image.frontend.tag | string | `"v1.3.0"`                                                                         | Used only when `image.frontend.digest` is empty. |
-| imagePullSecrets | list | `[]`                                                                               |  |
+| imagePullSecrets | list | `[]`                                                                               | Image pull secrets used by both containers in the WebUI Pod. |
 | ingress.annotations | object | `{}`                                                                               |  |
 | ingress.className | string | `""`                                                                               |  |
 | ingress.enabled | bool | `false`                                                                            |  |

@@ -26,6 +26,7 @@ image:
     # When set, digest takes precedence over tag and renders repository@digest.
     digest: "sha256:7057047c7c2f7838cd190b3dc7263d503bbcf5d8e52642bc703227d137bc029d"
 
+# Image pull secrets used by both containers in the WebUI Pod.
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
