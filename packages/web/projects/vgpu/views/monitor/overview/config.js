@@ -13,6 +13,7 @@ export const getRangeConfigInit = (t) => {
           data: [],
           type: 'line',
           itemStyle: {
+            color: 'rgb(84, 112, 198)',
             borderColor: 'rgb(84, 112, 198)',
           },
           lineStyle: {
@@ -24,6 +25,7 @@ export const getRangeConfigInit = (t) => {
           query: queries.computeUsage,
           data: [],
           itemStyle: {
+            color: 'rgb(145, 204, 117)',
             borderColor: 'rgb(145, 204, 117)',
           },
           lineStyle: {
@@ -40,6 +42,7 @@ export const getRangeConfigInit = (t) => {
           query: queries.memoryAllocation,
           data: [],
           itemStyle: {
+            color: 'rgb(84, 112, 198)',
             borderColor: 'rgb(84, 112, 198)',
           },
           lineStyle: {
@@ -51,6 +54,7 @@ export const getRangeConfigInit = (t) => {
           query: queries.memoryUsage,
           data: [],
           itemStyle: {
+            color: 'rgb(145, 204, 117)',
             borderColor: 'rgb(145, 204, 117)',
           },
           lineStyle: {

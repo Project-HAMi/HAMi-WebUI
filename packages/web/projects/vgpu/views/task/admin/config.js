@@ -188,7 +188,8 @@ export const getTopOptions = (dataSource) => {
       right: '4%',
       bottom: '3%',
       top: '0',
-      containLabel: true,
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel',
     },
     xAxis: {
       type: 'value',

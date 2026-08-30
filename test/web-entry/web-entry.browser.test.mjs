@@ -235,11 +235,188 @@ async function assertFrameBlocked(parentURL, targetOrigin) {
   await page.close()
 }
 
+async function assertChartRuntime(target) {
+  const page = await browser.newPage({
+    viewport: { width: 1440, height: 1000 }
+  })
+  const runtimeErrors = []
+  let rangeRequests = 0
+  page.on('pageerror', (error) => runtimeErrors.push(error.message))
+  page.on('request', (request) => {
+    if (request.url().includes('/v1/monitor/query/range-vector')) {
+      rangeRequests += 1
+    }
+  })
+  page.on('console', (message) => {
+    if (
+      ['warning', 'error'].includes(message.type()) &&
+      message.text().includes('[ECharts]')
+    ) {
+      runtimeErrors.push(message.text())
+    }
+  })
+
+  await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(
+    () => document.querySelectorAll('.echarts canvas').length >= 4
+  )
+
+  const initialRangeRequests = rangeRequests
+  await page.locator('.home-bottom-trend-filter .t-radio-button').nth(1).click()
+  await waitUntil(
+    () => rangeRequests > initialRangeRequests,
+    'Changing the time range did not update the chart data'
+  )
+  assert.ok(
+    await page.locator('.home-bottom-row .echarts canvas').count() >= 2,
+    'Trend charts disappeared after an option update'
+  )
+
+  const pie = page.locator('.card-type-chart canvas').first()
+  const pieBox = await pie.boundingBox()
+  assert.ok(pieBox?.width > 0, 'Overview card-type chart has no width')
+  assert.ok(pieBox?.height > 0, 'Overview card-type chart has no height')
+  await pie.click({
+    position: { x: pieBox.width * 0.75, y: pieBox.height * 0.5 }
+  })
+  await page.waitForURL((url) =>
+    url.pathname.endsWith('/admin/vgpu/card/admin') &&
+    url.searchParams.get('type') === 'NVIDIA'
+  )
+
+  const previewChart = page.locator('.pie .echarts canvas').first()
+  await previewChart.waitFor()
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await waitUntil(async() => {
+    const box = await previewChart.boundingBox()
+    return box && box.width > 0 && box.height > 0
+  }, 'Preview chart did not survive a resize')
+  await page.waitForFunction(() => {
+    const canvas = document.querySelector('.pie .echarts canvas')
+    const context = canvas?.getContext('2d')
+    if (!canvas?.width || !canvas.height || !context) return false
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+    for (let index = 0; index < pixels.length; index += 4) {
+      const red = pixels[index]
+      const green = pixels[index + 1]
+      const blue = pixels[index + 2]
+      const alpha = pixels[index + 3]
+      if (alpha > 0 && green > 100 && green > red * 1.2 && green > blue * 1.2) {
+        return true
+      }
+    }
+    return false
+  })
+  await waitUntil(async() => previewChart.evaluate(async(canvas) => {
+    const frame = canvas.toDataURL()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    return frame === canvas.toDataURL()
+  }), 'Preview chart animation did not settle')
+  const previewLegendItem = page.locator('.nodeCard-legend li').first()
+  assert.equal(
+    await previewLegendItem.evaluate((element) => element.style.fontWeight),
+    'bold'
+  )
+  const previewBox = await previewChart.boundingBox()
+  assert.ok(previewBox?.width > 0, 'Preview chart has no width after resize')
+  assert.ok(previewBox?.height > 0, 'Preview chart has no height after resize')
+  const paintedSlice = await previewChart.evaluate((canvas) => {
+    const context = canvas.getContext('2d')
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+    let longestRun = 0
+    let point = null
+
+    for (let y = 0; y < canvas.height; y += 1) {
+      let runStart = -1
+      for (let x = 0; x < canvas.width; x += 1) {
+        const index = (y * canvas.width + x) * 4
+        const red = pixels[index]
+        const green = pixels[index + 1]
+        const blue = pixels[index + 2]
+        const alpha = pixels[index + 3]
+        const isGreen = alpha > 0 && green > 100 && green > red * 1.2 && green > blue * 1.2
+
+        if (isGreen && runStart === -1) runStart = x
+        if ((!isGreen || x === canvas.width - 1) && runStart !== -1) {
+          const runEnd = isGreen ? x : x - 1
+          const runLength = runEnd - runStart + 1
+          if (runLength > longestRun) {
+            longestRun = runLength
+            point = { x: (runStart + runEnd) / 2, y }
+          }
+          runStart = -1
+        }
+      }
+    }
+
+    return point
+      ? { ...point, width: canvas.width, height: canvas.height }
+      : null
+  })
+  assert.ok(paintedSlice, 'Preview chart did not paint the active slice')
+  await previewChart.click({
+    position: {
+      x: paintedSlice.x / paintedSlice.width * previewBox.width,
+      y: paintedSlice.y / paintedSlice.height * previewBox.height
+    }
+  })
+  await waitUntil(
+    () => previewLegendItem.evaluate(
+      (element) => element.style.fontWeight === 'normal'
+    ),
+    'Preview chart click did not clear the active card-type filter'
+  )
+
+  assert.deepEqual(runtimeErrors, [])
+  await page.close()
+}
+
 before(async() => {
   backend = http.createServer((req, res) => {
     req.resume()
+    const pathname = new URL(req.url, 'http://backend.local').pathname
+    const now = Math.floor(Date.now() / 1000)
+    let payload = { code: 0, data: {}, list: [], total: 0 }
+
+    if (pathname === '/v1/nodes') {
+      payload = {
+        code: 0,
+        list: [{ name: 'node-1', uid: 'node-1', isExternal: false, isSchedulable: true }],
+        total: 1
+      }
+    } else if (pathname === '/v1/gpus') {
+      payload = {
+        code: 0,
+        list: [{ uuid: 'gpu-1', type: 'NVIDIA', node: 'node-1', health: true }],
+        total: 1
+      }
+    } else if (pathname === '/v1/containers') {
+      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1' }], total: 1 }
+    } else if (pathname === '/v1/monitor/query/instant-vector') {
+      payload = {
+        code: 0,
+        data: [{
+          metric: {
+            device_type: 'NVIDIA',
+            device_uuid: 'gpu-1',
+            node: 'node-1',
+            provider: 'NVIDIA'
+          },
+          value: 42
+        }]
+      }
+    } else if (pathname === '/v1/monitor/query/range-vector') {
+      payload = {
+        code: 0,
+        data: [{
+          metric: { node: 'node-1' },
+          values: [[now - 60, 20], [now, 42]]
+        }]
+      }
+    }
+
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ code: 0, data: {}, list: [], total: 0 }))
+    res.end(JSON.stringify(payload))
   })
   backendURL = await listen(backend)
   browser = await chromium.launch({ headless: true })
@@ -317,3 +494,8 @@ test('runtime base path and framing policy work in Chromium', async(t) => {
     await assertFrameBlocked(topParent, target)
   })
 }, { timeout: 120_000 })
+
+test('ECharts runtime renders, updates and handles interaction in Chromium', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  await assertChartRuntime(target)
+}, { timeout: 60_000 })

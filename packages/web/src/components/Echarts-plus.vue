@@ -10,7 +10,7 @@ import {
   nextTick,
   onUnmounted,
 } from 'vue';
-import * as echarts from 'echarts';
+import { init as initEcharts } from '@/plugins/echarts';
 import { debounce } from 'lodash';
 
 const props = defineProps({
@@ -27,7 +27,7 @@ const initChart = () => {
   if (myChart.value) {
     myChart.value.dispose();
   }
-  myChart.value = echarts.init(echartsRef.value);
+  myChart.value = initEcharts(echartsRef.value);
   if (props.options) {
     myChart.value.setOption(props.options);
   }
