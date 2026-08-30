@@ -94,7 +94,7 @@ const topConfig = computed(() => [
         key: 'vgpu',
         data: [],
         nameKey: 'container_pod_uuid',
-        unit: '个',
+        unit: t('dashboard.vgpuSlotUnit'),
         query: 'topk(5, avg by (container_pod_uuid) (hami_container_vgpu_allocated))',
       },
     ],
