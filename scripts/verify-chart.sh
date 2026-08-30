@@ -219,6 +219,96 @@ external_render="$(helm template test "${work_dir}/hami-webui" \
   --set 'kube-prometheus-stack.prometheus.enabled=true' \
   --show-only templates/configmap.yaml)"
 grep -Fq "address: ${external_address}" <<<"${external_render}"
+grep -Fq 'insecure_skip_verify: false' <<<"${external_render}"
+
+external_deployment_render="$(render_template templates/deployment.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string "externalPrometheus.address=${external_address}")"
+if grep -Fq 'prometheus-tls' <<<"${external_deployment_render}"; then
+  echo "External Prometheus must not mount TLS material unless a Secret is configured" >&2
+  exit 1
+fi
+
+prometheus_tls_ca_config="$(render_template templates/configmap.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.tls.existingSecret=prometheus-ca' \
+  --set-string 'externalPrometheus.tls.caKey=company-ca.pem')"
+prometheus_tls_ca_deployment="$(render_template templates/deployment.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.tls.existingSecret=prometheus-ca' \
+  --set-string 'externalPrometheus.tls.caKey=company-ca.pem')"
+if ! grep -Fq 'ca_file: "/apps/prometheus-tls/ca.crt"' <<<"${prometheus_tls_ca_config}" ||
+  grep -Eq 'prometheus-ca|company-ca\.pem' <<<"${prometheus_tls_ca_config}" ||
+  ! grep -Fq 'secretName: "prometheus-ca"' <<<"${prometheus_tls_ca_deployment}" ||
+  ! grep -A1 -F 'key: "company-ca.pem"' <<<"${prometheus_tls_ca_deployment}" | grep -Fq 'path: ca.crt' ||
+  [[ "$(grep -c 'name: prometheus-tls' <<<"${prometheus_tls_ca_deployment}")" -ne 2 ]] ||
+  ! grep -A2 -F 'mountPath: /apps/prometheus-tls/' <<<"${prometheus_tls_ca_deployment}" | grep -Fq 'readOnly: true'; then
+  echo "Private-CA Secret was not rendered as a backend-only fixed-path mount" >&2
+  exit 1
+fi
+
+prometheus_mtls_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.tls.serverName=prometheus.internal' \
+  --set-string 'externalPrometheus.tls.existingSecret=prometheus-mtls' \
+  --set-string 'externalPrometheus.tls.caKey=root.pem' \
+  --set-string 'externalPrometheus.tls.certKey=client.pem' \
+  --set-string 'externalPrometheus.tls.keyKey=client-key.pem' \
+  --show-only templates/configmap.yaml \
+  --show-only templates/deployment.yaml)"
+for expected in \
+  'server_name: "prometheus.internal"' \
+  'ca_file: "/apps/prometheus-tls/ca.crt"' \
+  'cert_file: "/apps/prometheus-tls/tls.crt"' \
+  'key_file: "/apps/prometheus-tls/tls.key"' \
+  'key: "root.pem"' \
+  'key: "client.pem"' \
+  'key: "client-key.pem"'; do
+  if ! grep -Fq "${expected}" <<<"${prometheus_mtls_render}"; then
+    echo "mTLS rendering is missing ${expected}" >&2
+    exit 1
+  fi
+done
+
+prometheus_insecure_render="$(render_template templates/configmap.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set 'externalPrometheus.tls.insecureSkipVerify=true')"
+grep -Fq 'insecure_skip_verify: true' <<<"${prometheus_insecure_render}"
+
+disabled_tls_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --set-string 'externalPrometheus.tls.existingSecret=unused-tls' \
+  --set-string 'externalPrometheus.tls.caKey=ca.pem' \
+  --show-only templates/configmap.yaml \
+  --show-only templates/deployment.yaml)"
+if grep -Eq 'prometheus-tls|insecure_skip_verify|unused-tls|ca\.pem' <<<"${disabled_tls_render}"; then
+  echo "Disabled external Prometheus unexpectedly rendered TLS configuration" >&2
+  exit 1
+fi
+
+for invalid_prometheus_tls in \
+  '--set-string=externalPrometheus.tls.insecureSkipVerify=true' \
+  '--set-string=externalPrometheus.tls.unknownField=value' \
+  '--set=externalPrometheus.enabled=true --set-string=externalPrometheus.tls.certKey=tls.crt' \
+  '--set=externalPrometheus.enabled=true --set-string=externalPrometheus.tls.keyKey=tls.key' \
+  '--set=externalPrometheus.enabled=true --set-string=externalPrometheus.tls.caKey=ca.crt' \
+  '--set=externalPrometheus.enabled=true --set-string=externalPrometheus.tls.existingSecret=empty-secret'; do
+  read -r -a invalid_args <<<"${invalid_prometheus_tls}"
+  if helm template test "${work_dir}/hami-webui" "${invalid_args[@]}" >/dev/null 2>&1; then
+    echo "Invalid external Prometheus TLS values were accepted: ${invalid_prometheus_tls}" >&2
+    exit 1
+  fi
+done
+
+if grep -Fq 'kind: Secret' <<<"${prometheus_mtls_render}"; then
+  echo "The Chart must reference, not create, Prometheus credential Secrets" >&2
+  exit 1
+fi
 
 deployment_with_address() {
   helm template test "${work_dir}/hami-webui" \

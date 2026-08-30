@@ -45,7 +45,17 @@ func NewPromClient(c *conf.Bootstrap) *prom.Client {
 	if err != nil {
 		panic(err)
 	}
-	client, err := prom.NewClient(c.Prometheus.Address, timeout, c.Prometheus.Auth)
+	tlsConfig := prom.TLSConfig{}
+	if c.Prometheus.Tls != nil {
+		tlsConfig = prom.TLSConfig{
+			CAFile:             c.Prometheus.Tls.CaFile,
+			CertFile:           c.Prometheus.Tls.CertFile,
+			KeyFile:            c.Prometheus.Tls.KeyFile,
+			ServerName:         c.Prometheus.Tls.ServerName,
+			InsecureSkipVerify: c.Prometheus.Tls.InsecureSkipVerify,
+		}
+	}
+	client, err := prom.NewClient(c.Prometheus.Address, timeout, c.Prometheus.Auth, tlsConfig)
 	if err != nil {
 		panic(err)
 	}

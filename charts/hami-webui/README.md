@@ -53,8 +53,15 @@ The command removes all the Kubernetes components associated with the chart and 
 | dcgm-exporter.serviceMonitor.enabled | bool | `true`                                                                             |  |
 | dcgm-exporter.serviceMonitor.honorLabels | bool | `false`                                                                            |  |
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
-| externalPrometheus.address | string | `"http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"` |  |
-| externalPrometheus.enabled | bool | `false`                                                                            |  |
+| externalPrometheus.address | string | `"http://prometheus-kube-prometheus-prometheus.prometheus.svc.cluster.local:9090"` | Prometheus or VictoriaMetrics HTTP API address. |
+| externalPrometheus.enabled | bool | `false`                                                                            | Use an existing metrics backend instead of the bundled address. |
+| externalPrometheus.timeout | string | `"1m"` | Timeout sent with each upstream PromQL request. |
+| externalPrometheus.tls.insecureSkipVerify | bool | `false` | Disable HTTPS certificate verification. Use only as a temporary break-glass setting. |
+| externalPrometheus.tls.serverName | string | `""` | Optional certificate name override for the HTTPS endpoint. |
+| externalPrometheus.tls.existingSecret | string | `""` | Existing Secret containing private-CA or mTLS files. The Chart never creates this Secret. |
+| externalPrometheus.tls.caKey | string | `""` | Secret data key containing the CA certificate. |
+| externalPrometheus.tls.certKey | string | `""` | Secret data key containing the client certificate; configure with `keyKey`. |
+| externalPrometheus.tls.keyKey | string | `""` | Secret data key containing the client private key; configure with `certKey`. |
 | frontend.basePath | string | `"/"` | Public URL prefix served by the official Go Web entry; use the same non-stripped Ingress path. |
 | frontend.frameAncestors | list or null | `null` | CSP framing allowlist. `null` preserves existing behavior, `[]` blocks framing, and a list allows explicit parents. |
 | frontend.livenessProbe.enabled | bool | `true` | Enable the Web-entry liveness probe. |
@@ -160,6 +167,22 @@ externalPrometheus:
 ```
 
 Here, replace <your-prometheus-address> with the actual domain or internal Ingress address for your Prometheus instance.
+
+HTTPS certificates are verified by default. For an endpoint signed by a private
+CA, create a Secret and reference its data key instead of placing PEM material
+in values:
+
+```yaml
+externalPrometheus:
+  enabled: true
+  address: "https://prometheus.example.com"
+  tls:
+    existingSecret: "prometheus-ca"
+    caKey: "ca.crt"
+```
+
+See the [installation guide](../../docs/installation/helm/index.md#https-external-prometheus)
+for Secret creation, mTLS, and the upgrade boundary.
 
 #### Scenario 2: If no Prometheus or Operator is installed in the cluster
 

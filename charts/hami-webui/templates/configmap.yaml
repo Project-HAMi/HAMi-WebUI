@@ -1,3 +1,9 @@
+{{- include "hami-webui.validatePrometheusTLS" . -}}
+{{- $externalPrometheus := default (dict) .Values.externalPrometheus -}}
+{{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
+{{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
+{{- $prometheusCAKey := default "" (get $prometheusTLS "caKey") -}}
+{{- $prometheusCertKey := default "" (get $prometheusTLS "certKey") -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,6 +21,20 @@ data:
     prometheus:
       address: {{ include "hami-webui.prometheusAddress" . }}
       timeout: {{ .Values.externalPrometheus.timeout | default "1m" }}
+      {{- if (get $externalPrometheus "enabled") }}
+      tls:
+        insecure_skip_verify: {{ default false (get $prometheusTLS "insecureSkipVerify") }}
+        {{- with (get $prometheusTLS "serverName") }}
+        server_name: {{ . | quote }}
+        {{- end }}
+        {{- if and (get $externalPrometheus "enabled") $prometheusTLSSecret $prometheusCAKey }}
+        ca_file: "/apps/prometheus-tls/ca.crt"
+        {{- end }}
+        {{- if and (get $externalPrometheus "enabled") $prometheusTLSSecret $prometheusCertKey }}
+        cert_file: "/apps/prometheus-tls/tls.crt"
+        key_file: "/apps/prometheus-tls/tls.key"
+        {{- end }}
+      {{- end }}
     exporter:
       interval: {{ .Values.metricsExporter.interval | default "30s" }}
       timeout:  {{ .Values.metricsExporter.timeout  | default "60s" }}

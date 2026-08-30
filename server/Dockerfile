@@ -16,9 +16,10 @@ ARG UNZIP_VERSION=6.0-28
 RUN sed -i -E \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
-      /etc/apt/sources.list.d/debian.sources && \
+    /etc/apt/sources.list.d/debian.sources && \
     apt-get -o Acquire::Check-Valid-Until=false update && \
     apt-get install -y --no-install-recommends "unzip=${UNZIP_VERSION}" && \
+    test -s /etc/ssl/certs/ca-certificates.crt && \
     rm -rf /var/lib/apt/lists/*
 
 # Install the exact protoc release used by CI. The archive checksum makes this
@@ -52,4 +53,5 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /src/build/ /apps/

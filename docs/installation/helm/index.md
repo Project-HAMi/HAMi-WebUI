@@ -59,6 +59,44 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
 
    You should get the expected both 'hami-webui' and 'hami-webui-dcgm-exporter' in running state if installation is successful.
 
+### HTTPS external Prometheus
+
+HAMi-WebUI verifies HTTPS certificates with the container's system trust store
+by default. No TLS values are required for a publicly trusted endpoint.
+
+For a private CA, create a Secret in the HAMi-WebUI namespace and reference its
+data key:
+
+```bash
+kubectl create secret generic hami-webui-prometheus-tls \
+  --namespace kube-system \
+  --from-file=ca.crt=/path/to/prometheus-ca.crt
+```
+
+```yaml
+externalPrometheus:
+  enabled: true
+  address: "https://prometheus.example.com"
+  tls:
+    existingSecret: hami-webui-prometheus-tls
+    caKey: ca.crt
+```
+
+When Prometheus requires mutual TLS, add the client certificate and key to the
+same Secret and configure `certKey` and `keyKey` together. `serverName` is
+available when certificate verification must use a name different from the URL
+host. Secret contents are mounted only into the backend container; they are not
+copied into the rendered ConfigMap.
+
+`insecureSkipVerify: true` remains available only as an explicit temporary
+escape hatch. It disables certificate-chain and host-name verification and
+should not replace configuring the correct CA.
+
+HAMi-WebUI 2.0.0 enables certificate verification by default; earlier versions
+silently skipped it for every HTTPS Prometheus endpoint. Before upgrading an
+installation that relies on an untrusted self-signed certificate, configure its
+CA as shown above or explicitly opt into the temporary insecure setting.
+
 ### Prometheus scrape labels
 
 HAMi's vgpu-monitor exposes workload identity as `namespace`, `pod`, and
