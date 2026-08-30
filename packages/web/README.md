@@ -4,26 +4,28 @@ The supported development server is Vite. Start the Go backend first; see the
 [developer guide](../../docs/contribute/developer-guide.md) for the complete
 workflow and backend URL override.
 
+Run the supported commands from the repository root.
+
 ## Project setup
 
-```
-pnpm install
+```bash
+make bootstrap
 ```
 
 ### Compiles and hot-reloads for development
 
-```
-pnpm run start:dev
+```bash
+make dev
 ```
 
 ### Compiles and minifies for production
 
-```
-pnpm run build
+```bash
+make build
 ```
 
-### Lints and fixes files
+### Verify before a pull request
 
-```
-pnpm run lint
+```bash
+make verify
 ```

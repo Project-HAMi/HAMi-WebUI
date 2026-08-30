@@ -1,8 +1,13 @@
-DOCKER_IMAGE ?= projecthami/hami-webui-be
+.DEFAULT_GOAL := help
+
+DOCKER ?= docker
+DOCKER_IMAGE ?= hami-webui-backend
 CMD_PATH ?= ./cmd/
 BUILD_PATH ?= ./build/
-VERSION ?= $(shell git describe --tags --always)
-DIRS = $(shell ls $(CMD_PATH))
+VERSION ?= dev
+PLATFORM ?=
+DOCKER_PLATFORM_FLAG := $(if $(strip $(PLATFORM)),--platform $(PLATFORM),)
+DIRS ?= $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard $(CMD_PATH)*/main.go)))))
 WIRE_DIRS = $(patsubst $(CMD_PATH)%/wire.go,%,$(wildcard $(CMD_PATH)*/wire.go))
 TARGET_ARCH ?= amd64
 WIRE_VERSION ?= v0.7.0
@@ -15,14 +20,37 @@ PROTOC_GEN_GO_ERRORS_VERSION ?= v2.0.0-20240322155018-41971ffa647a
 PROTOC_GEN_OPENAPI_VERSION ?= v0.6.9
 PROTO_TOOLS = \
 	protoc \
+	wire \
 	kratos \
+	protoc-gen-validate \
 	protoc-gen-go \
 	protoc-gen-go-grpc \
 	protoc-gen-go-http \
 	protoc-gen-go-errors \
 	protoc-gen-openapi
 
-# 1. Install Go dependencies
+.PHONY: help
+help:
+	@printf '%s\n' \
+		'Local HAMi-WebUI backend development:' \
+		'  make bootstrap        Install pinned Go code generators' \
+		'  make run              Generate code and start the backend' \
+		'  make test             Generate code and run all Go tests' \
+		'  make vet              Generate code and run go vet' \
+		'  make verify           Generate, build, vet, and test all Go packages' \
+		'  make build            Generate and build Linux commands for TARGET_ARCH' \
+		'  make build-local      Generate and build commands for the host platform' \
+		'  make build-web-entry  Build only the production Web entry' \
+		'  make build-image      Build a local backend image' \
+		'' \
+		'Install protoc separately before bootstrap; use PLATFORM for Docker builds.'
+
+.PHONY: bootstrap
+bootstrap:
+	$(MAKE) install-deps
+	$(MAKE) check-proto-tools
+
+# protoc is an external prerequisite; install the pinned Go generators.
 .PHONY: install-deps
 install-deps:
 	go install github.com/google/wire/cmd/wire@$(WIRE_VERSION)
@@ -34,7 +62,6 @@ install-deps:
 	go install github.com/go-kratos/kratos/cmd/protoc-gen-go-errors/v2@$(PROTOC_GEN_GO_ERRORS_VERSION)
 	go install github.com/google/gnostic/cmd/protoc-gen-openapi@$(PROTOC_GEN_OPENAPI_VERSION)
 
-# 2. Generate proto and wire files
 .PHONY: generate
 generate: generate-proto generate-wire
 
@@ -46,7 +73,7 @@ check-proto-tools:
 		if ! command -v "$$tool" >/dev/null 2>&1; then missing="$$missing $$tool"; fi; \
 	done; \
 	if [ -n "$$missing" ]; then \
-		echo "missing required protobuf tools:$$missing; install them before generating code (Go tools: 'make install-deps')" >&2; \
+		echo "missing required protobuf tools:$$missing; install protoc, run 'make install-deps', and ensure the Go bin directory is on PATH" >&2; \
 		exit 1; \
 	fi
 
@@ -56,9 +83,9 @@ generate-proto: check-proto-tools
 
 .PHONY: generate-wire
 generate-wire:
-	@ for dir in $(WIRE_DIRS); \
+	@set -eu; for dir in $(WIRE_DIRS); \
 	do \
-		cd ${CMD_PATH}$$dir/ && wire . && cd ../../; \
+		(cd "$(CMD_PATH)$$dir" && wire .); \
 	done
 
 # Verify module metadata without changing it. Release builds must not repair
@@ -67,68 +94,74 @@ generate-wire:
 verify-mod:
 	go mod tidy -diff
 
-# 3. Clean Go modules
 .PHONY: tidy-mod
 tidy-mod:
 	go mod tidy
 
-# 4. Build-related commands
 .PHONY: build-linux
 build-linux:
-	@echo "Building for GOOS=linux GOARCH=$(TARGET_ARCH)" # TARGET_ARCH 会从 make 命令传入
+	@mkdir -p "$(BUILD_PATH)"
+	@echo "Building for GOOS=linux GOARCH=$(TARGET_ARCH)"
 	@set -e; for dir in $(DIRS); \
 	do \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) go build -o $(BUILD_PATH)$$dir ${CMD_PATH}$$dir; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) go build -mod=readonly -trimpath -o "$(BUILD_PATH)$$dir" "$(CMD_PATH)$$dir"; \
 		echo "Built $$dir for Linux/$(TARGET_ARCH)"; \
 	done
 
 .PHONY: build-local
-build-local:
-	@ for dir in $(DIRS); \
+build-local: generate
+	$(MAKE) verify-mod
+	@mkdir -p "$(BUILD_PATH)"
+	@set -e; for dir in $(DIRS); \
 	do \
-		go build -o $(BUILD_PATH)$$dir ${CMD_PATH}$$dir; \
+		go build -mod=readonly -trimpath -o "$(BUILD_PATH)$$dir" "$(CMD_PATH)$$dir"; \
 		echo "Built $$dir"; \
 	done
 
-# 5. Docker image commands
+.PHONY: build-web-entry
+build-web-entry:
+	@mkdir -p "$(BUILD_PATH)"
+	go build -mod=readonly -trimpath -o "$(BUILD_PATH)web-entry" ./cmd/web-entry
+
+# This target creates one local development image. Stable multi-platform images
+# are published only by ../.github/workflows/release.yaml.
 .PHONY: build-image
 build-image:
-	docker build --platform linux/amd64 -t ${DOCKER_IMAGE}:${VERSION} .
-
-.PHONY: push-image
-push-image:
-	docker push ${DOCKER_IMAGE}:${VERSION}
+	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) -t $(DOCKER_IMAGE):$(VERSION) .
 
 .PHONY: save-image
 save-image:
-	docker save -o $(BUILD_PATH)hami_webui_release_${VERSION}.tar ${DOCKER_IMAGE}:${VERSION}
-	gzip -f $(BUILD_PATH)hami_webui_release_${VERSION}.tar
+	@mkdir -p "$(BUILD_PATH)"
+	$(DOCKER) save -o "$(BUILD_PATH)hami_webui_release_$(VERSION).tar" $(DOCKER_IMAGE):$(VERSION)
+	gzip -f "$(BUILD_PATH)hami_webui_release_$(VERSION).tar"
 
-# 6. Debugging and Testing
 .PHONY: run
-run: install-deps generate run-debug
-
-.PHONY: run-debug
-run-debug:
+run: generate
+	$(MAKE) verify-mod
 	kratos run
 
-.PHONY: run-tests
-run-tests:
-	go test .
+.PHONY: test
+test: generate
+	$(MAKE) verify-mod
+	go test -mod=readonly ./...
 
-.PHONY: run-vet
-run-vet:
-	go vet ./...
+.PHONY: vet
+vet: generate
+	$(MAKE) verify-mod
+	go vet -mod=readonly ./...
 
-# 7. Cleaning
-.PHONY: clean-build
-clean-build:
+.PHONY: verify
+verify: generate
+	$(MAKE) verify-mod
+	go build -mod=readonly ./...
+	go vet -mod=readonly ./...
+	go test -mod=readonly ./...
+
+.PHONY: clean
+clean:
 	rm -rf $(BUILD_PATH)
 
-# 8. Complete build workflow
 .PHONY: build
-build: install-deps generate verify-mod build-linux
-
-# 9. Release workflow
-.PHONY: release
-release: build-image push-image
+build: generate
+	$(MAKE) verify-mod
+	$(MAKE) build-linux

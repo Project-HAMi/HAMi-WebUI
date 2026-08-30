@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -12,8 +13,6 @@ const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..'
 )
-const outputDirectory = path.join(repositoryRoot, 'public')
-
 const inheritedEnvironment = ['CI', 'HOME', 'PATH', 'PNPM_HOME', 'TMPDIR']
 const buildEnvironment = Object.fromEntries(
   inheritedEnvironment
@@ -27,20 +26,6 @@ Object.assign(buildEnvironment, {
   VITE_APP_REQUEST_TIMEOUT: '71234567'
 })
 
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const build = spawnSync(
-  pnpm,
-  ['--filter', 'hami-webui-web', 'run', 'build'],
-  {
-    cwd: repositoryRoot,
-    env: buildEnvironment,
-    stdio: 'inherit'
-  }
-)
-if (build.status !== 0) {
-  throw new Error(`Vite build failed with status ${build.status}`)
-}
-
 const listJavaScriptFiles = async(directory) => {
   const entries = await readdir(directory, { withFileTypes: true })
   const files = await Promise.all(
@@ -53,55 +38,93 @@ const listJavaScriptFiles = async(directory) => {
   return files.flat().filter((file) => file.endsWith('.js'))
 }
 
-const bundles = await Promise.all(
-  (await listJavaScriptFiles(outputDirectory)).map((file) =>
-    readFile(file, 'utf8')
+const verifyBuildEnvironmentBoundary = async() => {
+  const outputDirectory = await mkdtemp(
+    path.join(os.tmpdir(), 'hami-webui-vite-env-')
   )
-)
-const contains = (value) => bundles.some((bundle) => bundle.includes(value))
 
-const forbiddenValues = [
-  'http://private-backend-canary.invalid:8000',
-  'HAMI_WEBUI_UNREFERENCED_CANARY',
-  'hami_webui_canary_should_not_ship',
-  '/vite-env-contract/'
-]
-const bundledForbiddenValue = forbiddenValues.find(contains)
-if (bundledForbiddenValue) {
-  throw new Error(
-    `unreferenced build environment value was bundled: ${bundledForbiddenValue}`
-  )
+  try {
+    const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+    const build = spawnSync(
+      pnpm,
+      [
+        '--filter',
+        'hami-webui-web',
+        'exec',
+        'vite',
+        'build',
+        '--outDir',
+        outputDirectory,
+        '--emptyOutDir'
+      ],
+      {
+        cwd: repositoryRoot,
+        env: buildEnvironment,
+        stdio: 'inherit'
+      }
+    )
+    if (build.status !== 0) {
+      throw new Error(`Vite build failed with status ${build.status}`)
+    }
+
+    const bundles = await Promise.all(
+      (await listJavaScriptFiles(outputDirectory)).map((file) =>
+        readFile(file, 'utf8')
+      )
+    )
+    const contains = (value) => bundles.some((bundle) => bundle.includes(value))
+
+    const forbiddenValues = [
+      'http://private-backend-canary.invalid:8000',
+      'HAMI_WEBUI_UNREFERENCED_CANARY',
+      'hami_webui_canary_should_not_ship',
+      '/vite-env-contract/'
+    ]
+    const bundledForbiddenValue = forbiddenValues.find(contains)
+    if (bundledForbiddenValue) {
+      throw new Error(
+        `unreferenced build environment value was bundled: ${bundledForbiddenValue}`
+      )
+    }
+
+    const requiredValues = ['71234567']
+    const missingRequiredValue = requiredValues.find((value) => !contains(value))
+    if (missingRequiredValue) {
+      throw new Error(
+        `allowlisted Vite value was not bundled: ${missingRequiredValue}`
+      )
+    }
+
+    const builtIndex = await readFile(
+      path.join(outputDirectory, 'index.html'),
+      'utf8'
+    )
+    if (
+      !/<base\b(?=[^>]*\bdata-hami-webui-base\b)(?=[^>]*\bhref="\/")[^>]*>/i.test(
+        builtIndex
+      )
+    ) {
+      throw new Error('built index is missing the runtime base-path marker')
+    }
+    if (
+      !/<link\b(?=[^>]*\brel="icon")(?=[^>]*\bhref="\.\/favicon\.svg")[^>]*>/i.test(
+        builtIndex
+      )
+    ) {
+      throw new Error('built index favicon is not relative to the runtime base path')
+    }
+    if (
+      builtIndex.indexOf('data-hami-webui-base') >
+      builtIndex.indexOf('href="./favicon.svg"')
+    ) {
+      throw new Error('runtime base-path marker must precede relative document URLs')
+    }
+  } finally {
+    await rm(outputDirectory, { force: true, recursive: true })
+  }
 }
 
-const requiredValues = ['71234567']
-const missingRequiredValue = requiredValues.find((value) => !contains(value))
-if (missingRequiredValue) {
-  throw new Error(
-    `allowlisted Vite value was not bundled: ${missingRequiredValue}`
-  )
-}
-
-const builtIndex = await readFile(path.join(outputDirectory, 'index.html'), 'utf8')
-if (
-  !/<base\b(?=[^>]*\bdata-hami-webui-base\b)(?=[^>]*\bhref="\/")[^>]*>/i.test(
-    builtIndex
-  )
-) {
-  throw new Error('built index is missing the runtime base-path marker')
-}
-if (
-  !/<link\b(?=[^>]*\brel="icon")(?=[^>]*\bhref="\.\/favicon\.svg")[^>]*>/i.test(
-    builtIndex
-  )
-) {
-  throw new Error('built index favicon is not relative to the runtime base path')
-}
-if (
-  builtIndex.indexOf('data-hami-webui-base') >
-  builtIndex.indexOf('href="./favicon.svg"')
-) {
-  throw new Error('runtime base-path marker must precede relative document URLs')
-}
+await verifyBuildEnvironmentBoundary()
 
 const basePathCases = [
   [undefined, '/'],

@@ -1,38 +1,73 @@
-VERSION?=latest
-DOCKER_IMAGE=projecthami/hami-webui-fe
-PROJECT_NAME?=test-project
+.DEFAULT_GOAL := help
 
-# 按项目最小化构建
-ROUTE_FILE=packages/web/src/router/index.js
-PROJECT_PATH=packages/web/projects/
-DISABLED_PROJECTS?=""
+PNPM ?= pnpm
+DOCKER ?= docker
+DOCKER_IMAGE ?= hami-webui-frontend
+VERSION ?= dev
+PLATFORM ?=
+DOCKER_PLATFORM_FLAG := $(if $(strip $(PLATFORM)),--platform $(PLATFORM),)
 
-.PHONY: install-modules
-install-modules:
-	pnpm install
+.PHONY: help
+help:
+	@printf '%s\n' \
+		'Local HAMi-WebUI development:' \
+		'  make bootstrap              Install locked Node.js dependencies' \
+		'  make dev                    Start the Vite development server' \
+		'  make lint                   Lint Web-entry tooling and Vue sources' \
+		'  make test                   Run Vue unit and contract tests' \
+		'  make build                  Build and pre-compress browser assets' \
+		'  make verify-vite-env        Check the Vite environment boundary' \
+		'  make build-web-entry        Build the production Go Web entry' \
+		'  make verify                 Run all frontend and Web-entry checks' \
+		'  make build-image            Build a local frontend image' \
+		'' \
+		'Use PLATFORM=linux/amd64 (or linux/arm64) for an explicit image platform.'
 
-.PHONY: build-all
-build-all: install-modules build-web
+.PHONY: bootstrap
+bootstrap:
+	$(PNPM) install --frozen-lockfile --config.package-lock=true
 
-.PHONY: build-web
-build-web:
-	pnpm --filter hami-webui-web run build
+.PHONY: dev
+dev:
+	$(PNPM) --filter hami-webui-web run dev
 
-.PHONY: start-dev
-start-dev: install-modules start-web
+.PHONY: lint
+lint:
+	$(PNPM) run lint
+	$(PNPM) --filter hami-webui-web run lint
 
+.PHONY: test
+test:
+	$(PNPM) --filter hami-webui-web run test
 
-.PHONY: start-web
-start-web:
-	pnpm --filter hami-webui-web run start:dev
+.PHONY: build
+build:
+	$(PNPM) --filter hami-webui-web run build
+	$(PNPM) run precompress:web-assets
 
+.PHONY: verify-vite-env
+verify-vite-env:
+	$(PNPM) run verify:vite-env
+
+.PHONY: build-web-entry
+build-web-entry:
+	$(MAKE) -C server build-web-entry
+
+.PHONY: test-web-entry-contract
+test-web-entry-contract:
+	$(PNPM) run test:web-entry-contract
+
+.PHONY: test-web-entry-browser
+test-web-entry-browser:
+	$(PNPM) run test:web-entry-browser
+
+.PHONY: verify
+verify: lint test verify-vite-env build build-web-entry
+	$(MAKE) test-web-entry-contract
+	$(MAKE) test-web-entry-browser
+
+# This target creates one local development image. Stable multi-platform images
+# are published only by .github/workflows/release.yaml.
 .PHONY: build-image
 build-image:
-	docker build --platform linux/amd64 -t ${DOCKER_IMAGE}:${VERSION} .
-
-.PHONY: push-image
-push-image:
-	docker push ${DOCKER_IMAGE}:${VERSION}
-
-.PHONY: release
-release: build-image push-image
+	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) -t $(DOCKER_IMAGE):$(VERSION) .

@@ -39,6 +39,7 @@ jobs:
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'server/.go-version'
+              - 'server/Makefile'
               - 'server/cmd/web-entry/**'
               - 'server/go.mod'
               - 'server/go.sum'
@@ -70,22 +71,21 @@ jobs:
       - name: Verify toolchain versions
         run: bash scripts/verify-toolchain-versions.sh
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: make bootstrap
       - name: Test Web
-        run: pnpm --filter hami-webui-web run test
-      - name: Build web and verify environment boundary
-        run: pnpm run verify:vite-env
-      - name: Pre-compress Web assets
-        run: pnpm run precompress:web-assets
+        run: make test
+      - name: Verify Vite environment boundary
+        run: make verify-vite-env
+      - name: Build Web assets
+        run: make build
       - name: Build Go Web entry
-        working-directory: server
-        run: mkdir -p build && GOTOOLCHAIN=local go build -mod=readonly -trimpath -o build/web-entry ./cmd/web-entry
+        run: make build-web-entry
       - name: Test Web-entry contract
-        run: pnpm run test:web-entry-contract
+        run: make test-web-entry-contract
       - name: Install Chromium for Web-entry browser tests
         run: pnpm exec playwright install --with-deps --only-shell chromium
       - name: Test base-path and iframe browser contract
-        run: pnpm run test:web-entry-browser
+        run: make test-web-entry-browser
 
   lint:
     runs-on: ubuntu-latest
@@ -101,11 +101,9 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Lint Web-entry tooling
-        run: pnpm run lint
-      - name: Lint web
-        run: pnpm --filter hami-webui-web run lint
+        run: make bootstrap
+      - name: Lint Web-entry tooling and Web
+        run: make lint
 
   # Single required status check: green only if every frontend job passed (or
   # there were no frontend-relevant changes).

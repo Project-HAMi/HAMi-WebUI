@@ -49,7 +49,7 @@ When you're ready to contribute, it's time to create a pull request.
 ### Pull request review and merge
 
 1. Sign off every commit to satisfy the Developer Certificate of Origin (DCO).
-2. Wait for the required frontend, backend, and DCO checks to pass.
+2. Wait for all required checks to pass.
 3. A reviewer records the code review in GitHub and writes `/lgtm` when the change is ready.
 4. An approver listed in the relevant `OWNERS` file approves the change. An approver can select **Approve** in the GitHub review and put `/lgtm` in the review body to grant both `lgtm` and `approved` in one step.
 5. After the required checks and both labels are present, Tide merges the pull request through `hami-robot`.

@@ -62,16 +62,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install codegen tools (wire / kratos / protoc-gen-*)
         run: make install-deps
-      - name: Generate proto + wire
-        run: make generate
-      - name: Verify module metadata
-        run: make verify-mod
-      - name: Build
-        run: go build ./...
-      - name: Vet
-        run: go vet ./...
-      - name: Unit tests
-        run: go test ./...
+      - name: Generate, build, vet, and test
+        run: make verify
 
   lint:
     runs-on: ubuntu-latest
