@@ -5,6 +5,7 @@ import {
   calculateMetricPercent,
   METRIC_STATUS,
   readInstantValue,
+  readReadyMetricField,
   requiresMetricCapacity,
   resolveMetricStatus,
   setMetricErrorState,
@@ -28,6 +29,30 @@ test('protobuf JSON non-finite samples are marked invalid', () => {
       METRIC_STATUS.INVALID,
     );
   }
+});
+
+test('detail values only expose ready samples while preserving a real zero', () => {
+  assert.equal(
+    readReadyMetricField(
+      { status: METRIC_STATUS.READY, percent: 0 },
+      'percent',
+    ),
+    0,
+  );
+  assert.equal(
+    readReadyMetricField(
+      { status: METRIC_STATUS.MISSING, percent: 0 },
+      'percent',
+    ),
+    undefined,
+  );
+  assert.equal(
+    readReadyMetricField(
+      { status: METRIC_STATUS.ERROR, used: 0 },
+      'used',
+    ),
+    undefined,
+  );
 });
 
 test('percentages require a finite positive capacity', () => {

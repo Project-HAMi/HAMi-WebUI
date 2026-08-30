@@ -21,6 +21,15 @@ export const readInstantValue = (response) => {
   return { status: METRIC_STATUS.READY, value };
 };
 
+export const readReadyMetricField = (metric, field) => {
+  if (metric?.status !== METRIC_STATUS.READY) {
+    return undefined;
+  }
+
+  const value = Number(metric?.[field]);
+  return Number.isFinite(value) ? value : undefined;
+};
+
 export const calculateMetricPercent = (used, total) => {
   const numericUsed = Number(used);
   const numericTotal = Number(total);
