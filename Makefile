@@ -17,7 +17,7 @@ help:
 		'  make test                   Run Vue unit and contract tests' \
 		'  make build                  Build and pre-compress browser assets' \
 		'  make verify-vite-env        Check the Vite environment boundary' \
-		'  make build-web-entry        Build the production Go Web entry' \
+		'  make build-web-entry        Build the standalone Web-entry contract binary' \
 		'  make verify                 Run all frontend and Web-entry checks' \
 		'  make build-image            Build the application image' \
 		'' \

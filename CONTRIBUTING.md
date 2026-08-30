@@ -20,13 +20,16 @@ For more ways to contribute, check out the [Open Source Guides](https://opensour
 
 Before submitting a new issue, try to make sure someone hasn't already reported the problem. Look through the [existing issues](https://github.com/Project-HAMi/HAMi-WebUI/issues) for similar issues.
 
-Report a bug by [opening an issue](https://github.com/Project-HAMi/HAMi-WebUI/issues/new?labels=bug). Make sure that you provide as much information as possible on how to reproduce the bug.
+Report a bug by [opening an issue](https://github.com/Project-HAMi/HAMi-WebUI/issues/new?labels=kind%2Fbug). Make sure that you provide as much information as possible on how to reproduce the bug.
 
-For authentication and alerting HAMi-WebUI server logs are useful.
+Include the HAMi-WebUI version, installation mode, Kubernetes and HAMi
+versions, browser, reproduction steps, expected and actual behavior, and
+relevant browser console, network, or server logs. Remove credentials and
+private cluster data before sharing logs.
 
 ### Suggest enhancements
 
-If you have an idea of how to improve HAMi-WebUI, submit a [feature request](https://github.com/Project-HAMi/HAMi-WebUI/issues/new?labels=enhancement).
+If you have an idea of how to improve HAMi-WebUI, submit a [feature request](https://github.com/Project-HAMi/HAMi-WebUI/issues/new?labels=kind%2Fenhancement).
 
 We want to make HAMi-WebUI accessible to even more people. [Open an issue](https://github.com/Project-HAMi/HAMi-WebUI/issues/new) to help us understand what we can improve.
 
