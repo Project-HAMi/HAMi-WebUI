@@ -53,6 +53,7 @@ message QueryRangeRequest {
 message SamplePair {
   float value = 1;
   int64 timestamp = 2;
+  bool missing = 3;
 }
 
 message SampleStream {

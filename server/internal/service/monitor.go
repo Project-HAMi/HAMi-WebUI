@@ -74,9 +74,9 @@ func fillLessSamplePoint(startTime, endTime time.Time, step time.Duration, value
 	for !currentTime.After(endTime) {
 		currentTimestamp := currentTime.UnixMilli()
 		if value, exists := existingPoints[currentTimestamp]; exists {
-			filledValues = append(filledValues, &pb.SamplePair{Value: value, Timestamp: currentTimestamp})
+			filledValues = append(filledValues, &pb.SamplePair{Value: value, Timestamp: currentTimestamp, Missing: false})
 		} else {
-			filledValues = append(filledValues, &pb.SamplePair{Value: 0, Timestamp: currentTimestamp})
+			filledValues = append(filledValues, &pb.SamplePair{Value: 0, Timestamp: currentTimestamp, Missing: true})
 		}
 		currentTime = currentTime.Add(step)
 	}
