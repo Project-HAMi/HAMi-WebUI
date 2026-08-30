@@ -28,7 +28,6 @@
     "echarts": "5.4.3",
     "element-plus": "^2.4.1",
     "generate-avatar": "1.4.10",
-    "iframe-resizer": "^4.3.2",
     "js-cookie": "3.0.5",
     "lodash": "^4.17.21",
     "normalize.css": "^8.0.1",
