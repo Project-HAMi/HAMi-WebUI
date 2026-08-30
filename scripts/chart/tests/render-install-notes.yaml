@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: install-notes-contract
+data:
+  notes: |-
+{{ include "hami-webui.installNotes" . | nindent 4 }}

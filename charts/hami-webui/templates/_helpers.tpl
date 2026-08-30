@@ -73,6 +73,107 @@ Allow the release namespace to be overridden for multi-namespace deployments in 
 {{- end -}}
 
 {{/*
+Normalize the public URL prefix with the same rules as the Go Web entry. The
+Chart uses this value for the Deployment, Ingress validation, and install
+notes, so users receive one public-path contract instead of three subtly
+different spellings.
+*/}}
+{{- define "hami-webui.frontendBasePath" -}}
+{{- $frontend := default (dict) .Values.frontend -}}
+{{- $basePath := "/" -}}
+{{- if hasKey $frontend "basePath" -}}
+{{- $basePath = get $frontend "basePath" -}}
+{{- if not (kindIs "string" $basePath) -}}
+{{- fail "frontend.basePath must be a string" -}}
+{{- end -}}
+{{- if empty $basePath -}}
+{{- $basePath = "/" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (trim $basePath) $basePath -}}
+{{- fail "frontend.basePath must not contain surrounding whitespace" -}}
+{{- end -}}
+{{- if not (hasPrefix "/" $basePath) -}}
+{{- $basePath = printf "/%s" $basePath -}}
+{{- end -}}
+{{- if not (hasSuffix "/" $basePath) -}}
+{{- $basePath = printf "%s/" $basePath -}}
+{{- end -}}
+{{- if ne $basePath "/" -}}
+{{- range $segment := splitList "/" (trimAll "/" $basePath) -}}
+{{- if or (empty $segment) (eq $segment ".") (eq $segment "..") (not (regexMatch "^[A-Za-z0-9._~-]+$" $segment)) -}}
+{{- fail (printf "frontend.basePath %q contains an invalid path segment" $basePath) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $basePrefix := trimSuffix "/" $basePath -}}
+{{- if or (eq $basePrefix "/health_check") (hasPrefix "/health_check/" $basePrefix) -}}
+{{- fail "frontend.basePath conflicts with the public health-check endpoint" -}}
+{{- end -}}
+{{- $basePath -}}
+{{- end -}}
+
+{{/*
+Keep the Chart's public URL discoverable and portable. Dedicated frontend
+values are the single source of truth for Chart installs; the same settings
+remain available as environment variables when the image is run directly.
+*/}}
+{{- define "hami-webui.validatePublicEntry" -}}
+{{- $env := default (list) .Values.env -}}
+{{- range $entry := $env -}}
+{{- $name := default "" (get $entry "name") -}}
+{{- if eq $name "HAMI_WEBUI_BASE_PATH" -}}
+{{- fail "env must not override HAMI_WEBUI_BASE_PATH; configure frontend.basePath so the Deployment, Ingress, and install notes stay consistent" -}}
+{{- end -}}
+{{- if eq $name "HAMI_WEBUI_FRAME_ANCESTORS_JSON" -}}
+{{- fail "env must not override HAMI_WEBUI_FRAME_ANCESTORS_JSON; configure frontend.frameAncestors instead" -}}
+{{- end -}}
+{{- end -}}
+{{- $basePath := include "hami-webui.frontendBasePath" . -}}
+{{- $basePrefix := trimSuffix "/" $basePath -}}
+{{- if empty $basePrefix -}}
+{{- $basePrefix = "/" -}}
+{{- end -}}
+{{- $ingress := default (dict) .Values.ingress -}}
+{{- if (get $ingress "enabled") -}}
+{{- $hosts := default (list) (get $ingress "hosts") -}}
+{{- if empty $hosts -}}
+{{- fail "ingress.hosts must contain at least one host when ingress.enabled=true" -}}
+{{- end -}}
+{{- range $hostIndex, $host := $hosts -}}
+{{- $paths := default (list) (get $host "paths") -}}
+{{- if empty $paths -}}
+{{- fail (printf "ingress.hosts[%d].paths must contain at least one path" $hostIndex) -}}
+{{- end -}}
+{{- $hostCoversBasePath := false -}}
+{{- range $pathIndex, $pathConfig := $paths -}}
+{{- $pathType := default "" (get $pathConfig "pathType") -}}
+{{- if not (has $pathType (list "Exact" "Prefix" "ImplementationSpecific")) -}}
+{{- fail (printf "ingress.hosts[%d].paths[%d].pathType must be Exact, Prefix, or ImplementationSpecific" $hostIndex $pathIndex) -}}
+{{- end -}}
+{{- if eq $pathType "Prefix" -}}
+  {{- $ingressPath := default "" (get $pathConfig "path") -}}
+  {{- if and $ingressPath (hasPrefix "/" $ingressPath) -}}
+    {{- $ingressPrefix := trimSuffix "/" $ingressPath -}}
+    {{- if empty $ingressPrefix -}}
+      {{- $ingressPrefix = "/" -}}
+    {{- end -}}
+    {{- $pathIsClean := and (eq (clean $ingressPath) $ingressPrefix) (not (contains "//" $ingressPath)) -}}
+    {{- $coversBasePath := or (eq $ingressPrefix "/") (eq $ingressPrefix $basePrefix) (hasPrefix (printf "%s/" $ingressPrefix) $basePrefix) -}}
+    {{- if and $pathIsClean $coversBasePath -}}
+      {{- $hostCoversBasePath = true -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $hostCoversBasePath -}}
+{{- fail (printf "ingress.hosts[%d] needs at least one clean Prefix path that covers frontend.basePath %q without stripping it" $hostIndex $basePath) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Require one explicit Prometheus ownership mode. A guessed in-cluster address
 can let the Pod become Ready while every metrics query points at a Service that
 does not exist, so an unconfigured or ambiguous mode must fail at render time.

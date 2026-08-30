@@ -62,6 +62,8 @@ The command removes all the Kubernetes components associated with the chart and 
 
 ## Requirements
 
+- Kubernetes 1.19 or newer
+
 | Repository | Name | Version |
 |------------|------|---------|
 | https://nvidia.github.io/dcgm-exporter/helm-charts | dcgm-exporter | 3.5.0 |
@@ -79,7 +81,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | dcgm-exporter.serviceMonitor.enabled | bool | `true`                                                                             | Create a DCGM ServiceMonitor; disable in raw/manual scrape mode. |
 | dcgm-exporter.serviceMonitor.honorLabels | bool | `false`                                                                            |  |
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
-| env[0].name | string | `"TZ"` | Default environment variable name for the single application container. Replace the list to add other variables. |
+| env[0].name | string | `"TZ"` | Default environment variable name for the single application container. Use `frontend.*`, not reserved `HAMI_WEBUI_*` variables, for the public path and iframe policy. |
 | env[0].value | string | `"Asia/Shanghai"` | Default timezone value. |
 | externalPrometheus.address | string | `""` | Required Prometheus or VictoriaMetrics HTTP API address when external mode is enabled. |
 | externalPrometheus.enabled | bool | `false`                                                                            | Use an existing metrics backend. Exactly one of this value and `kube-prometheus-stack.enabled` must be true. |
@@ -90,7 +92,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | externalPrometheus.tls.caKey | string | `""` | Secret data key containing the CA certificate. |
 | externalPrometheus.tls.certKey | string | `""` | Secret data key containing the client certificate; configure with `keyKey`. |
 | externalPrometheus.tls.keyKey | string | `""` | Secret data key containing the client private key; configure with `certKey`. |
-| frontend.basePath | string | `"/"` | Public URL prefix served by the official Go Web entry; use the same non-stripped Ingress path. |
+| frontend.basePath | string | `"/"` | Public URL prefix served by the official Go Web entry; a non-stripping Ingress Prefix must cover it. |
 | frontend.frameAncestors | list or null | `null` | CSP framing allowlist. `null` preserves existing behavior, `[]` blocks framing, and a list allows explicit parents. |
 | fullnameOverride | string | `""`                                                                               |  |
 | hamiServiceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
@@ -109,7 +111,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | ingress.enabled | bool | `false`                                                                            |  |
 | ingress.hosts[0].host | string | `"chart-example.local"`                                                            |  |
 | ingress.hosts[0].paths[0].path | string | `"/"`                                                                              |  |
-| ingress.hosts[0].paths[0].pathType | string | `"ImplementationSpecific"`                                                         |  |
+| ingress.hosts[0].paths[0].pathType | string | `"Prefix"` | Required portable path type for SPA deep links, assets, and browser API routes. |
 | ingress.tls | list | `[]`                                                                               |  |
 | kube-prometheus-stack.alertmanager.enabled | bool | `false`                                                                            |  |
 | kube-prometheus-stack.crds.enabled | bool | `false`                                                                            |  |
@@ -171,7 +173,9 @@ The command removes all the Kubernetes components associated with the chart and 
 For a non-root URL path and whole-application iframe embedding, see the
 [embedding guide](https://github.com/Project-HAMi/HAMi-WebUI/blob/main/docs/installation/embedding.md).
 The official Go Web entry requires the Ingress to preserve the configured
-`frontend.basePath`.
+`frontend.basePath`. The Chart rejects an Ingress Prefix that cannot route that
+path and rejects generic `env` entries that bypass the dedicated frontend
+values.
 
 ### 1. About `dcgm-exporter`
 
