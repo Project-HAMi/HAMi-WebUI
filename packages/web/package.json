@@ -31,7 +31,6 @@
     "lodash": "^4.17.21",
     "normalize.css": "^8.0.1",
     "nprogress": "0.2.0",
-    "socket.io-client": "^4.7.4",
     "sortablejs": "^1.15.2",
     "tdesign-icons-vue-next": "^0.4.2",
     "tdesign-vue-next": "^1.18.5",
