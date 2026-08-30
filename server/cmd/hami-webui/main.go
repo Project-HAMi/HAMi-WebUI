@@ -19,7 +19,6 @@ import (
 
 	"github.com/go-kratos/kratos/v2"
 	"github.com/go-kratos/kratos/v2/log"
-	"github.com/go-kratos/kratos/v2/transport/grpc"
 	kratoshttp "github.com/go-kratos/kratos/v2/transport/http"
 
 	_ "go.uber.org/automaxprocs"
@@ -161,7 +160,6 @@ func backendRequestTimeout(bootstrap *conf.Bootstrap) time.Duration {
 func newApp(
 	ctx context.Context,
 	logger log.Logger,
-	gs *grpc.Server,
 	hs *kratoshttp.Server,
 	mc *exporter.MetricsGenerator,
 	ws *webentry.LifecycleServer,
@@ -173,7 +171,7 @@ func newApp(
 		kratos.Version(Version),
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
-		kratos.Server(gs, hs, mc, ws),
+		kratos.Server(hs, mc, ws),
 	)
 }
 
