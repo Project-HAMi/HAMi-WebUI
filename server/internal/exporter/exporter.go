@@ -761,10 +761,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 			info.DriverVersion = metric["driver"]
 			info.DeviceNo = metric["sn"]
 		case biz.AscendGPUDevice:
-			info.DriverVersion = "暂无"
 			info.DeviceNo = "ascend-" + metric["id"]
 		case biz.HygonGPUDevice:
-			info.DriverVersion = "暂无"
 			info.DeviceNo = "dcu-" + metric["minor_number"]
 		case biz.MetaxGPUDevice:
 			info.DriverVersion = metric["driver_version"]
