@@ -36,19 +36,19 @@ func NewMonitorService(
 func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeRequest) (*pb.RangeResponse, error) {
 	startTime, err := time.ParseInLocation(time.DateTime, req.Range.GetStart(), time.Local)
 	if err != nil {
-		return nil, pb.ErrorTransformError(err.Error())
+		return nil, pb.ErrorTransformError("%s", err)
 	}
 	endTime, err := time.ParseInLocation(time.DateTime, req.Range.GetEnd(), time.Local)
 	if err != nil {
-		return nil, pb.ErrorTransformError(err.Error())
+		return nil, pb.ErrorTransformError("%s", err)
 	}
 	step, err := time.ParseDuration(req.Range.GetStep())
 	if err != nil {
-		return nil, pb.ErrorTransformError(err.Error())
+		return nil, pb.ErrorTransformError("%s", err)
 	}
 	value, err := s.promClient.QueryRange(ctx, req.GetQuery(), v1.Range{Start: startTime, End: endTime, Step: step})
 	if err != nil {
-		return nil, pb.ErrorVgpuDomainError(err.Error())
+		return nil, pb.ErrorVgpuDomainError("%s", err)
 	}
 	matrixValue, ok := value.(model.Matrix)
 	if !ok {
@@ -108,7 +108,7 @@ func getSamplePointStartTime(startTime time.Time, step time.Duration, values []*
 func (s *MonitorService) QueryInstant(ctx context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
 	value, err := s.promClient.Query(ctx, req.GetQuery())
 	if err != nil {
-		return nil, pb.ErrorVgpuDomainError(err.Error())
+		return nil, pb.ErrorVgpuDomainError("%s", err)
 	}
 	vectorValue, ok := value.(model.Vector)
 	if !ok {
