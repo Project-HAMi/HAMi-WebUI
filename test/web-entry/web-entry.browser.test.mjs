@@ -176,19 +176,32 @@ async function loadAllowedFrame(parentURL, expectedFrameURL, { checkAPI = false 
       root?.querySelectorAll('symbol') ?? [],
       (symbol) => symbol.id
     )
+    const renderedUse = Array.from(document.querySelectorAll('use')).find(
+      (use) =>
+        (use.getAttribute('href') || use.getAttribute('xlink:href')) ===
+        '#icon-more'
+    )
+    const renderedBox = renderedUse?.getBBox()
+    const referencedSymbol = document.getElementById('icon-more')
     return {
       present: Boolean(root),
+      referencedSymbolTag: referencedSymbol?.tagName.toLowerCase(),
+      renderedHeight: renderedBox?.height ?? 0,
+      renderedWidth: renderedBox?.width ?? 0,
       symbolCount: symbolIDs.length,
       uniqueSymbolCount: new Set(symbolIDs).size
     }
   })
   assert.equal(svgSprite.present, true, 'SVG sprite root was not registered')
-  assert.ok(svgSprite.symbolCount > 0, 'SVG sprite contains no symbols')
+  assert.equal(svgSprite.symbolCount, 210, 'SVG sprite is missing source icons')
   assert.equal(
     svgSprite.uniqueSymbolCount,
     svgSprite.symbolCount,
     'SVG sprite contains duplicate symbol IDs'
   )
+  assert.equal(svgSprite.referencedSymbolTag, 'symbol')
+  assert.ok(svgSprite.renderedWidth > 0, 'Rendered SVG use has no width')
+  assert.ok(svgSprite.renderedHeight > 0, 'Rendered SVG use has no height')
   assert.equal(await frame.evaluate(() => new URL(document.baseURI).pathname), basePath)
   if (checkAPI) {
     await waitUntil(() => apiRequests.length > 0, 'SPA did not issue a base-prefixed API request')

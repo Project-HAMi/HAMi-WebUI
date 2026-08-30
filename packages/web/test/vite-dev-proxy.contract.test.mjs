@@ -178,7 +178,10 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     }
   } finally {
     if (frontend) await close(frontend)
-    if (vite) await vite.close()
+    if (vite) {
+      await vite.waitForRequestsIdle()
+      await vite.close()
+    }
     await close(backend)
 
     if (previousBackendURL === undefined) {
