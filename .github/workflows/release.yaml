@@ -153,6 +153,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      packages: read
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       candidate_tag: ${{ steps.source.outputs.candidate_tag }}
@@ -184,8 +185,15 @@ jobs:
             echo "candidate_tag=${candidate_tag}"
           } >>"${GITHUB_OUTPUT}"
 
+      - name: Require public unified image repositories
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/release/verify-image-publication-targets.sh \
+            "${GITHUB_REPOSITORY}"
+
   candidate-images:
-    name: Build ${{ matrix.component }} candidate once
+    name: Build unified candidate once
     if: inputs.phase == 'candidate'
     needs: candidate-preflight
     runs-on: ubuntu-24.04
@@ -193,18 +201,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: frontend
-            context: .
-            dockerhub_repository: projecthami/hami-webui-fe-oss
-            ghcr_repository: ghcr.io/project-hami/hami-webui-fe-oss
-          - component: backend
-            context: ./server
-            dockerhub_repository: projecthami/hami-webui-be-oss
-            ghcr_repository: ghcr.io/project-hami/hami-webui-be-oss
     steps:
       - name: Checkout candidate source without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -240,35 +236,36 @@ jobs:
       - name: Build once and push unique candidate references
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: ${{ matrix.context }}
+          context: .
+          target: unified
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: mode=max
           sbom: true
           tags: |
-            ${{ matrix.dockerhub_repository }}:${{ needs.candidate-preflight.outputs.candidate_tag }}
-            ${{ matrix.ghcr_repository }}:${{ needs.candidate-preflight.outputs.candidate_tag }}
+            projecthami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }}
+            ghcr.io/project-hami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }}
           labels: |
             org.opencontainers.image.revision=${{ needs.candidate-preflight.outputs.source_sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          cache-from: type=gha,scope=stable-${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=stable-${{ matrix.component }}
+          cache-from: type=gha,scope=stable-webui
+          cache-to: type=gha,mode=max,scope=stable-webui
 
       - name: Record both registry digests
         run: |
           bash scripts/release/record-candidate-image.sh \
-            "${{ matrix.component }}" \
+            webui \
             "${{ needs.candidate-preflight.outputs.source_sha }}" \
             "${{ needs.candidate-preflight.outputs.candidate_tag }}" \
-            "${{ matrix.dockerhub_repository }}" \
-            "${{ matrix.ghcr_repository }}" \
-            "candidate-metadata/${{ matrix.component }}.json"
+            projecthami/hami-webui \
+            ghcr.io/project-hami/hami-webui \
+            candidate-metadata/webui.json
 
       - name: Upload image metadata
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-candidate-part-${{ github.run_id }}-${{ matrix.component }}
-          path: candidate-metadata/${{ matrix.component }}.json
+          name: release-candidate-part-${{ github.run_id }}-webui
+          path: candidate-metadata/webui.json
           if-no-files-found: error
           retention-days: 2
 
@@ -325,7 +322,7 @@ jobs:
             echo
             echo "Candidate run ID: \`${GITHUB_RUN_ID}\`"
             echo "Source: \`${{ needs.candidate-preflight.outputs.source_sha }}\`"
-            echo "Use this run ID only after a release-metadata PR locks the four recorded digests."
+            echo "Use this run ID only after a release-metadata PR locks the two recorded registry digests."
           } >>"${GITHUB_STEP_SUMMARY}"
 
   prepare-release:

@@ -29,6 +29,10 @@ release_validate_commit "${release_sha}"
 [[ "$(release_sha256_file "${chart_path}")" == "${chart_sha}" ]] || \
   release_die "canonical chart changed before destination preflight"
 
+# Stable publication requires both application-image destinations to remain
+# publicly readable, and the GHCR package to stay linked to this repository.
+bash "${script_dir}/verify-image-publication-targets.sh" "${repository}"
+
 # The first OCI push would create a private package by default. Require the
 # package to be bootstrapped, public, and linked to this repository before any
 # stable image or chart destination is touched.

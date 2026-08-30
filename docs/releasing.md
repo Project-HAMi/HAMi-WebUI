@@ -10,12 +10,17 @@ publishing: the protected `release` environment must exist and its
 `STABLE_RELEASES_ENABLED` variable must be set to `true` after the repository,
 registry, and release acceptance gates below are configured.
 
+The unified image contract lands before the Chart 2 migration by design. Until
+that follow-up changes the production chart from `image.frontend` and
+`image.backend` to the single `image` value, release-contract verification
+fails closed and no stable release can be published.
+
 ## What “atomic” means here
 
 Docker Hub, GHCR, GitHub Pages, and GitHub Releases do not share a transaction.
 The controller therefore makes an ordered, resumable release:
 
-1. build each multi-platform image once and address it by digest;
+1. build the multi-platform `webui` image once and address it by digest;
 2. package the chart once and preserve that exact archive;
 3. test that archive against the release issue acceptance matrix while the
    `release` environment is waiting;
@@ -49,8 +54,8 @@ For stable version `X.Y.Z`:
 | Git tag and GitHub Release | `vX.Y.Z` |
 | `Chart.yaml` `version` | `X.Y.Z` |
 | `Chart.yaml` `appVersion` | `X.Y.Z` |
-| both default image tags | `vX.Y.Z` |
-| both default image digests | candidate Docker Hub manifest digests |
+| default `webui` image tag | `vX.Y.Z` |
+| default `webui` image digest | candidate Docker Hub manifest digest |
 | chart package | `hami-webui-X.Y.Z.tgz` |
 
 Only `vX.Y.Z` is created. Do not create a second `hami-webui-X.Y.Z` tag or
@@ -59,7 +64,7 @@ stable tag remains a human-readable alias and must resolve to that same digest.
 Docker Hub and GHCR digests are recorded separately and are not assumed to be
 equal.
 
-## Phase 1: candidate images
+## Phase 1: candidate image
 
 Run **Verified Stable Release** with:
 
@@ -67,7 +72,7 @@ Run **Verified Stable Release** with:
 - `source_sha`: the full, current `main` commit SHA
 
 The workflow refuses a branch, abbreviated SHA, stale `main`, or fork. It builds
-the frontend and backend once for `linux/amd64` and `linux/arm64`, pushing only a
+the unified `webui` image for `linux/amd64` and `linux/arm64`, pushing only a
 unique candidate tag:
 
 ```text
@@ -78,7 +83,7 @@ Both Docker Hub and GHCR manifest digests are sealed into the
 `release-candidate-<run-id>` artifact. Keep that run ID.
 
 Create a small release-metadata PR that sets the next Chart version,
-`appVersion`, default tags, and the two Docker Hub digests from the candidate.
+`appVersion`, default image tag, and Docker Hub digest from the candidate.
 After the candidate source, only these paths may change:
 
 - `charts/hami-webui/Chart.yaml`
@@ -89,8 +94,8 @@ After the candidate source, only these paths may change:
 
 Any application, build, dependency, workflow, or template change invalidates
 the candidate; build a new one instead. Within `Chart.yaml`, only `version` and
-`appVersion` may differ. Within `values.yaml`, only the frontend/backend `tag`
-and `digest` fields may differ; the controller compares the remaining YAML
+`appVersion` may differ. Within `values.yaml`, only the `image.tag` and
+`image.digest` fields may differ; the controller compares the remaining YAML
 structure to the candidate commit.
 
 ## Phase 2: canonical chart and protected publication
@@ -144,9 +149,10 @@ verification.
 After approval the controller:
 
 1. re-verifies the canonical bundle hashes and performs a read-only preflight
-   of all four image tags, the public and repository-linked OCI package/version,
-   workflow-built Pages site/package/index, Git tag, GitHub Release, and Release
-   assets; every stable object must be absent or an exact match;
+   of both registry image tags, the public and repository-linked OCI
+   package/version, workflow-built Pages site/package/index, Git tag, GitHub
+   Release, and Release assets; every stable object must be absent or an exact
+   match;
 2. creates or reuses a private GitHub draft targeting the verified commit and
    attaches the same archive, checksum, and manifest;
 3. create-only reserves `vX.Y.Z` at the verified commit; a retry accepts that
@@ -176,6 +182,16 @@ test.
 
 Before setting `STABLE_RELEASES_ENABLED=true`:
 
+- let the first `main` publication create `projecthami/hami-webui`; Docker Hub
+  [creates a missing destination on first push](https://docs.docker.com/docker-hub/repos/manage/hub-images/bulk-migrate/)
+  when the authenticated account has permission. If creation is denied, create
+  the public repository manually and re-run that failed job;
+- let the same publication create `ghcr.io/project-hami/hami-webui`, then make
+  that package public, confirm it is linked to this repository, and verify that
+  `:main` is anonymously pullable;
+- keep both image packages public. Candidate and stable phases independently
+  verify registry visibility and repository linkage and must not bypass this
+  gate;
 - observe the `pr-release-required` check on this controller PR, add that exact
   aggregate context to `main` protection, and require it before merging future
   controller changes;
@@ -199,7 +215,6 @@ Before setting `STABLE_RELEASES_ENABLED=true`:
   `DOCKERHUB_TOKEN` (username) and `DOCKERHUB_PASSWD` (access token/password);
 - allow the workflow's `GITHUB_TOKEN` `contents:write`, `packages:write`, and
   `actions:read` only in the jobs that declare them;
-- keep Docker Hub and GHCR image packages public;
 - run this workflow once with `phase=bootstrap-oci`. Its protected job publishes
   one `0.0.0-bootstrap.<run-id>` package from a retained artifact and then
   intentionally requires an anonymous pull. A first run may stop because GitHub

@@ -294,23 +294,13 @@ jobs:
           fi
           echo "All image builds passed."
 
-  publish-development-images:
-    name: Publish ${{ matrix.name }} development image
+  publish-development-image:
+    name: Publish unified development image
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: frontend
-            context: .
-            repository: hami-webui-fe-oss
-          - name: backend
-            context: ./server
-            repository: hami-webui-be-oss
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -336,11 +326,15 @@ jobs:
       - name: Build and push development image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: ${{ matrix.context }}
+          context: .
+          target: unified
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            projecthami/${{ matrix.repository }}:main
-            ghcr.io/project-hami/${{ matrix.repository }}:main
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+            projecthami/hami-webui:main
+            ghcr.io/project-hami/hami-webui:main
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=unified-development
+          cache-to: type=gha,mode=max,scope=unified-development
