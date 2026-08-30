@@ -7,9 +7,12 @@ This guide helps you get started developing HAMi-WebUI.
 Make sure you have the following dependencies installed before setting up your developer environment:
 
 - [Git](https://git-scm.com/)
+- Make
 - [Go](https://golang.org/dl/) (use the version in [`server/.go-version`](../../server/.go-version))
 - [Node.js](https://nodejs.org/) (use the version in [`.node-version`](../../.node-version))
 - [pnpm](https://pnpm.io/) (use the version in the root `package.json`)
+- [Protocol Buffers compiler](https://protobuf.dev/installation/) (`protoc`)
+- Docker, only when building local container images
 
 
 ### macOS
@@ -20,6 +23,7 @@ We recommend using [Homebrew](https://brew.sh/) for installing any missing depen
 brew install git
 brew install go
 brew install node@24
+brew install protobuf
 corepack enable
 ```
 
@@ -31,6 +35,25 @@ We recommend using the Git command-line interface to download the source code fo
 2. Open the `HAMi-WebUI` directory in your favorite code editor.
 
 For alternative ways of cloning the HAMi-WebUI repository, refer to [GitHub's documentation](https://docs.github.com/en/github/creating-cloning-and-archiving-repositories/cloning-a-repository).
+
+## Bootstrap local dependencies
+
+Run dependency installation explicitly once from the repository root. Normal
+build and development commands never update dependencies as a side effect.
+
+```bash
+make bootstrap
+export PATH="$(go env GOPATH)/bin:$PATH"
+make -C server bootstrap
+pnpm exec playwright install chromium
+```
+
+`make bootstrap` uses the committed lockfile and fails instead of rewriting it.
+The server bootstrap installs the pinned Go code generators; `protoc` remains a
+system prerequisite. Re-run the relevant bootstrap command only after its
+dependency or tool versions change. On Linux, use
+`pnpm exec playwright install --with-deps chromium` when Chromium's system
+libraries are not already installed.
 
 ## Build HAMi-WebUI
 
@@ -46,13 +69,17 @@ supported for Chart 1.x rollback.
 
 ### Backend
 
-Build and run the backend by running `make run` in the `server` directory of the repository. This command compiles the Go source code and starts a backend server.
+Generate the API code and start the backend from the repository root:
+
+```bash
+make -C server run
+```
 
 By default, you can access the web-ui-server-swagger at `http://localhost:8000/q/swagger-ui`.
 
 ### Frontend
 
-Start the backend first, then run `make start-dev` in the repository root. This
+Start the backend first, then run `make dev` in the repository root. This
 starts the Vite development server; NestJS is not part of the browser
 development path. Vite forwards browser requests below `/api/vgpu/v1/*`
 directly to the backend at `http://127.0.0.1:8000` and removes the
@@ -63,24 +90,26 @@ By default, you can access the web-ui at `http://localhost:3000/`.
 Set `HAMI_WEBUI_BACKEND_URL` when the backend uses a different origin:
 
 ```bash
-HAMI_WEBUI_BACKEND_URL=http://127.0.0.1:18000 make start-dev
+HAMI_WEBUI_BACKEND_URL=http://127.0.0.1:18000 make dev
 ```
 
-Before opening a frontend pull request, run the supported Vite checks:
+Before opening a pull request, run the checks for the area you changed:
 
 ```bash
-pnpm --filter hami-webui-web run lint
-pnpm --filter hami-webui-web run test
-pnpm run verify:vite-env
+make verify
+make -C server verify
+bash scripts/verify-chart.sh  # when the Helm chart changes
 ```
+
+The root verification target covers Vue lint and tests, the production asset
+build, the Go Web entry, and its HTTP and Chromium contracts. The server target
+generates code before building, vetting, and testing every Go package. CI calls
+the same granular Make targets so local and pull-request behavior stay aligned.
 
 To exercise the production Web entry locally:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm --filter hami-webui-web run build
-pnpm run precompress:web-assets
-(cd server && mkdir -p build && go build -trimpath -o build/web-entry ./cmd/web-entry)
+make build build-web-entry
 server/build/web-entry --static-dir ./public
 ```
 
@@ -151,21 +180,30 @@ concern.
 
 ## Build a Docker image
 
-To build a HAMi-WebUI Frontend Docker image, run:
+To build a frontend development image for the local Docker platform, run:
 
-```
-make build-image DOCKER_IMAGE=projecthami/hami-webui-fe-oss VERSION=dev
+```bash
+make build-image
 ```
 
-The resulting image will be tagged as `projecthami/hami-webui-fe-oss:dev`. It
+The resulting image is tagged as `hami-webui-frontend:dev`. It
 contains the Go Web entry and built Vue assets, but no production Node.js
 runtime.
 
+Build the backend development image from the repository root:
 
-To build a HAMi-WebUI Backend Docker image, run from the repository root:
-
+```bash
+make -C server build-image
 ```
-make -C server build-image DOCKER_IMAGE=projecthami/hami-webui-be-oss VERSION=dev
+
+The resulting image is tagged as `hami-webui-backend:dev`. Override
+`DOCKER_IMAGE`, `VERSION`, or `PLATFORM` when a local integration environment
+needs a different tag or architecture, for example:
+
+```bash
+make build-image DOCKER_IMAGE=my-registry/hami-webui-frontend VERSION=test PLATFORM=linux/amd64
 ```
 
-The resulting image will be tagged as `projecthami/hami-webui-be-oss:dev`.
+These targets build one local development image and never push it. Stable
+multi-platform images, the Helm chart, release tag, and release notes are
+published only through the [verified release process](../releasing.md).

@@ -3,12 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "vite",
-    "start:dev": "vite",
     "lint": "eslint --ext .js,.mjs,.vue build src test vite.config.js",
     "build": "vite build",
     "dev": "vite",
-    "build:vite": "vite build",
     "test": "pnpm run test:dev-proxy && pnpm run test:svg-icons && pnpm run test:echarts-runtime && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
     "test:dev-proxy": "node --test test/vite-dev-proxy.contract.test.mjs",
     "test:svg-icons": "node --test test/svg-icons-plugin.test.mjs",
