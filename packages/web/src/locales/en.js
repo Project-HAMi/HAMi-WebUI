@@ -82,7 +82,7 @@ export default {
     computeUsageRateDescription:
       'Equal-weight average of provider-native, device-level compute utilization across reporting devices. Definitions may differ by provider; this is not compute allocation.',
     memUsageRateDescription:
-      'Used memory divided by HAMi-registered memory capacity across devices reporting memory-use data. With memory overcommit, this is not physical memory occupancy.',
+      'Vendor-reported used physical memory divided by vendor-reported physical capacity across devices that provide both values. Devices without matching telemetry are excluded; this is not memory allocation.',
     metricHelpLabel: 'View metric definition for {metric}',
     metricNoData: 'No metric data',
     metricInvalid: 'Invalid metric value',
@@ -103,7 +103,7 @@ export default {
     cpuCoreUnit: 'Core',
     systemMemoryTotal: 'Total Memory',
     memory: 'Memory',
-    memoryTotal: 'Total GPU Memory',
+    memoryTotal: 'Schedulable GPU Memory',
     schedulable: 'Schedulable',
     unschedulable: 'Unschedulable',
     allocated: 'Allocated',
