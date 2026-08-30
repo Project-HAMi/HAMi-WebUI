@@ -14,7 +14,7 @@ service Container {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "任务列表";
+      summary: "List workloads";
     };
   }
   rpc GetContainer (GetContainerReq) returns (ContainerReply) {
@@ -22,7 +22,7 @@ service Container {
       get: "/v1/container"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "任务详情";
+      summary: "Get workload details";
     };
   }
 }

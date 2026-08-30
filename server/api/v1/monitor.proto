@@ -14,7 +14,7 @@ service Monitor {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "查询区间向量"
+      summary: "Query range vector"
     };
   }
 
@@ -24,7 +24,7 @@ service Monitor {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "查询瞬时向量"
+      summary: "Query instant vector"
     };
   }
 
@@ -34,7 +34,7 @@ service Monitor {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "资源使用情况概览"
+      summary: "Get resource usage summary"
     };
   }
 }

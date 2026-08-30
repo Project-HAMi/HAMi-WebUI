@@ -14,7 +14,7 @@ service Node {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "首页统计";
+      summary: "Get cluster resource summary";
     };
   }
 
@@ -24,7 +24,7 @@ service Node {
       body: "*"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "节点列表";
+      summary: "List nodes";
     };
   }
 
@@ -33,7 +33,7 @@ service Node {
       get: "/v1/node"
     };
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
-      summary: "节点详情";
+      summary: "Get node details";
     };
   }
 }
