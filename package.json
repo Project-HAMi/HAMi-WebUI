@@ -12,11 +12,12 @@
     "packages/*"
   ],
   "scripts": {
-    "lint": "eslint \"test/web-entry/**/*.mjs\" \"scripts/*.mjs\"",
+    "lint": "pnpm run verify:source-language && eslint \"test/web-entry/**/*.mjs\" \"scripts/*.mjs\"",
     "test:web-entry-contract": "node --test --test-concurrency=1 test/web-entry/web-entry.contract.test.mjs",
     "test:web-entry-browser": "node --test --test-concurrency=1 test/web-entry/web-entry.browser.test.mjs",
     "precompress:web-assets": "node scripts/precompress-web-assets.mjs",
-    "verify:vite-env": "node scripts/verify-vite-env-boundary.mjs"
+    "verify:vite-env": "node scripts/verify-vite-env-boundary.mjs",
+    "verify:source-language": "node scripts/verify-source-language.mjs"
   },
   "devDependencies": {
     "axios": "1.18.0",

@@ -22,17 +22,14 @@ export const timeParse = (obj = new Date(), format = 'YYYY-MM-DD HH:mm:ss') => {
 
 export function roundToDecimal(num, decimalPlaces) {
   if (typeof num !== 'number' || typeof decimalPlaces !== 'number') {
-    throw new TypeError('参数必须是数字');
+    throw new TypeError('num and decimalPlaces must be numbers');
   }
 
-  // 判断是否是小数
   if (num % 1 !== 0) {
-    // 进行四舍五入
     const factor = Math.pow(10, decimalPlaces);
     return Math.round(num * factor) / factor;
   }
 
-  // 如果不是小数，返回原数字
   return num;
 }
 

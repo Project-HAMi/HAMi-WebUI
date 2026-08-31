@@ -68,26 +68,6 @@ import { Modal } from 'bootstrap';
 import i18n from '@/locales';
 
 export default {
-  //   props: {
-  //     confirmText: {
-  //       type: String,
-  //       default: '',
-  //     },
-  //     confirmObj: {
-  //       type: Object,
-  //       default: () => {
-  //         return {
-  //           confirmButtonText: '确定',
-  //           cancelButtonText: '取消',
-  //           type: '',
-  //         };
-  //       },
-  //     },
-  //     fn: {
-  //       type: Function,
-  //       default: null,
-  //     },
-  //   },
   data() {
     return {
       removeModal: null,

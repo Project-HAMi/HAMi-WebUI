@@ -12,7 +12,7 @@ Object.keys(viteModules).forEach((key) => {
 
 const global = createPersistedState({
   key: 'global',
-  storage: window.localStorage, //window.localStorage
+  storage: window.localStorage,
   paths: ['global'],
 });
 
@@ -20,7 +20,6 @@ const store = new createStore({
   state: {},
   modules,
   getters,
-  // 将各个插件引用
   plugins: [global],
 });
 

@@ -8,7 +8,6 @@ import './plugins/echarts';
 import 'normalize.css/normalize.css'; // a modern alternative to CSS resets
 import '@/styles/index.scss'; // global css
 
-// 导入 svgIcon
 import installIcons from '@/icons';
 import Message from '@/components/Message/index.js';
 import Confirm from '@/components/Confirm/index.js';

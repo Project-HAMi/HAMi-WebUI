@@ -52,10 +52,10 @@ export const getRangeOptions = (
       formatter: buildPercentTooltipFormatter(),
     },
     grid: {
-      top: 20, // 上边距
-      bottom: 60, // 下边距
-      left: '7%', // 左边距
-      right: 10, // 右边距
+      top: 20,
+      bottom: 60,
+      left: '7%',
+      right: 10,
     },
     dataZoom: [
       {

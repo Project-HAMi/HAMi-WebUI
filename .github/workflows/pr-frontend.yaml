@@ -45,6 +45,7 @@ jobs:
               - 'server/go.sum'
               - 'server/internal/webentry/**'
               - 'scripts/precompress-web-assets.mjs'
+              - 'scripts/verify-source-language.mjs'
               - 'scripts/verify-toolchain-versions.sh'
               - 'scripts/verify-vite-env-boundary.mjs'
               - 'test/web-entry/**'
@@ -105,8 +106,8 @@ jobs:
       - name: Lint Web-entry tooling and Web
         run: make lint
 
-  # Single required status check: green only if every frontend job passed (or
-  # there were no frontend-relevant changes).
+  # Single required status check: green only if the source-language guard and
+  # every frontend job passed (or there were no frontend-relevant changes).
   pr-frontend-required:
     runs-on: ubuntu-latest
     needs:
@@ -115,6 +116,14 @@ jobs:
       - lint
     if: always()
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: Verify source language
+        run: node scripts/verify-source-language.mjs
       - name: Aggregate frontend check results
         run: |
           if [[ "${{ needs.changes.result }}" != "success" ]]; then
