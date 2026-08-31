@@ -226,7 +226,10 @@ import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
-import { buildTaskResourceOverviewQueries } from '~/vgpu/metrics/query-contract.mjs';
+import {
+  buildTaskContainerResourceQueries,
+  buildTaskResourceOverviewQueries,
+} from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 
 const route = useRoute();
@@ -372,6 +375,7 @@ const taskAllocationSelector =
 const taskResourceOverviewQueries = buildTaskResourceOverviewQueries({
   selector: taskAllocationSelector,
 });
+const taskContainerResourceQueries = buildTaskContainerResourceQueries();
 const resourceOverviewData = useInstantVector(
   [
     {
@@ -388,18 +392,15 @@ const resourceOverviewData = useInstantVector(
     },
     {
       key: 'cpuLimit',
-      query:
-        `sum(kube_pod_container_resource_limits{resource="cpu", namespace=$namespace, pod=$pod, container=$container})`,
+      query: taskContainerResourceQueries.cpuLimit,
     },
     {
       key: 'memoryLimit',
-      query:
-        `sum(kube_pod_container_resource_limits{resource="memory", namespace=$namespace, pod=$pod, container=$container}) / 1024 / 1024 / 1024`,
+      query: taskContainerResourceQueries.memoryLimit,
     },
     {
       key: 'containerInfo',
-      query:
-        `count(kube_pod_container_info{namespace=$namespace, pod=$pod, container=$container})`,
+      query: taskContainerResourceQueries.containerInfo,
     },
   ],
   (query) => {
@@ -408,6 +409,7 @@ const resourceOverviewData = useInstantVector(
       container: detail.value.name || '',
       namespace: detail.value.namespace || '',
       pod: detail.value.appName || '',
+      pod_uid: detail.value.podUid || requestedIdentity.value.podUid || '',
     });
   },
 );
