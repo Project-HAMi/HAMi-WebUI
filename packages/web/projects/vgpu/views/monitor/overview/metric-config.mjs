@@ -96,3 +96,6 @@ export const createOverviewGaugeConfigs = () => {
 
 export const createNodeTopQueries = () =>
   buildGroupedResourceTopQueries('node');
+
+export const createNodeWorkloadDistributionQuery = () =>
+  'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated)) by (node) or on (node) (count by (node) (hami_vgpu_count) * 0)';

@@ -382,6 +382,7 @@ import Gauge from '~/vgpu/components/gauge.vue';
 import { getRangeConfigInit } from './config';
 import {
   createNodeTopQueries,
+  createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
 import {
@@ -521,7 +522,7 @@ const fetchNodeWorkloadTop5 = () =>
 const fetchNodeWorkloadDistribution = () =>
   fetchVectorRows(
     nodeWorkloadDistributionState,
-    'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node)',
+    createNodeWorkloadDistributionQuery(),
     (item) => ({
       name: item?.metric?.node || '-',
       value: Number(item?.value),

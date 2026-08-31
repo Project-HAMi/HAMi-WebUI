@@ -133,7 +133,7 @@ export default {
     nodeWorkloadTop5: 'Node Workload Count Top5',
     nodeWorkloadDistribution: 'Node Workload Distribution',
     nodeWorkloadDistributionDesc1:
-      'Show the distribution of all cluster nodes by workload-count ranges.',
+      'Show HAMi-managed accelerator nodes by workload-count ranges, including idle nodes.',
     nodeWorkloadDistributionDesc2:
       'X-axis is workload-count range per node, and Y-axis is number of nodes in that range.',
     workload24hTrendTop5: '24h Workload Usage Trend Top5 (%)',

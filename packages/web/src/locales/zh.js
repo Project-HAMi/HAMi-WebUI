@@ -131,7 +131,7 @@ export default {
     nodeMemoryTop5: '节点显存 Top5',
     nodeWorkloadTop5: '节点工作负载数量 Top5',
     nodeWorkloadDistribution: '节点工作负载分布（台）',
-    nodeWorkloadDistributionDesc1: '展示集群中所有节点的工作负载在不同数量区间的分布情况。',
+    nodeWorkloadDistributionDesc1: '展示 HAMi 管理的加速卡节点在不同工作负载数量区间的分布，包含空闲节点。',
     nodeWorkloadDistributionDesc2: '横轴是节点的工作负载数量范围，纵轴表示落入该范围的节点数量。',
     workload24hTrendTop5: '24 小时工作负载使用趋势 Top5 (%)',
     workloadRange: '工作负载区间',

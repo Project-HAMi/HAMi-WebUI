@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createComputeUsageGaugeConfig,
   createNodeTopQueries,
+  createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
 
@@ -104,4 +105,14 @@ test('node allocation rankings keep idle nodes and exclude unknown compute scope
     /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
   );
   assert.doesNotMatch(queries.memoryUsage, / or /);
+});
+
+test('node workload distribution includes idle accelerator inventory nodes', () => {
+  const query = createNodeWorkloadDistributionQuery();
+
+  assert.equal(
+    query,
+    'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated)) by (node) or on (node) (count by (node) (hami_vgpu_count) * 0)',
+  );
+  assert.doesNotMatch(query, /vector\(0\)/);
 });
