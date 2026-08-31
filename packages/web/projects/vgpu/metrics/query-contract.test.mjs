@@ -13,6 +13,7 @@ import {
   buildTaskComputeAllocationQuery,
   buildTaskCountQueries,
   buildTaskContainerResourceQueries,
+  buildTaskMonitoringQueries,
   buildTaskResourceOverviewQueries,
 } from './query-contract.mjs';
 import {
@@ -169,6 +170,70 @@ test('task resource totals stay stable for one or two exporter replicas and mult
     queries.singleCardMemory,
     `${replicaSafeMemory} / clamp_min(${replicaSafeVgpu}, 1) / 1024`,
   );
+});
+
+test('task trends require current-lifecycle telemetry from every allocated device', () => {
+  const queries = buildTaskMonitoringQueries({
+    expectedDeviceCount: 2,
+    expectedVgpuCount: 3,
+  });
+
+  for (const query of Object.values(queries)) {
+    assert.match(
+      query,
+      /hami_container_vgpu_allocated\{container_name=\$container,pod_name=\$pod,namespace_name=\$namespace,container_pod_uuid=\$container_pod_uuid\}/,
+    );
+    assert.match(query, /max by \(node, provider, device_uuid\)/);
+    assert.match(query, /hami_container_vgpu_allocated\{[^}]+\}\) > 0/);
+    assert.match(query, /count\([^]*hami_container_vgpu_allocated[^]*\) == 2/);
+    assert.match(query, /sum\([^]*hami_container_vgpu_allocated[^]*\) == 3/);
+    assert.doesNotMatch(query, /\bbool\b/);
+  }
+
+  assert.match(
+    queries.computeUsage,
+    /hami_container_core_util\{container_name=\$container,pod_name=\$pod,namespace_name=\$namespace\}/,
+  );
+  assert.match(
+    queries.computeUsage,
+    /and on \(node, provider, device_uuid\) \(max by/,
+  );
+  assert.match(
+    queries.computeUsage,
+    /count\([^]*hami_container_core_util[^]*\) == 2/,
+  );
+
+  assert.match(
+    queries.memoryUsage,
+    /hami_container_memory_used\{container_name=\$container,pod_name=\$pod,namespace_name=\$namespace\}/,
+  );
+  assert.match(
+    queries.memoryUsage,
+    /hami_container_vmemory_allocated\{container_name=\$container,pod_name=\$pod,namespace_name=\$namespace,container_pod_uuid=\$container_pod_uuid\}/,
+  );
+  assert.match(
+    queries.memoryUsage,
+    /count\([^]*hami_container_vmemory_allocated[^]*\) == 2/,
+  );
+  assert.match(
+    queries.memoryUsage,
+    /count\([^]*hami_container_memory_used[^]*\) == 2/,
+  );
+});
+
+test('task trend queries reject inconsistent device-identity and vGPU counts', () => {
+  for (const counts of [
+    {},
+    { expectedDeviceCount: 0, expectedVgpuCount: 1 },
+    { expectedDeviceCount: 1.5, expectedVgpuCount: 2 },
+    { expectedDeviceCount: 2, expectedVgpuCount: 1 },
+    { expectedDeviceCount: 2, expectedVgpuCount: 2.5 },
+  ]) {
+    assert.throws(
+      () => buildTaskMonitoringQueries(counts),
+      /Valid task device and vGPU counts/,
+    );
+  }
 });
 
 test('Kubernetes resource queries deduplicate replicas and bind the current Pod UID', () => {

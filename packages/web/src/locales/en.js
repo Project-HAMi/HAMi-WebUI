@@ -311,7 +311,7 @@ export default {
     memUsageTrend: 'GPU Memory Utilization (%)',
     cpuUsageTrend: 'CPU Usage (%)',
     memoryUsageTrend: 'Memory Usage (%)',
-    noMonitorSupport: 'Vendor does not support task-level monitoring',
+    noCompleteMonitorData: 'No complete task monitoring data for this time range',
     topCount: 'Workload Count Top5',
     topApply: 'Workload Allocation Top5',
     detail: {

@@ -173,24 +173,46 @@
     </div>
   </block-box>
 
-  <TrendTimeFilter
-    v-if="supportsTaskMonitoring"
-    v-model="times"
-  />
+  <TrendTimeFilter v-model="times" />
 
   <div class="task-trend-row">
-    <block-box v-for="{ title, data } in lineConfigView" :key="title" :title="title">
-      <div class="trend-chart">
-        <template v-if="primaryDeviceType && !supportsTaskMonitoring">
-          <el-empty :description="$t('task.noMonitorSupport')" :image-size="60" />
-        </template>
-        <template v-else>
-          <VChart
-            :option="getLineOptions({ data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
-            :autoresize="true"
-            class="trend-vchart"
+    <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
+      <div
+        class="trend-chart"
+        :aria-busy="item.status === REQUEST_STATUS.LOADING ? 'true' : 'false'"
+      >
+        <template v-if="item.status === REQUEST_STATUS.LOADING">
+          <t-skeleton
+            animation="gradient"
+            :row-col="[
+              { width: '100%', height: '200px' },
+              { width: '42%', height: '16px', margin: '16px auto 0' },
+            ]"
+            class="trend-chart-skeleton"
+            aria-hidden="true"
           />
+          <span class="trend-state-sr-only" role="status">{{ $t('common.loading') }}</span>
         </template>
+        <VChart
+          v-else-if="item.status === REQUEST_STATUS.READY"
+          :option="getLineOptions({ data: item.data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
+          :autoresize="true"
+          class="trend-vchart"
+        />
+        <el-empty
+          v-else
+          :description="getTaskMonitoringStateText(item.status)"
+          :image-size="60"
+          class="trend-state"
+        >
+          <el-button
+            v-if="item.status === REQUEST_STATUS.ERROR || item.status === REQUEST_STATUS.INVALID"
+            type="primary"
+            @click="retryTaskMonitoring"
+          >
+            {{ $t('common.retry') }}
+          </el-button>
+        </el-empty>
       </div>
     </block-box>
   </div>
@@ -218,6 +240,9 @@ import { getLineOptions } from '~/vgpu/components/config';
 import VChart from 'vue-echarts';
 import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
+import useTaskMonitoring, {
+  getTaskMonitoringAllocationShape,
+} from './useTaskMonitoring';
 import {
   METRIC_STATUS,
   readReadyMetricField,
@@ -300,17 +325,11 @@ const getStatusDisplay = (status) => {
 const safeDeviceIds = computed(() => (
   Array.isArray(detail.value?.deviceIds) ? detail.value.deviceIds : []
 ));
-const primaryDeviceType = computed(() => {
-  const primaryDeviceId = safeDeviceIds.value[0];
-  return (
-    (primaryDeviceId && cardTypeById.value?.[primaryDeviceId]) ||
-    detail.value?.type ||
-    ''
-  );
-});
-const supportsTaskMonitoring = computed(() => (
-  primaryDeviceType.value.startsWith('NVIDIA') ||
-  primaryDeviceType.value.startsWith('MXC')
+const monitoringAllocationShape = computed(() => (
+  getTaskMonitoringAllocationShape({
+    allocatedDevices: detail.value?.allocatedDevices,
+    deviceIds: safeDeviceIds.value,
+  })
 ));
 const gpuModelList = computed(() => {
   if (!safeDeviceIds.value.length) return [];
@@ -451,92 +470,53 @@ const handleGpuJump = (uuid) => {
   router.push(`/admin/vgpu/card/admin/${uuid}`);
 };
 
-const lineConfig = ref([
-  {
-    titleKey: 'task.computeUsageTrend',
-    query: `avg(avg(hami_container_core_util{container_name=$container,pod_name=$pod,namespace_name=$namespace}) by (node, device_uuid))`,
-    data: [],
-  },
-  {
-    titleKey: 'task.memUsageTrend',
-    query: `100 * sum(avg(hami_container_memory_used{container_name=$container,pod_name=$pod,namespace_name=$namespace}) by (node, device_uuid)) / clamp_min(sum(avg(hami_container_vmemory_allocated{container_name=$container,pod_name=$pod,namespace_name=$namespace}) by (node, device_uuid)), 1)`,
-    data: [],
-  },
-]);
-
 const headerStatusDisplay = computed(() => (
   detailStatus.value === REQUEST_STATUS.READY
     ? getStatusDisplay(detail.value?.status)
     : { text: '', icon: '' }
 ));
 
+const taskMonitoringSource = computed(() => {
+  if (
+    detailStatus.value !== REQUEST_STATUS.READY ||
+    !monitoringAllocationShape.value
+  ) return null;
+  return {
+    container: detail.value.name || '',
+    ...monitoringAllocationShape.value,
+    namespace: detail.value.namespace || '',
+    pod: detail.value.appName || '',
+    podUid: detail.value.podUid || requestedIdentity.value.podUid || '',
+  };
+});
+const taskMonitoringRange = computed(() => {
+  const [rangeStart, rangeEnd] = times.value || [];
+  if (!rangeStart || !rangeEnd) return null;
+  return {
+    start: timeParse(rangeStart),
+    end: timeParse(rangeEnd),
+    step: calculatePrometheusStep(rangeStart, rangeEnd),
+  };
+});
+const {
+  data: taskMonitoringSeries,
+  refresh: retryTaskMonitoring,
+} = useTaskMonitoring({
+  source: taskMonitoringSource,
+  range: taskMonitoringRange,
+  request: (payload) => cardApi.getRangeVector(payload),
+});
 const lineConfigView = computed(() =>
-  lineConfig.value.map((item) => ({
+  taskMonitoringSeries.value.map((item) => ({
     ...item,
     title: t(item.titleKey),
   })),
 );
-
-let lineRequestGeneration = 0;
-const clearLineData = () => {
-  lineConfig.value.forEach((item) => {
-    item.data = [];
-  });
+const getTaskMonitoringStateText = (status) => {
+  if (status === REQUEST_STATUS.ERROR) return t('dashboard.metricQueryFailed');
+  if (status === REQUEST_STATUS.INVALID) return t('dashboard.metricInvalid');
+  return t('task.noCompleteMonitorData');
 };
-const fetchLineData = async () => {
-  const generation = ++lineRequestGeneration;
-  if (
-    detailStatus.value !== REQUEST_STATUS.READY ||
-    !supportsTaskMonitoring.value
-  ) {
-    clearLineData();
-    return;
-  }
-
-  const { name, namespace, appName } = detail.value;
-  const [rangeStart, rangeEnd] = times.value || [];
-  if (!name || !namespace || !appName || !rangeStart || !rangeEnd) {
-    clearLineData();
-    return;
-  }
-
-  const results = await Promise.all(lineConfig.value.map(async (item) => {
-    try {
-      const res = await cardApi.getRangeVector({
-        range: {
-          start: timeParse(rangeStart),
-          end: timeParse(rangeEnd),
-          step: calculatePrometheusStep(rangeStart, rangeEnd),
-        },
-        query: renderPromQLTemplate(item.query, {
-          container: name,
-          namespace,
-          pod: appName,
-        }),
-      });
-      return { ok: true, data: res.data[0]?.values || [] };
-    } catch {
-      return { ok: false };
-    }
-  }));
-
-  if (
-    generation !== lineRequestGeneration ||
-    detailStatus.value !== REQUEST_STATUS.READY
-  ) return;
-
-  results.forEach((result, index) => {
-    if (result.ok) lineConfig.value[index].data = result.data;
-  });
-};
-
-watch(
-  [detailStatus, detail, times, primaryDeviceType],
-  () => {
-    void fetchLineData();
-  },
-  { deep: true, immediate: true },
-);
 
 let enrichmentGeneration = 0;
 watch(
@@ -865,6 +845,27 @@ watch(
 .trend-chart {
   height: 250px;
   margin-top: 15px;
+}
+
+.trend-chart-skeleton {
+  width: 100%;
+  padding: 8px 12px 0;
+}
+
+.trend-state {
+  height: 100%;
+}
+
+.trend-state-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .trend-vchart {

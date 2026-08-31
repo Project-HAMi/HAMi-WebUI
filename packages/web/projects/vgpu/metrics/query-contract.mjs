@@ -8,6 +8,8 @@ const METRICS = Object.freeze({
   memorySchedulableCapacity: 'hami_vmemory_size',
   memoryPhysicalCapacity: 'hami_memory_size',
   memoryUsed: 'hami_memory_used',
+  taskComputeUtilization: 'hami_container_core_util',
+  taskMemoryUsed: 'hami_container_memory_used',
 });
 
 const PROMETHEUS_LABEL_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -145,6 +147,61 @@ export const buildTaskResourceOverviewQueries = ({ selector = '' } = {}) => {
     gpuCards,
     computeLimit: buildTaskComputeAllocationQuery({ selector }),
     singleCardMemory: `${memory} / clamp_min(${gpuCards}, 1) / 1024`,
+  };
+};
+
+export const buildTaskMonitoringQueries = ({
+  expectedDeviceCount,
+  expectedVgpuCount,
+} = {}) => {
+  if (
+    !Number.isSafeInteger(expectedDeviceCount) ||
+    expectedDeviceCount <= 0 ||
+    !Number.isSafeInteger(expectedVgpuCount) ||
+    expectedVgpuCount < expectedDeviceCount
+  ) {
+    throw new TypeError('Valid task device and vGPU counts are required');
+  }
+
+  const group = 'node, provider, device_uuid';
+  const match = `on (${group})`;
+  const usageSelector =
+    'container_name=$container,pod_name=$pod,namespace_name=$namespace';
+  const allocationSelector =
+    `${usageSelector},container_pod_uuid=$container_pod_uuid`;
+  // Usage gauges do not yet carry the Pod UID. Intersect them with the current
+  // lifecycle's allocation identities before aggregation.
+  const devices = `max by (${group}) (${metricSeries(
+    METRICS.vgpuAllocated,
+    allocationSelector,
+  )}) > 0`;
+  const compute = `avg by (${group}) (${metricSeries(
+    METRICS.taskComputeUtilization,
+    usageSelector,
+  )}) and ${match} (${devices})`;
+  const memoryAllocation = `max by (${group}) (${metricSeries(
+    METRICS.memoryAllocated,
+    allocationSelector,
+  )}) and ${match} (${devices})`;
+  const memoryUsed = `avg by (${group}) (${metricSeries(
+    METRICS.taskMemoryUsed,
+    usageSelector,
+  )}) and ${match} (${memoryAllocation})`;
+  const completeDeviceCount = (series) =>
+    `and on () (count(${series}) == ${expectedDeviceCount})`;
+  // count protects unique device coverage; sum also protects vGPU/slot
+  // coverage when several allocations share one device identity.
+  const completeVgpuCount =
+    `and on () (sum(${devices}) == ${expectedVgpuCount})`;
+
+  return {
+    computeUsage:
+      `(avg(${compute})) ${completeDeviceCount(devices)} ${completeVgpuCount} ` +
+      `${completeDeviceCount(compute)}`,
+    memoryUsage:
+      `(100 * sum(${memoryUsed}) / clamp_min(sum(${memoryAllocation}), 1)) ` +
+      `${completeDeviceCount(devices)} ${completeVgpuCount} ` +
+      `${completeDeviceCount(memoryAllocation)} ${completeDeviceCount(memoryUsed)}`,
   };
 };
 

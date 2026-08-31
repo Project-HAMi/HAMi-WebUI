@@ -307,7 +307,7 @@ export default {
     memUsageTrend: 'GPU 显存使用率（%）',
     cpuUsageTrend: 'CPU 使用率（%）',
     memoryUsageTrend: '内存使用率（%）',
-    noMonitorSupport: '该设备厂商暂不支持任务维度监控',
+    noCompleteMonitorData: '当前时间范围内没有完整的任务监控数据',
     topCount: '任务数量分布 Top5',
     topApply: '工作负载分配 Top5',
     detail: {
