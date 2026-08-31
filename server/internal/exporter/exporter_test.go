@@ -297,6 +297,89 @@ func TestOptionalDeviceTelemetryDistinguishesMissingNonFiniteAndZero(t *testing.
 	}
 }
 
+func TestProviderDeviceTelemetryUsesPhysicalMetricSeries(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  string
+		wantQuery string
+		read      func(*MetricsGenerator, string, string) (float32, error)
+	}{
+		{
+			name:      "Ascend HBM temperature",
+			provider:  biz.AscendGPUDevice,
+			wantQuery: `avg(npu_chip_info_hbm_temperature{vdie_id="device-1"})`,
+			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
+				return generator.memoryTemperature(context.Background(), provider, deviceUUID)
+			},
+		},
+		{
+			name:      "MetaX HBM temperature",
+			provider:  biz.MetaxGPUDevice,
+			wantQuery: `avg(mx_chip_hbm_temp{uuid="device-1"})`,
+			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
+				return generator.memoryTemperature(context.Background(), provider, deviceUUID)
+			},
+		},
+		{
+			name:      "MLU physical memory temperature",
+			provider:  biz.CambriconGPUDevice,
+			wantQuery: `avg(mlu_memory_temperature{uuid="device-1",memory_die=""})`,
+			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
+				return generator.memoryTemperature(context.Background(), provider, deviceUUID)
+			},
+		},
+		{
+			name:      "MLU physical power",
+			provider:  biz.CambriconGPUDevice,
+			wantQuery: `avg(mlu_power_usage{uuid="device-1",vf=""})`,
+			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
+				return generator.gpuPower(context.Background(), provider, deviceUUID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			querier := &fakeInstantQuerier{responsesByQuery: map[string]*pb.InstantResponse{
+				tt.wantQuery: instantValue(42.5),
+			}}
+			generator := &MetricsGenerator{monitorService: querier}
+
+			value, err := tt.read(generator, tt.provider, "device-1")
+			if err != nil || value != 42.5 {
+				t.Fatalf("telemetry = (%v, %v), want (42.5, nil)", value, err)
+			}
+			if len(querier.queries) != 1 || querier.queries[0] != tt.wantQuery {
+				t.Fatalf("queries = %q, want [%q]", querier.queries, tt.wantQuery)
+			}
+		})
+	}
+}
+
+func TestMLUAdditionalInfoUsesPhysicalPowerSeries(t *testing.T) {
+	const wantQuery = `mlu_power_usage{uuid="device-1",vf=""}`
+	querier := &fakeInstantQuerier{responsesByQuery: map[string]*pb.InstantResponse{
+		wantQuery: {
+			Data: []*pb.Sample{{Metric: map[string]string{
+				"driver": "1.2.3",
+				"sn":     "MLU-serial",
+			}}},
+		},
+	}}
+	generator := &MetricsGenerator{monitorService: querier}
+
+	info, err := generator.queryDeviceAdditional(context.Background(), biz.CambriconGPUDevice, "device-1")
+	if err != nil {
+		t.Fatalf("queryDeviceAdditional() error = %v", err)
+	}
+	if len(querier.queries) != 1 || querier.queries[0] != wantQuery {
+		t.Fatalf("queries = %q, want [%q]", querier.queries, wantQuery)
+	}
+	if info.DriverVersion != "1.2.3" || info.DeviceNo != "MLU-serial" {
+		t.Fatalf("additional info = %+v, want driver 1.2.3 and device MLU-serial", info)
+	}
+}
+
 func TestDeviceMemoryQueriesConvertVendorUnitsToMiB(t *testing.T) {
 	tests := []struct {
 		name     string
