@@ -21,11 +21,15 @@ type fakeInstantQuerier struct {
 	responses        []*pb.InstantResponse
 	responsesByQuery map[string]*pb.InstantResponse
 	errorsByQuery    map[string]error
+	queryErr         error
 	queries          []string
 }
 
 func (f *fakeInstantQuerier) QueryInstant(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
 	f.queries = append(f.queries, req.GetQuery())
+	if f.queryErr != nil {
+		return nil, f.queryErr
+	}
 	if err, ok := f.errorsByQuery[req.GetQuery()]; ok {
 		return nil, err
 	}
@@ -83,23 +87,72 @@ func TestNvidiaTaskCoreUsedQueryIncludesIdleSamples(t *testing.T) {
 	}
 }
 
-func TestTaskCoreUsedDistinguishesMissingFromIdle(t *testing.T) {
-	fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{{}}}
-	generator := &MetricsGenerator{monitorService: fake}
+func TestTaskUsageQueriesDistinguishMissingFailureAndIdle(t *testing.T) {
+	readers := []struct {
+		name string
+		read func(*MetricsGenerator) (float32, error)
+	}{
+		{name: "compute", read: func(generator *MetricsGenerator) (float32, error) {
+			return generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+		}},
+		{name: "memory", read: func(generator *MetricsGenerator) (float32, error) {
+			return generator.taskMemoryUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+		}},
+	}
 
-	_, err := generator.taskCoreUsed(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 0)
-	if !errors.Is(err, errNoMetricData) {
-		t.Fatalf("expected errNoMetricData, got %v", err)
+	for _, reader := range readers {
+		t.Run(reader.name+"/missing", func(t *testing.T) {
+			generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{}}}}
+			_, err := reader.read(generator)
+			if !errors.Is(err, errNoMetricData) {
+				t.Fatalf("expected errNoMetricData, got %v", err)
+			}
+		})
+
+		t.Run(reader.name+"/query failure", func(t *testing.T) {
+			queryErr := errors.New("prometheus unavailable")
+			generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{queryErr: queryErr}}
+			_, err := reader.read(generator)
+			if !errors.Is(err, queryErr) {
+				t.Fatalf("expected query error, got %v", err)
+			}
+		})
+
+		t.Run(reader.name+"/idle", func(t *testing.T) {
+			generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: 0}}}}}}
+			value, err := reader.read(generator)
+			if err != nil || value != 0 {
+				t.Fatalf("idle sample = (%v, %v), want (0, nil)", value, err)
+			}
+		})
 	}
 }
 
-func TestTaskCoreUsedKeepsLegacyEmptyBehaviorForOtherProviders(t *testing.T) {
-	fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{{}}}
-	generator := &MetricsGenerator{monitorService: fake}
+func TestAscendTaskUsageIsUnsupported(t *testing.T) {
+	readers := []struct {
+		name string
+		read func(*MetricsGenerator) (float32, error)
+	}{
+		{name: "compute", read: func(generator *MetricsGenerator) (float32, error) {
+			return generator.taskCoreUsed(context.Background(), biz.AscendGPUDevice, "research", "train", "worker", "pod-uid", "ascend-1", "node-1", 0)
+		}},
+		{name: "memory", read: func(generator *MetricsGenerator) (float32, error) {
+			return generator.taskMemoryUsed(context.Background(), biz.AscendGPUDevice, "research", "train", "worker", "pod-uid", "ascend-1", "node-1", 0)
+		}},
+	}
 
-	value, err := generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
-	if err != nil || value != 0 {
-		t.Fatalf("Cambricon empty result = (%v, %v), want (0, nil)", value, err)
+	for _, reader := range readers {
+		t.Run(reader.name, func(t *testing.T) {
+			querier := &fakeInstantQuerier{}
+			generator := &MetricsGenerator{monitorService: querier}
+			_, err := reader.read(generator)
+			if !errors.Is(err, errWorkloadTelemetryUnsupported) {
+				t.Fatalf("expected errWorkloadTelemetryUnsupported, got %v", err)
+			}
+			if len(querier.queries) != 0 {
+				t.Fatalf("unsupported telemetry made %d queries, want 0", len(querier.queries))
+			}
+		})
 	}
 }
 
@@ -614,7 +667,56 @@ func TestContainerCoreMetricsKeepsLegacyProviderConversions(t *testing.T) {
 	}
 }
 
-func TestAscendContainerAllocationNormalizesProviderAndOmitsUnknownCore(t *testing.T) {
+func TestGenerateContainerMetricsPreservesMissingAndIdleUsage(t *testing.T) {
+	const (
+		deviceID   = "GPU-workload-presence"
+		nodeName   = "node-workload-presence"
+		deviceType = "A100"
+		podName    = "train"
+		container  = "worker"
+		namespace  = "research"
+		podUID     = "pod-uid"
+	)
+
+	tests := []struct {
+		name         string
+		response     *pb.InstantResponse
+		wantUsageSet bool
+	}{
+		{name: "empty vectors omit usage", response: &pb.InstantResponse{}, wantUsageSet: false},
+		{name: "real zero exports idle usage", response: instantValue(0), wantUsageSet: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			generator := &MetricsGenerator{
+				nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{{
+					Id: deviceID, Type: deviceType, Provider: biz.NvidiaGPUDevice, NodeName: nodeName,
+				}}}, log.NewStdLogger(io.Discard)),
+				podUsecase: biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{{
+					Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
+					ContainerDevices: biz.ContainerDevices{{UUID: deviceID, Type: biz.NvidiaGPUDevice, Usedmem: 1024, Usedcores: 50}},
+				}}}, log.NewStdLogger(io.Discard)),
+				monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{tt.response, tt.response}},
+				log:            log.NewHelper(log.NewStdLogger(io.Discard)),
+			}
+			t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+			if err := generator.GenerateContainerMetrics(context.Background()); err != nil {
+				t.Fatalf("GenerateContainerMetrics() error = %v", err)
+			}
+			labels := []string{nodeName, biz.NvidiaGPUDevice, deviceType, deviceID, podName, container, namespace}
+			for _, gauge := range []*prometheus.GaugeVec{HamiContainerCoreUsed, HamiContainerCoreUtil, HamiContainerMemoryUsed, HamiContainerMemoryUtil} {
+				assertGaugeTracked(t, generator, gauge, labels, tt.wantUsageSet)
+				if tt.wantUsageSet && testutil.ToFloat64(gauge.WithLabelValues(labels...)) != 0 {
+					t.Fatalf("idle gauge value must be zero")
+				}
+			}
+		})
+	}
+}
+
+func TestAscendContainerAllocationOmitsUnknownCoreAndUnsupportedUsage(t *testing.T) {
 	tests := []struct {
 		name          string
 		core          int32
@@ -656,6 +758,13 @@ func TestAscendContainerAllocationNormalizesProviderAndOmitsUnknownCore(t *testi
 			assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels, true)
 			assertGaugeTracked(t, generator, HamiContainerVmemoryAllocated, labels, true)
 			assertGaugeTracked(t, generator, HamiContainerVcoreAllocated, labels, tt.wantCoreGauge)
+			usageLabels := labels[:len(labels)-1]
+			for _, gauge := range []*prometheus.GaugeVec{HamiContainerCoreUsed, HamiContainerCoreUtil, HamiContainerMemoryUsed, HamiContainerMemoryUtil} {
+				assertGaugeTracked(t, generator, gauge, usageLabels, false)
+			}
+			if querier := generator.monitorService.(*fakeInstantQuerier); len(querier.queries) != 0 {
+				t.Fatalf("unsupported Ascend workload telemetry made %d queries, want 0", len(querier.queries))
+			}
 		})
 	}
 }
