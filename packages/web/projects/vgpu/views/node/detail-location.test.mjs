@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildNodeDetailLocation } from './node-detail-location.mjs';
+import { buildNodeDetailLocation } from './detail-location.mjs';
 
 test('node detail location uses the named route and normalized identity', () => {
   assert.deepEqual(

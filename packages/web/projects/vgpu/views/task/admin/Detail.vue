@@ -37,9 +37,16 @@
               <div class="basic-info-card-sub-title">{{ $t('task.namespace') }}</div>
             </div>
             <div class="basic-info-card">
-              <div class="basic-info-card-title node-link" @click="handleNodeJump">
+              <RouterLink
+                v-if="nodeDetailLocation"
+                :to="nodeDetailLocation"
+                class="basic-info-card-title node-link"
+              >
                 <EllipsisText :text="detail.nodeName || '--'" mode="middle" tooltip="always" />
-                <svg-icon icon="jump" />
+                <svg-icon icon="jump" class="node-link-icon" aria-hidden="true" />
+              </RouterLink>
+              <div v-else class="basic-info-card-title">
+                <EllipsisText :text="detail.nodeName || '--'" mode="middle" tooltip="always" />
               </div>
               <div class="basic-info-card-sub-title">{{ $t('task.node') }}</div>
             </div>
@@ -195,7 +202,7 @@ import PageHeader from '@/components/PageHeader.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
-import { useRoute, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { ref, watch, computed } from 'vue';
 import { Tooltip as TTooltip } from 'tdesign-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
@@ -215,6 +222,7 @@ import { METRIC_STATUS } from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
+import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 
 const route = useRoute();
 const router = useRouter();
@@ -247,6 +255,10 @@ const workloadDisplayName = computed(() => (
     : requestedIdentity.value.name || '--'
 ));
 const nodeUid = ref('');
+const nodeDetailLocation = computed(() => buildNodeDetailLocation({
+  uid: nodeUid.value,
+  nodeName: detail.value?.nodeName || detail.value?.node_name,
+}));
 const cardTypeById = ref({});
 
 const end = new Date();
@@ -423,11 +435,6 @@ const resourceOverviewTexts = computed(() => {
   };
 });
 
-const handleNodeJump = () => {
-  const nodeName = detail.value?.nodeName || detail.value?.node_name || '';
-  if (!nodeUid.value || !nodeName) return;
-  router.push(`/admin/vgpu/node/admin/${nodeUid.value}?nodeName=${nodeName}`);
-};
 const handleGpuJump = (uuid) => {
   if (!uuid) return;
   router.push(`/admin/vgpu/card/admin/${uuid}`);
@@ -668,7 +675,39 @@ watch(
   }
 
   .node-link {
+    align-self: flex-start;
+    max-width: 100%;
+    border-radius: 3px;
     cursor: pointer;
+    text-decoration: none;
+    transition: color 0.2s ease;
+
+    :deep(.ellipsis-text) {
+      flex: 1;
+      min-width: 0;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      text-underline-offset: 3px;
+      transition: text-decoration-color 0.2s ease;
+    }
+
+    .node-link-icon {
+      flex-shrink: 0;
+    }
+
+    &:hover,
+    &:focus-visible {
+      color: var(--el-color-primary);
+
+      :deep(.ellipsis-text) {
+        text-decoration-color: currentColor;
+      }
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
+    }
   }
 
   .gpu-eye-icon {

@@ -308,7 +308,7 @@ import {
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
-import { buildNodeDetailLocation } from './node-detail-location.mjs';
+import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 
 const route = useRoute();
 const { t } = useI18n();
