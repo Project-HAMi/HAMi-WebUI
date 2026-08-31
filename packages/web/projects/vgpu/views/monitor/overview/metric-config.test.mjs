@@ -80,9 +80,13 @@ test('an idle cluster reports zero allocation when capacity is present', () => {
   );
 });
 
-test('memory utilization capacity only includes reporting devices', () => {
+test('memory utilization values only include devices reporting both sides', () => {
   const memoryUtilization = createOverviewGaugeConfigs().at(-1);
 
+  assert.match(
+    memoryUtilization.query,
+    /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
+  );
   assert.match(
     memoryUtilization.totalQuery,
     /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,

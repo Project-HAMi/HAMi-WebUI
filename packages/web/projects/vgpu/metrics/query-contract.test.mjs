@@ -210,9 +210,13 @@ test('scoped memory allocation keeps the same contract for node and card details
   assert.match(card.percentQuery, / or /);
 });
 
-test('memory usage capacity only includes devices that report usage', () => {
+test('memory usage only includes devices that report both used and capacity', () => {
   const queries = buildMemoryUsageQueries();
 
+  assert.match(
+    queries.query,
+    /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
+  );
   assert.match(
     queries.totalQuery,
     /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
@@ -233,6 +237,10 @@ test('grouped rankings preserve idle allocation but not missing usage', () => {
     assert.match(queries.memoryAllocation, /hami_vmemory_size/);
     assert.match(
       queries.memoryUsage,
+      /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
+    );
+    assert.match(
+      queries.memoryUsage,
       /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
     );
     assert.doesNotMatch(queries.memoryUsage, / or /);
@@ -246,6 +254,10 @@ test('cluster trends share the allocation and reporting-device contracts', () =>
   assert.match(queries.computeAllocation, / or /);
   assert.match(queries.memoryAllocation, /hami_vmemory_size/);
   assert.match(queries.memoryAllocation, / or /);
+  assert.match(
+    queries.memoryUsage,
+    /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
+  );
   assert.match(
     queries.memoryUsage,
     /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,

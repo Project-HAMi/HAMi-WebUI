@@ -170,8 +170,12 @@ export const buildMemoryUsageQueries = ({
 } = {}) => {
   const usedSeries = metricSeries(METRICS.memoryUsed, selector);
   const capacitySeries = metricSeries(METRICS.memoryPhysicalCapacity, selector);
+  const reportingUsedSeries = `${usedSeries} and ${REPORTING_DEVICE_MATCH} ${capacitySeries}`;
   const reportingCapacitySeries = `${capacitySeries} and ${REPORTING_DEVICE_MATCH} ${usedSeries}`;
-  const used = aggregateAcrossExporterReplicas(usedSeries, groupLabel);
+  const used = aggregateAcrossExporterReplicas(
+    reportingUsedSeries,
+    groupLabel,
+  );
   const capacity = aggregateAcrossExporterReplicas(
     reportingCapacitySeries,
     groupLabel,
