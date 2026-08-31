@@ -3,10 +3,71 @@ import test from 'node:test';
 
 import {
   buildClusterTrendQueries,
+  buildComputeAllocationQueries,
   buildGroupedResourceTopQueries,
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
+  buildTaskComputeAllocationQuery,
+  buildTaskCountQueries,
 } from './query-contract.mjs';
+
+test('compute allocation stays idle at real zero and hides unknown allocations', () => {
+  const queries = buildComputeAllocationQueries();
+
+  assert.match(queries.query, /hami_core_size\)\) \* 0/);
+  assert.match(
+    queries.query,
+    /unless on \(\) max\(hami_container_vcore_allocation_known == 0\)/,
+  );
+  assert.match(
+    queries.percentQuery,
+    /unless on \(\) max\(hami_container_vcore_allocation_known == 0\)/,
+  );
+  assert.doesNotMatch(
+    queries.totalQuery,
+    /hami_container_vcore_allocation_known/,
+  );
+});
+
+test('scoped compute allocation excludes the whole affected group', () => {
+  const queries = buildComputeAllocationQueries({
+    selector: 'node=~"$node"',
+    groupLabel: 'node',
+  });
+
+  assert.match(
+    queries.percentQuery,
+    /unless on \(node\) max by \(node\) \(hami_container_vcore_allocation_known\{node=~"\$node"\} == 0\)/,
+  );
+});
+
+test('task compute queries reject partial unknown allocations', () => {
+  const selector =
+    'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"';
+  const detail = buildTaskComputeAllocationQuery({ selector });
+  const ranked = buildTaskComputeAllocationQuery({
+    groupLabel: 'container_pod_uuid',
+  });
+
+  assert.match(detail, /^\(sum\(hami_container_vcore_allocated\{/);
+  assert.match(
+    detail,
+    /unless on \(\) max\(hami_container_vcore_allocation_known\{.*\} == 0\)$/,
+  );
+  assert.match(
+    ranked,
+    /unless on \(container_pod_uuid\) max by \(container_pod_uuid\)/,
+  );
+});
+
+test('workload counts do not depend on compute-allocation availability', () => {
+  const queries = buildTaskCountQueries();
+
+  for (const query of Object.values(queries)) {
+    assert.match(query, /hami_container_vgpu_allocated/);
+    assert.doesNotMatch(query, /hami_container_vcore_allocated/);
+  }
+});
 
 test('memory allocation uses schedulable capacity and fills idle allocation', () => {
   const queries = buildMemoryAllocationQueries();
@@ -17,6 +78,10 @@ test('memory allocation uses schedulable capacity and fills idle allocation', ()
   }
   assert.match(queries.query, / or /);
   assert.match(queries.percentQuery, /\* 0/);
+  assert.doesNotMatch(
+    queries.percentQuery,
+    /hami_container_vcore_allocation_known/,
+  );
 });
 
 test('scoped memory allocation keeps the same contract for node and card details', () => {

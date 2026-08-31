@@ -30,6 +30,7 @@ func init() {
 	prometheus.MustRegister(HamiContainerVgpuAllocated)
 	prometheus.MustRegister(HamiContainerVmemoryAllocated)
 	prometheus.MustRegister(HamiContainerVcoreAllocated)
+	prometheus.MustRegister(HamiContainerVcoreAllocationKnown)
 	prometheus.MustRegister(HamiContainerMemoryUsed)
 	prometheus.MustRegister(HamiContainerMemoryUtil)
 	prometheus.MustRegister(HamiContainerCoreUsed)
@@ -152,6 +153,11 @@ var (
 	HamiContainerVcoreAllocated = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_container_vcore_allocated",
 		Help: "task allocated vCore size",
+	}, []string{"node", "provider", "device_type", "device_uuid", "pod_name", "container_name", "namespace_name", "container_pod_uuid"})
+
+	HamiContainerVcoreAllocationKnown = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hami_container_vcore_allocation_known",
+		Help: "whether the task's allocated vCore size is known (1) or unavailable (0)",
 	}, []string{"node", "provider", "device_type", "device_uuid", "pod_name", "container_name", "namespace_name", "container_pod_uuid"})
 
 	HamiContainerMemoryUsed = prometheus.NewGaugeVec(prometheus.GaugeOpts{

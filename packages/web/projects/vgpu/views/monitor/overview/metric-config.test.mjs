@@ -88,12 +88,12 @@ test('memory utilization capacity only includes reporting devices', () => {
   );
 });
 
-test('node allocation rankings include every device and fully idle nodes', () => {
+test('node allocation rankings keep idle nodes and exclude unknown compute scopes', () => {
   const queries = createNodeTopQueries();
 
   assert.equal(
     queries.computeAllocation,
-    'topk(5, (avg by (node) (sum by (node, instance) (hami_container_vcore_allocated)) / avg by (node) (sum by (node, instance) (hami_core_size)) * 100) or on (node) (avg by (node) (sum by (node, instance) (hami_core_size)) * 0))',
+    'topk(5, ((avg by (node) (sum by (node, instance) (hami_container_vcore_allocated)) / avg by (node) (sum by (node, instance) (hami_core_size)) * 100) or on (node) (avg by (node) (sum by (node, instance) (hami_core_size)) * 0)) unless on (node) max by (node) (hami_container_vcore_allocation_known == 0))',
   );
   assert.equal(
     queries.memoryAllocation,
