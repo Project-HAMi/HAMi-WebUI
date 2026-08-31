@@ -33,8 +33,9 @@ const (
 )
 
 var (
-	errNoMetricData        = errors.New("prometheus query returned no data")
-	errInvalidCoreCapacity = errors.New("allocated core capacity must be greater than zero")
+	errNoMetricData                 = errors.New("prometheus query returned no data")
+	errInvalidCoreCapacity          = errors.New("allocated core capacity must be greater than zero")
+	errWorkloadTelemetryUnsupported = errors.New("workload telemetry is not supported by provider")
 )
 
 type instantQuerier interface {
@@ -535,7 +536,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vcore\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
-		return 0, nil
+		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_percent{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
@@ -546,14 +547,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	val, present, err := s.queryInstantValWithPresence(ctx, query)
-	if err != nil {
-		return 0, err
-	}
-	if !present && provider == biz.NvidiaGPUDevice {
-		return 0, errNoMetricData
-	}
-	return val, nil
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 func nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container string) string {
@@ -614,7 +608,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vmemory\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
-		return 0, nil
+		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_usage_memory_size{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
 	case metax.MetaxGPUDevice:
@@ -625,7 +619,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
