@@ -6,6 +6,11 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 )
 
+// PhysicalCoreBaselinePerDevice is the normalized physical-compute denominator
+// used by WebUI allocation metrics. It represents one accelerator at 100
+// percentage points; it is not a CUDA-core, AI-core, or schedulable-vCore count.
+const PhysicalCoreBaselinePerDevice int32 = 100
+
 type Node struct {
 	Name                    string
 	IP                      string

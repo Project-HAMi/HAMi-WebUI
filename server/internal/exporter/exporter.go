@@ -253,7 +253,7 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiCoreSize, 100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)
 		if memoryUsedErr == nil {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)

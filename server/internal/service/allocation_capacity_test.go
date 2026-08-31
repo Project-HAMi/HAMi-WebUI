@@ -2,107 +2,102 @@ package service
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
-	"vgpu/internal/data/prom"
 )
 
-func TestAllocationListsKeepRegisteredMemoryCapacity(t *testing.T) {
-	const registeredMemory = int32(65536)
-
-	var (
-		queriesMu sync.Mutex
-		queries   []string
-	)
-	prometheus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.FormValue("query")
-		queriesMu.Lock()
-		queries = append(queries, query)
-		queriesMu.Unlock()
-
-		label, value := "device_uuid", "100"
-		if strings.Contains(query, "by (node)") {
-			label = "node"
-		}
-		if strings.Contains(query, "hami_memory_size") {
-			// A physical-memory metric deliberately differs from the registered
-			// schedulable capacity. Allocation APIs must never use this value.
-			value = "32768"
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"%s":"%s"},"value":[1788050000,"%s"]}]}}`, label, map[string]string{"node": "node-a", "device_uuid": "GPU-1"}[label], value)
-	}))
-	defer prometheus.Close()
-
-	device := &biz.DeviceInfo{
+func TestAllocationCapacityUsesDeterministicPhysicalCoreBaseline(t *testing.T) {
+	device1 := &biz.DeviceInfo{
 		Id:       "GPU-1",
 		AliasId:  "GPU-1",
 		Count:    1,
-		Devmem:   registeredMemory,
+		Devmem:   65536,
 		Devcore:  200,
 		NodeName: "node-a",
 		NodeUid:  "node-uid-a",
 	}
+	device2 := &biz.DeviceInfo{
+		Id:       "GPU-2",
+		AliasId:  "GPU-2",
+		Count:    2,
+		Devmem:   32768,
+		Devcore:  300,
+		NodeName: "node-a",
+		NodeUid:  "node-uid-a",
+	}
 	nodeRepo := &capacityTestNodeRepo{
-		nodes:   []*biz.Node{{Name: "node-a", Uid: "node-uid-a", Devices: []*biz.DeviceInfo{device}}},
-		devices: []*biz.DeviceInfo{device},
+		nodes:   []*biz.Node{{Name: "node-a", Uid: "node-uid-a", Devices: []*biz.DeviceInfo{device1, device2}}},
+		devices: []*biz.DeviceInfo{device1, device2},
 	}
 	podRepo := &capacityTestPodRepo{}
 	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
-	promClient, err := prom.NewClient(prometheus.URL, time.Second, prom.HTTPConfig{}, log.DefaultLogger)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	monitor := NewMonitorService(promClient, nodeUsecase, podUsecase)
+	summaryUsecase := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
+	nodeService := NewNodeService(nodeUsecase, podUsecase, summaryUsecase)
+	cardService := NewCardService(nodeUsecase, podUsecase)
 
-	nodes, err := NewNodeService(nodeUsecase, podUsecase, nil, monitor).GetAllNodes(
+	nodes, err := nodeService.GetAllNodes(
 		context.Background(),
 		&pb.GetAllNodesReq{Filters: &pb.GetAllNodesReq_Filters{}},
 	)
 	if err != nil {
 		t.Fatalf("GetAllNodes: %v", err)
 	}
-	if got := nodes.List[0].MemoryTotal; got != registeredMemory {
-		t.Fatalf("node memory_total = %d, want registered capacity %d", got, registeredMemory)
+	if len(nodes.List) != 1 {
+		t.Fatalf("GetAllNodes returned %d nodes, want 1", len(nodes.List))
 	}
-	if got := nodes.List[0].CoreTotal; got != 100 {
-		t.Fatalf("node core_total = %d, want physical baseline 100", got)
-	}
+	assertCapacity(t, "node list", nodes.List[0].CoreTotal, nodes.List[0].MemoryTotal, 200, 98304)
 
-	cards, err := NewCardService(nodeUsecase, podUsecase, monitor).GetAllGPUs(
+	node, err := nodeService.GetNode(context.Background(), &pb.GetNodeReq{Uid: "node-uid-a"})
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	assertCapacity(t, "node detail", node.CoreTotal, node.MemoryTotal, 200, 98304)
+
+	cards, err := cardService.GetAllGPUs(
 		context.Background(),
 		&pb.GetAllGpusReq{Filters: &pb.GetAllGpusReq_Filters{}},
 	)
 	if err != nil {
 		t.Fatalf("GetAllGPUs: %v", err)
 	}
-	if got := cards.List[0].MemoryTotal; got != registeredMemory {
-		t.Fatalf("card memory_total = %d, want registered capacity %d", got, registeredMemory)
+	if len(cards.List) != 2 {
+		t.Fatalf("GetAllGPUs returned %d cards, want 2", len(cards.List))
 	}
-	if got := cards.List[0].CoreTotal; got != 100 {
-		t.Fatalf("card core_total = %d, want physical baseline 100", got)
+	assertCapacity(t, "first card list", cards.List[0].CoreTotal, cards.List[0].MemoryTotal, 100, 65536)
+	assertCapacity(t, "second card list", cards.List[1].CoreTotal, cards.List[1].MemoryTotal, 100, 32768)
+
+	card, err := cardService.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "GPU-2"})
+	if err != nil {
+		t.Fatalf("GetGPU: %v", err)
+	}
+	assertCapacity(t, "card detail", card.CoreTotal, card.MemoryTotal, 100, 32768)
+
+	summary, err := nodeService.GetSummary(context.Background(), &pb.GetSummaryReq{})
+	if err != nil {
+		t.Fatalf("GetSummary: %v", err)
+	}
+	assertCapacity(t, "summary", summary.CoreTotal, summary.MemoryTotal, 200, 98304)
+	if summary.GpuCount != 2 || summary.NodeCount != 1 || summary.VgpuTotal != 3 {
+		t.Fatalf("summary counts = gpu:%d node:%d vgpu:%d, want 2/1/3", summary.GpuCount, summary.NodeCount, summary.VgpuTotal)
 	}
 
-	queriesMu.Lock()
-	defer queriesMu.Unlock()
-	if len(queries) != 2 {
-		t.Fatalf("Prometheus queries = %v, want one core query per list API", queries)
+	filteredSummary, err := nodeService.GetSummary(context.Background(), &pb.GetSummaryReq{
+		Filters: &pb.GetSummaryReq_Filters{DeviceId: "GPU-1"},
+	})
+	if err != nil {
+		t.Fatalf("GetSummary filtered by device: %v", err)
 	}
-	for _, query := range queries {
-		if !strings.Contains(query, "hami_core_size") || strings.Contains(query, "memory_size") {
-			t.Fatalf("unexpected allocation-list query %q", query)
-		}
+	assertCapacity(t, "filtered summary", filteredSummary.CoreTotal, filteredSummary.MemoryTotal, 100, 65536)
+}
+
+func assertCapacity(t *testing.T, scope string, core, memory, wantCore, wantMemory int32) {
+	t.Helper()
+	if core != wantCore || memory != wantMemory {
+		t.Fatalf("%s capacity = core:%d memory:%d, want core:%d memory:%d", scope, core, memory, wantCore, wantMemory)
 	}
 }
 
