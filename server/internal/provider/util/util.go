@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -29,7 +30,21 @@ const (
 	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
 
 	NVIDIAPriority = "nvidia.com/priority"
+
+	AscendVNPUModeAnnotation     = "huawei.com/vnpu-mode"
+	AscendVNPUModeHamiCore       = "hami-core"
+	AscendNodeHamiCoreAnnotation = "hami-vnpu-core"
 )
+
+// VendorOf maps a concrete device type to the provider name used for metric
+// dispatch. Ascend annotations carry the chip commonWord as their type; keep
+// that concrete type in inventory and normalize only at the provider boundary.
+func VendorOf(deviceType string) string {
+	if strings.HasPrefix(deviceType, AscendGPUDevice) {
+		return AscendGPUDevice
+	}
+	return deviceType
+}
 
 type ascendDeviceConfig struct {
 	Usedmem   int32
@@ -45,15 +60,53 @@ var (
 func init() {
 	InRequestDevices = make(map[string]string)
 	SupportDevices = make(map[string]string)
+	// This is a compatibility snapshot of the templates shipped by HAMi. Custom
+	// operator templates are intentionally not guessed: their core allocation is
+	// reported as unavailable until WebUI has a configured source of truth.
 	ascendDeviceConfigs = map[string]map[int32]ascendDeviceConfig{
+		"Ascend910A": {
+			2184:  {Usedmem: 2184, Usedcores: 7},
+			4369:  {Usedmem: 4369, Usedcores: 13},
+			8738:  {Usedmem: 8738, Usedcores: 27},
+			17476: {Usedmem: 17476, Usedcores: 53},
+			32768: {Usedmem: 32768, Usedcores: 100},
+		},
 		"Ascend910B": {
 			16384: {Usedmem: 16384, Usedcores: 25},
 			32768: {Usedmem: 32768, Usedcores: 50},
+			65536: {Usedmem: 65536, Usedcores: 100},
+		},
+		"Ascend910B2": {
+			8192:  {Usedmem: 8192, Usedcores: 13},
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+			65536: {Usedmem: 65536, Usedcores: 100},
+		},
+		"Ascend910B3": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+			65536: {Usedmem: 65536, Usedcores: 100},
+		},
+		"Ascend910B4": {
+			8192:  {Usedmem: 8192, Usedcores: 25},
+			16384: {Usedmem: 16384, Usedcores: 50},
+			32768: {Usedmem: 32768, Usedcores: 100},
+		},
+		"Ascend910B4-1": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+			65536: {Usedmem: 65536, Usedcores: 100},
+		},
+		"Ascend910C": {
+			16384: {Usedmem: 16384, Usedcores: 25},
+			32768: {Usedmem: 32768, Usedcores: 50},
+			65536: {Usedmem: 65536, Usedcores: 100},
 		},
 		"Ascend310P": {
 			3072:  {Usedmem: 3072, Usedcores: 13},
 			6144:  {Usedmem: 6144, Usedcores: 25},
 			12288: {Usedmem: 12288, Usedcores: 50},
+			21527: {Usedmem: 21527, Usedcores: 100},
 		},
 	}
 	initMLUDevice()
@@ -185,39 +238,49 @@ func DecodeDCUContainerDevices(str, priority, nodeName string) (ContainerDevices
 	return contdev, nil
 }
 
-func DecodeNpuContainerDevices(str string) (ContainerDevices, error) {
+func DecodeNpuContainerDevices(str string, mode AscendAllocationMode) (ContainerDevices, error) {
 	if len(str) == 0 {
 		return ContainerDevices{}, nil
 	}
 	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
 	contdev := ContainerDevices{}
-	tmpdev := ContainerDevice{}
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
-	}
 	for i, val := range cd {
 		if strings.Contains(val, ",") {
 			tmpstr := strings.Split(val, ",")
 			if len(tmpstr) < 4 {
 				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
 			}
-			tmpdev.Idx = i
-			tmpdev.UUID = tmpstr[0]
-			tmpdev.Type = tmpstr[1]
-			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
-			tmpdev.Usedmem = int32(devmem)
-			tmpdev.Usedcores = 100
-
-			if configs, exists := ascendDeviceConfigs[tmpdev.Type]; exists {
-				if config, ok := configs[tmpdev.Usedmem]; ok {
-					tmpdev.Usedcores = config.Usedcores
-				}
+			devmem, err := strconv.ParseInt(tmpstr[2], 10, 32)
+			if err != nil || devmem < 0 {
+				return ContainerDevices{}, fmt.Errorf("invalid Ascend memory field %q", tmpstr[2])
 			}
+			devcores, err := strconv.ParseInt(tmpstr[3], 10, 32)
+			if err != nil || devcores < 0 {
+				return ContainerDevices{}, fmt.Errorf("invalid Ascend core field %q", tmpstr[3])
+			}
+			tmpdev := ContainerDevice{Idx: i, UUID: tmpstr[0], Type: tmpstr[1], Usedmem: int32(devmem)}
+			tmpdev.Usedcores, tmpdev.CoreAllocationKnown = ascendCoreAllocation(tmpdev.Type, tmpdev.Usedmem, int32(devcores), mode)
 
 			contdev = append(contdev, tmpdev)
 		}
 	}
 	return contdev, nil
+}
+
+func ascendCoreAllocation(deviceType string, memory, annotationCore int32, mode AscendAllocationMode) (int32, bool) {
+	switch mode {
+	case AscendAllocationModeHamiCore:
+		return annotationCore, true
+	case AscendAllocationModeTemplate:
+		if configs, exists := ascendDeviceConfigs[deviceType]; exists {
+			if config, ok := configs[memory]; ok {
+				return config.Usedcores, true
+			}
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
 }
 
 // DecodeMLUContainerDevices decodes the mlu container devices from a string.
@@ -307,8 +370,8 @@ func podContainerCount(pod *corev1.Pod) int {
 	return len(pod.Spec.InitContainers) + len(pod.Spec.Containers)
 }
 
-func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
-	checklist := SupportDevices
+func DecodePodDevices(pod *corev1.Pod, log *log.Helper, ascendMode AscendAllocationMode) (PodDevices, error) {
+	checklist := supportDevicesForPod(pod.Annotations)
 
 	priorities := GetContainerPriorities(pod)
 
@@ -318,14 +381,20 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 	}
 	nodeName := annos[AssignedNodeAnnotations]
 	pd := make(PodDevices)
-	for devType, devs := range checklist {
+	deviceTypes := make([]string, 0, len(checklist))
+	for devType := range checklist {
+		deviceTypes = append(deviceTypes, devType)
+	}
+	sort.Strings(deviceTypes)
+	for _, devType := range deviceTypes {
+		devs := checklist[devType]
 		str, ok := annos[devs]
 		if !ok {
 			continue
 		}
 		pd[devType] = make(PodSingleDevice, 0)
-		switch devType {
-		case AscendGPUDevice, Ascend310PGPUDevice:
+		switch VendorOf(devType) {
+		case AscendGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
 				if i >= podContainerCount(pod) {
 					break
@@ -334,9 +403,14 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 					pd[devType] = append(pd[devType], ContainerDevices{})
 					continue
 				}
-				cd, err := DecodeNpuContainerDevices(s)
+				cd, err := DecodeNpuContainerDevices(s, ascendMode)
 				if err != nil {
-					return PodDevices{}, nil
+					return PodDevices{}, err
+				}
+				for _, device := range cd {
+					if device.Type != devType {
+						return PodDevices{}, fmt.Errorf("ascend allocation annotation %s contains device type %q, want %q", devs, device.Type, devType)
+					}
 				}
 				if len(cd) == 0 {
 					continue
@@ -402,6 +476,40 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 	}
 	log.Infof("Decoded pod annos: poddevices %v", pd)
 	return pd, nil
+}
+
+func supportDevicesForPod(annotations map[string]string) map[string]string {
+	devices := make(map[string]string, len(SupportDevices))
+	for deviceType, annotation := range SupportDevices {
+		devices[deviceType] = annotation
+	}
+
+	const (
+		ascendAllocatedPrefix = "hami.io/Ascend"
+		allocatedSuffix       = "-devices-allocated"
+	)
+	discovered := make([]string, 0)
+	for annotation := range annotations {
+		if strings.HasPrefix(annotation, ascendAllocatedPrefix) && strings.HasSuffix(annotation, allocatedSuffix) {
+			discovered = append(discovered, annotation)
+		}
+	}
+	sort.Strings(discovered)
+	for _, annotation := range discovered {
+		deviceType := strings.TrimSuffix(strings.TrimPrefix(annotation, "hami.io/"), allocatedSuffix)
+		if deviceType == "" {
+			continue
+		}
+		// Replace legacy aliases that point at the same annotation so a concrete
+		// producer commonWord is decoded exactly once and remains visible.
+		for existingType, existingAnnotation := range devices {
+			if existingAnnotation == annotation {
+				delete(devices, existingType)
+			}
+		}
+		devices[deviceType] = annotation
+	}
+	return devices
 }
 
 func UnMarshalNodeDevices(str string) ([]*DeviceInfo, error) {

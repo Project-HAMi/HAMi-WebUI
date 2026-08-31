@@ -56,26 +56,27 @@ func (uc *PodUseCase) FindOneContainer(ctx context.Context, podUID string, name 
 	return uc.repo.FindOne(ctx, podUID, name)
 }
 
-func (uc *PodUseCase) StatisticsByDeviceId(ctx context.Context, deviceId string) (int32, int32, int32, error) {
+func (uc *PodUseCase) StatisticsByDeviceId(ctx context.Context, deviceId string) (int32, int32, int32, bool, error) {
 	containers, err := uc.repo.ListAll(ctx)
 	var vGPU int32 = 0
 	var core int32 = 0
 	var memory int32 = 0
 	if err != nil {
-		return vGPU, core, memory, err
+		return vGPU, core, memory, false, err
 	}
-	vGPU, core, memory = ContainersStatisticsInfo(containers, deviceId)
-	return vGPU, core, memory, nil
+	vGPU, core, memory, coreKnown := ContainersStatisticsInfo(containers, deviceId)
+	return vGPU, core, memory, coreKnown, nil
 }
 
 func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 	return uc.repo.ListAll(ctx)
 }
 
-func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32) {
+func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32, bool) {
 	var vGPU int32 = 0
 	var core int32 = 0
 	var memory int32 = 0
+	coreKnown := true
 	for _, t := range containers {
 		for _, cd := range t.ContainerDevices {
 			if deviceId != "" && !strings.HasPrefix(cd.UUID, deviceId) {
@@ -84,7 +85,10 @@ func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, 
 			vGPU = vGPU + 1
 			core = core + cd.Usedcores
 			memory = memory + cd.Usedmem
+			if strings.HasPrefix(cd.Type, AscendGPUDevice) && !cd.CoreAllocationKnown {
+				coreKnown = false
+			}
 		}
 	}
-	return vGPU, core, memory
+	return vGPU, core, memory, coreKnown
 }

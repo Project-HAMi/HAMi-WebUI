@@ -220,10 +220,10 @@ const baseColumns = computed(() => [
   {
     title: 'GPUs',
     dataIndex: 'deviceIds',
-    render: ({ deviceIds, allocatedCores, allocatedMem }) => {
+    render: ({ deviceIds, allocatedCores, allocatedCoresKnown, allocatedMem }) => {
       const ids = Array.isArray(deviceIds) ? deviceIds : [];
       const gpuCount = ids.length || '--';
-      const cores = allocatedCores === 0 || allocatedCores
+      const cores = allocatedCoresKnown !== false && (allocatedCores === 0 || allocatedCores)
         ? roundToDecimal(allocatedCores / 100, 1)
         : '--';
       const memoryGiB = allocatedMem === 0 || allocatedMem

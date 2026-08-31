@@ -56,6 +56,7 @@ message DeviceSummaryReply {
   int32 memory_total = 6;
   int32 gpu_count = 7;
   int32 node_count = 8;
+  optional bool core_used_known = 9;
 }
 
 message GetAllNodesReq {
@@ -93,6 +94,7 @@ message NodeReply {
   string kube_proxy_version = 19;
   string architecture = 20;
   string creation_timestamp = 21;
+  optional bool core_used_known = 22;
 }
 
 message NodesReply {

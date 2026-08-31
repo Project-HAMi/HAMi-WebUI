@@ -64,10 +64,15 @@ func (r *podRepo) onAddPod(obj interface{}) {
 		r.delPod(pod)
 		return
 	}
+	nodeUID, ascendMode := r.nodeAllocationContext(pod)
 	bizPodDev := biz.PodDevices{}
-	podDev, _ := util.DecodePodDevices(pod, r.log)
+	podDev, err := util.DecodePodDevices(pod, r.log, ascendMode)
+	if err != nil {
+		r.log.Errorf("cannot decode device allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return
+	}
 	copier.Copy(&bizPodDev, podDev)
-	r.addPod(pod, nodeID, bizPodDev)
+	r.addPod(pod, nodeID, nodeUID, bizPodDev)
 }
 
 func (r *podRepo) onUpdatePod(_ interface{}, new interface{}) {
@@ -87,10 +92,10 @@ func (r *podRepo) onDeletedPod(obj interface{}) {
 	r.delPod(pod)
 }
 
-func (r *podRepo) addPod(pod *corev1.Pod, nodeID string, devices biz.PodDevices) {
+func (r *podRepo) addPod(pod *corev1.Pod, nodeID, nodeUID string, devices biz.PodDevices) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
-	ctrs := r.fetchContainerInfo(pod)
+	ctrs := r.fetchContainerInfo(pod, devices, nodeUID)
 	pi := &biz.PodInfo{Name: pod.Name, UID: pod.UID, Namespace: pod.Namespace, NodeID: nodeID, Devices: devices, Ctrs: ctrs}
 	r.pods[pod.UID] = pi
 	r.log.Infof("Pod added: Name: %s, UID: %s, Namespace: %s, NodeID: %s", pod.Name, pod.UID, pod.Namespace, nodeID)
@@ -106,28 +111,10 @@ func (r *podRepo) delPod(pod *corev1.Pod) {
 	}
 }
 
-func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
+func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, nodeUID string) []*biz.Container {
 	containers := []*biz.Container{}
-	pdevices, err := util.DecodePodDevices(pod, r.log)
-	if err != nil {
-		return containers
-	}
-	// Merge devices from all device types per container index.
-	// pdevices: map[deviceType]PodSingleDevice([]ContainerDevices)
 	totalContainers := len(pod.Spec.InitContainers) + len(pod.Spec.Containers)
-	bizContainerDevices := make([]biz.ContainerDevices, totalContainers)
-	for devType, pds := range pdevices {
-		var bizPds biz.PodSingleDevice
-		if err := copier.Copy(&bizPds, pds); err != nil {
-			r.log.Warnf("failed to copy %s device info for pod %s/%s: %v", devType, pod.Namespace, pod.Name, err)
-			continue
-		}
-		for i, cd := range bizPds {
-			if i < totalContainers {
-				bizContainerDevices[i] = append(bizContainerDevices[i], cd...)
-			}
-		}
-	}
+	bizContainerDevices := mergeContainerDevicesBySlot(totalContainers, pdevices)
 	if len(pdevices) == 0 {
 		return containers
 	}
@@ -160,7 +147,7 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 			PodUID:           string(pod.UID),
 			Image:            ctr.Image,
 			Status:           containerStat[ctr.Name],
-			NodeUID:          r.GetNodeUUID(pod),
+			NodeUID:          nodeUID,
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
@@ -173,13 +160,49 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod) []*biz.Container {
 	return containers
 }
 
-func (r *podRepo) GetNodeUUID(pod *corev1.Pod) string {
+func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices) []biz.ContainerDevices {
+	containerDevices := make([]biz.ContainerDevices, totalContainers)
+	for _, devicesByContainer := range podDevices {
+		for i, devices := range devicesByContainer {
+			if i >= totalContainers {
+				break
+			}
+			containerDevices[i] = append(containerDevices[i], devices...)
+		}
+	}
+	return containerDevices
+}
+
+func (r *podRepo) nodeAllocationContext(pod *corev1.Pod) (string, util.AscendAllocationMode) {
+	podMode := pod.Annotations[util.AscendVNPUModeAnnotation]
+	if pod.Spec.NodeName == "" {
+		return "", resolveAscendAllocationMode(podMode, "")
+	}
 	node, err := r.data.k8sCl.CoreV1().Nodes().Get(context.Background(), pod.Spec.NodeName, metav1.GetOptions{})
 	if err != nil {
-		//p.log.Warnf("Error getting node: %s", err)
-		return ""
-	} else {
-		return string(node.UID)
+		r.log.Warnf("cannot resolve Ascend allocation mode for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		return "", resolveAscendAllocationMode(podMode, "")
+	}
+	return string(node.UID), resolveAscendAllocationMode(podMode, node.Annotations[util.AscendNodeHamiCoreAnnotation])
+}
+
+func resolveAscendAllocationMode(podMode, nodeHamiCore string) util.AscendAllocationMode {
+	if podMode != "" {
+		if podMode == util.AscendVNPUModeHamiCore {
+			return util.AscendAllocationModeHamiCore
+		}
+		return util.AscendAllocationModeTemplate
+	}
+	switch nodeHamiCore {
+	case "true":
+		// Released plugin images disagree on whether an unannotated Pod inherits
+		// soft mode from the Node. The Node flag does not encode that runtime
+		// version, so this allocation cannot be decoded without guessing.
+		return util.AscendAllocationModeUnknown
+	case "false":
+		return util.AscendAllocationModeTemplate
+	default:
+		return util.AscendAllocationModeUnknown
 	}
 }
 

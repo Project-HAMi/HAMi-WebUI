@@ -34,6 +34,7 @@ func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*p
 	var res = &pb.DeviceSummaryReply{}
 	t, err := s.summary.GetGPUSummary(ctx, filters.DeviceId, filters.NodeUid, filters.Type)
 	copier.Copy(&res, &t)
+	res.CoreUsedKnown = &t.CoreUsedKnown
 	return res, err
 }
 
@@ -106,6 +107,7 @@ func (s *NodeService) GetNode(ctx context.Context, req *pb.GetNodeReq) (*pb.Node
 // passes a pre-fetched container list so per-device usage stats reuse one scan
 // rather than re-listing all containers for each device.
 func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container) *pb.NodeReply {
+	coreUsedKnown := true
 	nodeReply := &pb.NodeReply{
 		Name:                    node.Name,
 		Uid:                     node.Uid,
@@ -127,11 +129,15 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 		nodeReply.VgpuTotal += device.Count
 		nodeReply.CoreTotal += device.Devcore
 		nodeReply.MemoryTotal += device.Devmem
-		vGPU, core, memory := biz.ContainersStatisticsInfo(containers, device.AliasId)
+		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
 		nodeReply.VgpuUsed += vGPU
 		nodeReply.CoreUsed += core
+		if !coreKnown {
+			coreUsedKnown = false
+		}
 		nodeReply.MemoryUsed += memory
 	}
+	nodeReply.CoreUsedKnown = &coreUsedKnown
 
 	nodeReply.Type = arrutil.Unique(nodeReply.Type)
 	nodeReply.CardCnt = int32(len(node.Devices))
