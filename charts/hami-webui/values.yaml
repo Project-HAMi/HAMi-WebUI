@@ -17,9 +17,9 @@ image:
   # Overrides the image tag. When empty, a semantic chart appVersion uses its
   # matching v-prefixed release tag (with '+' mapped to '_', as OCI tags do not
   # allow '+'); other appVersions are used unchanged.
-  tag: "main"
+  tag: "v2.0.0"
   # When set, digest takes precedence over tag and renders repository@digest.
-  digest: ""
+  digest: "sha256:80a8f63dab912d714dc1c12b90ee46b3557352c9cb11070968d25eba9644ca83"
 
 # Image pull secrets used by the WebUI Pod.
 imagePullSecrets: []
