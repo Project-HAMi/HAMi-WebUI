@@ -77,9 +77,9 @@ export default {
     viewAllGpuTypes: 'View all GPU types',
     vgpuAllocRate: 'vGPU Allocation',
     computeAllocRate: 'Compute Allocation',
-    memAllocRate: 'Memory Allocation',
+    memAllocRate: 'Schedulable Memory Allocation',
     computeUsageRate: 'Compute Utilization',
-    memUsageRate: 'Memory Usage',
+    memUsageRate: 'Physical Memory Usage',
     vgpuAllocRateDescription:
       'Allocated vGPU slots divided by the schedulable slots registered by HAMi. Slot capacity comes from device splitting and is not the physical accelerator count.',
     computeAllocRateDescription:
@@ -114,6 +114,7 @@ export default {
     schedulable: 'Schedulable',
     unschedulable: 'Unschedulable',
     allocated: 'Allocated',
+    physicalUsed: 'Physical Used',
     used: 'Used',
     idle: 'Idle',
     allocRate: 'Allocation Rate',

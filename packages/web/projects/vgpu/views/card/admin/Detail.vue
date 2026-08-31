@@ -149,7 +149,11 @@
               <div class="resource-card-rate-wrap">
                 <div class="resource-card-footer-item">
                   <div class="resource-card-footer-title">
-                    {{ $t('dashboard.allocated') }} / {{ $t('dashboard.allocRateLegend') }}
+                    <span>{{ $t('dashboard.allocated') }} / {{ $t('dashboard.memAllocRate') }}</span>
+                    <metric-help
+                      :description="$t('dashboard.memAllocRateDescription')"
+                      :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memAllocRate') })"
+                    />
                   </div>
                   <div class="resource-card-footer-value">
                     <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ memoryAllocUsedText }}</span>
@@ -170,7 +174,11 @@
               <div class="resource-card-rate-wrap">
                 <div class="resource-card-footer-item">
                   <div class="resource-card-footer-title">
-                    {{ $t('dashboard.used') }} / {{ $t('dashboard.usageRateLegend') }}
+                    <span>{{ $t('dashboard.physicalUsed') }} / {{ $t('dashboard.memUsageRate') }}</span>
+                    <metric-help
+                      :description="$t('dashboard.memUsageRateDescription')"
+                      :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
+                    />
                   </div>
                   <div class="resource-card-footer-value">
                     <span class="resource-card-footer-metric">{{ memoryUsageUsedText }}</span>
@@ -240,7 +248,7 @@
               {
                 ...getRangeOptions([
                   {
-                    name: t('dashboard.allocRateLegend'),
+                    name: t('dashboard.memAllocRate'),
                     data: gaugeConfig[1]?.data,
                     itemStyle: {
                       color: '#5B8FF9',
@@ -252,7 +260,7 @@
                     },
                   },
                   {
-                    name: t('dashboard.usageRateLegend'),
+                    name: t('dashboard.memUsageRate'),
                     data: gaugeConfig[3]?.data,
                     itemStyle: {
                       color: '#42C090',
@@ -288,6 +296,7 @@ import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { RouterLink, useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { ref, watch, computed } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
@@ -920,6 +929,7 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 
 .resource-card-footer-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -927,8 +937,10 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 
 .resource-card-footer-title {
   display: inline-flex;
+  flex: 1 1 160px;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   font-size: 12px;
   color: #939ea9;
   line-height: 20px;
@@ -936,9 +948,11 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 
 .resource-card-footer-value {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
 }
 
 .resource-card-footer-metric {
