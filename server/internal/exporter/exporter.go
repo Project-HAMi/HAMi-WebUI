@@ -37,10 +37,34 @@ var (
 	errInvalidCoreCapacity          = errors.New("allocated core capacity must be greater than zero")
 	errWorkloadTelemetryUnsupported = errors.New("workload telemetry is not supported by provider")
 	errFanSpeedTelemetryUnsupported = errors.New("fan speed telemetry is not supported by provider")
+	errTelemetryUnsupported         = errors.New("telemetry is not supported by provider")
 )
 
 type instantQuerier interface {
 	QueryInstant(context.Context, *pb.QueryInstantRequest) (*pb.InstantResponse, error)
+}
+
+type refreshFailure struct {
+	fatal bool
+	count int
+	first error
+}
+
+func (e *refreshFailure) Error() string {
+	kind := "degraded"
+	if e.fatal {
+		kind = "fatal"
+	}
+	return fmt.Sprintf("%s metrics refresh: %d error(s); first: %v", kind, e.count, e.first)
+}
+
+func (e *refreshFailure) Unwrap() error {
+	return e.first
+}
+
+func isFatalRefreshFailure(err error) bool {
+	var failure *refreshFailure
+	return errors.As(err, &failure) && failure.fatal
 }
 
 // MetricsGenerator owns the lifecycle of the background /metrics collector.
@@ -73,13 +97,24 @@ type MetricsGenerator struct {
 
 	// Diff-based cell tracking. See cells.go for the full rationale.
 	// current holds tuples written during the in-progress cycle; prev holds the
-	// last successfully-committed cycle so we know which tuples to delete when a
-	// device or container disappears.
+	// last committed cycle so we know which tuples to delete when a device or
+	// container disappears.
 	cellMu  sync.Mutex
 	current map[cellKey]cell
 	prev    map[cellKey]cell
 
-	cacheTime time.Time
+	degradedCount int
+	firstDegraded error
+	fatalErr      error
+
+	now func() time.Time
+}
+
+func (s *MetricsGenerator) clockNow() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // roundToTwoDecimal rounds value to two decimal places.
@@ -124,6 +159,48 @@ func resolveCollectorIntervals(bc *conf.Bootstrap) (interval, timeout time.Durat
 		timeout = d
 	}
 	return
+}
+
+// recordTelemetryError records a failed query that was actually sent upstream.
+// Only cancellation of the cycle context itself is fatal; an upstream request
+// timeout while that context remains valid is a degraded query failure.
+func (s *MetricsGenerator) recordTelemetryError(ctx context.Context, err error) {
+	s.cellMu.Lock()
+	defer s.cellMu.Unlock()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if s.fatalErr == nil {
+			s.fatalErr = ctxErr
+		}
+		return
+	}
+	if s.firstDegraded == nil {
+		s.firstDegraded = err
+	}
+	s.degradedCount++
+}
+
+func (s *MetricsGenerator) recordFatalError(err error) error {
+	if err == nil {
+		return nil
+	}
+	s.cellMu.Lock()
+	if s.fatalErr == nil {
+		s.fatalErr = err
+	}
+	s.cellMu.Unlock()
+	return s.currentRefreshError()
+}
+
+func (s *MetricsGenerator) currentRefreshError() error {
+	s.cellMu.Lock()
+	defer s.cellMu.Unlock()
+	if s.fatalErr != nil {
+		return &refreshFailure{fatal: true, count: 1, first: s.fatalErr}
+	}
+	if s.degradedCount > 0 {
+		return &refreshFailure{count: s.degradedCount, first: s.firstDegraded}
+	}
+	return nil
 }
 
 // Start launches the background collector loop. It is invoked once by the kratos
@@ -194,17 +271,27 @@ func (s *MetricsGenerator) runOnce(parent context.Context) {
 
 	ctx, cancel := context.WithTimeout(parent, s.timeout)
 	defer cancel()
-	start := time.Now()
-	if err := s.GenerateMetrics(ctx); err != nil {
-		// Partial cycle (ctx canceled, upstream error, etc.): keep last known good
-		// snapshot intact so the registry doesn't briefly lose cells that simply
-		// could not be re-queried this round.
+	start := s.clockNow()
+	err := s.GenerateMetrics(ctx)
+	if isFatalRefreshFailure(err) {
 		s.dropCurrentCycle()
-		s.log.Errorw("msg", "metrics refresh failed (partial cycle, last-known cells retained)", "err", err, "elapsed", time.Since(start))
+		finished := s.clockNow()
+		HamiWebUIMetricsRefreshDurationSeconds.Set(finished.Sub(start).Seconds())
+		HamiWebUIMetricsRefreshSuccess.Set(0)
+		s.log.Errorw("msg", "metrics refresh failed (partial cycle, last-known cells retained)", "err", err, "elapsed", finished.Sub(start))
 		return
 	}
 	s.commitCycle()
-	s.log.Debugw("msg", "metrics refresh complete", "elapsed", time.Since(start))
+	finished := s.clockNow()
+	HamiWebUIMetricsRefreshDurationSeconds.Set(finished.Sub(start).Seconds())
+	if err != nil {
+		HamiWebUIMetricsRefreshSuccess.Set(0)
+		s.log.Warnw("msg", "metrics refresh degraded (best-effort snapshot committed)", "err", err, "elapsed", finished.Sub(start))
+		return
+	}
+	HamiWebUIMetricsRefreshLastSuccessTimestampSeconds.Set(float64(finished.Unix()))
+	HamiWebUIMetricsRefreshSuccess.Set(1)
+	s.log.Debugw("msg", "metrics refresh complete", "elapsed", finished.Sub(start))
 }
 
 // GenerateMetrics runs one full fanout cycle (device + container dimensions) into
@@ -212,35 +299,38 @@ func (s *MetricsGenerator) runOnce(parent context.Context) {
 // triggered manually if needed, but on the request path it must never be called
 // synchronously: the registry is the only thing /metrics serves.
 //
-// The function intentionally does NOT clear existing gauges. Each Set goes
-// through s.set, which both writes the value and records the (gauge, labels)
-// tuple. runOnce decides whether to commit the new snapshot (delete tuples that
-// disappeared) or drop it (keep the previous snapshot intact). See cells.go.
+// Each Set goes through s.set, which stages the value and label tuple without
+// touching the live GaugeVec. runOnce decides whether to commit the staged
+// snapshot or drop it and keep the previous registry values intact. See cells.go.
 func (s *MetricsGenerator) GenerateMetrics(ctx context.Context) error {
-	s.cellMu.Lock()
-	s.current = make(map[cellKey]cell)
-	s.cellMu.Unlock()
+	s.beginCycle()
 
-	s.GenerateDeviceMetrics(ctx)
-	s.GenerateContainerMetrics(ctx)
+	if err := s.GenerateDeviceMetrics(ctx); isFatalRefreshFailure(err) {
+		return err
+	}
+	if err := s.GenerateContainerMetrics(ctx); isFatalRefreshFailure(err) {
+		return err
+	}
 
 	// Surface ctx cancellation so runOnce treats this as a partial cycle and
 	// preserves the prior snapshot. Without this guard, a mid-cycle timeout
 	// would silently commit an incomplete map and erase real series.
 	if err := ctx.Err(); err != nil {
-		return err
+		return s.recordFatalError(err)
 	}
-	s.cacheTime = time.Now()
-	return nil
+	return s.currentRefreshError()
 }
 
 // GenerateDeviceMetrics refreshes device-level metrics from inventory and provider telemetry.
 func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	deviceInfos, err := s.nodeUsecase.ListAllDevices(ctx)
 	if err != nil {
-		return err
+		return s.recordFatalError(fmt.Errorf("list devices: %w", err))
 	}
 	for _, device := range deviceInfos {
+		if err := ctx.Err(); err != nil {
+			return s.recordFatalError(err)
+		}
 		provider := device.Provider
 		deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
 		var driver, deviceNo = "", ""
@@ -302,11 +392,17 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			s.set(HamiDeviceLastXIDErrorCode, float64(lastXIDErrorCode), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 	}
-	return nil
+	if err := ctx.Err(); err != nil {
+		return s.recordFatalError(err)
+	}
+	return s.currentRefreshError()
 }
 
-func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Container) {
+func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, containers []*biz.Container) error {
 	for _, c := range containers {
+		if err := ctx.Err(); err != nil {
+			return s.recordFatalError(err)
+		}
 		if len(c.ContainerDevices) == 0 {
 			continue
 		}
@@ -325,14 +421,18 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 		query := fmt.Sprintf("mx_memory_used{exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"}",
 			c.Namespace, c.PodName, c.Name)
 
-		res, err := s.monitorService.QueryInstant(context.TODO(), &pb.QueryInstantRequest{
-			Query: query,
-		})
+		res, err := s.queryInstant(ctx, query)
 		if err != nil {
+			if ctx.Err() != nil {
+				return s.currentRefreshError()
+			}
 			continue
 		}
 		reportLen := min(len(res.Data), len(c.ContainerDevices))
 		for i := range reportLen {
+			if err := ctx.Err(); err != nil {
+				return s.recordFatalError(err)
+			}
 			deviceUUID := res.Data[i].Metric["uuid"]
 			deviceType := res.Data[i].Metric["modelName"]
 			nodeName := res.Data[i].Metric["Hostname"]
@@ -343,39 +443,64 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(containers []*biz.Containe
 			s.set(HamiContainerVcoreAllocated, float64(core[i]), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace, podUIDLabel)
 
 			taskMemoryUsed := float32(res.Data[i].Value) // KB
-			s.set(HamiContainerMemoryUsed, float64(taskMemoryUsed/1024), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
-			s.set(HamiContainerMemoryUtil, roundToOneDecimal(100*float64(taskMemoryUsed/1024)/float64(memory[i])), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+			if !math.IsNaN(float64(taskMemoryUsed)) && !math.IsInf(float64(taskMemoryUsed), 0) {
+				s.set(HamiContainerMemoryUsed, float64(taskMemoryUsed/1024), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+				if memory[i] > 0 {
+					s.set(HamiContainerMemoryUtil, roundToOneDecimal(100*float64(taskMemoryUsed/1024)/float64(memory[i])), nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+				}
+			}
 
-			taskCoreUsed, err := s.taskCoreUsed(context.TODO(), metax.MetaxGPUDevice, c.Namespace, c.PodName, c.Name, c.PodUID, deviceUUID, nodeName, -1)
+			taskCoreUsed, err := s.taskCoreUsed(ctx, metax.MetaxGPUDevice, c.Namespace, c.PodName, c.Name, c.PodUID, deviceUUID, nodeName, -1)
 			if err == nil {
 				used := float64(taskCoreUsed)
-				util := roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core[0]))
-				cardCoreUtil, err := s.deviceCoreUtil(context.TODO(), metax.MetaxGPUDevice, deviceUUID)
+				util := math.NaN()
+				if core[i] > 0 {
+					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core[i]))
+				}
+				cardCoreUtil, err := s.deviceCoreUtil(ctx, metax.MetaxGPUDevice, deviceUUID)
 				if err == nil && used != 0 && cardCoreUtil > 95 {
 					used = float64(cardCoreUtil) / 100 * float64(core[i])
 					util = float64(cardCoreUtil)
+				} else if ctx.Err() != nil {
+					return s.currentRefreshError()
 				}
 				s.set(HamiContainerCoreUsed, used, nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
-				s.set(HamiContainerCoreUtil, util, nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+				if !math.IsNaN(util) && !math.IsInf(util, 0) {
+					s.set(HamiContainerCoreUtil, util, nodeName, metax.MetaxGPUDevice, deviceType, deviceUUID, c.PodName, c.Name, c.Namespace)
+				}
+			} else if ctx.Err() != nil {
+				return s.currentRefreshError()
 			}
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return s.recordFatalError(err)
+	}
+	return s.currentRefreshError()
 }
 
 // GenerateContainerMetrics refreshes workload-level allocation and usage metrics.
 func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 	deviceInfos, err := s.nodeUsecase.ListAllDevices(ctx)
 	if err != nil {
-		return err
+		return s.recordFatalError(fmt.Errorf("list devices for container metrics: %w", err))
 	}
 	containers, err := s.podUsecase.ListAll(ctx)
 	if err != nil {
-		return err
+		return s.recordFatalError(fmt.Errorf("list containers: %w", err))
 	}
 
-	s.generateMetricsForMetaxGPU(containers)
+	if err := s.generateMetricsForMetaxGPU(ctx, containers); isFatalRefreshFailure(err) {
+		return err
+	}
 	for _, device := range deviceInfos {
+		if err := ctx.Err(); err != nil {
+			return s.recordFatalError(err)
+		}
 		for _, c := range containers {
+			if err := ctx.Err(); err != nil {
+				return s.recordFatalError(err)
+			}
 			var vGPU int32 = 0
 			var core int32 = 0
 			var memory int32 = 0
@@ -422,11 +547,16 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				default:
 				}
 				s.set(HamiContainerMemoryUsed, float64(taskMemoryUsed/1024/1024), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
-				s.set(HamiContainerMemoryUtil, roundToOneDecimal(100*float64(taskMemoryUsed/1024/1024)/float64(memory)), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+				if memory > 0 {
+					s.set(HamiContainerMemoryUtil, roundToOneDecimal(100*float64(taskMemoryUsed/1024/1024)/float64(memory)), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+				}
 			}
 		}
 	}
-	return nil
+	if err := ctx.Err(); err != nil {
+		return s.recordFatalError(err)
+	}
+	return s.currentRefreshError()
 }
 
 func (s *MetricsGenerator) queryInstantVal(ctx context.Context, query string) (float32, error) {
@@ -434,10 +564,16 @@ func (s *MetricsGenerator) queryInstantVal(ctx context.Context, query string) (f
 	return val, err
 }
 
+func (s *MetricsGenerator) queryInstant(ctx context.Context, query string) (*pb.InstantResponse, error) {
+	res, err := s.monitorService.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
+	if err != nil {
+		s.recordTelemetryError(ctx, fmt.Errorf("prometheus query %q: %w", query, err))
+	}
+	return res, err
+}
+
 func (s *MetricsGenerator) queryInstantValWithPresence(ctx context.Context, query string) (float32, bool, error) {
-	res, err := s.monitorService.QueryInstant(ctx, &pb.QueryInstantRequest{
-		Query: query,
-	})
+	res, err := s.queryInstant(ctx, query)
 	if err != nil {
 		return 0, false, err
 	}
@@ -472,7 +608,7 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	val, err := s.queryRequiredInstantVal(ctx, query)
 	if err != nil {
@@ -495,7 +631,7 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	val, err := s.queryRequiredInstantVal(ctx, query)
 	if err != nil {
@@ -529,7 +665,7 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }
@@ -551,7 +687,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 		query = fmt.Sprintf("avg(mx_sgpu_usage{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
 			hostname, deviceIndex, namespace, pod, container)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }
@@ -602,6 +738,8 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 	if err == nil && used != 0 && cardCoreUtil > 95 {
 		used = float64(cardCoreUtil) / 100 * float64(allocatedCore)
 		util = float64(cardCoreUtil)
+	} else if ctx.Err() != nil {
+		return 0, 0, ctx.Err()
 	}
 	return used, util, nil
 }
@@ -623,7 +761,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 		query = fmt.Sprintf("avg(mx_sgpu_used_memory{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
 			hostname, deviceIndex, namespace, pod, container)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }
@@ -642,7 +780,7 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_chip_hotspot_temp{uuid=\"%s\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }
@@ -659,7 +797,7 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_chip_hbm_temp{uuid=\"%s\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }
@@ -678,7 +816,7 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_board_power{uuid=\"%s\"})", deviceUUID) // mW
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 
 	power, err := s.queryRequiredInstantVal(ctx, query)
@@ -694,7 +832,7 @@ func (s *MetricsGenerator) lastXIDErrorCode(ctx context.Context, provider, devic
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("avg(DCGM_FI_DEV_XID_ERRORS{UUID=\"%s\"})", deviceUUID)
 	default:
-		return 0, fmt.Errorf("last XID error code is not supported by provider %q", provider)
+		return 0, fmt.Errorf("%w: last XID error code for %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }
@@ -738,11 +876,9 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("mx_board_power{uuid=\"%s\"}", deviceUUID)
 	default:
-		return nil, errors.New("provider not exists")
+		return nil, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
-	res, err := s.monitorService.QueryInstant(context.TODO(), &pb.QueryInstantRequest{
-		Query: query,
-	})
+	res, err := s.queryInstant(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -767,7 +903,7 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		}
 		return info, nil
 	}
-	return nil, fmt.Errorf("unknown error")
+	return nil, errNoMetricData
 }
 
 func (s *MetricsGenerator) systemComponentHealth(ctx context.Context, componentType, componentName string) (float32, error) {

@@ -14,13 +14,10 @@ import (
 // landed between reset() and the end of populate saw partial / empty data. The
 // resulting series flickered in and out of the UI at scrape boundaries.
 //
-// The fix: instead of wiping the GaugeVec at the start of each cycle, every Set
-// goes through MetricsGenerator.set, which both writes the value AND records the
-// (gauge, label tuple) it touched. After a cycle completes successfully, we walk
-// the previous cycle's recorded set and DeleteLabelValues for any tuple that
-// disappeared this round. Existing series are atomically overwritten in place,
-// brand-new series appear when their Set runs, vanished series disappear at the
-// end-of-cycle prune. There is no window where a known device is missing.
+// The fix: instead of wiping or mutating GaugeVecs while upstream queries are in
+// flight, every Set stages the value and label tuple in memory. A completed cycle
+// applies the staged values and removes tuples that disappeared. A fatal cycle can
+// therefore discard its staging map without leaking partial values or new labels.
 
 // cellKey identifies a single observation (gauge vector + concrete label tuple).
 // The joined string is just a map-key encoding of the labels; the original
@@ -33,18 +30,26 @@ type cellKey struct {
 type cell struct {
 	gauge  *prometheus.GaugeVec
 	labels []string
+	value  float64
 }
 
 // labelSep is a 0-byte separator that cannot appear in normal Prometheus label
 // values, so strings.Join produces an unambiguous key.
 const labelSep = "\x00"
 
-// set writes value into the gauge and records the (gauge, labels) tuple in the
-// current-cycle map. Safe for concurrent use; the collector itself only calls
-// it from one goroutine, but we lock anyway in case callers add a parallel pass.
-func (s *MetricsGenerator) set(g *prometheus.GaugeVec, value float64, labels ...string) {
-	g.WithLabelValues(labels...).Set(value)
+func (s *MetricsGenerator) beginCycle() {
+	s.cellMu.Lock()
+	s.current = make(map[cellKey]cell)
+	s.degradedCount = 0
+	s.firstDegraded = nil
+	s.fatalErr = nil
+	s.cellMu.Unlock()
+}
 
+// set stages a value and its label tuple in the current-cycle map. GaugeVecs are
+// only changed by commitCycle, so dropCurrentCycle can leave the last committed
+// registry snapshot untouched.
+func (s *MetricsGenerator) set(g *prometheus.GaugeVec, value float64, labels ...string) {
 	k := cellKey{gauge: g, joined: strings.Join(labels, labelSep)}
 	s.cellMu.Lock()
 	defer s.cellMu.Unlock()
@@ -52,20 +57,27 @@ func (s *MetricsGenerator) set(g *prometheus.GaugeVec, value float64, labels ...
 		s.current = make(map[cellKey]cell)
 	}
 	// Copy the labels slice — callers reuse the underlying array between iterations.
-	s.current[k] = cell{gauge: g, labels: append([]string(nil), labels...)}
+	s.current[k] = cell{gauge: g, labels: append([]string(nil), labels...), value: value}
 }
 
 // commitCycle promotes the current cycle to "previous" and removes any label
-// tuple that existed in the previous cycle but not this one. Call ONLY when the
-// cycle completed without being cut short by ctx cancellation: pruning on a
-// partial map would erroneously delete cells that just weren't re-Set this time.
+// tuple that existed in the previous cycle but not this one. It may commit a
+// best-effort degraded cycle, but must only be called after the full inventory
+// walk completes: pruning a fatally partial map would erase unvisited cells.
 func (s *MetricsGenerator) commitCycle() {
 	s.cellMu.Lock()
 	defer s.cellMu.Unlock()
 	if s.current == nil {
 		// Nothing was written this cycle; leave prev intact.
+		s.degradedCount = 0
+		s.firstDegraded = nil
+		s.fatalErr = nil
 		return
 	}
+	for _, c := range s.current {
+		c.gauge.WithLabelValues(c.labels...).Set(c.value)
+	}
+
 	deleted := 0
 	for k, c := range s.prev {
 		if _, ok := s.current[k]; ok {
@@ -80,17 +92,19 @@ func (s *MetricsGenerator) commitCycle() {
 	}
 	s.prev = s.current
 	s.current = nil
+	s.degradedCount = 0
+	s.firstDegraded = nil
+	s.fatalErr = nil
 }
 
 // dropCurrentCycle discards the in-progress map without promoting it. Use this
 // when a cycle ran into ctx cancellation or any other partial-completion path,
-// so the next cycle's prune still references the last KNOWN-GOOD snapshot.
-//
-// Any partial Set() calls that did land remain in the GaugeVec as freshly
-// overwritten cells — that is intentional and harmless, since they only update
-// values on label tuples that already existed.
+// so the next cycle's prune still references the last committed snapshot.
 func (s *MetricsGenerator) dropCurrentCycle() {
 	s.cellMu.Lock()
 	s.current = nil
+	s.degradedCount = 0
+	s.firstDegraded = nil
+	s.fatalErr = nil
 	s.cellMu.Unlock()
 }

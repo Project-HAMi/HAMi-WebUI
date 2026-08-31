@@ -14,7 +14,6 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type fakeInstantQuerier struct {
@@ -23,10 +22,14 @@ type fakeInstantQuerier struct {
 	errorsByQuery    map[string]error
 	queryErr         error
 	queries          []string
+	query            func(context.Context, *pb.QueryInstantRequest) (*pb.InstantResponse, error)
 }
 
-func (f *fakeInstantQuerier) QueryInstant(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+func (f *fakeInstantQuerier) QueryInstant(ctx context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
 	f.queries = append(f.queries, req.GetQuery())
+	if f.query != nil {
+		return f.query(ctx, req)
+	}
 	if f.queryErr != nil {
 		return nil, f.queryErr
 	}
@@ -45,7 +48,9 @@ func (f *fakeInstantQuerier) QueryInstant(_ context.Context, req *pb.QueryInstan
 }
 
 type fakeNodeRepo struct {
-	devices []*biz.DeviceInfo
+	devices            []*biz.DeviceInfo
+	err                error
+	listAllDevicesFunc func(context.Context) ([]*biz.DeviceInfo, error)
 }
 
 func (f *fakeNodeRepo) ListAll(context.Context) ([]*biz.Node, error) {
@@ -56,8 +61,11 @@ func (f *fakeNodeRepo) GetNode(context.Context, string) (*biz.Node, error) {
 	return nil, nil
 }
 
-func (f *fakeNodeRepo) ListAllDevices(context.Context) ([]*biz.DeviceInfo, error) {
-	return f.devices, nil
+func (f *fakeNodeRepo) ListAllDevices(ctx context.Context) ([]*biz.DeviceInfo, error) {
+	if f.listAllDevicesFunc != nil {
+		return f.listAllDevicesFunc(ctx)
+	}
+	return f.devices, f.err
 }
 
 func (f *fakeNodeRepo) FindDeviceByAliasId(string) (*biz.DeviceInfo, error) {
@@ -66,10 +74,11 @@ func (f *fakeNodeRepo) FindDeviceByAliasId(string) (*biz.DeviceInfo, error) {
 
 type fakePodRepo struct {
 	containers []*biz.Container
+	err        error
 }
 
 func (f *fakePodRepo) ListAll(context.Context) ([]*biz.Container, error) {
-	return f.containers, nil
+	return f.containers, f.err
 }
 
 func (f *fakePodRepo) FindOne(context.Context, string, string) (*biz.Container, error) {
@@ -695,8 +704,8 @@ func TestGenerateDeviceMetricsExportsOnlyPresentFiniteOptionalTelemetry(t *testi
 				HamiDeviceFanSpeedP,
 			} {
 				assertGaugeTracked(t, generator, gauge, labels, tt.wantTracked)
-				if tt.wantTracked && testutil.ToFloat64(gauge.WithLabelValues(labels...)) != tt.wantValue {
-					t.Fatalf("optional gauge value = %v, want %v", testutil.ToFloat64(gauge.WithLabelValues(labels...)), tt.wantValue)
+				if tt.wantTracked {
+					assertTrackedGaugeValue(t, generator, gauge, labels, tt.wantValue)
 				}
 			}
 		})
@@ -799,8 +808,8 @@ func TestGenerateDeviceMetricsExportsOnlyPresentXIDErrorCodes(t *testing.T) {
 			}
 			labels := []string{"node-xid", biz.NvidiaGPUDevice, "A100", tt.deviceID, "", ""}
 			assertGaugeTracked(t, generator, HamiDeviceLastXIDErrorCode, labels, tt.wantTracked)
-			if tt.wantTracked && testutil.ToFloat64(HamiDeviceLastXIDErrorCode.WithLabelValues(labels...)) != tt.wantValue {
-				t.Fatalf("last XID error code gauge value = %v, want %v", testutil.ToFloat64(HamiDeviceLastXIDErrorCode.WithLabelValues(labels...)), tt.wantValue)
+			if tt.wantTracked {
+				assertTrackedGaugeValue(t, generator, HamiDeviceLastXIDErrorCode, labels, tt.wantValue)
 			}
 		})
 	}
@@ -916,9 +925,13 @@ func assertTrackedGaugeValue(
 	want float64,
 ) {
 	t.Helper()
-	assertGaugeTracked(t, generator, gauge, labels, true)
-	if got := testutil.ToFloat64(gauge.WithLabelValues(labels...)); got != want {
-		t.Fatalf("gauge value = %v, want %v", got, want)
+	key := cellKey{gauge: gauge, joined: strings.Join(labels, labelSep)}
+	tracked, ok := generator.current[key]
+	if !ok {
+		t.Fatalf("gauge is not tracked")
+	}
+	if tracked.value != want {
+		t.Fatalf("staged gauge value = %v, want %v", tracked.value, want)
 	}
 }
 
@@ -977,6 +990,57 @@ func deleteTrackedTestCells(generator *MetricsGenerator) {
 		for _, tracked := range cells {
 			tracked.gauge.DeleteLabelValues(tracked.labels...)
 		}
+	}
+}
+
+func TestMetaxMultiDeviceUtilizationUsesEachDeviceAllocation(t *testing.T) {
+	const (
+		podName    = "metax-pod"
+		container  = "worker"
+		namespace  = "research"
+		podUID     = "pod-uid"
+		nodeName   = "metax-node"
+		deviceType = "C500"
+	)
+	devices := []struct {
+		uuid      string
+		allocated int32
+		wantUtil  float64
+	}{
+		{uuid: "MX-0", allocated: 20, wantUtil: 50},
+		{uuid: "MX-1", allocated: 40, wantUtil: 25},
+	}
+
+	containerDevices := make(biz.ContainerDevices, 0, len(devices))
+	memoryResponse := &pb.InstantResponse{}
+	responses := []*pb.InstantResponse{memoryResponse}
+	for _, device := range devices {
+		containerDevices = append(containerDevices, biz.ContainerDevice{
+			UUID: device.uuid, Type: metax.MetaxGPUDevice, Usedmem: 1024, Usedcores: device.allocated,
+		})
+		memoryResponse.Data = append(memoryResponse.Data, &pb.Sample{
+			Metric: map[string]string{"uuid": device.uuid, "modelName": deviceType, "Hostname": nodeName},
+			Value:  128,
+		})
+		responses = append(responses, instantValue(10), instantValue(50))
+	}
+
+	containers := []*biz.Container{{
+		Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
+		ContainerDevices: containerDevices,
+	}}
+	generator := &MetricsGenerator{
+		monitorService: &fakeInstantQuerier{responses: responses},
+		log:            log.NewHelper(log.NewStdLogger(io.Discard)),
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+	if err := generator.generateMetricsForMetaxGPU(context.Background(), containers); err != nil {
+		t.Fatalf("generateMetricsForMetaxGPU() error = %v", err)
+	}
+	for _, device := range devices {
+		labels := []string{nodeName, metax.MetaxGPUDevice, deviceType, device.uuid, podName, container, namespace}
+		assertTrackedGaugeValue(t, generator, HamiContainerCoreUtil, labels, device.wantUtil)
 	}
 }
 
@@ -1133,8 +1197,8 @@ func TestGenerateContainerMetricsPreservesMissingAndIdleUsage(t *testing.T) {
 			labels := []string{nodeName, biz.NvidiaGPUDevice, deviceType, deviceID, podName, container, namespace}
 			for _, gauge := range []*prometheus.GaugeVec{HamiContainerCoreUsed, HamiContainerCoreUtil, HamiContainerMemoryUsed, HamiContainerMemoryUtil} {
 				assertGaugeTracked(t, generator, gauge, labels, tt.wantUsageSet)
-				if tt.wantUsageSet && testutil.ToFloat64(gauge.WithLabelValues(labels...)) != 0 {
-					t.Fatalf("idle gauge value must be zero")
+				if tt.wantUsageSet {
+					assertTrackedGaugeValue(t, generator, gauge, labels, 0)
 				}
 			}
 		})
