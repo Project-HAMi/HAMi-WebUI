@@ -309,6 +309,7 @@ import {
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
+import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 
 const route = useRoute();
 const { t } = useI18n();
@@ -398,14 +399,12 @@ const memoryUsageQueries = buildMemoryUsageQueries({
 const basicPowerText = computed(() => {
   const v = lineTools.value[1]?.percent;
   const unit = lineTools.value[1]?.gaugeUnit || 'W';
-  if (v === undefined || v === null) return '--';
-  return `${Number(v)} ${unit}`;
+  return formatOptionalTelemetry(v, unit);
 });
 const basicTemperatureText = computed(() => {
   const v = lineTools.value[0]?.percent;
   const unit = lineTools.value[0]?.gaugeUnit || '℃';
-  if (v === undefined || v === null) return '--';
-  return `${Number(v)} ${unit}`;
+  return formatOptionalTelemetry(v, unit);
 });
 
 const _gaugeConfigBase = [
