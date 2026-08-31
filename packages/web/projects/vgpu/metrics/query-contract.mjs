@@ -1,4 +1,5 @@
 const METRICS = Object.freeze({
+  vgpuAllocated: 'hami_container_vgpu_allocated',
   computeAllocated: 'hami_container_vcore_allocated',
   computeAllocationKnown: 'hami_container_vcore_allocation_known',
   computeCapacity: 'hami_core_size',
@@ -107,12 +108,27 @@ export const buildTaskComputeAllocationQuery = ({
   const allocated = metricSeries(METRICS.computeAllocated, selector);
   const aggregate = groupLabel
     ? `avg by (${groupLabel}) (${allocated})`
-    : `sum(${allocated})`;
+    : aggregateAcrossExporterReplicas(allocated);
 
   return excludeUnknownComputeAllocations(aggregate, {
     selector,
     groupLabel,
   });
+};
+
+export const buildTaskResourceOverviewQueries = ({ selector = '' } = {}) => {
+  const gpuCards = aggregateAcrossExporterReplicas(
+    metricSeries(METRICS.vgpuAllocated, selector),
+  );
+  const memory = aggregateAcrossExporterReplicas(
+    metricSeries(METRICS.memoryAllocated, selector),
+  );
+
+  return {
+    gpuCards,
+    computeLimit: buildTaskComputeAllocationQuery({ selector }),
+    singleCardMemory: `${memory} / clamp_min(${gpuCards}, 1) / 1024`,
+  };
 };
 
 export const buildTaskCountQueries = () => ({
