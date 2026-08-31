@@ -641,9 +641,60 @@ if [[ ! "${checksum_a}" =~ ^[a-f0-9]{64}$ || ! "${checksum_b}" =~ ^[a-f0-9]{64}$
   exit 1
 fi
 
-# The development default is deliberately mutable. Stable release automation
-# replaces it with the verified candidate tag or digest before publication.
-grep -Fq 'image: "projecthami/hami-webui:main"' <<<"${default_deployment_render}"
+chart_image_value() {
+  local key="$1"
+
+  awk -v key="${key}" '
+    $0 == "image:" { in_image = 1; next }
+    in_image && /^[^[:space:]]/ { exit }
+    in_image && $1 == key ":" {
+      value = $2
+      gsub(/^"|"$/, "", value)
+      print value
+      exit
+    }
+  ' "${work_dir}/hami-webui/values.yaml"
+}
+
+default_image_repository="$(chart_image_value repository)"
+default_image_tag="$(chart_image_value tag)"
+default_image_digest="$(chart_image_value digest)"
+chart_app_version="$(awk '
+  $1 == "appVersion:" {
+    value = $2
+    gsub(/^"|"$/, "", value)
+    print value
+    exit
+  }
+' "${work_dir}/hami-webui/Chart.yaml")"
+if [[ -z "${default_image_repository}" ]]; then
+  echo "The default image repository is empty" >&2
+  exit 1
+fi
+if [[ "${chart_app_version}" == "main" ]]; then
+  if [[ "${default_image_tag}" != "main" || -n "${default_image_digest}" ]]; then
+    echo "Development Chart defaults must use the mutable main tag without a digest" >&2
+    exit 1
+  fi
+elif [[ "${chart_app_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [[ "${default_image_tag}" != "v${chart_app_version}" ||
+    ! "${default_image_digest}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    echo "Stable Chart defaults must use the matching v-prefixed tag and a sha256 digest" >&2
+    exit 1
+  fi
+fi
+if [[ -n "${default_image_digest}" ]]; then
+  default_image_reference="${default_image_repository}@${default_image_digest}"
+elif [[ -n "${default_image_tag}" ]]; then
+  default_image_reference="${default_image_repository}:${default_image_tag}"
+else
+  default_image_reference=""
+fi
+if [[ -n "${default_image_reference}" ]] &&
+  ! grep -Fq "image: \"${default_image_reference}\"" <<<"${default_deployment_render}"; then
+  echo "The rendered default image does not match values.yaml" >&2
+  exit 1
+fi
 
 explicit_tag_render="$(helm template test "${work_dir}/hami-webui" \
   --set-string 'image.tag=chart-contract' \
@@ -651,13 +702,7 @@ explicit_tag_render="$(helm template test "${work_dir}/hami-webui" \
   --show-only templates/deployment.yaml)"
 grep -Fq 'image: "projecthami/hami-webui:chart-contract"' <<<"${explicit_tag_render}"
 
-fallback_render="$(helm template test "${work_dir}/hami-webui" \
-  --set-string 'image.tag=' \
-  --set-string 'image.digest=' \
-  --show-only templates/deployment.yaml)"
-grep -Fq 'image: "projecthami/hami-webui:main"' <<<"${fallback_render}"
-
-assert_release_app_version_fallback() {
+assert_app_version_fallback() {
   local app_version="$1"
   local expected_tag="$2"
   local release_chart
@@ -679,9 +724,10 @@ assert_release_app_version_fallback() {
   grep -Fq "image: \"projecthami/hami-webui:${expected_tag}\"" <<<"${release_fallback_render}"
 }
 
-assert_release_app_version_fallback '2.0.0' 'v2.0.0'
-assert_release_app_version_fallback 'v2.0.0' 'v2.0.0'
-assert_release_app_version_fallback '2.0.0-rc.1+build.7' 'v2.0.0-rc.1_build.7'
+assert_app_version_fallback 'main' 'main'
+assert_app_version_fallback '2.0.0' 'v2.0.0'
+assert_app_version_fallback 'v2.0.0' 'v2.0.0'
+assert_app_version_fallback '2.0.0-rc.1+build.7' 'v2.0.0-rc.1_build.7'
 
 if helm template test "${work_dir}/hami-webui" \
   --set-string 'image.tag=invalid+tag' >/dev/null 2>&1; then
