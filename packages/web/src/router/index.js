@@ -27,22 +27,18 @@ export const constantRoutes = [
     ],
   },
   {
-    path: '/404',
-    component: () => import('@/views/error-page/404'),
-    hidden: true,
-  },
-  {
-    path: '/401',
-    component: () => import('@/views/error-page/401'),
-    hidden: true,
-  },
-  {
     path: '/',
     redirect: '/admin/vgpu/monitor/overview',
     component: Layout,
     hidden: true,
   },
   vgpuRoutes(Layout),
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: () => import('@/views/error-page/404'),
+    hidden: true,
+  },
 ];
 
 export const asyncRoutes = [

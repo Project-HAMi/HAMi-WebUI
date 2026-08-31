@@ -677,6 +677,103 @@ test('runtime base path and framing policy work in Chromium', async(t) => {
   })
 }, { timeout: 120_000 })
 
+test('unknown routes render a local, responsive HAMi page', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const unknownRoute = `${basePath}missing/reports/does-not-exist?source=browser#summary`
+
+  await t.test('the top-level page retains its URL and language controls', async() => {
+    const requestedURLs = []
+    const page = await browser.newPage({
+      locale: 'en-US',
+      viewport: { width: 375, height: 667 }
+    })
+    page.on('request', (request) => requestedURLs.push(request.url()))
+
+    try {
+      await page.goto(`${target}${unknownRoute}`, { waitUntil: 'domcontentloaded' })
+      await page.locator('[data-testid="not-found-page"]').waitFor()
+      await page.getByRole('heading', { name: 'Page not found' }).waitFor()
+
+      const currentURL = new URL(page.url())
+      assert.equal(
+        `${currentURL.pathname}${currentURL.search}${currentURL.hash}`,
+        unknownRoute
+      )
+
+      const overviewLink = page.locator('[data-testid="not-found-overview-link"]')
+      const overviewURL = new URL(await overviewLink.getAttribute('href'), target)
+      assert.equal(overviewURL.origin, new URL(target).origin)
+      assert.equal(overviewURL.pathname, deepRoute)
+
+      const dimensions = await page.evaluate(() => ({
+        body: document.body.scrollWidth,
+        document: document.documentElement.scrollWidth,
+        viewport: window.innerWidth
+      }))
+      assert.ok(
+        dimensions.body <= dimensions.viewport,
+        `404 body overflows horizontally: ${JSON.stringify(dimensions)}`
+      )
+      assert.ok(
+        dimensions.document <= dimensions.viewport,
+        `404 document overflows horizontally: ${JSON.stringify(dimensions)}`
+      )
+
+      const targetOrigin = new URL(target).origin
+      const externalRequests = requestedURLs.filter((requestURL) => {
+        const parsed = new URL(requestURL)
+        return ['http:', 'https:'].includes(parsed.protocol) && parsed.origin !== targetOrigin
+      })
+      assert.deepEqual(externalRequests, [])
+      assert.equal(requestedURLs.some((url) => url.includes('wallstcn')), false)
+
+      await page.locator('.lang-select-container').click()
+      await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
+        .filter({ hasText: '中文' })
+        .click()
+      await page.locator('html[lang="zh-CN"]').waitFor()
+      await page.getByRole('heading', { name: '页面未找到' }).waitFor()
+      assert.equal(page.url(), `${target}${unknownRoute}`)
+
+      await page.locator('.lang-select-container').click()
+      await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
+        .filter({ hasText: 'English' })
+        .click()
+      await page.locator('html[lang="en"]').waitFor()
+      await page.getByRole('heading', { name: 'Page not found' }).waitFor()
+    } finally {
+      await page.close()
+    }
+  })
+
+  await t.test('the base-prefixed overview link works inside an iframe', async() => {
+    const parent = await startParent({ iframeURL: `${target}${unknownRoute}` })
+    const page = await browser.newPage({ locale: 'en-US' })
+
+    try {
+      await page.goto(`${parent}/parent`, { waitUntil: 'domcontentloaded' })
+      const frame = await waitUntil(
+        () => page.frames().find((candidate) => candidate.url() === `${target}${unknownRoute}`),
+        `Expected iframe navigation to ${target}${unknownRoute}`
+      )
+      const overviewLink = frame.locator('[data-testid="not-found-overview-link"]')
+      await overviewLink.waitFor()
+      assert.equal(
+        new URL(await overviewLink.getAttribute('href'), target).pathname,
+        deepRoute
+      )
+
+      await Promise.all([
+        frame.waitForURL((url) => url.pathname === deepRoute),
+        overviewLink.click()
+      ])
+      await frame.locator('.home-page-title').waitFor()
+    } finally {
+      await page.close()
+    }
+  })
+}, { timeout: 60_000 })
+
 test('browser language selects English without leaking active Chinese UI text', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
@@ -703,8 +800,8 @@ test('browser language selects English without leaking active Chinese UI text', 
     assert.equal((await value.textContent()).trim(), '0.4 slots')
 
     await page.goto(`${target}${basePath}401`, { waitUntil: 'domcontentloaded' })
-    await page.getByText('You do not have permission to access this page').waitFor()
-    assert.equal((await page.locator('body').textContent()).includes('gif来源'), false)
+    await page.getByRole('heading', { name: 'Page not found' }).waitFor()
+    assert.equal((await page.locator('body').textContent()).includes('页面未找到'), false)
   } finally {
     await page.close()
   }
