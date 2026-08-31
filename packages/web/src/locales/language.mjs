@@ -10,3 +10,7 @@ export function resolveLanguage(preferredLanguage, browserLanguage) {
   const browser = normalizeLanguage(browserLanguage).replaceAll('_', '-');
   return browser === 'zh' || browser.startsWith('zh-') ? 'zh' : 'en';
 }
+
+export function toDocumentLanguage(language) {
+  return language === 'zh' ? 'zh-CN' : 'en';
+}

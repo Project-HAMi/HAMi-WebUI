@@ -710,6 +710,61 @@ test('browser language selects English without leaking active Chinese UI text', 
   }
 }, { timeout: 60_000 })
 
+test('runtime language updates the document and Element Plus services', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  let failNextNodesRequest = true
+
+  await page.route('**/api/vgpu/v1/nodes**', (route) => {
+    if (!failNextNodesRequest) return route.continue()
+    failNextNodesRequest = false
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        code: 50008,
+        message: 'authentication expired'
+      })
+    })
+  })
+
+  try {
+    await page.goto(
+      `${target}${basePath}admin/vgpu/node/admin`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('html[lang="en"]').waitFor()
+
+    const messageBox = page.locator('.el-message-box')
+    await messageBox.waitFor()
+    await messageBox.locator('.el-button--primary')
+      .filter({ hasText: 'OK' })
+      .click()
+
+    await page.locator('.lang-select-container').click()
+    await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
+      .filter({ hasText: '中文' })
+      .click()
+    await page.locator('html[lang="zh-CN"]').waitFor()
+
+    failNextNodesRequest = true
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.locator('html[lang="zh-CN"]').waitFor()
+    await messageBox.waitFor()
+    await messageBox.locator('.el-button--primary')
+      .filter({ hasText: '确定' })
+      .click()
+
+    await page.locator('.lang-select-container').click()
+    await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
+      .filter({ hasText: 'English' })
+      .click()
+    await page.locator('html[lang="en"]').waitFor()
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
 test('detail pages expose truthful asynchronous resource states', async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
 

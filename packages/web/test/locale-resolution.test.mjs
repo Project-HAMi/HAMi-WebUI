@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveLanguage } from '../src/locales/language.mjs';
+import {
+  resolveLanguage,
+  toDocumentLanguage,
+} from '../src/locales/language.mjs';
 
 test('a supported saved preference overrides the browser language', () => {
   assert.equal(resolveLanguage('en', 'zh-CN'), 'en');
@@ -23,4 +26,10 @@ test('other browser locales use the English fallback', () => {
 test('an invalid saved preference does not become an application locale', () => {
   assert.equal(resolveLanguage('fr', 'zh-CN'), 'zh');
   assert.equal(resolveLanguage('zh-CN', 'en-US'), 'en');
+});
+
+test('application locales map to document language tags', () => {
+  assert.equal(toDocumentLanguage('en'), 'en');
+  assert.equal(toDocumentLanguage('zh'), 'zh-CN');
+  assert.equal(toDocumentLanguage('fr'), 'en');
 });
