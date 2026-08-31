@@ -62,9 +62,6 @@ importers:
       normalize.css:
         specifier: ^8.0.1
         version: 8.0.1
-      nprogress:
-        specifier: 0.2.0
-        version: 0.2.0
       sortablejs:
         specifier: ^1.15.2
         version: 1.15.6
@@ -104,9 +101,6 @@ importers:
       vuex-persistedstate:
         specifier: ^4.1.0
         version: 4.1.0(vuex@4.1.0(vue@3.5.25(typescript@5.9.3)))
-      web-storage-cache:
-        specifier: ^1.1.1
-        version: 1.1.1
     devDependencies:
       '@babel/core':
         specifier: ^7.12.16
@@ -1624,9 +1618,6 @@ packages:
   normalize.css@8.0.1:
     resolution: {integrity: sha512-qizSNPO93t1YUuUhP22btGOo3chcvDFqFaj2TRybP0DMxkHOCTYwp3n34fel4a31ORXy4m1Xq0Gyqpb5m33qIg==}
 
-  nprogress@0.2.0:
-    resolution: {integrity: sha512-I19aIingLgR1fmhftnbWWO3dXc0hSxqHQHQb3H8m+K3TnEn/iSeTZZOyvKXWqQESMwuUVnatlCnZdLBZZt2VSA==}
-
   nth-check@2.1.1:
     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==}
 
@@ -1980,9 +1971,6 @@ packages:
     resolution: {integrity: sha512-hmV6UerDrPcgbSy9ORAtNXDr9M4wlNP4pEFKye4ujJF8oqgFFuxDCdOLS3eNoRTtq5O3hoBDh9Doj1bQMYHRbQ==}
     peerDependencies:
       vue: ^3.2.0
-
-  web-storage-cache@1.1.1:
-    resolution: {integrity: sha512-D0MieGooOs8RpsrK+vnejXnvh4OOv/+lTFB35JRkJJQt+uOjPE08XpaE0QBLMTRu47B1KGT/Nq3Gbag3Orinzw==}
 
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
@@ -3507,8 +3495,6 @@ snapshots:
 
   normalize.css@8.0.1: {}
 
-  nprogress@0.2.0: {}
-
   nth-check@2.1.1:
     dependencies:
       boolbase: 1.0.0
@@ -3847,8 +3833,6 @@ snapshots:
     dependencies:
       '@vue/devtools-api': 6.6.4
       vue: 3.5.25(typescript@5.9.3)
-
-  web-storage-cache@1.1.1: {}
 
   which@2.0.2:
     dependencies:
