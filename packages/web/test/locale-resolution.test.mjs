@@ -5,6 +5,24 @@ import {
   resolveLanguage,
   toDocumentLanguage,
 } from '../src/locales/language.mjs';
+import en from '../src/locales/en.js';
+import zh from '../src/locales/zh.js';
+
+const leafKeyPaths = (messages) => {
+  const paths = [];
+  const walk = (value, prefix = '') => {
+    Object.entries(value).forEach(([key, entry]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        walk(entry, path);
+        return;
+      }
+      paths.push(path);
+    });
+  };
+  walk(messages);
+  return paths.sort();
+};
 
 test('a supported saved preference overrides the browser language', () => {
   assert.equal(resolveLanguage('en', 'zh-CN'), 'en');
@@ -32,4 +50,8 @@ test('application locales map to document language tags', () => {
   assert.equal(toDocumentLanguage('en'), 'en');
   assert.equal(toDocumentLanguage('zh'), 'zh-CN');
   assert.equal(toDocumentLanguage('fr'), 'en');
+});
+
+test('English and Chinese expose the same translation keys', () => {
+  assert.deepEqual(leafKeyPaths(en), leafKeyPaths(zh));
 });
