@@ -231,6 +231,72 @@ func TestDeviceUsageMetricsRejectNonFiniteSamples(t *testing.T) {
 	}
 }
 
+func TestOptionalDeviceTelemetryDistinguishesMissingNonFiniteAndZero(t *testing.T) {
+	readers := []struct {
+		name string
+		read func(*MetricsGenerator, string) (float32, error)
+	}{
+		{name: "temperature", read: func(generator *MetricsGenerator, provider string) (float32, error) {
+			return generator.gpuTemperature(context.Background(), provider, "GPU-1")
+		}},
+		{name: "memory temperature", read: func(generator *MetricsGenerator, provider string) (float32, error) {
+			return generator.memoryTemperature(context.Background(), provider, "GPU-1")
+		}},
+		{name: "power", read: func(generator *MetricsGenerator, provider string) (float32, error) {
+			return generator.gpuPower(context.Background(), provider, "GPU-1")
+		}},
+		{name: "fan speed", read: func(generator *MetricsGenerator, provider string) (float32, error) {
+			return generator.fanSpeed(context.Background(), provider, "GPU-1")
+		}},
+		{name: "hardware health", read: func(generator *MetricsGenerator, provider string) (float32, error) {
+			return generator.gpuHardwareHealth(context.Background(), provider, "GPU-1")
+		}},
+	}
+	tests := []struct {
+		name        string
+		response    *pb.InstantResponse
+		wantValue   float32
+		wantPresent bool
+	}{
+		{name: "missing", response: &pb.InstantResponse{}},
+		{name: "zero", response: instantValue(0), wantPresent: true},
+		{name: "ordinary value", response: instantValue(42.5), wantValue: 42.5, wantPresent: true},
+		{name: "NaN", response: instantValue(float32(math.NaN()))},
+		{name: "positive infinity", response: instantValue(float32(math.Inf(1)))},
+		{name: "negative infinity", response: instantValue(float32(math.Inf(-1)))},
+	}
+
+	for _, reader := range readers {
+		for _, tt := range tests {
+			t.Run(reader.name+"/"+tt.name, func(t *testing.T) {
+				generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{tt.response}}}
+				value, err := reader.read(generator, biz.NvidiaGPUDevice)
+				if tt.wantPresent {
+					if err != nil || value != tt.wantValue {
+						t.Fatalf("optional telemetry = (%v, %v), want (%v, nil)", value, err, tt.wantValue)
+					}
+					return
+				}
+				if !errors.Is(err, errNoMetricData) {
+					t.Fatalf("expected errNoMetricData, got (%v, %v)", value, err)
+				}
+			})
+		}
+
+		t.Run(reader.name+"/unsupported provider", func(t *testing.T) {
+			querier := &fakeInstantQuerier{}
+			generator := &MetricsGenerator{monitorService: querier}
+			_, err := reader.read(generator, "unsupported")
+			if err == nil {
+				t.Fatal("unsupported provider returned a nil error")
+			}
+			if len(querier.queries) != 0 {
+				t.Fatalf("unsupported provider made %d queries, want 0", len(querier.queries))
+			}
+		})
+	}
+}
+
 func TestDeviceMemoryQueriesConvertVendorUnitsToMiB(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -408,6 +474,91 @@ func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t 
 			assertGaugeTracked(t, generator, HamiMemoryUtil, labels, tt.wantPhysicalUtil)
 			assertGaugeTracked(t, generator, HamiVMemoryScaling, labels, tt.wantMemoryScaling)
 		})
+	}
+}
+
+func TestGenerateDeviceMetricsExportsOnlyPresentFiniteOptionalTelemetry(t *testing.T) {
+	tests := []struct {
+		name        string
+		deviceID    string
+		response    *pb.InstantResponse
+		wantTracked bool
+		wantValue   float64
+	}{
+		{name: "missing", deviceID: "GPU-optional-missing"},
+		{name: "zero", deviceID: "GPU-optional-zero", response: instantValue(0), wantTracked: true},
+		{name: "ordinary value", deviceID: "GPU-optional-value", response: instantValue(42.5), wantTracked: true, wantValue: 42.5},
+		{name: "NaN", deviceID: "GPU-optional-nan", response: instantValue(float32(math.NaN()))},
+		{name: "positive infinity", deviceID: "GPU-optional-pos-inf", response: instantValue(float32(math.Inf(1)))},
+		{name: "negative infinity", deviceID: "GPU-optional-neg-inf", response: instantValue(float32(math.Inf(-1)))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			responses := map[string]*pb.InstantResponse{}
+			if tt.response != nil {
+				responses[`avg(DCGM_FI_DEV_GPU_TEMP{UUID="`+tt.deviceID+`"})`] = tt.response
+				responses[`avg(DCGM_FI_DEV_MEMORY_TEMP{UUID="`+tt.deviceID+`"})`] = tt.response
+				responses[`avg(DCGM_FI_DEV_POWER_USAGE{UUID="`+tt.deviceID+`"})`] = tt.response
+				responses[`avg(DCGM_FI_DEV_FAN_SPEED{UUID="`+tt.deviceID+`"})`] = tt.response
+				responses[`avg(DCGM_FI_DEV_XID_ERRORS{UUID="`+tt.deviceID+`"})`] = tt.response
+			}
+			generator := newDeviceMetricsTestGenerator(
+				&biz.DeviceInfo{
+					Id: tt.deviceID, Devmem: 40960, Devcore: 100, Count: 1,
+					Type: "A100", NodeName: "node-optional", Provider: biz.NvidiaGPUDevice,
+				},
+				responses,
+			)
+			t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+			if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+				t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+			}
+			labels := []string{"node-optional", biz.NvidiaGPUDevice, "A100", tt.deviceID, "", ""}
+			for _, gauge := range []*prometheus.GaugeVec{
+				HamiDeviceTemperature,
+				HamiDeviceMemoryTemperature,
+				HamiDevicePower,
+				HamiDeviceFanSpeedP,
+				HamiDeviceHardwareHealth,
+			} {
+				assertGaugeTracked(t, generator, gauge, labels, tt.wantTracked)
+				if tt.wantTracked && testutil.ToFloat64(gauge.WithLabelValues(labels...)) != tt.wantValue {
+					t.Fatalf("optional gauge value = %v, want %v", testutil.ToFloat64(gauge.WithLabelValues(labels...)), tt.wantValue)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateDeviceMetricsOmitsUnsupportedOptionalTelemetry(t *testing.T) {
+	const deviceID = "DCU-optional-support"
+	generator := newDeviceMetricsTestGenerator(
+		&biz.DeviceInfo{
+			Id: deviceID, Devmem: 16384, Devcore: 100, Count: 1,
+			Type: "DCU", NodeName: "node-dcu", Provider: biz.HygonGPUDevice,
+		},
+		map[string]*pb.InstantResponse{
+			`avg(dcu_temp{device_id="DCU-optional-support"})`:        instantValue(0),
+			`avg(dcu_power_usage{device_id="DCU-optional-support"})`: instantValue(0),
+		},
+	)
+	t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	labels := []string{"node-dcu", biz.HygonGPUDevice, "DCU", deviceID, "", ""}
+	assertTrackedGaugeValue(t, generator, HamiDeviceTemperature, labels, 0)
+	assertTrackedGaugeValue(t, generator, HamiDevicePower, labels, 0)
+	for _, gauge := range []*prometheus.GaugeVec{
+		HamiDeviceMemoryTemperature,
+		HamiDeviceFanSpeedP,
+		HamiDeviceFanSpeedR,
+		HamiDeviceHardwareHealth,
+	} {
+		assertGaugeTracked(t, generator, gauge, labels, false)
 	}
 }
 

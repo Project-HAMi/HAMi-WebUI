@@ -643,7 +643,7 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
@@ -658,7 +658,7 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID string) (float32, error) {
@@ -678,7 +678,7 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 		return 0, errors.New("provider not exists")
 	}
 
-	power, err := s.queryInstantVal(ctx, query)
+	power, err := s.queryRequiredInstantVal(ctx, query)
 	if err == nil && provider == biz.MetaxGPUDevice {
 		power = power / 1000 // mW -> W
 	}
@@ -691,9 +691,9 @@ func (s *MetricsGenerator) gpuHardwareHealth(ctx context.Context, provider, devi
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("avg(DCGM_FI_DEV_XID_ERRORS{UUID=\"%s\"})", deviceUUID)
 	default:
-		return 0, nil
+		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 func (s *MetricsGenerator) fanSpeed(ctx context.Context, provider, deviceUUID string) (float32, error) {
@@ -708,7 +708,7 @@ func (s *MetricsGenerator) fanSpeed(ctx context.Context, provider, deviceUUID st
 	default:
 		return 0, errors.New("provider not exists")
 	}
-	return s.queryInstantVal(ctx, query)
+	return s.queryRequiredInstantVal(ctx, query)
 }
 
 type DeviceAdditionalInfo struct {
