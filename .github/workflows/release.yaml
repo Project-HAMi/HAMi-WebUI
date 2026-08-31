@@ -429,12 +429,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Hold for T4 verification
+      - name: Hold for acceptance verification
         run: |
           {
             echo "### Canonical release bundle ready"
             echo
-            echo "Download artifact \`release-bundle-${GITHUB_RUN_ID}\` and test that exact tgz on T4/K3s."
+            echo "Download artifact \`release-bundle-${GITHUB_RUN_ID}\` and test that exact tgz against the release issue acceptance matrix."
             echo "Approve the protected \`release\` environment only after the acceptance matrix passes."
             echo "Chart SHA256: \`${{ steps.package.outputs.chart_sha256 }}\`"
           } >>"${GITHUB_STEP_SUMMARY}"
