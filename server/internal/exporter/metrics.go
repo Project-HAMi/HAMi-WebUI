@@ -42,6 +42,11 @@ func init() {
 	prometheus.MustRegister(HamiPoolVmemorySize)
 
 	prometheus.MustRegister(HamiSystemComponentHealth)
+
+	// Background cache refresh health.
+	prometheus.MustRegister(HamiWebUIMetricsRefreshSuccess)
+	prometheus.MustRegister(HamiWebUIMetricsRefreshDurationSeconds)
+	prometheus.MustRegister(HamiWebUIMetricsRefreshLastSuccessTimestampSeconds)
 }
 
 var (
@@ -199,6 +204,21 @@ var (
 		Name: "hami_system_component_health",
 		Help: "system component health",
 	}, []string{"component"})
+
+	HamiWebUIMetricsRefreshSuccess = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hami_webui_metrics_refresh_success",
+		Help: "Whether the most recent completed background refresh of the cached HAMi metrics snapshot was fully successful (1) or degraded/failed (0).",
+	})
+
+	HamiWebUIMetricsRefreshDurationSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hami_webui_metrics_refresh_duration_seconds",
+		Help: "Duration in seconds of the most recent completed background refresh of the cached HAMi metrics snapshot.",
+	})
+
+	HamiWebUIMetricsRefreshLastSuccessTimestampSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hami_webui_metrics_refresh_last_success_timestamp_seconds",
+		Help: "Unix timestamp in seconds of the most recent fully successful commit of the cached HAMi metrics snapshot.",
+	})
 
 	Reset = true
 )
