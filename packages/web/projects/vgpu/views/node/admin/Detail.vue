@@ -211,6 +211,10 @@ import {
 } from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
+import {
+  getNodeReadinessStatus,
+  getNodeSchedulingStatus,
+} from '~/vgpu/views/node/node-status.mjs';
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -384,22 +388,16 @@ const headerStatusDisplay = computed(() => {
   if (detailStatus.value !== REQUEST_STATUS.READY) {
     return { icon: '', text: '' };
   }
-  return getNodeStatusDisplay({
-    isSchedulable: detail.value?.isSchedulable,
-    isExternal: detail.value?.isExternal,
-  });
+  const status = getNodeReadinessStatus(detail.value);
+  return { icon: status.icon, text: t(status.labelKey) };
 });
 
-const getNodeStatusDisplay = ({ isSchedulable, isExternal }) => {
-  if (isExternal || isSchedulable === undefined || isSchedulable === null) {
-    return { icon: 'status-unmanaged', text: t('node.unknown') };
-  }
-  if (isSchedulable) {
-    return { icon: 'status-schedulable', text: t('node.normal') };
-  }
-  return { icon: 'status-unschedulable', text: t('node.abnormal') };
-};
-
+const renderNodeStatus = ({ icon, labelKey }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+    <svg-icon icon={icon} style={{ fontSize: '16px' }} />
+    <span>{t(labelKey)}</span>
+  </span>
+);
 
 const toDisplayText = (value) => (value === '' || value === undefined || value === null ? '--' : value);
 
@@ -415,6 +413,11 @@ const detailColumns = computed(() => [
     render: ({ uid }) => (
       <EllipsisText text={uid || '--'} mode="middle" tooltip="always" />
     ),
+  },
+  {
+    label: t('node.schedulingStatus'),
+    value: 'isSchedulable',
+    render: (row) => renderNodeStatus(getNodeSchedulingStatus(row)),
   },
   {
     label: t('node.detail.osVersion'),
