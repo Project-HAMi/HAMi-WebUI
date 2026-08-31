@@ -398,6 +398,11 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			podUIDLabel := fmt.Sprintf("%s:%s", c.Name, c.PodUID)
 			s.set(HamiContainerVgpuAllocated, float64(vGPU), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
+			allocationKnown := float64(1)
+			if !coreAllocationKnown {
+				allocationKnown = 0
+			}
+			s.set(HamiContainerVcoreAllocationKnown, allocationKnown, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			if coreAllocationKnown {
 				s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 				used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index, core)

@@ -722,9 +722,11 @@ func TestAscendContainerAllocationOmitsUnknownCoreAndUnsupportedUsage(t *testing
 		core          int32
 		coreKnown     bool
 		wantCoreGauge bool
+		wantKnown     float64
 	}{
-		{name: "known template", core: 25, coreKnown: true, wantCoreGauge: true},
-		{name: "unknown template", core: 0, coreKnown: false, wantCoreGauge: false},
+		{name: "known template", core: 25, coreKnown: true, wantCoreGauge: true, wantKnown: 1},
+		{name: "known zero", core: 0, coreKnown: true, wantCoreGauge: true, wantKnown: 1},
+		{name: "unknown template", core: 0, coreKnown: false, wantCoreGauge: false, wantKnown: 0},
 	}
 
 	for _, tt := range tests {
@@ -758,6 +760,7 @@ func TestAscendContainerAllocationOmitsUnknownCoreAndUnsupportedUsage(t *testing
 			assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels, true)
 			assertGaugeTracked(t, generator, HamiContainerVmemoryAllocated, labels, true)
 			assertGaugeTracked(t, generator, HamiContainerVcoreAllocated, labels, tt.wantCoreGauge)
+			assertTrackedGaugeValue(t, generator, HamiContainerVcoreAllocationKnown, labels, tt.wantKnown)
 			usageLabels := labels[:len(labels)-1]
 			for _, gauge := range []*prometheus.GaugeVec{HamiContainerCoreUsed, HamiContainerCoreUtil, HamiContainerMemoryUsed, HamiContainerMemoryUtil} {
 				assertGaugeTracked(t, generator, gauge, usageLabels, false)
@@ -767,4 +770,34 @@ func TestAscendContainerAllocationOmitsUnknownCoreAndUnsupportedUsage(t *testing
 			}
 		})
 	}
+}
+
+func TestNonAscendContainerAllocationIsKnown(t *testing.T) {
+	const (
+		deviceID  = "GPU-allocation-known"
+		nodeName  = "nvidia-node"
+		podName   = "nvidia-pod"
+		container = "worker"
+		namespace = "research"
+		podUID    = "pod-uid"
+	)
+	generator := &MetricsGenerator{
+		nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{{
+			Id: deviceID, AliasId: deviceID, Type: "A100", Provider: biz.NvidiaGPUDevice, NodeName: nodeName,
+		}}}, log.NewStdLogger(io.Discard)),
+		podUsecase: biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{{
+			Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
+			ContainerDevices: biz.ContainerDevices{{UUID: deviceID, Type: biz.NvidiaGPUDevice, Usedmem: 8192, Usedcores: 0}},
+		}}}, log.NewStdLogger(io.Discard)),
+		monitorService: &fakeInstantQuerier{},
+		log:            log.NewHelper(log.NewStdLogger(io.Discard)),
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+	if err := generator.GenerateContainerMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateContainerMetrics() error = %v", err)
+	}
+	labels := []string{nodeName, biz.NvidiaGPUDevice, "A100", deviceID, podName, container, namespace, container + ":" + podUID}
+	assertTrackedGaugeValue(t, generator, HamiContainerVcoreAllocated, labels, 0)
+	assertTrackedGaugeValue(t, generator, HamiContainerVcoreAllocationKnown, labels, 1)
 }

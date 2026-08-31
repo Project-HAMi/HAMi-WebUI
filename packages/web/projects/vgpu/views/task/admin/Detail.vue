@@ -218,11 +218,15 @@ import { getLineOptions } from '~/vgpu/components/config';
 import VChart from 'vue-echarts';
 import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
-import { METRIC_STATUS } from '~/vgpu/hooks/instant-vector-state.mjs';
+import {
+  METRIC_STATUS,
+  readReadyMetricField,
+} from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
+import { buildTaskComputeAllocationQuery } from '~/vgpu/metrics/query-contract.mjs';
 
 const route = useRoute();
 const router = useRouter();
@@ -370,7 +374,10 @@ const resourceOverviewData = useInstantVector(
     },
     {
       key: 'computeLimit',
-      query: `sum(hami_container_vcore_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"})`,
+      query: buildTaskComputeAllocationQuery({
+        selector:
+          'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"',
+      }),
     },
     {
       key: 'singleCardMemory',
@@ -408,7 +415,7 @@ const toNumOrUndefined = (v) => {
 };
 const resourceOverviewTexts = computed(() => {
   const getMetric = (key) => resourceOverviewData.value.find((item) => item.key === key);
-  const get = (key) => getMetric(key)?.count;
+  const get = (key) => readReadyMetricField(getMetric(key), 'count');
   const containerInfo = getMetric('containerInfo');
   const hasContainerInfo =
     containerInfo?.hasData === true && Number(containerInfo.count) > 0;

@@ -1,5 +1,6 @@
 const METRICS = Object.freeze({
   computeAllocated: 'hami_container_vcore_allocated',
+  computeAllocationKnown: 'hami_container_vcore_allocation_known',
   computeCapacity: 'hami_core_size',
   computeUsageAverage: 'hami_core_util_avg',
   memoryAllocated: 'hami_container_vmemory_allocated',
@@ -34,6 +35,27 @@ const aggregateAcrossExporterReplicas = (series, groupLabel = '') => {
 const divideForDisplay = (expression, divisor) =>
   divisor === 1 ? expression : `${expression} / ${divisor}`;
 
+// An absent allocated-core series can mean either a genuinely idle scope or an
+// Ascend allocation that WebUI cannot decode without guessing. Keep the idle
+// capacity-derived zero, but remove the entire scope when any explicit unknown
+// allocation is present so a known subset is never presented as the total.
+const excludeUnknownComputeAllocations = (
+  expression,
+  { selector = '', groupLabel = '' } = {},
+) => {
+  validateGroupLabel(groupLabel);
+  const unknownSeries = `${metricSeries(
+    METRICS.computeAllocationKnown,
+    selector,
+  )} == 0`;
+  const unknown = groupLabel
+    ? `max by (${groupLabel}) (${unknownSeries})`
+    : `max(${unknownSeries})`;
+  const match = groupLabel ? `on (${groupLabel})` : 'on ()';
+
+  return `(${expression}) unless ${match} ${unknown}`;
+};
+
 const buildAllocationQueries = ({
   allocatedMetric,
   capacityMetric,
@@ -60,12 +82,45 @@ const buildAllocationQueries = ({
   };
 };
 
-export const buildComputeAllocationQueries = (options = {}) =>
-  buildAllocationQueries({
+export const buildComputeAllocationQueries = (options = {}) => {
+  const queries = buildAllocationQueries({
     allocatedMetric: METRICS.computeAllocated,
     capacityMetric: METRICS.computeCapacity,
     ...options,
   });
+
+  return {
+    query: excludeUnknownComputeAllocations(queries.query, options),
+    totalQuery: queries.totalQuery,
+    percentQuery: excludeUnknownComputeAllocations(
+      queries.percentQuery,
+      options,
+    ),
+  };
+};
+
+export const buildTaskComputeAllocationQuery = ({
+  selector = '',
+  groupLabel = '',
+} = {}) => {
+  validateGroupLabel(groupLabel);
+  const allocated = metricSeries(METRICS.computeAllocated, selector);
+  const aggregate = groupLabel
+    ? `avg by (${groupLabel}) (${allocated})`
+    : `sum(${allocated})`;
+
+  return excludeUnknownComputeAllocations(aggregate, {
+    selector,
+    groupLabel,
+  });
+};
+
+export const buildTaskCountQueries = () => ({
+  byNode:
+    'topk(5, count by (node) (sum by (container_pod_uuid, node) (hami_container_vgpu_allocated)))',
+  byDevice:
+    'topk(5, count by (device_uuid) (sum by (container_pod_uuid, device_uuid) (hami_container_vgpu_allocated)))',
+});
 
 export const buildMemoryAllocationQueries = (options = {}) =>
   buildAllocationQueries({
