@@ -1,6 +1,6 @@
 # HAMi-WebUI
 
-![Version: 2.0.0-rc.1](https://img.shields.io/badge/Version-2.0.0--rc.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: main](https://img.shields.io/badge/AppVersion-main-informational?style=flat-square)
+![Version: 2.0.0](https://img.shields.io/badge/Version-2.0.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2.0.0](https://img.shields.io/badge/AppVersion-2.0.0-informational?style=flat-square)
 
 ## Get Repo Info
 
@@ -107,10 +107,10 @@ The command removes all the Kubernetes components associated with the chart and 
 | hamiServiceMonitor.interval | string | `"15s"`                                                                            |  |
 | hamiServiceMonitor.relabelings | list | `[]`                                                                               |  |
 | hamiServiceMonitor.svcNamespace | string | `"kube-system"`                                                                    | Namespace where the HAMi monitor Service is installed. |
-| image.digest | string | `""` | Immutable manifest digest; takes precedence over `image.tag` when set. |
+| image.digest | string | `"sha256:80a8f63dab912d714dc1c12b90ee46b3557352c9cb11070968d25eba9644ca83"` | Immutable manifest digest; takes precedence over `image.tag` when set. |
 | image.pullPolicy | string | `"IfNotPresent"` | Pull policy for the application image. |
 | image.repository | string | `"projecthami/hami-webui"` | Unified HAMi-WebUI image repository. |
-| image.tag | string | `"main"` | Used only when `image.digest` is empty. Release packaging replaces development defaults with the released version. |
+| image.tag | string | `"v2.0.0"` | Used only when `image.digest` is empty; stable releases pin both fields to the same image. |
 | imagePullSecrets | list | `[]` | Image pull secrets used by the WebUI Pod. |
 | ingress.annotations | object | `{}`                                                                               |  |
 | ingress.className | string | `""`                                                                               |  |
