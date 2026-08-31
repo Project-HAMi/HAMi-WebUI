@@ -9,6 +9,7 @@ import {
   buildMemoryUsageQueries,
   buildTaskComputeAllocationQuery,
   buildTaskCountQueries,
+  buildTaskResourceOverviewQueries,
 } from './query-contract.mjs';
 
 test('compute allocation stays idle at real zero and hides unknown allocations', () => {
@@ -49,14 +50,45 @@ test('task compute queries reject partial unknown allocations', () => {
     groupLabel: 'container_pod_uuid',
   });
 
-  assert.match(detail, /^\(sum\(hami_container_vcore_allocated\{/);
+  assert.match(
+    detail,
+    /^\(avg\(sum by \(instance\) \(hami_container_vcore_allocated\{/,
+  );
   assert.match(
     detail,
     /unless on \(\) max\(hami_container_vcore_allocation_known\{.*\} == 0\)$/,
   );
   assert.match(
     ranked,
+    /^\(avg by \(container_pod_uuid\) \(hami_container_vcore_allocated\)/,
+  );
+  assert.match(
+    ranked,
     /unless on \(container_pod_uuid\) max by \(container_pod_uuid\)/,
+  );
+});
+
+test('task resource totals stay stable for one or two exporter replicas and multiple cards', () => {
+  const selector =
+    'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"';
+  const queries = buildTaskResourceOverviewQueries({ selector });
+  const vgpuSeries = `hami_container_vgpu_allocated{${selector}}`;
+  const coreSeries = `hami_container_vcore_allocated{${selector}}`;
+  const memorySeries = `hami_container_vmemory_allocated{${selector}}`;
+  const replicaSafeVgpu = `avg(sum by (instance) (${vgpuSeries}))`;
+  const replicaSafeCore = `avg(sum by (instance) (${coreSeries}))`;
+  const replicaSafeMemory = `avg(sum by (instance) (${memorySeries}))`;
+
+  // sum by (instance) totals all cards inside one exporter snapshot; averaging
+  // those totals keeps one and two equivalent WebUI replicas at the same value.
+  assert.equal(queries.gpuCards, replicaSafeVgpu);
+  assert.equal(
+    queries.computeLimit,
+    `(${replicaSafeCore}) unless on () max(hami_container_vcore_allocation_known{${selector}} == 0)`,
+  );
+  assert.equal(
+    queries.singleCardMemory,
+    `${replicaSafeMemory} / clamp_min(${replicaSafeVgpu}, 1) / 1024`,
   );
 });
 

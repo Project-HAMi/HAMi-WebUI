@@ -226,7 +226,7 @@ import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
-import { buildTaskComputeAllocationQuery } from '~/vgpu/metrics/query-contract.mjs';
+import { buildTaskResourceOverviewQueries } from '~/vgpu/metrics/query-contract.mjs';
 
 const route = useRoute();
 const router = useRouter();
@@ -366,24 +366,24 @@ const basicImageTooltip = computed(() => {
 const basicCreateTime = computed(() => (
   detail.value?.createTime ? timeParse(detail.value.createTime) : '--'
 ));
+const taskAllocationSelector =
+  'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"';
+const taskResourceOverviewQueries = buildTaskResourceOverviewQueries({
+  selector: taskAllocationSelector,
+});
 const resourceOverviewData = useInstantVector(
   [
     {
       key: 'gpuCards',
-      query: `sum(hami_container_vgpu_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"})`,
+      query: taskResourceOverviewQueries.gpuCards,
     },
     {
       key: 'computeLimit',
-      query: buildTaskComputeAllocationQuery({
-        selector:
-          'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"',
-      }),
+      query: taskResourceOverviewQueries.computeLimit,
     },
     {
       key: 'singleCardMemory',
-      query:
-        `sum(hami_container_vmemory_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}) ` +
-        `/ clamp_min(sum(hami_container_vgpu_allocated{container_name="$container",pod_name=~"$pod",namespace_name="$namespace"}), 1) / 1024`,
+      query: taskResourceOverviewQueries.singleCardMemory,
     },
     {
       key: 'cpuLimit',
