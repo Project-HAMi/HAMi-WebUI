@@ -209,6 +209,7 @@ import {
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
+import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
 
 const route = useRoute();
@@ -243,7 +244,7 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const nodeMetricSelector = 'node=~"$node"';
+const nodeMetricSelector = 'node=$node';
 const computeAllocationQueries = buildComputeAllocationQueries({
   selector: nodeMetricSelector,
 });
@@ -291,12 +292,11 @@ const _gaugeConfigBase = [
 const gaugeData = useInstantVector(
   _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
   (query) =>
-    query.replaceAll(
-      `$node`,
-      detailStatus.value === REQUEST_STATUS.READY
+    renderPromQLTemplate(query, {
+      node: detailStatus.value === REQUEST_STATUS.READY
         ? detail.value.name
         : 'undefined',
-    ),
+    }),
   times,
 );
 

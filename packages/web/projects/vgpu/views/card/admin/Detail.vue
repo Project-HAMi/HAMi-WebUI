@@ -308,6 +308,7 @@ import {
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
+import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 
@@ -385,7 +386,7 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const cardMetricSelector = 'device_uuid=~"$device_uuid"';
+const cardMetricSelector = 'device_uuid=$device_uuid';
 const computeAllocationQueries = buildComputeAllocationQueries({
   selector: cardMetricSelector,
 });
@@ -431,8 +432,8 @@ const _gaugeConfigBase = [
   {
     titleKey: 'dashboard.computeUsageRate',
     percent: 0,
-    query: `avg(sum(hami_core_util{device_uuid=~"$device_uuid"}) by (instance))`,
-    percentQuery: `avg(sum(hami_core_util_avg{device_uuid=~"$device_uuid"}) by (instance))`,
+    query: `avg(sum(hami_core_util{device_uuid=$device_uuid}) by (instance))`,
+    percentQuery: `avg(sum(hami_core_util_avg{device_uuid=$device_uuid}) by (instance))`,
     total: 100,
     used: 0,
     unit: ' ',
@@ -451,7 +452,9 @@ const _gaugeConfigBase = [
 
 const gaugeData = useInstantVector(
   _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
-  (query) => query.replaceAll(`$device_uuid`, detailCardUuid.value),
+  (query) => renderPromQLTemplate(query, {
+    device_uuid: detailCardUuid.value,
+  }),
   times,
 );
 
@@ -555,7 +558,7 @@ const lineTools = ref([
   {
     titleKey: 'card.detail.gpuTemperatureTrend',
     seriesNameKey: 'card.detail.gpuTemperature',
-    query: `avg by (device_no,driver_version) (hami_device_temperature{device_uuid=~"$device_uuid"})`,
+    query: `avg by (device_no,driver_version) (hami_device_temperature{device_uuid=$device_uuid})`,
     data: [],
     unit: '℃',
     gaugeUnit: '℃',
@@ -567,7 +570,7 @@ const lineTools = ref([
   {
     titleKey: 'card.detail.gpuPowerTrend',
     seriesNameKey: 'card.detail.gpuPower',
-    query: `avg by (device_no,driver_version) (hami_device_power{device_uuid=~"$device_uuid"})`,
+    query: `avg by (device_no,driver_version) (hami_device_power{device_uuid=$device_uuid})`,
     data: [],
     unit: 'W',
     gaugeUnit: 'W',
@@ -602,7 +605,7 @@ const fetchLineData = async () => {
   }
 
   const requests = lineTools.value.flatMap((item, index) => {
-    const query = item.query.replaceAll(`$device_uuid`, uuid);
+    const query = renderPromQLTemplate(item.query, { device_uuid: uuid });
     const rangeRequest = cardApi
       .getRangeVector({
         range: {

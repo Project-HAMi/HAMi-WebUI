@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -12,6 +13,55 @@ import {
   buildTaskCountQueries,
   buildTaskResourceOverviewQueries,
 } from './query-contract.mjs';
+import {
+  promQLStringLiteral,
+  renderPromQLTemplate,
+} from './promql-template.mjs';
+
+test('PromQL templates render complete escaped string literals', () => {
+  assert.equal(promQLStringLiteral('gpu.node-1'), '"gpu.node-1"');
+  assert.equal(promQLStringLiteral('GPU-"lab"'), '"GPU-\\"lab\\""');
+  assert.equal(promQLStringLiteral('rack\\slot'), '"rack\\\\slot"');
+  assert.equal(promQLStringLiteral('train\nv1'), '"train\\nv1"');
+
+  assert.equal(
+    renderPromQLTemplate(
+      'metric{node=$node,device_uuid=$device_uuid,pod=$pod}',
+      {
+        node: 'gpu.node-1',
+        device_uuid: 'GPU-"lab"\\slot',
+        pod: 'train\nv1',
+      },
+    ),
+    'metric{node="gpu.node-1",device_uuid="GPU-\\"lab\\"\\\\slot",pod="train\\nv1"}',
+  );
+  assert.equal(
+    renderPromQLTemplate('metric{device_uuid=$device_uuid,pod=$pod}', {
+      device_uuid: 'GPU-$pod',
+      pod: 'train-v1',
+    }),
+    'metric{device_uuid="GPU-$pod",pod="train-v1"}',
+  );
+  assert.throws(
+    () => renderPromQLTemplate('metric{node=$node}', {}),
+    /Missing PromQL template variable: node/,
+  );
+});
+
+test('detail queries do not regex-match exact resource identities', () => {
+  const exactIdentityRegex =
+    /\b(?:node|pod|pod_name|container|container_name|namespace|namespace_name|device_uuid)=~/;
+  const detailFiles = [
+    '../views/node/admin/Detail.vue',
+    '../views/card/admin/Detail.vue',
+    '../views/task/admin/Detail.vue',
+  ];
+
+  for (const file of detailFiles) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.doesNotMatch(source, exactIdentityRegex, file);
+  }
+});
 
 test('compute allocation stays idle at real zero and hides unknown allocations', () => {
   const queries = buildComputeAllocationQueries();
@@ -33,19 +83,19 @@ test('compute allocation stays idle at real zero and hides unknown allocations',
 
 test('scoped compute allocation excludes the whole affected group', () => {
   const queries = buildComputeAllocationQueries({
-    selector: 'node=~"$node"',
+    selector: 'node=$node',
     groupLabel: 'node',
   });
 
   assert.match(
     queries.percentQuery,
-    /unless on \(node\) max by \(node\) \(hami_container_vcore_allocation_known\{node=~"\$node"\} == 0\)/,
+    /unless on \(node\) max by \(node\) \(hami_container_vcore_allocation_known\{node=\$node\} == 0\)/,
   );
 });
 
 test('task compute queries reject partial unknown allocations', () => {
   const selector =
-    'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"';
+    'container_name=$container,pod_name=$pod,namespace_name=$namespace';
   const detail = buildTaskComputeAllocationQuery({ selector });
   const ranked = buildTaskComputeAllocationQuery({
     groupLabel: 'container_pod_uuid',
@@ -97,7 +147,7 @@ test('workload allocation rankings total cards within each exporter replica', ()
 
 test('task resource totals stay stable for one or two exporter replicas and multiple cards', () => {
   const selector =
-    'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"';
+    'container_name=$container,pod_name=$pod,namespace_name=$namespace';
   const queries = buildTaskResourceOverviewQueries({ selector });
   const vgpuSeries = `hami_container_vgpu_allocated{${selector}}`;
   const coreSeries = `hami_container_vcore_allocated{${selector}}`;
@@ -145,16 +195,16 @@ test('memory allocation uses schedulable capacity and fills idle allocation', ()
 
 test('scoped memory allocation keeps the same contract for node and card details', () => {
   const node = buildMemoryAllocationQueries({
-    selector: 'node=~"$node"',
+    selector: 'node=$node',
   });
   const card = buildMemoryAllocationQueries({
-    selector: 'device_uuid=~"$device_uuid"',
+    selector: 'device_uuid=$device_uuid',
   });
 
-  assert.match(node.totalQuery, /hami_vmemory_size\{node=~"\$node"\}/);
+  assert.match(node.totalQuery, /hami_vmemory_size\{node=\$node\}/);
   assert.match(
     card.totalQuery,
-    /hami_vmemory_size\{device_uuid=~"\$device_uuid"\}/,
+    /hami_vmemory_size\{device_uuid=\$device_uuid\}/,
   );
   assert.match(node.percentQuery, / or /);
   assert.match(card.percentQuery, / or /);

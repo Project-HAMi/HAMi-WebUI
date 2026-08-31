@@ -227,6 +227,7 @@ import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import { buildTaskResourceOverviewQueries } from '~/vgpu/metrics/query-contract.mjs';
+import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 
 const route = useRoute();
 const router = useRouter();
@@ -367,7 +368,7 @@ const basicCreateTime = computed(() => (
   detail.value?.createTime ? timeParse(detail.value.createTime) : '--'
 ));
 const taskAllocationSelector =
-  'container_name="$container",pod_name=~"$pod",namespace_name="$namespace"';
+  'container_name=$container,pod_name=$pod,namespace_name=$namespace';
 const taskResourceOverviewQueries = buildTaskResourceOverviewQueries({
   selector: taskAllocationSelector,
 });
@@ -388,25 +389,26 @@ const resourceOverviewData = useInstantVector(
     {
       key: 'cpuLimit',
       query:
-        `sum(kube_pod_container_resource_limits{resource="cpu", namespace="$namespace", pod=~"$pod", container="$container"})`,
+        `sum(kube_pod_container_resource_limits{resource="cpu", namespace=$namespace, pod=$pod, container=$container})`,
     },
     {
       key: 'memoryLimit',
       query:
-        `sum(kube_pod_container_resource_limits{resource="memory", namespace="$namespace", pod=~"$pod", container="$container"}) / 1024 / 1024 / 1024`,
+        `sum(kube_pod_container_resource_limits{resource="memory", namespace=$namespace, pod=$pod, container=$container}) / 1024 / 1024 / 1024`,
     },
     {
       key: 'containerInfo',
       query:
-        `count(kube_pod_container_info{namespace="$namespace", pod=~"$pod", container="$container"})`,
+        `count(kube_pod_container_info{namespace=$namespace, pod=$pod, container=$container})`,
     },
   ],
   (query) => {
     if (detailStatus.value !== REQUEST_STATUS.READY) return 'undefined';
-    return query
-      .replaceAll(`$container`, detail.value.name || '')
-      .replaceAll(`$namespace`, detail.value.namespace || '')
-      .replaceAll(`$pod`, detail.value.appName || '');
+    return renderPromQLTemplate(query, {
+      container: detail.value.name || '',
+      namespace: detail.value.namespace || '',
+      pod: detail.value.appName || '',
+    });
   },
 );
 const toNumOrUndefined = (v) => {
@@ -450,12 +452,12 @@ const handleGpuJump = (uuid) => {
 const lineConfig = ref([
   {
     titleKey: 'task.computeUsageTrend',
-    query: `avg(avg(hami_container_core_util{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (node, device_uuid))`,
+    query: `avg(avg(hami_container_core_util{container_name=$container,pod_name=$pod,namespace_name=$namespace}) by (node, device_uuid))`,
     data: [],
   },
   {
     titleKey: 'task.memUsageTrend',
-    query: `100 * sum(avg(hami_container_memory_used{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (node, device_uuid)) / clamp_min(sum(avg(hami_container_vmemory_allocated{container_name=~"$container",pod_name=~"$pod",namespace_name="$namespace"}) by (node, device_uuid)), 1)`,
+    query: `100 * sum(avg(hami_container_memory_used{container_name=$container,pod_name=$pod,namespace_name=$namespace}) by (node, device_uuid)) / clamp_min(sum(avg(hami_container_vmemory_allocated{container_name=$container,pod_name=$pod,namespace_name=$namespace}) by (node, device_uuid)), 1)`,
     data: [],
   },
 ]);
@@ -504,10 +506,11 @@ const fetchLineData = async () => {
           end: timeParse(rangeEnd),
           step: calculatePrometheusStep(rangeStart, rangeEnd),
         },
-        query: item.query
-          .replaceAll(`$container`, name)
-          .replaceAll(`$namespace`, namespace)
-          .replaceAll(`$pod`, appName),
+        query: renderPromQLTemplate(item.query, {
+          container: name,
+          namespace,
+          pod: appName,
+        }),
       });
       return { ok: true, data: res.data[0]?.values || [] };
     } catch {
