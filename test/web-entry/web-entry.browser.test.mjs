@@ -862,6 +862,155 @@ test('runtime language updates the document and Element Plus services', async() 
   }
 }, { timeout: 60_000 })
 
+test('workload list exposes deterministic loading, empty, error and refresh states', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const responses = []
+  let receivedRequests = 0
+  let completedRequests = 0
+
+  const enqueue = (handler) => responses.push(handler)
+  const fulfill = (route, items, status = 200) => route.fulfill({
+    status,
+    contentType: 'application/json',
+    body: JSON.stringify(status === 200
+      ? { code: 0, items, total: Array.isArray(items) ? items.length : 0 }
+      : { code: status, message: 'temporary list failure' })
+  })
+  const workload = (name) => ({
+    name,
+    appName: '',
+    podUid: `pod-${name}`,
+    namespace: 'default',
+    status: 'success',
+    deviceIds: ['gpu-1'],
+    allocatedCores: 100,
+    allocatedMem: 1024,
+    createTime: '2026-08-31T00:00:00Z'
+  })
+  const createGate = () => {
+    let release
+    const promise = new Promise((resolve) => {
+      release = resolve
+    })
+    return { promise, release }
+  }
+
+  await page.route('**/api/vgpu/v1/containers', async(route) => {
+    const handler = responses.shift()
+    assert.ok(handler, 'Workload list issued an unexpected request')
+    receivedRequests += 1
+    await handler(route)
+    completedRequests += 1
+  })
+
+  const initialGate = createGate()
+  enqueue(async(route) => {
+    await initialGate.promise
+    await fulfill(route, { invalid: true })
+  })
+
+  try {
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('[data-testid="stateful-table-skeleton"]').waitFor()
+    assert.equal(
+      await page.locator('.stateful-table').getAttribute('aria-busy'),
+      'true'
+    )
+
+    initialGate.release()
+    await page.locator('[data-testid="stateful-table-error"]').waitFor()
+    await page.getByText('The server returned an invalid list response. Please try again.')
+      .waitFor()
+
+    enqueue((route) => fulfill(route, [], 503))
+    await page.locator('[data-testid="stateful-table-retry"]').click()
+    await page.getByText('Failed to load this resource. Please try again.').waitFor()
+
+    enqueue((route) => fulfill(route, []))
+    await page.locator('[data-testid="stateful-table-retry"]').click()
+    await page.locator('[data-testid="stateful-table-empty"]').waitFor()
+    assert.equal(
+      await page.locator('[data-testid="stateful-table-error"]').count(),
+      0
+    )
+
+    const refreshButton = page.locator('.table-toolbar-right .t-button').nth(1)
+    enqueue((route) => fulfill(route, [workload('stable-worker')]))
+    await refreshButton.click()
+    await page.locator('.workload-table .ellipsis-text')
+      .filter({ hasText: 'stable-worker' })
+      .waitFor()
+
+    const failedRefreshGate = createGate()
+    enqueue(async(route) => {
+      await failedRefreshGate.promise
+      await fulfill(route, [], 503)
+    })
+    await refreshButton.click()
+    await page.locator('[data-testid="stateful-table-refreshing"]').waitFor()
+    await page.locator('.workload-table .ellipsis-text')
+      .filter({ hasText: 'stable-worker' })
+      .waitFor()
+
+    failedRefreshGate.release()
+    await page.locator('[data-testid="stateful-table-refresh-error"]').waitFor()
+    await page.locator('.workload-table .ellipsis-text')
+      .filter({ hasText: 'stable-worker' })
+      .waitFor()
+
+    enqueue((route) => fulfill(route, [workload('fixed-worker')]))
+    await page.locator('[data-testid="stateful-table-refresh-error"] .t-button').click()
+    await page.locator('.workload-table .ellipsis-text')
+      .filter({ hasText: 'fixed-worker' })
+      .waitFor()
+
+    const slowRefreshGate = createGate()
+    enqueue(async(route) => {
+      await slowRefreshGate.promise
+      await fulfill(route, [workload('stale-worker')])
+    })
+    const requestsBeforeRace = receivedRequests
+    await refreshButton.click()
+    await waitUntil(
+      () => receivedRequests === requestsBeforeRace + 1,
+      'The slow list refresh did not start'
+    )
+
+    enqueue((route) => fulfill(route, [workload('newest-worker')]))
+    await refreshButton.click()
+    await page.locator('.workload-table .ellipsis-text')
+      .filter({ hasText: 'newest-worker' })
+      .waitFor()
+
+    const completedBeforeSlowRelease = completedRequests
+    slowRefreshGate.release()
+    await waitUntil(
+      () => completedRequests === completedBeforeSlowRelease + 1,
+      'The slow list refresh did not settle'
+    )
+    assert.equal(
+      await page.locator('.workload-table .ellipsis-text')
+        .filter({ hasText: 'newest-worker' })
+        .count(),
+      1
+    )
+    assert.equal(
+      await page.locator('.workload-table .ellipsis-text')
+        .filter({ hasText: 'stale-worker' })
+        .count(),
+      0
+    )
+    assert.equal(responses.length, 0)
+  } finally {
+    initialGate.release()
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
 test('detail pages expose truthful asynchronous resource states', async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
 

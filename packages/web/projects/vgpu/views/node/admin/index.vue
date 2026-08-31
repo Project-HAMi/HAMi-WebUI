@@ -40,15 +40,23 @@
           </t-input>
         </t-space>
       </toolbar>
-      <t-table
-        :key="locale"
-        row-key="uid"
-        class="node-table vgpu-table-skin"
-        :data="tableData"
-        :columns="visibleColumns"
-        :loading="tableLoading"
-        table-layout="auto"
-      />
+      <stateful-table
+        :status="tableStatus"
+        :refreshing="tableRefreshing"
+        :refresh-error="tableRefreshError"
+        :has-rows="tableData.length > 0"
+        :column-count="visibleColumns.length"
+        @retry="refreshTable"
+      >
+        <t-table
+          :key="locale"
+          row-key="uid"
+          class="node-table vgpu-table-skin"
+          :data="tableData"
+          :columns="visibleColumns"
+          table-layout="auto"
+        />
+      </stateful-table>
     </div>
   </div>
 </template>
@@ -59,6 +67,7 @@ import cardApi from '~/vgpu/api/card';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
+import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TextPlus from '@/components/TextPlus.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -68,12 +77,11 @@ import { computed, ref, reactive, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
+import useFetchList from '@/hooks/useFetchList';
 
 const router = useRouter();
 const route = useRoute();
 const { t, locale } = useI18n();
-const tableData = ref([]);
-const tableLoading = ref(false);
 const allNodeMap = ref(new Map());
 const filters = reactive({
   isSchedulable: undefined,
@@ -231,22 +239,23 @@ const baseColumns = computed(() => [
 ]);
 const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
 
-const fetchTableData = async () => {
-  tableLoading.value = true;
-  try {
-    const payload = {
-      filters: {
-        ...(filters.isSchedulable ? { isSchedulable: filters.isSchedulable } : {}),
-        ...(filters.type ? { type: filters.type } : {}),
-        ...(getTrimValue(filters.ip) ? { ip: getTrimValue(filters.ip) } : {}),
-      },
-    };
-    const { list = [] } = await request(nodeApi.getNodeList(payload));
-    tableData.value = list;
-  } finally {
-    tableLoading.value = false;
-  }
-};
+const tableState = useFetchList(() => {
+  const payload = {
+    filters: {
+      ...(filters.isSchedulable ? { isSchedulable: filters.isSchedulable } : {}),
+      ...(filters.type ? { type: filters.type } : {}),
+      ...(getTrimValue(filters.ip) ? { ip: getTrimValue(filters.ip) } : {}),
+    },
+  };
+  return request(nodeApi.getNodeList(payload));
+}, { immediate: false });
+const {
+  data: tableData,
+  refresh: fetchTableData,
+  refreshError: tableRefreshError,
+  refreshing: tableRefreshing,
+  status: tableStatus,
+} = tableState;
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({ fetchTableData });
 
 const parseSchedulableFromQuery = (value) => {
