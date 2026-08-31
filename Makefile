@@ -25,7 +25,7 @@ help:
 
 .PHONY: bootstrap
 bootstrap:
-	$(PNPM) install --frozen-lockfile --config.package-lock=true
+	$(PNPM) install --frozen-lockfile --config.lockfile=true
 
 .PHONY: dev
 dev:
