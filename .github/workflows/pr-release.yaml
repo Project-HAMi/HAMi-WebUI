@@ -78,8 +78,10 @@ jobs:
         run: |
           mkdir -p "${RUNNER_TEMP}/artifact-contract/part-a"
           mkdir -p "${RUNNER_TEMP}/artifact-contract/part-b"
+          mkdir -p "${RUNNER_TEMP}/artifact-contract/pages"
           printf 'artifact-part-a\n' >"${RUNNER_TEMP}/artifact-contract/part-a/part-a.txt"
           printf 'artifact-part-b\n' >"${RUNNER_TEMP}/artifact-contract/part-b/part-b.txt"
+          printf 'pages-artifact-v5\n' >"${RUNNER_TEMP}/artifact-contract/pages/index.html"
 
       - name: Upload part A
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -95,6 +97,13 @@ jobs:
           name: pr-release-artifact-${{ github.run_id }}-${{ github.run_attempt }}-part-b
           path: ${{ runner.temp }}/artifact-contract/part-b/
           if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload Pages fixture
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          name: pr-release-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/artifact-contract/pages/
           retention-days: 1
 
   artifact-consumer:
@@ -130,6 +139,12 @@ jobs:
           github-token: ${{ github.token }}
           run-id: ${{ github.run_id }}
 
+      - name: Download the Pages fixture
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-release-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/artifact-contract/pages-download
+
       - name: Verify every downloaded byte and layout
         run: |
           set -euo pipefail
@@ -138,6 +153,18 @@ jobs:
           [[ "$(cat "${RUNNER_TEMP}/artifact-contract/merged/part-b.txt")" == 'artifact-part-b' ]]
           [[ "$(cat "${RUNNER_TEMP}/artifact-contract/authenticated/part-b.txt")" == 'artifact-part-b' ]]
           [[ "$(find "${RUNNER_TEMP}/artifact-contract/merged" -type f | wc -l | tr -d ' ')" == '2' ]]
+          pages_archive="${RUNNER_TEMP}/artifact-contract/pages-download/artifact.tar"
+          mapfile -t pages_entries < <(tar -tf "${pages_archive}")
+          [[ "${#pages_entries[@]}" == '2' ]]
+          [[ "${pages_entries[0]}" == './' ]]
+          [[ "${pages_entries[1]}" == './index.html' ]]
+          mkdir -p "${RUNNER_TEMP}/artifact-contract/pages-unpacked"
+          tar -xf "${pages_archive}" \
+            -C "${RUNNER_TEMP}/artifact-contract/pages-unpacked"
+          pages_index="${RUNNER_TEMP}/artifact-contract/pages-unpacked/index.html"
+          [[ -f "${pages_index}" && ! -L "${pages_index}" ]]
+          printf 'pages-artifact-v5\n' >"${RUNNER_TEMP}/artifact-contract/pages-expected"
+          cmp --silent "${RUNNER_TEMP}/artifact-contract/pages-expected" "${pages_index}"
 
   pr-release-required:
     name: pr-release-required
