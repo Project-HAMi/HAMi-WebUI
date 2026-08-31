@@ -218,7 +218,7 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: 'GPUs',
+    title: t('task.card'),
     dataIndex: 'deviceIds',
     render: ({ deviceIds, allocatedCores, allocatedCoresKnown, allocatedMem }) => {
       const ids = Array.isArray(deviceIds) ? deviceIds : [];
