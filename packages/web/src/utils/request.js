@@ -3,6 +3,7 @@ import axios from 'axios';
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
 import i18n from '@/locales';
 import { getBasePath } from '@/utils/base-path.mjs';
+import { createRequestErrorNotificationGate } from '@/utils/request-error-notification.mjs';
 
 // Default request timeout in ms. Override at build time via VITE_APP_REQUEST_TIMEOUT
 // (injected through .env.* or the image build environment). 60s is large
@@ -11,6 +12,7 @@ import { getBasePath } from '@/utils/base-path.mjs';
 const DEFAULT_REQUEST_TIMEOUT = 60000;
 const requestTimeout =
   Number.parseInt(import.meta.env.VITE_APP_REQUEST_TIMEOUT, 10) || DEFAULT_REQUEST_TIMEOUT;
+const shouldNotifyRequestError = createRequestErrorNotificationGate();
 
 const service = axios.create({
   // API descriptors remain `/api/vgpu/...`; Axios combines them with this
@@ -53,7 +55,16 @@ service.interceptors.response.use(
       if (res.code === 50008 || res.code === 50012 || res.code === 50014) {
         // to re-login
         await ElMessageBox.alert(i18n.global.t('common.requestError'), i18n.global.t('common.tip'));
-      } else {
+      } else if (
+        shouldNotifyRequestError({
+          kind: 'domain',
+          config: response.config,
+          status: response.status,
+          code: res.code,
+          reason: res.reason,
+          message: res.message,
+        })
+      ) {
         ElNotification({
           title: res.reason,
           message: res.message,
@@ -67,10 +78,21 @@ service.interceptors.response.use(
     }
   },
   (error) => {
-    ElMessage({
-      message: error.message,
-      type: 'error',
-    });
+    if (
+      shouldNotifyRequestError({
+        kind: 'transport',
+        config: error.config,
+        status: error.response?.status,
+        code: error.code,
+        reason: error.name,
+        message: error.message,
+      })
+    ) {
+      ElMessage({
+        message: error.message,
+        type: 'error',
+      });
+    }
     return Promise.reject(error);
   },
 );
