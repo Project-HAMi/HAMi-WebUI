@@ -248,9 +248,6 @@ func TestOptionalDeviceTelemetryDistinguishesMissingNonFiniteAndZero(t *testing.
 		{name: "fan speed", read: func(generator *MetricsGenerator, provider string) (float32, error) {
 			return generator.fanSpeed(context.Background(), provider, "GPU-1")
 		}},
-		{name: "hardware health", read: func(generator *MetricsGenerator, provider string) (float32, error) {
-			return generator.gpuHardwareHealth(context.Background(), provider, "GPU-1")
-		}},
 	}
 	tests := []struct {
 		name        string
@@ -294,6 +291,49 @@ func TestOptionalDeviceTelemetryDistinguishesMissingNonFiniteAndZero(t *testing.
 				t.Fatalf("unsupported provider made %d queries, want 0", len(querier.queries))
 			}
 		})
+	}
+}
+
+func TestLastXIDErrorCodeUsesNvidiaMetricAndRejectsUnsupportedProvider(t *testing.T) {
+	t.Run("NVIDIA", func(t *testing.T) {
+		querier := &fakeInstantQuerier{responses: []*pb.InstantResponse{instantValue(79)}}
+		generator := &MetricsGenerator{monitorService: querier}
+		value, err := generator.lastXIDErrorCode(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+		if err != nil || value != 79 {
+			t.Fatalf("last XID error code = (%v, %v), want (79, nil)", value, err)
+		}
+		if len(querier.queries) != 1 || querier.queries[0] != `avg(DCGM_FI_DEV_XID_ERRORS{UUID="GPU-1"})` {
+			t.Fatalf("queries = %v, want the NVIDIA XID query", querier.queries)
+		}
+	})
+
+	t.Run("unsupported provider", func(t *testing.T) {
+		querier := &fakeInstantQuerier{}
+		generator := &MetricsGenerator{monitorService: querier}
+		if _, err := generator.lastXIDErrorCode(context.Background(), "unsupported", "GPU-1"); err == nil {
+			t.Fatal("unsupported provider returned a nil error")
+		}
+		if len(querier.queries) != 0 {
+			t.Fatalf("unsupported provider made %d queries, want 0", len(querier.queries))
+		}
+	})
+}
+
+func TestLastXIDErrorMetricDescriptorNamesTheRawDiagnosticCode(t *testing.T) {
+	descriptors := make(chan *prometheus.Desc, 1)
+	HamiDeviceLastXIDErrorCode.Describe(descriptors)
+	descriptor := (<-descriptors).String()
+
+	for _, want := range []string{
+		`fqName: "hami_device_last_xid_error_code"`,
+		`help: "Last NVIDIA XID error code reported by DCGM; 0 means no error and non-zero values are diagnostic codes, not a health status"`,
+	} {
+		if !strings.Contains(descriptor, want) {
+			t.Fatalf("metric descriptor %q does not contain %q", descriptor, want)
+		}
+	}
+	if strings.Contains(descriptor, "hami_device_hardware_health") {
+		t.Fatalf("metric descriptor still exposes the removed health name: %s", descriptor)
 	}
 }
 
@@ -584,7 +624,6 @@ func TestGenerateDeviceMetricsExportsOnlyPresentFiniteOptionalTelemetry(t *testi
 				responses[`avg(DCGM_FI_DEV_MEMORY_TEMP{UUID="`+tt.deviceID+`"})`] = tt.response
 				responses[`avg(DCGM_FI_DEV_POWER_USAGE{UUID="`+tt.deviceID+`"})`] = tt.response
 				responses[`avg(DCGM_FI_DEV_FAN_SPEED{UUID="`+tt.deviceID+`"})`] = tt.response
-				responses[`avg(DCGM_FI_DEV_XID_ERRORS{UUID="`+tt.deviceID+`"})`] = tt.response
 			}
 			generator := newDeviceMetricsTestGenerator(
 				&biz.DeviceInfo{
@@ -604,12 +643,55 @@ func TestGenerateDeviceMetricsExportsOnlyPresentFiniteOptionalTelemetry(t *testi
 				HamiDeviceMemoryTemperature,
 				HamiDevicePower,
 				HamiDeviceFanSpeedP,
-				HamiDeviceHardwareHealth,
 			} {
 				assertGaugeTracked(t, generator, gauge, labels, tt.wantTracked)
 				if tt.wantTracked && testutil.ToFloat64(gauge.WithLabelValues(labels...)) != tt.wantValue {
 					t.Fatalf("optional gauge value = %v, want %v", testutil.ToFloat64(gauge.WithLabelValues(labels...)), tt.wantValue)
 				}
+			}
+		})
+	}
+}
+
+func TestGenerateDeviceMetricsExportsOnlyPresentXIDErrorCodes(t *testing.T) {
+	tests := []struct {
+		name        string
+		deviceID    string
+		response    *pb.InstantResponse
+		wantTracked bool
+		wantValue   float64
+	}{
+		{name: "missing", deviceID: "GPU-xid-missing"},
+		{name: "no error", deviceID: "GPU-xid-zero", response: instantValue(0), wantTracked: true},
+		{name: "informational code", deviceID: "GPU-xid-45", response: instantValue(45), wantTracked: true, wantValue: 45},
+		{name: "fallen off bus code", deviceID: "GPU-xid-79", response: instantValue(79), wantTracked: true, wantValue: 79},
+		{name: "NaN", deviceID: "GPU-xid-nan", response: instantValue(float32(math.NaN()))},
+		{name: "positive infinity", deviceID: "GPU-xid-pos-inf", response: instantValue(float32(math.Inf(1)))},
+		{name: "negative infinity", deviceID: "GPU-xid-neg-inf", response: instantValue(float32(math.Inf(-1)))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			responses := map[string]*pb.InstantResponse{}
+			if tt.response != nil {
+				responses[`avg(DCGM_FI_DEV_XID_ERRORS{UUID="`+tt.deviceID+`"})`] = tt.response
+			}
+			generator := newDeviceMetricsTestGenerator(
+				&biz.DeviceInfo{
+					Id: tt.deviceID, Devmem: 40960, Devcore: 100, Count: 1,
+					Type: "A100", NodeName: "node-xid", Provider: biz.NvidiaGPUDevice,
+				},
+				responses,
+			)
+			t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+			if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+				t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+			}
+			labels := []string{"node-xid", biz.NvidiaGPUDevice, "A100", tt.deviceID, "", ""}
+			assertGaugeTracked(t, generator, HamiDeviceLastXIDErrorCode, labels, tt.wantTracked)
+			if tt.wantTracked && testutil.ToFloat64(HamiDeviceLastXIDErrorCode.WithLabelValues(labels...)) != tt.wantValue {
+				t.Fatalf("last XID error code gauge value = %v, want %v", testutil.ToFloat64(HamiDeviceLastXIDErrorCode.WithLabelValues(labels...)), tt.wantValue)
 			}
 		})
 	}
@@ -639,7 +721,7 @@ func TestGenerateDeviceMetricsOmitsUnsupportedOptionalTelemetry(t *testing.T) {
 		HamiDeviceMemoryTemperature,
 		HamiDeviceFanSpeedP,
 		HamiDeviceFanSpeedR,
-		HamiDeviceHardwareHealth,
+		HamiDeviceLastXIDErrorCode,
 	} {
 		assertGaugeTracked(t, generator, gauge, labels, false)
 	}

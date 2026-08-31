@@ -296,9 +296,9 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 				s.set(HamiDeviceFanSpeedR, float64(fanSpeed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			}
 		}
-		gpuHardwareHealth, err := s.gpuHardwareHealth(ctx, provider, device.Id)
+		lastXIDErrorCode, err := s.lastXIDErrorCode(ctx, provider, device.Id)
 		if err == nil {
-			s.set(HamiDeviceHardwareHealth, float64(gpuHardwareHealth), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiDeviceLastXIDErrorCode, float64(lastXIDErrorCode), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
 	}
 	return nil
@@ -687,13 +687,13 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 	return power, err
 }
 
-func (s *MetricsGenerator) gpuHardwareHealth(ctx context.Context, provider, deviceUUID string) (float32, error) {
+func (s *MetricsGenerator) lastXIDErrorCode(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("avg(DCGM_FI_DEV_XID_ERRORS{UUID=\"%s\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, fmt.Errorf("last XID error code is not supported by provider %q", provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
 }

@@ -150,6 +150,17 @@ Do not copy these Chart 1.x settings:
 - `frontend.proxyTimeout`, `backend.grpc`, or `service.legacyBackendPort`, which
   no longer apply to the in-process API and single-container Service topology.
 
+Chart 2 also renames the NVIDIA device metric
+`hami_device_hardware_health` to `hami_device_last_xid_error_code`. The value
+has always been the raw `DCGM_FI_DEV_XID_ERRORS` code: `0` means that no XID
+error was reported, non-zero values are diagnostic codes rather than a health
+status, and unavailable telemetry leaves the series absent. Dashboards that
+must query retained Chart 1.3 history can temporarily use:
+
+```promql
+hami_device_last_xid_error_code or hami_device_hardware_health
+```
+
 After Chart 2.0.0 is published, upgrade with Helm defaults reset so removed
 values cannot leak from release history:
 
