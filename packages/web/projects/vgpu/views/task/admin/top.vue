@@ -12,16 +12,14 @@ import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { computed } from 'vue';
 import {
-  buildTaskComputeAllocationQuery,
+  buildTaskAllocationTopQueries,
   buildTaskCountQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
 
 const router = useRouter();
 const { t } = useI18n();
 const taskCountQueries = buildTaskCountQueries();
-const taskComputeAllocationQuery = buildTaskComputeAllocationQuery({
-  groupLabel: 'container_pod_uuid',
-});
+const taskAllocationTopQueries = buildTaskAllocationTopQueries();
 
 const handleChartClick = async (params) => {
   const name = params.data.name;
@@ -83,8 +81,8 @@ const topConfig = computed(() => [
         key: 'core',
         data: [],
         nameKey: 'container_pod_uuid',
-        unit: ' ',
-        query: `topk(5, ${taskComputeAllocationQuery})`,
+        unit: t('dashboard.acceleratorEquivalentUnit'),
+        query: taskAllocationTopQueries.compute,
       },
       {
         tab: t('dashboard.memory'),
@@ -92,8 +90,7 @@ const topConfig = computed(() => [
         data: [],
         unit: 'GiB',
         nameKey: 'container_pod_uuid',
-        query:
-          'topk(5, avg by (container_pod_uuid) (hami_container_vmemory_allocated))/1024',
+        query: taskAllocationTopQueries.memory,
       },
       {
         tab: 'vGPU',
@@ -101,7 +98,7 @@ const topConfig = computed(() => [
         data: [],
         nameKey: 'container_pod_uuid',
         unit: t('dashboard.vgpuSlotUnit'),
-        query: 'topk(5, avg by (container_pod_uuid) (hami_container_vgpu_allocated))',
+        query: taskAllocationTopQueries.vgpu,
       },
     ],
   },

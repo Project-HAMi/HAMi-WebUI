@@ -306,7 +306,7 @@ export default {
     memoryUsageTrend: '内存使用率（%）',
     noMonitorSupport: '该设备厂商暂不支持任务维度监控',
     topCount: '任务数量分布 Top5',
-    topApply: '任务资源申请 Top5',
+    topApply: '工作负载分配 Top5',
     detail: {
       title: '任务管理',
       detailInfo: '基础信息',
