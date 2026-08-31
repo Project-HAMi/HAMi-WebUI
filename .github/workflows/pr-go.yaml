@@ -12,7 +12,6 @@ permissions:
 
 env:
   GOLANGCI_VERSION: "v2.12"
-  PROTOC_VERSION: "28.3"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -55,11 +54,10 @@ jobs:
           cache-dependency-path: server/go.sum
       - name: Verify toolchain versions
         run: bash ../scripts/verify-toolchain-versions.sh
-      - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: ${{ env.PROTOC_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install checksum-verified protoc
+        run: |
+          bash hack/install-protoc.sh "${RUNNER_TEMP}/protoc"
+          echo "${RUNNER_TEMP}/protoc/bin" >>"${GITHUB_PATH}"
       - name: Install codegen tools (wire / kratos / protoc-gen-*)
         run: make install-deps
       - name: Generate, build, vet, and test
@@ -81,11 +79,10 @@ jobs:
         with:
           go-version-file: server/.go-version
           cache-dependency-path: server/go.sum
-      - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: ${{ env.PROTOC_VERSION }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install checksum-verified protoc
+        run: |
+          bash hack/install-protoc.sh "${RUNNER_TEMP}/protoc"
+          echo "${RUNNER_TEMP}/protoc/bin" >>"${GITHUB_PATH}"
       - name: Install codegen tools (wire / kratos / protoc-gen-*)
         run: make install-deps
       - name: Generate proto + wire
@@ -102,6 +99,25 @@ jobs:
           # by golangci-lint automatically.
           only-new-issues: true
 
+  # Cross-platform image builds execute protoc on BUILDPLATFORM, so an x86
+  # runner does not exercise the arm64 archive when it builds an arm64 binary.
+  protoc-arm64:
+    name: Verify arm64 protoc installer
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up arm64 execution
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - name: Install and execute the arm64 archive
+        run: bash server/hack/install-protoc.sh "${RUNNER_TEMP}/protoc-arm64" arm64
+
   # Single required status check: green only if every Go job passed (or there
   # were no Go-relevant changes).
   pr-go-required:
@@ -110,6 +126,7 @@ jobs:
       - changes
       - build-test
       - lint
+      - protoc-arm64
     if: always()
     steps:
       - name: Aggregate Go check results
@@ -124,7 +141,8 @@ jobs:
           fi
           for result in \
             "${{ needs.build-test.result }}" \
-            "${{ needs.lint.result }}"; do
+            "${{ needs.lint.result }}" \
+            "${{ needs.protoc-arm64.result }}"; do
             if [[ "${result}" != "success" ]]; then
               echo "Go checks did not complete successfully: ${result}"
               exit 1

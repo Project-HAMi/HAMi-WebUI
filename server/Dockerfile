@@ -4,9 +4,6 @@ WORKDIR /src
 
 ARG BUILDARCH
 ARG TARGETARCH
-ARG PROTOC_VERSION=28.3
-ARG PROTOC_SHA256_AMD64=0ad949f04a6a174da83cdcbdb36dee0a4925272a5b6d83f79a6bf9852076d53f
-ARG PROTOC_SHA256_ARM64=1de522032a8b194002fe35cab86d747848238b5e4de4f99648372079f5b46f9a
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
 ARG UNZIP_VERSION=6.0-28
 
@@ -22,18 +19,10 @@ RUN sed -i -E \
     test -s /etc/ssl/certs/ca-certificates.crt && \
     rm -rf /var/lib/apt/lists/*
 
-# Install the exact protoc release used by CI. The archive checksum makes this
-# input immutable.
-RUN case "${BUILDARCH}" in \
-      amd64) protoc_arch="x86_64"; protoc_sha="${PROTOC_SHA256_AMD64}" ;; \
-      arm64) protoc_arch="aarch_64"; protoc_sha="${PROTOC_SHA256_ARM64}" ;; \
-      *) echo "unsupported build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
-    esac && \
-    curl -fsSLo /tmp/protoc.zip \
-      "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${protoc_arch}.zip" && \
-    echo "${protoc_sha}  /tmp/protoc.zip" | sha256sum -c - && \
-    unzip -q /tmp/protoc.zip -d /usr/local && \
-    rm /tmp/protoc.zip
+# Install the same checksum-verified protoc release used by CI.
+COPY hack/install-protoc.sh /tmp/install-protoc.sh
+RUN bash /tmp/install-protoc.sh /usr/local "${BUILDARCH}" && \
+    rm /tmp/install-protoc.sh
 
 # Install code generators at versions compatible with the application's locked
 # Go dependencies. Never resolve release inputs from @latest.
