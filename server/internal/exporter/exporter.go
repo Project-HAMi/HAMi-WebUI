@@ -36,6 +36,7 @@ var (
 	errNoMetricData                 = errors.New("prometheus query returned no data")
 	errInvalidCoreCapacity          = errors.New("allocated core capacity must be greater than zero")
 	errWorkloadTelemetryUnsupported = errors.New("workload telemetry is not supported by provider")
+	errFanSpeedTelemetryUnsupported = errors.New("fan speed telemetry is not supported by provider")
 )
 
 type instantQuerier interface {
@@ -705,12 +706,17 @@ func (s *MetricsGenerator) fanSpeed(ctx context.Context, provider, deviceUUID st
 		query = fmt.Sprintf("avg(DCGM_FI_DEV_FAN_SPEED{UUID=\"%s\"})", deviceUUID)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_fan_speed{uuid=\"%s\"})", deviceUUID)
-	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_link_speed{vdie_id=\"%s\"})", deviceUUID)
 	default:
-		return 0, errors.New("provider not exists")
+		return 0, errFanSpeedTelemetryUnsupported
 	}
-	return s.queryRequiredInstantVal(ctx, query)
+	fanSpeed, err := s.queryRequiredInstantVal(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	if provider == biz.CambriconGPUDevice && fanSpeed == -1 {
+		return 0, errNoMetricData
+	}
+	return fanSpeed, nil
 }
 
 type DeviceAdditionalInfo struct {

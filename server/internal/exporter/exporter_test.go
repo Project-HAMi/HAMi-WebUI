@@ -294,6 +294,56 @@ func TestOptionalDeviceTelemetryDistinguishesMissingNonFiniteAndZero(t *testing.
 	}
 }
 
+func TestFanSpeedAppliesProviderCapabilitiesAndSentinels(t *testing.T) {
+	t.Run("Ascend is unsupported without a query", func(t *testing.T) {
+		querier := &fakeInstantQuerier{}
+		generator := &MetricsGenerator{monitorService: querier}
+		_, err := generator.fanSpeed(context.Background(), biz.AscendGPUDevice, "Ascend-1")
+		if !errors.Is(err, errFanSpeedTelemetryUnsupported) {
+			t.Fatalf("fanSpeed() error = %v, want errFanSpeedTelemetryUnsupported", err)
+		}
+		if len(querier.queries) != 0 {
+			t.Fatalf("unsupported Ascend fan speed made queries: %v", querier.queries)
+		}
+	})
+
+	tests := []struct {
+		name      string
+		provider  string
+		deviceID  string
+		query     string
+		value     float32
+		wantValue float32
+		wantErr   error
+	}{
+		{
+			name: "MLU no-fan sentinel is unavailable", provider: biz.CambriconGPUDevice, deviceID: "MLU-1",
+			query: `avg(mlu_fan_speed{uuid="MLU-1"})`, value: -1, wantErr: errNoMetricData,
+		},
+		{
+			name: "MLU explicit zero is preserved", provider: biz.CambriconGPUDevice, deviceID: "MLU-2",
+			query: `avg(mlu_fan_speed{uuid="MLU-2"})`, value: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			querier := &fakeInstantQuerier{responsesByQuery: map[string]*pb.InstantResponse{tt.query: instantValue(tt.value)}}
+			generator := &MetricsGenerator{monitorService: querier}
+			value, err := generator.fanSpeed(context.Background(), tt.provider, tt.deviceID)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("fanSpeed() error = %v, want %v", err, tt.wantErr)
+			}
+			if value != tt.wantValue {
+				t.Fatalf("fanSpeed() = %v, want %v", value, tt.wantValue)
+			}
+			if len(querier.queries) != 1 || querier.queries[0] != tt.query {
+				t.Fatalf("fanSpeed() queries = %v, want [%s]", querier.queries, tt.query)
+			}
+		})
+	}
+}
+
 func TestLastXIDErrorCodeUsesNvidiaMetricAndRejectsUnsupportedProvider(t *testing.T) {
 	t.Run("NVIDIA", func(t *testing.T) {
 		querier := &fakeInstantQuerier{responses: []*pb.InstantResponse{instantValue(79)}}
@@ -648,6 +698,65 @@ func TestGenerateDeviceMetricsExportsOnlyPresentFiniteOptionalTelemetry(t *testi
 				if tt.wantTracked && testutil.ToFloat64(gauge.WithLabelValues(labels...)) != tt.wantValue {
 					t.Fatalf("optional gauge value = %v, want %v", testutil.ToFloat64(gauge.WithLabelValues(labels...)), tt.wantValue)
 				}
+			}
+		})
+	}
+}
+
+func TestGenerateDeviceMetricsAppliesFanCapabilitiesAndSentinels(t *testing.T) {
+	t.Run("Ascend emits no fan query or gauge", func(t *testing.T) {
+		const deviceID = "Ascend-fan-unsupported"
+		generator := newDeviceMetricsTestGenerator(
+			&biz.DeviceInfo{
+				Id: deviceID, Devmem: 65536, Devcore: 100, Count: 1,
+				Type: "Ascend910B", NodeName: "node-ascend-fan", Provider: biz.AscendGPUDevice,
+			},
+			map[string]*pb.InstantResponse{},
+		)
+		t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+		if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+			t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+		}
+		queries := generator.monitorService.(*fakeInstantQuerier).queries
+		for _, query := range queries {
+			if strings.Contains(query, "npu_chip_link_speed") {
+				t.Fatalf("Ascend fan capability emitted link-speed query: %s", query)
+			}
+		}
+		labels := []string{"node-ascend-fan", biz.AscendGPUDevice, "Ascend910B", deviceID, "", ""}
+		assertGaugeTracked(t, generator, HamiDeviceFanSpeedP, labels, false)
+		assertGaugeTracked(t, generator, HamiDeviceFanSpeedR, labels, false)
+	})
+
+	mluTests := []struct {
+		name        string
+		deviceID    string
+		value       float32
+		wantTracked bool
+	}{
+		{name: "no-fan sentinel is omitted", deviceID: "MLU-fan-missing", value: -1},
+		{name: "explicit zero is exported", deviceID: "MLU-fan-zero", value: 0, wantTracked: true},
+	}
+	for _, tt := range mluTests {
+		t.Run(tt.name, func(t *testing.T) {
+			query := `avg(mlu_fan_speed{uuid="` + tt.deviceID + `"})`
+			generator := newDeviceMetricsTestGenerator(
+				&biz.DeviceInfo{
+					Id: tt.deviceID, Devmem: 32768, Devcore: 100, Count: 1,
+					Type: "MLU370", NodeName: "node-mlu-fan", Provider: biz.CambriconGPUDevice,
+				},
+				map[string]*pb.InstantResponse{query: instantValue(tt.value)},
+			)
+			t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+			if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+				t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+			}
+			labels := []string{"node-mlu-fan", biz.CambriconGPUDevice, "MLU370", tt.deviceID, "", ""}
+			assertGaugeTracked(t, generator, HamiDeviceFanSpeedR, labels, tt.wantTracked)
+			if tt.wantTracked {
+				assertTrackedGaugeValue(t, generator, HamiDeviceFanSpeedR, labels, 0)
 			}
 		})
 	}
