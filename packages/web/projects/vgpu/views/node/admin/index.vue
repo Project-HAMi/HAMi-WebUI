@@ -16,7 +16,7 @@
           <t-select
             v-model="filters.isSchedulable"
             clearable
-            :placeholder="$t('node.allStatus')"
+            :placeholder="$t('node.allSchedulingStatuses')"
             :options="statusOptions"
             @change="applyFilters"
           />
@@ -78,6 +78,10 @@ import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useFetchList from '@/hooks/useFetchList';
+import {
+  getNodeReadinessStatus,
+  getNodeSchedulingStatus,
+} from '~/vgpu/views/node/node-status.mjs';
 
 const router = useRouter();
 const route = useRoute();
@@ -90,9 +94,9 @@ const filters = reactive({
 });
 const rawCardTypes = ref([]);
 const statusOptions = computed(() => [
-  { label: t('node.allStatus'), value: undefined },
-  { label: t('node.normal'), value: 'true' },
-  { label: t('node.abnormal'), value: 'false' },
+  { label: t('node.allSchedulingStatuses'), value: undefined },
+  { label: t('node.schedulingEnabled'), value: 'true' },
+  { label: t('node.schedulingDisabled'), value: 'false' },
 ]);
 const cardTypeOptions = computed(() => [
   { label: t('node.allTypes'), value: undefined },
@@ -136,15 +140,12 @@ const fetchAllNodeMap = async () => {
   }
 };
 
-const getNodeStatusDisplay = ({ isSchedulable, isExternal }) => {
-  if (isExternal || isSchedulable === undefined || isSchedulable === null) {
-    return { icon: 'status-unmanaged', text: t('node.unknown') };
-  }
-  if (isSchedulable) {
-    return { icon: 'status-schedulable', text: t('node.normal') };
-  }
-  return { icon: 'status-unschedulable', text: t('node.abnormal') };
-};
+const renderNodeStatus = ({ icon, labelKey }) => (
+  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+    <svg-icon icon={icon} style={{ fontSize: '16px' }} />
+    <span>{t(labelKey)}</span>
+  </span>
+);
 
 const baseColumns = computed(() => [
   {
@@ -166,18 +167,16 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: t('task.status'),
-    minWidth: 150,
+    title: t('node.readiness'),
+    minWidth: 140,
+    dataIndex: 'isReady',
+    render: (row) => renderNodeStatus(getNodeReadinessStatus(row)),
+  },
+  {
+    title: t('node.schedulingStatus'),
+    minWidth: 170,
     dataIndex: 'isSchedulable',
-    render: ({ isSchedulable, isExternal }) => {
-      const { icon, text } = getNodeStatusDisplay({ isSchedulable, isExternal });
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-          <svg-icon icon={icon} style={{ fontSize: '16px' }} />
-          <span>{text}</span>
-        </span>
-      );
-    },
+    render: (row) => renderNodeStatus(getNodeSchedulingStatus(row)),
   },
   {
     title: t('node.ip'),
