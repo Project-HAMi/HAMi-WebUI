@@ -55,7 +55,11 @@ export const resolveRequest = (state, options = {}) => {
 export const rejectRequest = (
   state,
   error,
-  { hasResolved = state.hasResolved, requestId } = {},
+  {
+    hasResolved = state.hasResolved,
+    requestId,
+    status = REQUEST_STATUS.ERROR,
+  } = {},
 ) => {
   if (requestId !== undefined && !isLatestRequest(state, requestId)) {
     return false;
@@ -64,7 +68,7 @@ export const rejectRequest = (
   if (hasResolved) {
     state.refreshError = error;
   } else {
-    state.status = REQUEST_STATUS.ERROR;
+    state.status = status;
     state.hasResolved = true;
     state.error = error;
     state.refreshError = null;

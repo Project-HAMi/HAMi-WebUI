@@ -47,25 +47,35 @@
           </t-input>
         </t-space>
       </toolbar>
-      <t-table
-        :key="locale"
-        row-key="workloadRowKey"
-        class="workload-table vgpu-table-skin"
-        :data="pagedTableData"
-        :columns="visibleColumns"
-        :loading="tableLoading"
-        table-layout="auto"
-        :style="style"
-      />
-      <table-pagination
-        :total="pagination.total"
-        :current="pagination.current"
-        :page-size="pagination.pageSize"
-        :page-sizes="pagination.pageSizeOptions"
-        :show-jumper="pagination.showJumper"
-        @update:current="(val) => (pagination.current = val)"
-        @update:pageSize="(val) => (pagination.pageSize = val)"
-      />
+      <stateful-table
+        :status="tableStatus"
+        :refreshing="tableRefreshing"
+        :refresh-error="tableRefreshError"
+        :has-rows="tableData.length > 0"
+        :column-count="visibleColumns.length"
+        @retry="refreshTable"
+      >
+        <t-table
+          :key="locale"
+          row-key="workloadRowKey"
+          class="workload-table vgpu-table-skin"
+          :data="pagedTableData"
+          :columns="visibleColumns"
+          table-layout="auto"
+          :style="style"
+        />
+        <template #footer>
+          <table-pagination
+            :total="pagination.total"
+            :current="pagination.current"
+            :page-size="pagination.pageSize"
+            :page-sizes="pagination.pageSizeOptions"
+            :show-jumper="pagination.showJumper"
+            @update:current="(val) => (pagination.current = val)"
+            @update:pageSize="(val) => (pagination.pageSize = val)"
+          />
+        </template>
+      </stateful-table>
     </div>
 
   </div>
@@ -77,6 +87,7 @@ import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
+import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TextPlus from '@/components/TextPlus.vue';
 import { roundToDecimal, timeParse } from '@/utils';
 import request from '@/utils/request';
@@ -91,11 +102,10 @@ import {
   createWorkloadRowKey,
   formatWorkloadName,
 } from './workload-identity.mjs';
+import useFetchList from '@/hooks/useFetchList';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
 const { t, locale } = useI18n();
-const tableData = ref([]);
-const tableLoading = ref(false);
 const hasManualNodeScope = ref(false);
 const filters = reactive({
   name: props.filters?.name || '',
@@ -251,36 +261,41 @@ const baseColumns = computed(() => [
 
 ]);
 const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
-const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
 
-const fetchTableData = async () => {
-  tableLoading.value = true;
-  try {
-    const baseFilters = { ...(props.filters || {}) };
-    delete baseFilters.nodeName;
-    delete baseFilters.nodeUid;
-    const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
-    const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
-    const payload = {
-      filters: {
-        ...baseFilters,
-        ...(getTrimValue(filters.name) ? { name: getTrimValue(filters.name) } : {}),
-        ...(nodeName ? { nodeName } : {}),
-        ...(nodeUid ? { nodeUid } : {}),
-        ...(filters.status ? { status: filters.status } : {}),
-        ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
-      },
-    };
-    const { items = [] } = await taskApi.getTaskListReq(payload);
-    tableData.value = items.map((item) => ({
-      ...item,
-      workloadRowKey: createWorkloadRowKey(item),
-    }));
-    syncTotalAndClamp();
-  } finally {
-    tableLoading.value = false;
-  }
-};
+const tableState = useFetchList(() => {
+  const baseFilters = { ...(props.filters || {}) };
+  delete baseFilters.nodeName;
+  delete baseFilters.nodeUid;
+  const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
+  const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
+  const payload = {
+    filters: {
+      ...baseFilters,
+      ...(getTrimValue(filters.name) ? { name: getTrimValue(filters.name) } : {}),
+      ...(nodeName ? { nodeName } : {}),
+      ...(nodeUid ? { nodeUid } : {}),
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
+    },
+  };
+  return taskApi.getTaskListReq(payload);
+}, {
+  immediate: false,
+  path: 'items',
+  mapData: (items) => items.map((item) => ({
+    ...item,
+    workloadRowKey: createWorkloadRowKey(item),
+  })),
+});
+const {
+  data: tableData,
+  refresh: fetchTableData,
+  refreshError: tableRefreshError,
+  refreshing: tableRefreshing,
+  status: tableStatus,
+} = tableState;
+const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
+watch(tableData, syncTotalAndClamp, { immediate: true, flush: 'sync' });
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
   fetchTableData,
   resetBeforeApply: resetToFirstPage,

@@ -46,24 +46,34 @@
           </t-input>
         </t-space>
       </toolbar>
-      <t-table
-        :key="`${locale}-card-table`"
-        row-key="uuid"
-        class="accelerator-table vgpu-table-skin"
-        :data="pagedTableData"
-        :columns="visibleColumns"
-        :loading="tableLoading"
-        table-layout="fixed"
-      />
-      <table-pagination
-        :total="pagination.total"
-        :current="pagination.current"
-        :page-size="pagination.pageSize"
-        :page-sizes="pagination.pageSizeOptions"
-        :show-jumper="pagination.showJumper"
-        @update:current="(val) => (pagination.current = val)"
-        @update:pageSize="(val) => (pagination.pageSize = val)"
-      />
+      <stateful-table
+        :status="tableStatus"
+        :refreshing="tableRefreshing"
+        :refresh-error="tableRefreshError"
+        :has-rows="tableData.length > 0"
+        :column-count="visibleColumns.length"
+        @retry="refreshTable"
+      >
+        <t-table
+          :key="`${locale}-card-table`"
+          row-key="uuid"
+          class="accelerator-table vgpu-table-skin"
+          :data="pagedTableData"
+          :columns="visibleColumns"
+          table-layout="fixed"
+        />
+        <template #footer>
+          <table-pagination
+            :total="pagination.total"
+            :current="pagination.current"
+            :page-size="pagination.pageSize"
+            :page-sizes="pagination.pageSizeOptions"
+            :show-jumper="pagination.showJumper"
+            @update:current="(val) => (pagination.current = val)"
+            @update:pageSize="(val) => (pagination.pageSize = val)"
+          />
+        </template>
+      </stateful-table>
     </div>
   </div>
 </template>
@@ -75,6 +85,7 @@ import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
+import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
 import TextPlus from '@/components/TextPlus.vue';
 import request from '@/utils/request';
@@ -86,6 +97,7 @@ import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 import { getAllocationPercent } from './allocation-percent.mjs';
+import useFetchList from '@/hooks/useFetchList';
 
 const props = defineProps(['hideTitle', 'filters']);
 
@@ -99,8 +111,6 @@ const parseTypeFromQuery = (value) => {
 };
 
 const currentType = computed(() => filters.type || '');
-const tableData = ref([]);
-const tableLoading = ref(false);
 const hasManualNodeScope = ref(false);
 const filters = reactive({
   uid: '',
@@ -332,7 +342,6 @@ const baseColumns = computed(() => [
   },
 ]);
 const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
-const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
 
 const PieRef = ref();
 
@@ -389,27 +398,29 @@ watch(
   },
 );
 
-const fetchTableData = async () => {
-  tableLoading.value = true;
-  try {
-    const baseFilters = { ...(props.filters || {}) };
-    delete baseFilters.nodeName;
-    const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
-    const payload = {
-      filters: {
-        ...baseFilters,
-        ...(getTrimValue(filters.uid) ? { uid: getTrimValue(filters.uid) } : {}),
-        ...(nodeName ? { nodeName } : {}),
-        ...(filters.type ? { type: filters.type } : {}),
-      },
-    };
-    const { list = [] } = await request(cardApi.getCardList(payload));
-    tableData.value = list;
-    syncTotalAndClamp();
-  } finally {
-    tableLoading.value = false;
-  }
-};
+const tableState = useFetchList(() => {
+  const baseFilters = { ...(props.filters || {}) };
+  delete baseFilters.nodeName;
+  const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
+  const payload = {
+    filters: {
+      ...baseFilters,
+      ...(getTrimValue(filters.uid) ? { uid: getTrimValue(filters.uid) } : {}),
+      ...(nodeName ? { nodeName } : {}),
+      ...(filters.type ? { type: filters.type } : {}),
+    },
+  };
+  return request(cardApi.getCardList(payload));
+}, { immediate: false });
+const {
+  data: tableData,
+  refresh: fetchTableData,
+  refreshError: tableRefreshError,
+  refreshing: tableRefreshing,
+  status: tableStatus,
+} = tableState;
+const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
+watch(tableData, syncTotalAndClamp, { immediate: true, flush: 'sync' });
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
   fetchTableData,
   resetBeforeApply: resetToFirstPage,

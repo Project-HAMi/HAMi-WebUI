@@ -8,25 +8,44 @@ import {
   startRequest,
 } from './request-state.mjs';
 
-const useFetchList = (req, path = 'list') => {
+const useFetchList = (req, pathOrOptions = 'list') => {
+  const options = typeof pathOrOptions === 'string'
+    ? { path: pathOrOptions }
+    : pathOrOptions;
+  const {
+    immediate = true,
+    mapData = (data) => data,
+    path = 'list',
+  } = options;
   const state = reactive(createRequestState([]));
 
   const fetchList = async () => {
-    const hasResolved = state.hasResolved;
+    // Only a ready collection is usable stale content. Retrying a blocking
+    // error or invalid response should return to the initial loading state.
+    const hasResolved = state.hasResolved && state.status === REQUEST_STATUS.READY;
     const requestId = startRequest(state, { hasResolved });
     try {
       const response = await (typeof req === 'function' ? req() : req);
       const listData = response?.[path];
       if (!isArray(listData)) {
-        resolveRequest(state, {
-          data: [],
-          status: REQUEST_STATUS.INVALID,
+        rejectRequest(state, new TypeError(`Expected response.${path} to be an array`), {
+          hasResolved,
           requestId,
+          status: REQUEST_STATUS.INVALID,
+        });
+        return;
+      }
+      const mappedData = mapData(listData);
+      if (!isArray(mappedData)) {
+        rejectRequest(state, new TypeError('Expected mapData to return an array'), {
+          hasResolved,
+          requestId,
+          status: REQUEST_STATUS.INVALID,
         });
         return;
       }
       resolveRequest(state, {
-        data: listData,
+        data: mappedData,
         status: REQUEST_STATUS.READY,
         requestId,
       });
@@ -35,7 +54,9 @@ const useFetchList = (req, path = 'list') => {
     }
   };
 
-  onMounted(fetchList);
+  if (immediate) {
+    onMounted(fetchList);
+  }
 
   return { ...toRefs(state), refresh: fetchList };
 };
