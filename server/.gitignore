@@ -42,3 +42,4 @@ tmp/
 
 *_gen.go
 *.pb.go
+openapi.yaml

@@ -68,7 +68,6 @@ const TEXT_BASENAMES = new Set([
 const EXCLUDED_FILES = new Set([
   'packages/web/src/locales/en.js',
   'packages/web/src/locales/zh.js',
-  'server/openapi.yaml',
 ]);
 
 const EXCLUDED_PREFIXES = [
@@ -162,7 +161,6 @@ const assertGuardContract = () => {
     ['scripts/release/tests/example.sh', false],
     ['server/internal/app_test.go', false],
     ['server/third_party/example.proto', false],
-    ['server/openapi.yaml', false],
     ['server/api/v1/example.pb.go', false],
     ['server/cmd/hami-webui/wire_gen.go', false],
     ['pnpm-lock.yaml', false],
