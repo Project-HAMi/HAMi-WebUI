@@ -33,6 +33,23 @@ test('request error fingerprints ignore query bodies and URL query strings', () 
   assert.equal(requestErrorFingerprint(first), requestErrorFingerprint(duplicate));
 });
 
+test('fingerprints distinguish fields containing the former delimiter', () => {
+  const delimiter = '\u001f';
+  const first = domainError({
+    reason: `alpha${delimiter}beta`,
+    message: 'gamma',
+  });
+  const second = domainError({
+    reason: 'alpha',
+    message: `beta${delimiter}gamma`,
+  });
+  const shouldNotify = createRequestErrorNotificationGate({ now: () => 1000 });
+
+  assert.notEqual(requestErrorFingerprint(first), requestErrorFingerprint(second));
+  assert.equal(shouldNotify(first), true);
+  assert.equal(shouldNotify(second), true);
+});
+
 test('duplicate request errors share a fixed notification window', () => {
   let timestamp = 1000;
   const shouldNotify = createRequestErrorNotificationGate({

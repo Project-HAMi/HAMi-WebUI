@@ -22,17 +22,17 @@ export const requestErrorFingerprint = ({
   reason,
   message,
 }) =>
-  [
-    kind,
-    normalize(config?.method).toUpperCase(),
-    requestPath(config),
-    status,
-    code,
-    reason,
-    message,
-  ]
-    .map(normalize)
-    .join('\u001f');
+  JSON.stringify(
+    [
+      kind,
+      normalize(config?.method).toUpperCase(),
+      requestPath(config),
+      status,
+      code,
+      reason,
+      message,
+    ].map(normalize),
+  );
 
 export const createRequestErrorNotificationGate = ({
   now = Date.now,
