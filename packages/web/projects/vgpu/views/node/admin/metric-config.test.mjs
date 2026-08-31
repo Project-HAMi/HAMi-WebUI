@@ -12,13 +12,13 @@ import {
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
 
 const config = createNodeComputeUsageGaugeConfig({
-  selector: 'node=~"$node"',
+  selector: 'node=$node',
 });
 
 test('node compute utilization stays normalized for one-card and eight-card nodes', () => {
   assert.equal(
     config.query,
-    'avg(avg(hami_core_util{node=~"$node"}) by (node, device_uuid))',
+    'avg(avg(hami_core_util{node=$node}) by (node, device_uuid))',
   );
   assert.equal(config.total, 100);
   assert.equal(config.totalQuery, undefined);
