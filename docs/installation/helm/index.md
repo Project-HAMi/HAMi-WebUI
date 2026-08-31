@@ -25,12 +25,12 @@ To install HAMi-WebUI using Helm, ensure you meet these requirements:
 
 ### Version compatibility
 
-> _**Important**_: HAMi-WebUI v1.1.1+ switches to the HAMi 2.9.0 metrics schema (renamed metrics/labels). If you upgrade HAMi-WebUI without upgrading HAMi, dashboards may break.
+> _**Important**_: HAMi-WebUI v1.2.0+ uses the HAMi 2.9.0 metrics schema (renamed metrics/labels). If you upgrade HAMi-WebUI without upgrading HAMi, dashboards may break.
 
 | HAMi-WebUI version | Supported HAMi version | Metrics schema | Notes |
 | --- | --- | --- | --- |
 | <= v1.1.0 | >= 2.4.0, < 2.9.0 | old labels: `deviceuuid`, `devicetype`, `podnamespace`, `podname`, `ctrname` | For existing HAMi deployments before the metrics rename |
-| v1.1.1+ | >= 2.9.0 | new labels: `device_uuid`, `device_type`, `namespace`, `pod`, `container` | Required after the HAMi 2.9.0 metrics rename |
+| v1.2.0+ | >= 2.9.0 | new labels: `device_uuid`, `device_type`, `namespace`, `pod`, `container` | Required after the HAMi 2.9.0 metrics rename |
 
 3. External mode requires a reachable Prometheus-compatible HTTP API
    (Prometheus > 2.8.0 or VictoriaMetrics). Using the Chart's `ServiceMonitor`
@@ -104,6 +104,23 @@ To set up the HAMi-WebUI Helm repository so that you download the correct HAMi-W
    node selector. Pod readiness does not prove that an external Prometheus has
    selected or scraped these ServiceMonitors; use the query checks in
    [Prometheus scrape configuration](#prometheus-scrape-configuration).
+
+### Open HAMi-WebUI
+
+Forward the primary Service to your workstation:
+
+```bash
+kubectl port-forward service/my-hami-webui 3000:http --namespace=kube-system
+```
+
+For more information, see Kubernetes
+[Use Port Forwarding to Access Applications in a Cluster](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/).
+
+Open `http://localhost:3000/` in a browser. If `frontend.basePath` is
+configured, append that normalized path instead; the `helm install` and
+`helm get notes` output prints the exact URL.
+
+The HAMi-WebUI resource overview appears.
 
 ### Upgrade from Chart 1.3 to 2.0
 
@@ -425,25 +442,6 @@ Custom ServiceMonitors that still select the primary Service—whether by
 `component: hami-webui` or only the common name and instance labels—and port
 `metrics` must move to `component: backend` and port `backend-http`; otherwise
 they no longer find a target in Chart 2.
-
-### Access HAMi-WebUI
-
-1. Configure ~/.kube/config in your localhost to be able to connect your cluster.
-
-
-2. Run the following command to do a port-forwarding of the HAMi-WebUI service on port `3000` in your localhost.
-
-   ```bash
-   kubectl port-forward service/my-hami-webui 3000:http --namespace=kube-system
-   ```
-
-   For more information about port-forwarding, refer to [Use Port Forwarding to Access Applications in a Cluster](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/).
-
-3. Navigate to `http://localhost:3000/` in your browser. If
-   `frontend.basePath` is configured, append that normalized path instead; the
-   `helm install` and `helm get notes` output prints the exact URL.
-
-   The HAMi-WebUI resources-overview page appears.
 
 ### Serve from a URL prefix or embed in a platform
 
