@@ -30,8 +30,21 @@ message Server {
 message Prometheus {
   string address = 1;
   string timeout = 2;
-  string auth = 3;
+  // Deprecated: use authorization or basic_auth with credentials mounted from files.
+  string auth = 3 [deprecated = true];
   PrometheusTLS tls = 4;
+  PrometheusAuthorization authorization = 5;
+  PrometheusBasicAuth basic_auth = 6;
+}
+
+message PrometheusAuthorization {
+  string type = 1;
+  string credentials_file = 2;
+}
+
+message PrometheusBasicAuth {
+  string username_file = 1;
+  string password_file = 2;
 }
 
 message PrometheusTLS {

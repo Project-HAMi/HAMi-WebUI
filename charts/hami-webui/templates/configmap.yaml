@@ -1,6 +1,11 @@
 {{- include "hami-webui.validateChart2Values" . -}}
+{{- include "hami-webui.validatePrometheusAuthentication" . -}}
 {{- include "hami-webui.validatePrometheusTLS" . -}}
 {{- $externalPrometheus := default (dict) .Values.externalPrometheus -}}
+{{- $prometheusAuthorization := default (dict) (get $externalPrometheus "authorization") -}}
+{{- $prometheusBasicAuth := default (dict) (get $externalPrometheus "basicAuth") -}}
+{{- $prometheusAuthorizationSecret := default "" (get $prometheusAuthorization "existingSecret") -}}
+{{- $prometheusBasicAuthSecret := default "" (get $prometheusBasicAuth "existingSecret") -}}
 {{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
 {{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
 {{- $prometheusCAKey := default "" (get $prometheusTLS "caKey") -}}
@@ -19,6 +24,15 @@ data:
     prometheus:
       address: {{ include "hami-webui.prometheusAddress" . }}
       timeout: {{ .Values.externalPrometheus.timeout | default "1m" }}
+      {{- if and (get $externalPrometheus "enabled") $prometheusAuthorizationSecret }}
+      authorization:
+        type: {{ default "Bearer" (get $prometheusAuthorization "type") | quote }}
+        credentials_file: "/apps/prometheus-auth/credentials"
+      {{- else if and (get $externalPrometheus "enabled") $prometheusBasicAuthSecret }}
+      basic_auth:
+        username_file: "/apps/prometheus-auth/username"
+        password_file: "/apps/prometheus-auth/password"
+      {{- end }}
       {{- if (get $externalPrometheus "enabled") }}
       tls:
         insecure_skip_verify: {{ default false (get $prometheusTLS "insecureSkipVerify") }}

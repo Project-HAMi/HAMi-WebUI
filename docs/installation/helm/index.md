@@ -119,8 +119,8 @@ helm history my-hami-webui --namespace kube-system
 ```
 
 Create a new `values-v2.yaml` from the Chart 2 defaults, then copy only the
-settings you still need. Chart 2 supports external Prometheus and TLS settings,
-ServiceMonitor labels, Ingress, scheduling, security contexts,
+settings you still need. Chart 2 supports external Prometheus authentication
+and TLS settings, ServiceMonitor labels, Ingress, scheduling, security contexts,
 `frontend.basePath`, and `frontend.frameAncestors`; copy only settings that are
 actually present in your deployment.
 
@@ -196,6 +196,73 @@ If a compatible Operator and CRDs already exist but a separate Prometheus
 instance is desired, enable only `kube-prometheus-stack.enabled`; the Chart's
 defaults deliberately leave that dependency's CRDs and Operator disabled. The
 existing Operator must watch the HAMi-WebUI namespace.
+
+### Authenticate to an external Prometheus
+
+Use an existing Kubernetes Secret in the HAMi-WebUI namespace. The Chart does
+not accept inline credentials and does not copy Secret values, names, or data
+keys into its ConfigMap or Pod environment. It mounts only the selected keys at
+fixed file paths. The examples read credentials from local files so their values
+do not become command-line arguments or shell history.
+
+For a bearer token or another HTTP Authorization scheme, create the Secret and
+select its data key:
+
+```bash
+kubectl create secret generic hami-webui-prometheus-auth \
+  --namespace kube-system \
+  --from-file=token=/secure/path/prometheus-token
+```
+
+```yaml
+externalPrometheus:
+  enabled: true
+  address: "https://prometheus.example.com"
+  authorization:
+    type: Bearer
+    existingSecret: hami-webui-prometheus-auth
+    credentialsKey: token
+```
+
+For HTTP Basic Authentication, use one Secret containing both fields:
+
+```bash
+kubectl create secret generic hami-webui-prometheus-basic-auth \
+  --namespace kube-system \
+  --from-file=username=/secure/path/prometheus-username \
+  --from-file=password=/secure/path/prometheus-password
+```
+
+```yaml
+externalPrometheus:
+  enabled: true
+  address: "https://prometheus.example.com"
+  basicAuth:
+    existingSecret: hami-webui-prometheus-basic-auth
+    usernameKey: username
+    passwordKey: password
+```
+
+`authorization` and `basicAuth` are mutually exclusive. The Chart rejects
+credentials embedded in `externalPrometheus.address` such as
+`https://user:password@prometheus.example.com`; URL credentials are readily
+exposed by configuration output and logs. Basic Authentication and bearer
+tokens should use HTTPS unless transport security is provided elsewhere.
+Authenticated redirects are followed only when the scheme, host and effective
+port remain the same; cross-origin redirects fail before a request is sent to
+the new origin.
+
+The Prometheus client reads these files for every request. After Kubernetes
+propagates a Secret update to the mounted volume, new requests use the
+rotated credentials without restarting the Pod. The Chart deliberately mounts
+the directory rather than using `subPath`, because a `subPath` mount does not
+receive automated Secret updates.
+
+The direct server configuration field `prometheus.auth` remains available for
+pre-2.0 compatibility but is deprecated. New direct configurations should use
+`prometheus.authorization.credentials_file` or
+`prometheus.basic_auth.username_file` and `password_file`; these modes are
+mutually exclusive with the legacy field.
 
 ### HTTPS external Prometheus
 

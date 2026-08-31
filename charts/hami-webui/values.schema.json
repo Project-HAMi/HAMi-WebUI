@@ -102,6 +102,37 @@
           "type": "string",
           "minLength": 1
         },
+        "authorization": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingSecret": {
+              "type": "string"
+            },
+            "credentialsKey": {
+              "type": "string"
+            }
+          }
+        },
+        "basicAuth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "usernameKey": {
+              "type": "string"
+            },
+            "passwordKey": {
+              "type": "string"
+            }
+          }
+        },
         "tls": {
           "type": "object",
           "additionalProperties": false,

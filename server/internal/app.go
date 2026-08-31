@@ -45,9 +45,11 @@ func NewPromClient(c *conf.Bootstrap, logger log.Logger) *prom.Client {
 	if err != nil {
 		panic(err)
 	}
-	tlsConfig := prom.TLSConfig{}
+	httpConfig := prom.HTTPConfig{
+		LegacyAuthorization: c.Prometheus.Auth,
+	}
 	if c.Prometheus.Tls != nil {
-		tlsConfig = prom.TLSConfig{
+		httpConfig.TLS = prom.TLSConfig{
 			CAFile:             c.Prometheus.Tls.CaFile,
 			CertFile:           c.Prometheus.Tls.CertFile,
 			KeyFile:            c.Prometheus.Tls.KeyFile,
@@ -55,7 +57,19 @@ func NewPromClient(c *conf.Bootstrap, logger log.Logger) *prom.Client {
 			InsecureSkipVerify: c.Prometheus.Tls.InsecureSkipVerify,
 		}
 	}
-	client, err := prom.NewClient(c.Prometheus.Address, timeout, c.Prometheus.Auth, tlsConfig, logger)
+	if c.Prometheus.Authorization != nil {
+		httpConfig.Authorization = &prom.AuthorizationConfig{
+			Type:            c.Prometheus.Authorization.Type,
+			CredentialsFile: c.Prometheus.Authorization.CredentialsFile,
+		}
+	}
+	if c.Prometheus.BasicAuth != nil {
+		httpConfig.BasicAuth = &prom.BasicAuthConfig{
+			UsernameFile: c.Prometheus.BasicAuth.UsernameFile,
+			PasswordFile: c.Prometheus.BasicAuth.PasswordFile,
+		}
+	}
+	client, err := prom.NewClient(c.Prometheus.Address, timeout, httpConfig, logger)
 	if err != nil {
 		panic(err)
 	}

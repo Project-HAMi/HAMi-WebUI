@@ -190,12 +190,19 @@ does not exist, so an unconfigured or ambiguous mode must fail at render time.
 {{- fail "Prometheus is not configured; enable externalPrometheus with an explicit address or enable kube-prometheus-stack" -}}
 {{- end -}}
 {{- if $externalEnabled -}}
-{{- $address := trim (default "" (get $external "address")) -}}
+{{- $rawAddress := default "" (get $external "address") -}}
+{{- $address := trim $rawAddress -}}
 {{- if empty $address -}}
 {{- fail "externalPrometheus.address is required when externalPrometheus.enabled=true" -}}
 {{- end -}}
+{{- if ne $rawAddress $address -}}
+{{- fail "externalPrometheus.address must not contain leading or trailing whitespace" -}}
+{{- end -}}
 {{- if not (regexMatch "^https?://[^[:space:]]+$" $address) -}}
 {{- fail "externalPrometheus.address must be an absolute http:// or https:// URL without whitespace" -}}
+{{- end -}}
+{{- if regexMatch "^https?://[^/?#]*@" $address -}}
+{{- fail "externalPrometheus.address must not include user information; configure authorization or basicAuth instead" -}}
 {{- end -}}
 {{- $parsedAddress := urlParse $address -}}
 {{- if empty (get $parsedAddress "hostname") -}}
@@ -221,6 +228,81 @@ own helpers so release-name, namespace and port overrides cannot drift.
 {{- else if (index .Values "kube-prometheus-stack").enabled -}}
 {{- $stack := index .Subcharts "kube-prometheus-stack" -}}
 {{- printf "http://%s-prometheus.%s.svc.cluster.local:%v" (include "kube-prometheus-stack.fullname" $stack) (include "kube-prometheus-stack.namespace" $stack) $stack.Values.prometheus.service.port -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validate file-backed authentication for an external Prometheus endpoint. Secret
+contents never enter values or rendered configuration; the Chart only accepts a
+Secret name and selected data keys.
+*/}}
+{{- define "hami-webui.validatePrometheusAuthentication" -}}
+{{- $external := default (dict) .Values.externalPrometheus -}}
+{{- $rawAuthorization := get $external "authorization" -}}
+{{- $rawBasicAuth := get $external "basicAuth" -}}
+{{- if and $rawAuthorization (not (kindIs "map" $rawAuthorization)) -}}
+{{- fail "externalPrometheus.authorization must be a map" -}}
+{{- end -}}
+{{- if and $rawBasicAuth (not (kindIs "map" $rawBasicAuth)) -}}
+{{- fail "externalPrometheus.basicAuth must be a map" -}}
+{{- end -}}
+{{- $authorization := default (dict) $rawAuthorization -}}
+{{- $basicAuth := default (dict) $rawBasicAuth -}}
+{{- range $field := list "type" "existingSecret" "credentialsKey" -}}
+{{- if and (hasKey $authorization $field) (not (kindIs "string" (get $authorization $field))) -}}
+{{- fail (printf "externalPrometheus.authorization.%s must be a string" $field) -}}
+{{- end -}}
+{{- $value := default "" (get $authorization $field) -}}
+{{- if ne $value (trim $value) -}}
+{{- fail (printf "externalPrometheus.authorization.%s must not contain leading or trailing whitespace" $field) -}}
+{{- end -}}
+{{- end -}}
+{{- range $field := list "existingSecret" "usernameKey" "passwordKey" -}}
+{{- if and (hasKey $basicAuth $field) (not (kindIs "string" (get $basicAuth $field))) -}}
+{{- fail (printf "externalPrometheus.basicAuth.%s must be a string" $field) -}}
+{{- end -}}
+{{- $value := default "" (get $basicAuth $field) -}}
+{{- if ne $value (trim $value) -}}
+{{- fail (printf "externalPrometheus.basicAuth.%s must not contain leading or trailing whitespace" $field) -}}
+{{- end -}}
+{{- end -}}
+{{- $authorizationType := trim (default "Bearer" (get $authorization "type")) -}}
+{{- $authorizationSecret := trim (default "" (get $authorization "existingSecret")) -}}
+{{- $credentialsKey := trim (default "" (get $authorization "credentialsKey")) -}}
+{{- $basicAuthSecret := trim (default "" (get $basicAuth "existingSecret")) -}}
+{{- $usernameKey := trim (default "" (get $basicAuth "usernameKey")) -}}
+{{- $passwordKey := trim (default "" (get $basicAuth "passwordKey")) -}}
+{{- $authorizationConfigured := or (ne $authorizationSecret "") (ne $credentialsKey "") (ne $authorizationType "Bearer") -}}
+{{- $basicAuthConfigured := or (ne $basicAuthSecret "") (ne $usernameKey "") (ne $passwordKey "") -}}
+{{- if and $authorizationConfigured $basicAuthConfigured -}}
+{{- fail "externalPrometheus.authorization and externalPrometheus.basicAuth are mutually exclusive" -}}
+{{- end -}}
+{{- if and (or $authorizationConfigured $basicAuthConfigured) (not (get $external "enabled")) -}}
+{{- fail "external Prometheus authentication requires externalPrometheus.enabled=true" -}}
+{{- end -}}
+{{- if $authorizationConfigured -}}
+{{- if or (empty $authorizationSecret) (empty $credentialsKey) -}}
+{{- fail "externalPrometheus.authorization.existingSecret and credentialsKey must be configured together" -}}
+{{- end -}}
+{{- if empty $authorizationType -}}
+{{- fail "externalPrometheus.authorization.type must not be empty" -}}
+{{- end -}}
+{{- if eq (lower $authorizationType) "basic" -}}
+{{- fail "externalPrometheus.authorization.type cannot be Basic; use externalPrometheus.basicAuth" -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" $credentialsKey) -}}
+{{- fail (printf "externalPrometheus authorization Secret key %q is invalid" $credentialsKey) -}}
+{{- end -}}
+{{- end -}}
+{{- if $basicAuthConfigured -}}
+{{- if or (empty $basicAuthSecret) (empty $usernameKey) (empty $passwordKey) -}}
+{{- fail "externalPrometheus.basicAuth.existingSecret, usernameKey and passwordKey must be configured together" -}}
+{{- end -}}
+{{- range $key := list $usernameKey $passwordKey -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" $key) -}}
+{{- fail (printf "externalPrometheus basicAuth Secret key %q is invalid" $key) -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
