@@ -19,11 +19,10 @@ type NodeService struct {
 	uc      *biz.NodeUsecase
 	pod     *biz.PodUseCase
 	summary *biz.SummaryUseCase
-	ms      *MonitorService
 }
 
-func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.SummaryUseCase, ms *MonitorService) *NodeService {
-	return &NodeService{uc: uc, pod: pod, summary: summary, ms: ms}
+func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.SummaryUseCase) *NodeService {
+	return &NodeService{uc: uc, pod: pod, summary: summary}
 }
 
 func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*pb.DeviceSummaryReply, error) {
@@ -48,23 +47,19 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 		return nil, err
 	}
 
-	// Fetch containers once (StatisticsByDeviceId used to re-list per device) and
-	// pull the per-node normalized compute baseline in one query keyed by node.
+	// Fetch containers once (StatisticsByDeviceId used to re-list per device).
 	// Memory capacity already comes from DeviceInfo.Devmem, HAMi's registered
-	// schedulable value, so querying the exporter's delayed copy would be redundant.
+	// schedulable value. Compute capacity is the deterministic physical baseline
+	// assembled from the same inventory below.
 	containers, err := s.pod.ListAllContainers(ctx)
 	if err != nil {
 		return nil, err
 	}
-	coreByNode := s.queryNodeGauge(ctx, "avg(sum(hami_core_size) by (node, instance)) by (node)")
 
 	var res = &pb.NodesReply{List: []*pb.NodeReply{}}
 	for _, node := range nodes {
 		nodeReply := s.buildNodeReply(node, containers)
 
-		if v, ok := coreByNode[node.Name]; ok {
-			nodeReply.CoreTotal = v
-		}
 		if filters.Ip != "" && filters.Ip != nodeReply.Ip {
 			continue
 		}
@@ -127,7 +122,7 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 	for _, device := range node.Devices {
 		nodeReply.Type = append(nodeReply.Type, device.Type)
 		nodeReply.VgpuTotal += device.Count
-		nodeReply.CoreTotal += device.Devcore
+		nodeReply.CoreTotal += biz.PhysicalCoreBaselinePerDevice
 		nodeReply.MemoryTotal += device.Devmem
 		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
 		nodeReply.VgpuUsed += vGPU
@@ -143,23 +138,4 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 	nodeReply.CardCnt = int32(len(node.Devices))
 
 	return nodeReply
-}
-
-// queryNodeGauge runs a single instant query whose result is grouped by the
-// "node" label and returns value-by-node, batching what used to be two PromQL
-// per node into one round-trip.
-func (s *NodeService) queryNodeGauge(ctx context.Context, query string) map[string]int32 {
-	out := map[string]int32{}
-	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
-	if err != nil {
-		return out
-	}
-	for _, sample := range resp.Data {
-		node := sample.Metric["node"]
-		if node == "" {
-			continue
-		}
-		out[node] = int32(sample.Value)
-	}
-	return out
 }

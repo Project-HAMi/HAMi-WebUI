@@ -2,25 +2,14 @@ package service
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
-	"vgpu/internal/data/prom"
 )
 
 func TestRequestsTreatMissingFiltersAsEmpty(t *testing.T) {
-	prometheus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
-	}))
-	defer prometheus.Close()
-
 	device := &biz.DeviceInfo{
 		Id:       "GPU-1",
 		AliasId:  "GPU-1",
@@ -44,18 +33,12 @@ func TestRequestsTreatMissingFiltersAsEmpty(t *testing.T) {
 	}}}
 	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
-	promClient, err := prom.NewClient(prometheus.URL, time.Second, prom.HTTPConfig{}, log.DefaultLogger)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-	monitor := NewMonitorService(promClient, nodeUsecase, podUsecase)
 	nodes := NewNodeService(
 		nodeUsecase,
 		podUsecase,
 		biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger),
-		monitor,
 	)
-	cards := NewCardService(nodeUsecase, podUsecase, monitor)
+	cards := NewCardService(nodeUsecase, podUsecase)
 	containers := NewContainerService(nodeUsecase, podUsecase)
 
 	tests := []struct {

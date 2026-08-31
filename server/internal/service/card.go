@@ -13,11 +13,10 @@ type CardService struct {
 
 	node *biz.NodeUsecase
 	pod  *biz.PodUseCase
-	ms   *MonitorService
 }
 
-func NewCardService(node *biz.NodeUsecase, pod *biz.PodUseCase, ms *MonitorService) *CardService {
-	return &CardService{node: node, pod: pod, ms: ms}
+func NewCardService(node *biz.NodeUsecase, pod *biz.PodUseCase) *CardService {
+	return &CardService{node: node, pod: pod}
 }
 
 func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*pb.GPUsReply, error) {
@@ -38,12 +37,6 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		return nil, err
 	}
 
-	// Pull the normalized compute baseline for all devices in one query keyed by
-	// device_uuid. Memory capacity already comes from DeviceInfo.Devmem, HAMi's
-	// registered schedulable value, so querying the exporter's delayed copy would
-	// be redundant.
-	coreSizeByUUID := s.queryGaugeByLabel(ctx, "avg(hami_core_size) by (device_uuid)", "device_uuid")
-
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
 	for _, device := range deviceInfos {
 		gpu := &pb.GPUReply{}
@@ -63,7 +56,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.NodeName = device.NodeName
 		gpu.Type = device.Type
 		gpu.VgpuTotal = device.Count
-		gpu.CoreTotal = device.Devcore
+		gpu.CoreTotal = biz.PhysicalCoreBaselinePerDevice
 		gpu.MemoryTotal = device.Devmem
 		gpu.NodeUid = device.NodeUid
 		gpu.Health = device.Health
@@ -75,9 +68,6 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.CoreUsedKnown = &coreKnown
 		gpu.MemoryUsed = memory
 
-		if v, ok := coreSizeByUUID[device.Id]; ok {
-			gpu.CoreTotal = v
-		}
 		res.List = append(res.List, gpu)
 	}
 
@@ -85,25 +75,6 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		return res.List[i].Uuid < res.List[j].Uuid
 	})
 	return res, nil
-}
-
-// queryGaugeByLabel runs a single instant query and returns the result values
-// keyed by the given label, so callers can batch what used to be per-entity
-// lookups into one round-trip to Prometheus / VictoriaMetrics.
-func (s *CardService) queryGaugeByLabel(ctx context.Context, query, label string) map[string]int32 {
-	out := map[string]int32{}
-	resp, err := s.ms.QueryInstant(ctx, &pb.QueryInstantRequest{Query: query})
-	if err != nil {
-		return out
-	}
-	for _, sample := range resp.Data {
-		key := sample.Metric[label]
-		if key == "" {
-			continue
-		}
-		out[key] = int32(sample.Value)
-	}
-	return out
 }
 
 func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq) (*pb.GPUsReply, error) {
@@ -151,7 +122,7 @@ func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPURep
 		gpu.NodeName = device.NodeName
 		gpu.Type = device.Type
 		gpu.VgpuTotal = device.Count
-		gpu.CoreTotal = device.Devcore
+		gpu.CoreTotal = biz.PhysicalCoreBaselinePerDevice
 		gpu.MemoryTotal = device.Devmem
 		gpu.NodeUid = device.NodeUid
 		gpu.Health = device.Health
