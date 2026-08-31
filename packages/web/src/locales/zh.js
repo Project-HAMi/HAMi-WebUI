@@ -316,20 +316,11 @@ export default {
   },
   error: {
     404: {
-      oops: 'OOPS!',
-      message: '网站管理员说你不能进入这个页面...',
-      info: '请检查您输入的网址是否正确，或点击下面的按钮返回首页。',
-      backHome: '返回首页',
-    },
-    401: {
-      oops: 'Oops!',
-      noPermission: '你没有权限去该页面',
-      contactLeader: '如有不满请联系你领导',
-      or: '或者你可以去:',
-      backHome: '回首页',
-      backPrevious: '返回上一个页面',
-      back: '返回',
-      dialogTitle: '随便看',
+      title: '页面未找到',
+      message: '该地址无法匹配 HAMi WebUI 页面。',
+      guidance: '请检查网址，或返回集群概览。',
+      requestedPath: '当前地址',
+      backOverview: '返回集群概览',
     }
   },
   timeRange: {

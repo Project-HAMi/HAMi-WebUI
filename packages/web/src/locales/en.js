@@ -320,20 +320,11 @@ export default {
   },
   error: {
     404: {
-      oops: 'OOPS!',
-      message: 'The webmaster said that you can not enter this page...',
-      info: 'Please check that the URL you entered is correct, or click the button below to return to the homepage.',
-      backHome: 'Back to home',
-    },
-    401: {
-      oops: 'Oops!',
-      noPermission: 'You do not have permission to access this page',
-      contactLeader: 'If you have any questions, please contact your supervisor',
-      or: 'Or you can go to:',
-      backHome: 'Back to home',
-      backPrevious: 'Back to previous page',
-      back: 'Back',
-      dialogTitle: 'Just Look',
+      title: 'Page not found',
+      message: 'This address does not match a HAMi WebUI page.',
+      guidance: 'Check the URL, or return to the cluster overview.',
+      requestedPath: 'Requested path',
+      backOverview: 'Back to overview',
     }
   },
   timeRange: {
