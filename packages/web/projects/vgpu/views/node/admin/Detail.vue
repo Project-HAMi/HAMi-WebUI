@@ -209,6 +209,7 @@ import {
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
+import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -274,16 +275,7 @@ const _gaugeConfigBase = [
     used: 0,
     unit: 'GiB',
   },
-  {
-    titleKey: 'dashboard.computeUsageRate',
-    percent: 0,
-    query: `avg(avg(hami_core_util{node=~"$node"}) by (node, device_uuid))`,
-    percentQuery: `avg(avg(hami_core_util_avg{node=~"$node"}) by (node, device_uuid))`,
-    totalQuery: `avg(sum(hami_core_size{node=~"$node"}) by (instance))`,
-    total: 100,
-    used: 0,
-    unit: ' ',
-  },
+  createNodeComputeUsageGaugeConfig({ selector: nodeMetricSelector }),
   {
     titleKey: 'dashboard.memUsageRate',
     percent: 0,
