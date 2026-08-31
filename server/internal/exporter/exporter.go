@@ -652,9 +652,11 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("avg(DCGM_FI_DEV_MEMORY_TEMP{UUID=\"%s\"})", deviceUUID)
 	case biz.CambriconGPUDevice:
-		query = fmt.Sprintf("avg(mlu_memory_temperature{uuid=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mlu_memory_temperature{uuid=\"%s\",memory_die=\"\"})", deviceUUID)
 	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_temperature{vdie_id=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(npu_chip_info_hbm_temperature{vdie_id=\"%s\"})", deviceUUID)
+	case biz.MetaxGPUDevice:
+		query = fmt.Sprintf("avg(mx_chip_hbm_temp{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, errors.New("provider not exists")
 	}
@@ -667,7 +669,7 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("avg(DCGM_FI_DEV_POWER_USAGE{UUID=\"%s\"})", deviceUUID)
 	case biz.CambriconGPUDevice:
-		query = fmt.Sprintf("avg(mlu_power_usage{uuid=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mlu_power_usage{uuid=\"%s\",vf=\"\"})", deviceUUID)
 	case biz.AscendGPUDevice:
 		query = fmt.Sprintf("avg(npu_chip_info_power{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
@@ -724,7 +726,7 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 	case biz.AscendGPUDevice:
 		query = fmt.Sprintf("npu_chip_info_power{vdie_id=\"%s\"}", deviceUUID)
 	case biz.CambriconGPUDevice:
-		query = fmt.Sprintf("mlu_power_usage{uuid=\"%s\"}", deviceUUID)
+		query = fmt.Sprintf("mlu_power_usage{uuid=\"%s\",vf=\"\"}", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("dcu_power_usage{device_id=\"%s\"}", deviceUUID)
 	case biz.MetaxGPUDevice:
