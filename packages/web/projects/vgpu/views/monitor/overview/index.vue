@@ -385,6 +385,7 @@ import {
   createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
+import { buildClusterAllocatableQueries } from '~/vgpu/metrics/query-contract.mjs';
 import {
   createRequestState,
   rejectRequest,
@@ -537,14 +538,15 @@ const fetchNodeWorkloadDistribution = () =>
 
 const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs());
 
+const clusterAllocatableQueries = buildClusterAllocatableQueries();
 const clusterResourceConfig = useInstantVector([
   {
-    query: 'sum(kube_node_status_allocatable{resource="cpu"})',
+    query: clusterAllocatableQueries.cpu,
     total: 0,
     used: 0,
   },
   {
-    query: 'sum(kube_node_status_allocatable{resource="memory"})',
+    query: clusterAllocatableQueries.memory,
     total: 0,
     used: 0,
   },
@@ -604,7 +606,7 @@ const resourceOverview = computed(() => [
     to: '/admin/vgpu/card/admin',
   },
   {
-    title: t('dashboard.cpuTotalCores'),
+    title: t('dashboard.clusterAllocatableCpu'),
     count: readyMetricValue(
       clusterResourceConfig.value[0],
       'used',
@@ -637,7 +639,7 @@ const resourceOverview = computed(() => [
     unit: 'GiB',
   },
   {
-    title: t('dashboard.systemMemoryTotal'),
+    title: t('dashboard.clusterAllocatableMemory'),
     count: readyMetricValue(
       clusterResourceConfig.value[1],
       'used',

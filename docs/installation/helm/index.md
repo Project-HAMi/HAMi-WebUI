@@ -357,8 +357,14 @@ scrape_configs:
     # ...
 ```
 
+The CPU, memory, and container-limit queries also depend on kube-state-metrics
+object labels: `node`, `namespace`, `pod`, `container`, and `uid`. Preserve
+these labels as exported by kube-state-metrics. When scrape-target labels can
+collide, set `honorLabels: true` on its ServiceMonitor as well. The bundled
+kube-prometheus-stack does this by default.
+
 `Prometheus.spec.overrideHonorLabels: true` forces
-`honorLabels` off for every ServiceMonitor, including this one.
+`honorLabels` off for every ServiceMonitor, including both monitors above.
 
 If the same Prometheus selects both this Chart's monitor and HAMi's built-in
 device-plugin ServiceMonitor, the endpoint is scraped twice. The HAMi monitor
@@ -387,7 +393,10 @@ The manually managed scrape configuration must collect all of these targets:
 - the generated `my-hami-webui-backend` Service on port `8000`, path `/metrics`;
 - HAMi's device-plugin monitor Service on `monitorport`, path `/metrics`, with
   `honor_labels: true`;
-- kube-state-metrics for Kubernetes CPU and memory capacity; and
+- kube-state-metrics for Kubernetes allocatable CPU/memory and container
+  limits. Preserve its `node`, `namespace`, `pod`, `container`, and `uid`
+  workload labels; when scrape-target labels can collide, set
+  `honor_labels: true`;
 - every vendor exporter or monitor used by the enabled hardware providers. The
   consumed metric families include `DCGM_*` for NVIDIA, `npu_*` for Ascend,
   `dcu_*`/`vdcu_*` for DCU, `mlu_*` for MLU, and `mx_*` for MetaX.

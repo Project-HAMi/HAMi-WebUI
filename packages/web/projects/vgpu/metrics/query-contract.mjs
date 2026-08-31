@@ -148,6 +148,24 @@ export const buildTaskResourceOverviewQueries = ({ selector = '' } = {}) => {
   };
 };
 
+export const buildClusterAllocatableQueries = () => ({
+  cpu:
+    'sum(max by (node) (kube_node_status_allocatable{resource="cpu",unit="core"}))',
+  memory:
+    'sum(max by (node) (kube_node_status_allocatable{resource="memory",unit="byte"}))',
+});
+
+export const buildTaskContainerResourceQueries = () => {
+  const identity =
+    'namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid';
+
+  return {
+    cpuLimit: `max(kube_pod_container_resource_limits{resource="cpu",unit="core",${identity}})`,
+    memoryLimit: `max(kube_pod_container_resource_limits{resource="memory",unit="byte",${identity}}) / 1024 / 1024 / 1024`,
+    containerInfo: `max(kube_pod_container_info{${identity}})`,
+  };
+};
+
 export const buildTaskCountQueries = () => ({
   byNode:
     'topk(5, count by (node) (sum by (container_pod_uuid, node) (hami_container_vgpu_allocated)))',

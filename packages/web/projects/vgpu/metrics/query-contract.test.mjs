@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  buildClusterAllocatableQueries,
   buildClusterTrendQueries,
   buildComputeAllocationQueries,
   buildGroupedResourceTopQueries,
@@ -11,6 +12,7 @@ import {
   buildTaskAllocationTopQueries,
   buildTaskComputeAllocationQuery,
   buildTaskCountQueries,
+  buildTaskContainerResourceQueries,
   buildTaskResourceOverviewQueries,
 } from './query-contract.mjs';
 import {
@@ -167,6 +169,33 @@ test('task resource totals stay stable for one or two exporter replicas and mult
     queries.singleCardMemory,
     `${replicaSafeMemory} / clamp_min(${replicaSafeVgpu}, 1) / 1024`,
   );
+});
+
+test('Kubernetes resource queries deduplicate replicas and bind the current Pod UID', () => {
+  assert.deepEqual(buildClusterAllocatableQueries(), {
+    cpu:
+      'sum(max by (node) (kube_node_status_allocatable{resource="cpu",unit="core"}))',
+    memory:
+      'sum(max by (node) (kube_node_status_allocatable{resource="memory",unit="byte"}))',
+  });
+
+  const task = buildTaskContainerResourceQueries();
+  assert.equal(
+    task.cpuLimit,
+    'max(kube_pod_container_resource_limits{resource="cpu",unit="core",namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid})',
+  );
+  assert.equal(
+    task.memoryLimit,
+    'max(kube_pod_container_resource_limits{resource="memory",unit="byte",namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid}) / 1024 / 1024 / 1024',
+  );
+  assert.equal(
+    task.containerInfo,
+    'max(kube_pod_container_info{namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid})',
+  );
+  for (const query of Object.values(task)) {
+    assert.match(query, /uid=\$pod_uid/);
+    assert.doesNotMatch(query, /^sum\(/);
+  }
 });
 
 test('workload counts do not depend on compute-allocation availability', () => {
