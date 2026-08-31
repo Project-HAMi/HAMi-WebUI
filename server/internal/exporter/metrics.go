@@ -24,7 +24,7 @@ func init() {
 	prometheus.MustRegister(HamiDevicePower)
 	prometheus.MustRegister(HamiDeviceFanSpeedP)
 	prometheus.MustRegister(HamiDeviceFanSpeedR)
-	prometheus.MustRegister(HamiDeviceHardwareHealth)
+	prometheus.MustRegister(HamiDeviceLastXIDErrorCode)
 
 	// Container metrics.
 	prometheus.MustRegister(HamiContainerVgpuAllocated)
@@ -125,9 +125,9 @@ var (
 		Help: "gpu power",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
-	HamiDeviceHardwareHealth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "hami_device_hardware_health",
-		Help: "gpu hardware health",
+	HamiDeviceLastXIDErrorCode = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hami_device_last_xid_error_code",
+		Help: "Last NVIDIA XID error code reported by DCGM; 0 means no error and non-zero values are diagnostic codes, not a health status",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiDeviceFanSpeedP = prometheus.NewGaugeVec(prometheus.GaugeOpts{
