@@ -790,7 +790,7 @@ test('browser language selects English without leaking active Chinese UI text', 
 
     const requestsCard = page.locator('.task-top-box .home-block').nth(1)
     await requestsCard.locator('.title')
-      .filter({ hasText: 'Workload Requests Top5' })
+      .filter({ hasText: 'Workload Allocation Top5' })
       .waitFor()
     await requestsCard.locator('.t-radio-button')
       .filter({ hasText: 'vGPU' })

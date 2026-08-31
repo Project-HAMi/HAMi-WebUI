@@ -7,6 +7,7 @@ import {
   buildGroupedResourceTopQueries,
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
+  buildTaskAllocationTopQueries,
   buildTaskComputeAllocationQuery,
   buildTaskCountQueries,
   buildTaskResourceOverviewQueries,
@@ -60,12 +61,38 @@ test('task compute queries reject partial unknown allocations', () => {
   );
   assert.match(
     ranked,
-    /^\(avg by \(container_pod_uuid\) \(hami_container_vcore_allocated\)/,
+    /^\(avg by \(container_pod_uuid\) \(sum by \(container_pod_uuid, instance\) \(hami_container_vcore_allocated\)\)\)/,
   );
   assert.match(
     ranked,
     /unless on \(container_pod_uuid\) max by \(container_pod_uuid\)/,
   );
+});
+
+test('workload allocation rankings total cards within each exporter replica', () => {
+  const queries = buildTaskAllocationTopQueries();
+  const replicaSafe = (metric) =>
+    `avg by (container_pod_uuid) (sum by (container_pod_uuid, instance) (${metric}))`;
+
+  assert.equal(
+    queries.compute,
+    `topk(5, ((${replicaSafe('hami_container_vcore_allocated')}) unless on (container_pod_uuid) max by (container_pod_uuid) (hami_container_vcore_allocation_known == 0)) / 100)`,
+  );
+  assert.equal(
+    queries.memory,
+    `topk(5, ${replicaSafe('hami_container_vmemory_allocated')} / 1024)`,
+  );
+  assert.equal(
+    queries.vgpu,
+    `topk(5, ${replicaSafe('hami_container_vgpu_allocated')})`,
+  );
+
+  for (const query of Object.values(queries)) {
+    assert.doesNotMatch(
+      query,
+      /avg by \(container_pod_uuid\) \(hami_container_/,
+    );
+  }
 });
 
 test('task resource totals stay stable for one or two exporter replicas and multiple cards', () => {

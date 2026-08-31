@@ -310,7 +310,7 @@ export default {
     memoryUsageTrend: 'Memory Usage (%)',
     noMonitorSupport: 'Vendor does not support task-level monitoring',
     topCount: 'Workload Count Top5',
-    topApply: 'Workload Requests Top5',
+    topApply: 'Workload Allocation Top5',
     detail: {
       title: 'Workload',
       detailInfo: 'Basic Info',

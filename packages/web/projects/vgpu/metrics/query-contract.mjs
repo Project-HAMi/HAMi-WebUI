@@ -106,14 +106,31 @@ export const buildTaskComputeAllocationQuery = ({
 } = {}) => {
   validateGroupLabel(groupLabel);
   const allocated = metricSeries(METRICS.computeAllocated, selector);
-  const aggregate = groupLabel
-    ? `avg by (${groupLabel}) (${allocated})`
-    : aggregateAcrossExporterReplicas(allocated);
+  const aggregate = aggregateAcrossExporterReplicas(allocated, groupLabel);
 
   return excludeUnknownComputeAllocations(aggregate, {
     selector,
     groupLabel,
   });
+};
+
+export const buildTaskAllocationTopQueries = () => {
+  const groupLabel = 'container_pod_uuid';
+  const compute = buildTaskComputeAllocationQuery({ groupLabel });
+  const memory = aggregateAcrossExporterReplicas(
+    METRICS.memoryAllocated,
+    groupLabel,
+  );
+  const vgpu = aggregateAcrossExporterReplicas(
+    METRICS.vgpuAllocated,
+    groupLabel,
+  );
+
+  return {
+    compute: `topk(5, (${compute}) / 100)`,
+    memory: `topk(5, ${memory} / 1024)`,
+    vgpu: `topk(5, ${vgpu})`,
+  };
 };
 
 export const buildTaskResourceOverviewQueries = ({ selector = '' } = {}) => {
