@@ -60,6 +60,18 @@ func (f *fakeNodeRepo) FindDeviceByAliasId(string) (*biz.DeviceInfo, error) {
 	return nil, nil
 }
 
+type fakePodRepo struct {
+	containers []*biz.Container
+}
+
+func (f *fakePodRepo) ListAll(context.Context) ([]*biz.Container, error) {
+	return f.containers, nil
+}
+
+func (f *fakePodRepo) FindOne(context.Context, string, string) (*biz.Container, error) {
+	return nil, nil
+}
+
 func TestNvidiaTaskCoreUsedQueryIncludesIdleSamples(t *testing.T) {
 	query := nvidiaTaskCoreUsedQuery("GPU-1", "research", "train", "worker")
 	want := `avg(avg_over_time(hami_container_device_utilization_ratio{device_uuid="GPU-1", namespace="research", pod="train", container="worker"}[1m]))`
@@ -598,6 +610,52 @@ func TestContainerCoreMetricsKeepsLegacyProviderConversions(t *testing.T) {
 			if len(fake.queries) != 2 {
 				t.Fatalf("legacy provider made %d queries, want 2", len(fake.queries))
 			}
+		})
+	}
+}
+
+func TestAscendContainerAllocationNormalizesProviderAndOmitsUnknownCore(t *testing.T) {
+	tests := []struct {
+		name          string
+		core          int32
+		coreKnown     bool
+		wantCoreGauge bool
+	}{
+		{name: "known template", core: 25, coreKnown: true, wantCoreGauge: true},
+		{name: "unknown template", core: 0, coreKnown: false, wantCoreGauge: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const (
+				aliasID   = "B4-alias"
+				deviceID  = "B4-telemetry"
+				nodeName  = "ascend-node"
+				podName   = "ascend-pod"
+				container = "worker"
+				namespace = "research"
+				podUID    = "pod-uid"
+			)
+			generator := &MetricsGenerator{
+				nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{{
+					Id: deviceID, AliasId: aliasID, Type: "Ascend910B4", Provider: biz.AscendGPUDevice, NodeName: nodeName,
+				}}}, log.NewStdLogger(io.Discard)),
+				podUsecase: biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{{
+					Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
+					ContainerDevices: biz.ContainerDevices{{UUID: aliasID, Type: "Ascend910B4", Usedmem: 8192, Usedcores: tt.core, CoreAllocationKnown: tt.coreKnown}},
+				}}}, log.NewStdLogger(io.Discard)),
+				monitorService: &fakeInstantQuerier{},
+				log:            log.NewHelper(log.NewStdLogger(io.Discard)),
+			}
+			t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+			if err := generator.GenerateContainerMetrics(context.Background()); err != nil {
+				t.Fatalf("GenerateContainerMetrics() error = %v", err)
+			}
+			labels := []string{nodeName, biz.AscendGPUDevice, "Ascend910B4", deviceID, podName, container, namespace, container + ":" + podUID}
+			assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels, true)
+			assertGaugeTracked(t, generator, HamiContainerVmemoryAllocated, labels, true)
+			assertGaugeTracked(t, generator, HamiContainerVcoreAllocated, labels, tt.wantCoreGauge)
 		})
 	}
 }

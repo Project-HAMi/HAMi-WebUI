@@ -13,6 +13,7 @@ import (
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/metax"
+	providerutil "vgpu/internal/provider/util"
 	"vgpu/internal/service"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -377,6 +378,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			var core int32 = 0
 			var memory int32 = 0
 			var provider string = ""
+			coreAllocationKnown := true
 			for _, cd := range c.ContainerDevices {
 				if device.AliasId != "" && !strings.HasPrefix(cd.UUID, device.AliasId) {
 					continue
@@ -384,7 +386,10 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				vGPU = vGPU + 1
 				core = core + cd.Usedcores
 				memory = memory + cd.Usedmem
-				provider = cd.Type
+				provider = providerutil.VendorOf(cd.Type)
+				if provider == biz.AscendGPUDevice && !cd.CoreAllocationKnown {
+					coreAllocationKnown = false
+				}
 			}
 			if provider == "" || provider == metax.MetaxGPUDevice {
 				continue
@@ -392,11 +397,13 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			podUIDLabel := fmt.Sprintf("%s:%s", c.Name, c.PodUID)
 			s.set(HamiContainerVgpuAllocated, float64(vGPU), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			s.set(HamiContainerVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
-			s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
-			used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index, core)
-			if err == nil {
-				s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
-				s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+			if coreAllocationKnown {
+				s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
+				used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index, core)
+				if err == nil {
+					s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+					s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
+				}
 			}
 			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
 			if err == nil {

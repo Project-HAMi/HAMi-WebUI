@@ -243,8 +243,8 @@ const baseColumns = computed(() => [
     key: 'card-compute-remaining-total',
     dataIndex: 'used',
     width: 220,
-    render: ({ coreTotal, coreUsed, isExternal }) => {
-      if (isExternal || !coreTotal) return <span>--</span>;
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
+      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const stats = getRemainingTotalText({ total: coreTotal, used: coreUsed, divisor: 100 });
       if (!stats) return <span>--</span>;
       return (
@@ -262,8 +262,8 @@ const baseColumns = computed(() => [
     key: 'card-compute-allocation',
     dataIndex: 'used',
     width: 180,
-    render: ({ coreTotal, coreUsed, isExternal }) => {
-      if (isExternal || !coreTotal) return <span>--</span>;
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
+      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const percent = getAllocationPercent(coreUsed, coreTotal);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);

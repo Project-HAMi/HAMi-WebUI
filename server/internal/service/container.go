@@ -94,6 +94,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		containerReply.NodeUid = container.NodeUID
 		containerReply.Namespace = container.Namespace
 		containerReply.Priority = container.Priority
+		allocatedCoresKnown := true
 		for _, containerDevice := range container.ContainerDevices {
 			deviceID := containerDevice.UUID
 			if device, err := s.node.FindDeviceByAliasId(containerDevice.UUID); err == nil {
@@ -110,6 +111,9 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 
 			containerReply.DeviceIds = append(containerReply.DeviceIds, deviceID)
 			containerReply.AllocatedCores = containerReply.AllocatedCores + containerDevice.Usedcores
+			if strings.HasPrefix(containerDevice.Type, biz.AscendGPUDevice) && !containerDevice.CoreAllocationKnown {
+				allocatedCoresKnown = false
+			}
 			containerReply.AllocatedMem = containerReply.AllocatedMem + containerDevice.Usedmem
 			containerReply.Type = containerDevice.Type
 			containerReply.AllocatedDevices++
@@ -117,6 +121,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		if containerReply.DeviceIds == nil {
 			continue
 		}
+		containerReply.AllocatedCoresKnown = &allocatedCoresKnown
 		containerReply.CreateTime = container.CreateTime.Format(time.RFC3339)
 		res.Items = append(res.Items, containerReply)
 	}
@@ -140,6 +145,7 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	ctrReply.NodeUid = container.NodeUID
 	ctrReply.Namespace = container.Namespace
 	ctrReply.Priority = container.Priority
+	allocatedCoresKnown := true
 	allContainers, err := s.pod.ListAllContainers(ctx)
 	if err == nil {
 		images := make([]string, 0)
@@ -163,10 +169,14 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 			ctrReply.DeviceIds = append(ctrReply.DeviceIds, device.Id)
 		}
 		ctrReply.AllocatedCores = ctrReply.AllocatedCores + containerDevice.Usedcores
+		if strings.HasPrefix(containerDevice.Type, biz.AscendGPUDevice) && !containerDevice.CoreAllocationKnown {
+			allocatedCoresKnown = false
+		}
 		ctrReply.AllocatedMem = ctrReply.AllocatedMem + containerDevice.Usedmem
 		ctrReply.Type = containerDevice.Type
 		ctrReply.AllocatedDevices++
 	}
+	ctrReply.AllocatedCoresKnown = &allocatedCoresKnown
 	ctrReply.CreateTime = container.CreateTime.Format(time.RFC3339)
 	return ctrReply, nil
 }

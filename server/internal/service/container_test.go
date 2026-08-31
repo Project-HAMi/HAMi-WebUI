@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/go-kratos/kratos/v2/log"
+	"google.golang.org/protobuf/encoding/protojson"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 )
@@ -72,6 +74,35 @@ func TestGetAllContainersMatchesPodOrContainerName(t *testing.T) {
 		if len(reply.Items) != 1 {
 			t.Fatalf("GetAllContainers(%q) returned %d items, want 1", filter, len(reply.Items))
 		}
+	}
+}
+
+func TestGetAllContainersMarksUnknownAscendCoreAllocation(t *testing.T) {
+	containers := []*biz.Container{{
+		Name: "worker", PodName: "ascend-job", Status: biz.ContainerStatusSuccess, PodUID: "pod-1", NodeName: "node-1",
+		ContainerDevices: biz.ContainerDevices{{UUID: "ascend-0", Type: "Ascend910B4", Usedmem: 4096, CoreAllocationKnown: false}},
+	}}
+	service := NewContainerService(
+		biz.NewNodeUsecase(&containerTestNodeRepo{}, log.DefaultLogger),
+		biz.NewPodUseCase(&containerTestPodRepo{containers: containers}, log.DefaultLogger),
+	)
+
+	reply, err := service.GetAllContainers(context.Background(), &pb.GetAllContainersReq{})
+	if err != nil {
+		t.Fatalf("GetAllContainers() error = %v", err)
+	}
+	if len(reply.Items) != 1 || reply.Items[0].AllocatedCoresKnown == nil || reply.Items[0].GetAllocatedCoresKnown() {
+		t.Fatalf("allocated core presence = %#v, want explicit unknown", reply.Items)
+	}
+	if reply.Items[0].AllocatedMem != 4096 || len(reply.Items[0].DeviceIds) != 1 {
+		t.Fatalf("unknown core must preserve device and memory allocation: %#v", reply.Items[0])
+	}
+	encoded, err := protojson.Marshal(reply.Items[0])
+	if err != nil {
+		t.Fatalf("marshal reply: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"allocatedCoresKnown":false`) {
+		t.Fatalf("optional false presence was lost in JSON: %s", encoded)
 	}
 }
 

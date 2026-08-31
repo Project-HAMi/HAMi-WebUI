@@ -30,12 +30,13 @@ const (
 )
 
 type ContainerDevice struct {
-	Idx       int
-	UUID      string
-	Type      string
-	Usedmem   int32
-	Usedcores int32
-	Priority  string
+	Idx                 int
+	UUID                string
+	Type                string
+	Usedmem             int32
+	Usedcores           int32
+	CoreAllocationKnown bool
+	Priority            string
 }
 
 type ContainerDeviceRequest struct {

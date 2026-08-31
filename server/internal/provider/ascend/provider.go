@@ -7,7 +7,9 @@ import (
 	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"strconv"
+	"sort"
+	"strings"
+	"time"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/util"
 )
@@ -53,13 +55,16 @@ func (a *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.De
 			a.log.Warnf("vectorValue: %v, failed", vs)
 		} else {
 			for _, d := range ds {
-				id := d.Metric["id"]
+				vdieID := string(d.Metric["vdie_id"])
+				if vdieID == "" {
+					continue
+				}
 				health := false
 				if d.Value.Equal(1) {
 					health = true
 				}
-				device[string(id)] = &util.DeviceInfo{
-					ID:     string(d.Metric["vdie_id"]),
+				device[vdieID] = &util.DeviceInfo{
+					ID:     vdieID,
 					Type:   string(d.Metric["model_name"]),
 					Driver: "-",
 					Health: health,
@@ -71,26 +76,109 @@ func (a *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.De
 }
 
 func (a *Ascend) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
-	for _, anno := range AscendNodeRegisterAnnos {
-		tmpDevice := a.GetDevicesFromPrometheus(node)
-		anno, ok := node.Annotations[anno]
-		if !ok {
-			log.Infof("anno %s not found", anno)
-			continue
+	nodeDevices, err := decodeRegisteredDevices(node)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodeDevices) == 0 {
+		return []*util.DeviceInfo{}, nil
+	}
+
+	telemetryDevices := a.GetDevicesFromPrometheus(node)
+	for i, matched := range reconcileRegisteredDevices(nodeDevices, telemetryDevices) {
+		if !matched {
+			log.Infof("Ascend device %s (index %d) not found in Prometheus telemetry", nodeDevices[i].AliasId, nodeDevices[i].Index)
 		}
-		nodeDevices, err := util.UnMarshalNodeDevices(anno)
+	}
+	return nodeDevices, nil
+}
+
+func reconcileRegisteredDevices(nodeDevices []*util.DeviceInfo, telemetryDevices map[string]*util.DeviceInfo) []bool {
+	matched := make([]bool, len(nodeDevices))
+	for i, nodeDevice := range nodeDevices {
+		nodeDevices[i].AliasId = nodeDevice.ID
+		if telemetryDevice, exists := telemetryDevices[nodeDevice.ID]; exists {
+			nodeDevices[i].Health = telemetryDevice.Health
+			matched[i] = true
+		}
+	}
+	return matched
+}
+
+func decodeRegisteredDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
+	type candidate struct {
+		device    *util.DeviceInfo
+		reported  time.Time
+		hasReport bool
+		key       string
+	}
+	candidates := make(map[string]candidate)
+	annotationKeys := make([]string, 0)
+	const (
+		registerBase   = "hami.io/node-register-"
+		registerPrefix = registerBase + "Ascend"
+		handshakeBase  = "hami.io/node-handshake-"
+	)
+	for annotationKey := range node.Annotations {
+		if strings.HasPrefix(annotationKey, registerPrefix) && len(annotationKey) > len(registerBase) {
+			annotationKeys = append(annotationKeys, annotationKey)
+		}
+	}
+	sort.Strings(annotationKeys)
+	for _, annotationKey := range annotationKeys {
+		commonWord := strings.TrimPrefix(annotationKey, registerBase)
+		annotation := node.Annotations[annotationKey]
+		nodeDevices, err := util.UnMarshalNodeDevices(annotation)
 		if err != nil {
-			return []*util.DeviceInfo{}, err
+			return nil, fmt.Errorf("decode %s on node %s: %w", annotationKey, node.Name, err)
 		}
-		for i, nodedevice := range nodeDevices {
-			nodeDevices[i].AliasId = nodedevice.ID
-			if device, exists := tmpDevice[strconv.Itoa(i)]; exists {
-				nodeDevices[i].ID = device.ID
-			} else {
-				log.Infof("Key %d not found in tmpDevice", i)
+		reported, hasReport := parseAscendReportedTime(node.Annotations[handshakeBase+commonWord])
+		for _, device := range nodeDevices {
+			if device.ID == "" || device.Type != commonWord {
+				return nil, fmt.Errorf("decode %s on node %s: device id/type does not match commonWord %q", annotationKey, node.Name, commonWord)
+			}
+			// The plugin reports physical AI Core count in hard mode (for
+			// example 20), while WebUI's allocation contract is a normalized
+			// whole-card percentage. Keep the inventory denominator consistent
+			// with template shares and hami-core mode.
+			device.Devcore = 100
+			incoming := candidate{device: device, reported: reported, hasReport: hasReport, key: annotationKey}
+			existing, duplicate := candidates[device.ID]
+			if !duplicate {
+				candidates[device.ID] = incoming
+				continue
+			}
+			replace := incoming.hasReport && (!existing.hasReport || incoming.reported.After(existing.reported))
+			if replace {
+				candidates[device.ID] = incoming
+			}
+			if existing.device.Type != incoming.device.Type {
+				log.Warnf("conflicting Ascend registrations for device %s on node %s: %s and %s", device.ID, node.Name, existing.key, incoming.key)
 			}
 		}
-		return nodeDevices, nil
 	}
-	return []*util.DeviceInfo{}, fmt.Errorf("")
+	ordered := make([]candidate, 0, len(candidates))
+	for _, registered := range candidates {
+		ordered = append(ordered, registered)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].device.Index != ordered[j].device.Index {
+			return ordered[i].device.Index < ordered[j].device.Index
+		}
+		return ordered[i].device.ID < ordered[j].device.ID
+	})
+	devices := make([]*util.DeviceInfo, 0, len(ordered))
+	for _, registered := range ordered {
+		devices = append(devices, registered.device)
+	}
+	return devices, nil
+}
+
+func parseAscendReportedTime(value string) (time.Time, bool) {
+	const prefix = "Reported_"
+	if !strings.HasPrefix(value, prefix) {
+		return time.Time{}, false
+	}
+	reported, err := time.Parse("2006.01.02 15:04:05", strings.TrimPrefix(value, prefix))
+	return reported, err == nil
 }

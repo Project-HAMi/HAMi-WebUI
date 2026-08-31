@@ -65,7 +65,7 @@ func TestDecodePodDevicesWithInitContainers(t *testing.T) {
 		},
 	}
 
-	got, err := DecodePodDevices(pod, logger)
+	got, err := DecodePodDevices(pod, logger, AscendAllocationModeUnknown)
 	if err != nil {
 		t.Fatalf("DecodePodDevices() error = %v", err)
 	}
@@ -118,7 +118,7 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 			want: PodDevices{
 				"Ascend310P": {
 					{
-						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 				},
 			},
@@ -142,10 +142,10 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 			want: PodDevices{
 				"Ascend310P": {
 					{
-						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 					{
-						{Idx: 0, UUID: "D7E96E64-214123F1-E8E618E4-AED8030A-E3003039", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "D7E96E64-214123F1-E8E618E4-AED8030A-E3003039", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 				},
 			},
@@ -167,7 +167,7 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 			want: PodDevices{
 				"Ascend310P": {
 					{
-						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 				},
 			},
@@ -192,11 +192,11 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 			want: PodDevices{
 				"Ascend310P": {
 					{
-						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 					{}, // empty segment placeholder
 					{
-						{Idx: 0, UUID: "D7E96E64-214123F1-E8E618E4-AED8030A-E3003039", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "D7E96E64-214123F1-E8E618E4-AED8030A-E3003039", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 				},
 			},
@@ -219,7 +219,7 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 				"Ascend310P": {
 					{},
 					{
-						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25},
+						{Idx: 0, UUID: "E0766E64-20C0AB59-CC9AB1A4-3778030A-83003019", Type: "Ascend310P", Usedmem: 6144, Usedcores: 25, CoreAllocationKnown: true},
 					},
 				},
 			},
@@ -257,7 +257,7 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := DecodePodDevices(tt.pod, logger)
+			got, err := DecodePodDevices(tt.pod, logger, AscendAllocationModeTemplate)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DecodePodDevices() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -266,5 +266,102 @@ func Test_DecodePodDevices_Ascend(t *testing.T) {
 				t.Errorf("DecodePodDevices() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDecodeNpuContainerDevicesUsesModeSpecificCoreContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		mode      AscendAllocationMode
+		wantCore  int32
+		wantKnown bool
+	}{
+		{name: "B3 hami-core uses annotation percentage", input: "B3-soft,Ascend910B3,28672,40:", mode: AscendAllocationModeHamiCore, wantCore: 40, wantKnown: true},
+		{name: "B3 hami-core zero remains zero", input: "B3-soft-zero,Ascend910B3,16384,0:", mode: AscendAllocationModeHamiCore, wantCore: 0, wantKnown: true},
+		{name: "910A hard template", input: "A-hard,Ascend910A,2184,0:", mode: AscendAllocationModeTemplate, wantCore: 7, wantKnown: true},
+		{name: "B2 hard template", input: "B2-hard,Ascend910B2,8192,0:", mode: AscendAllocationModeTemplate, wantCore: 13, wantKnown: true},
+		{name: "B4 hard template", input: "B4-hard,Ascend910B4,8192,0:", mode: AscendAllocationModeTemplate, wantCore: 25, wantKnown: true},
+		{name: "B4-1 hard template", input: "B4-1-hard,Ascend910B4-1,32768,0:", mode: AscendAllocationModeTemplate, wantCore: 50, wantKnown: true},
+		{name: "C hard full card", input: "C-hard,Ascend910C,65536,0:", mode: AscendAllocationModeTemplate, wantCore: 100, wantKnown: true},
+		{name: "unknown hard template is unavailable", input: "B4-custom,Ascend910B4,4096,0:", mode: AscendAllocationModeTemplate, wantCore: 0, wantKnown: false},
+		{name: "zero with unresolved mode is unavailable", input: "B4-ambiguous,Ascend910B4,8192,0:", mode: AscendAllocationModeUnknown, wantCore: 0, wantKnown: false},
+		{name: "positive core with unresolved mode is unavailable", input: "B3-positive,Ascend910B3,28672,40:", mode: AscendAllocationModeUnknown, wantCore: 0, wantKnown: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			devices, err := DecodeNpuContainerDevices(tt.input, tt.mode)
+			if err != nil {
+				t.Fatalf("DecodeNpuContainerDevices() error = %v", err)
+			}
+			if len(devices) != 1 {
+				t.Fatalf("device count = %d, want 1", len(devices))
+			}
+			if devices[0].Usedcores != tt.wantCore || devices[0].CoreAllocationKnown != tt.wantKnown {
+				t.Fatalf("core allocation = (%d, known=%t), want (%d, known=%t)", devices[0].Usedcores, devices[0].CoreAllocationKnown, tt.wantCore, tt.wantKnown)
+			}
+		})
+	}
+}
+
+func TestDecodePodDevicesKeepsAscendInitContainerSlot(t *testing.T) {
+	const annotation = "hami.io/Ascend910B3-devices-allocated"
+	setSupportDeviceForTest(t, "Ascend910B3", annotation)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			annotation: ";B3-main,Ascend910B3,28672,40:;",
+		}},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "init"}},
+			Containers:     []corev1.Container{{Name: "worker"}},
+		},
+	}
+
+	got, err := DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), AscendAllocationModeHamiCore)
+	if err != nil {
+		t.Fatalf("DecodePodDevices() error = %v", err)
+	}
+	slots := got["Ascend910B3"]
+	if len(slots) != 2 || len(slots[0]) != 0 || len(slots[1]) != 1 {
+		t.Fatalf("Ascend slots = %#v, want empty init slot and one worker device", slots)
+	}
+	if slots[1][0].UUID != "B3-main" || slots[1][0].Usedcores != 40 {
+		t.Fatalf("worker allocation = %#v", slots[1][0])
+	}
+}
+
+func TestDecodePodDevicesDiscoversFutureAscendCommonWord(t *testing.T) {
+	const annotation = "hami.io/AscendFuture-devices-allocated"
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			annotation: "future-0,AscendFuture,12345,0:",
+		}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}},
+	}
+
+	got, err := DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), AscendAllocationModeTemplate)
+	if err != nil {
+		t.Fatalf("DecodePodDevices() error = %v", err)
+	}
+	devices := got["AscendFuture"]
+	if len(devices) != 1 || len(devices[0]) != 1 {
+		t.Fatalf("future Ascend devices = %#v", devices)
+	}
+	if devices[0][0].Usedmem != 12345 || devices[0][0].CoreAllocationKnown {
+		t.Fatalf("future Ascend allocation = %#v, want memory preserved and core unavailable", devices[0][0])
+	}
+}
+
+func TestDecodePodDevicesRejectsAscendCommonWordMismatch(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			"hami.io/Ascend910B3-devices-allocated": "device-0,Ascend910B4,16384,0:",
+		}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}},
+	}
+
+	if _, err := DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), AscendAllocationModeTemplate); err == nil {
+		t.Fatal("DecodePodDevices() accepted a device type that did not match the annotation commonWord")
 	}
 }

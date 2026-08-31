@@ -181,8 +181,8 @@ const baseColumns = computed(() => [
     key: 'node-compute-allocation',
     minWidth: 280,
     dataIndex: 'used',
-    render: ({ coreTotal, coreUsed, isExternal }) => {
-      if (isExternal || !coreTotal) return <span>--</span>;
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
+      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const rawPercent = (Number(coreUsed || 0) / Number(coreTotal)) * 100;
       const percentForProgress = Math.max(0, Math.min(100, rawPercent));
       const color = getResourceColor(percentForProgress);

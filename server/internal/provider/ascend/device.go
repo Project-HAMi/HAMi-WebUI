@@ -15,14 +15,12 @@ const (
 )
 
 var (
-	AscendResourceCount     string
-	AscendResourceMemory    string
-	AscendResourceCores     string
-	AscendNodeRegisterAnnos []string
+	AscendResourceCount  string
+	AscendResourceMemory string
+	AscendResourceCores  string
 )
 
 func init() {
-	AscendNodeRegisterAnnos = []string{Ascend910BNodeRegisterAnno, Ascend310PNodeRegisterAnno}
 	util.InRequestDevices[AscendDevice] = "hami.io/Ascend910B-devices-to-allocate"
 	util.SupportDevices[AscendDevice] = "hami.io/Ascend910B-devices-allocated"
 	util.InRequestDevices[Ascend310PDevice] = "hami.io/Ascend310P-devices-to-allocate"
