@@ -76,9 +76,9 @@ export default {
     viewAllGpuTypes: '查看全部 GPU 类型',
     vgpuAllocRate: 'vGPU 分配率',
     computeAllocRate: '算力分配率',
-    memAllocRate: '显存分配率',
+    memAllocRate: '可调度显存分配率',
     computeUsageRate: '算力利用率',
-    memUsageRate: '显存使用率',
+    memUsageRate: '物理显存使用率',
     vgpuAllocRateDescription:
       '已分配 vGPU 槽位 ÷ HAMi 注册的可调度槽位。槽位容量来自设备拆分配置，不等于物理加速卡数量。',
     computeAllocRateDescription:
@@ -113,6 +113,7 @@ export default {
     schedulable: '可调度',
     unschedulable: '禁止调度',
     allocated: '已分配',
+    physicalUsed: '物理已用',
     used: '已用',
     idle: '闲置',
     allocRate: '分配率',

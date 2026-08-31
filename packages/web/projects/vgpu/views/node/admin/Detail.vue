@@ -112,7 +112,13 @@
               <div class="resource-card-footer">
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
-                    <div class="resource-card-footer-title">{{ $t('dashboard.allocRateLegend') }}</div>
+                    <div class="resource-card-footer-title">
+                      <span>{{ $t('dashboard.memAllocRate') }}</span>
+                      <metric-help
+                        :description="$t('dashboard.memAllocRateDescription')"
+                        :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memAllocRate') })"
+                      />
+                    </div>
                     <div class="resource-card-footer-value">
                       <span class="resource-card-footer-percent">{{ memoryAllocPercentText }}</span>
                       <t-progress
@@ -129,7 +135,13 @@
 
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
-                    <div class="resource-card-footer-title">{{ $t('dashboard.usageRateLegend') }}</div>
+                    <div class="resource-card-footer-title">
+                      <span>{{ $t('dashboard.memUsageRate') }}</span>
+                      <metric-help
+                        :description="$t('dashboard.memUsageRateDescription')"
+                        :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
+                      />
+                    </div>
                     <div class="resource-card-footer-value">
                       <span class="resource-card-footer-percent">{{ memoryUsagePercentText }}</span>
                       <t-progress
@@ -173,6 +185,8 @@
               getRangeOptions({
                 allocation: gaugeConfig[1].data,
                 usage: gaugeConfig[3].data,
+                allocationName: t('dashboard.memAllocRate'),
+                usageName: t('dashboard.memUsageRate'),
               }, t)
             "
             :autoresize="true"
@@ -193,6 +207,7 @@ import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import { computed, ref } from 'vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import {
   classifyDetailPayload,
 } from '~/vgpu/hooks/detail-resource-state.mjs';
@@ -658,12 +673,18 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-footer-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .resource-card-footer-title {
+  display: inline-flex;
+  flex: 1 1 160px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   font-size: 12px;
   color: #939ea9;
   line-height: 20px;
@@ -671,9 +692,11 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-footer-value {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  margin-left: auto;
 }
 
 .resource-card-footer-percent {

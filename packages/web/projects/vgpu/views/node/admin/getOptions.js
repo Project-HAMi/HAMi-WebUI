@@ -30,7 +30,12 @@ const buildPercentTooltipFormatter = () => {
 };
 
 export const getRangeOptions = (
-  { allocation = [], usage = [] },
+  {
+    allocation = [],
+    usage = [],
+    allocationName,
+    usageName,
+  },
   t = (v) => v,
 ) => {
   const normalizedAllocation = normalizeRangeValues(allocation);
@@ -83,7 +88,7 @@ export const getRangeOptions = (
     },
     series: [
       buildRangeLineSeries({
-        name: t('dashboard.allocRateLegend'),
+        name: allocationName || t('dashboard.allocRateLegend'),
         data: normalizedAllocation,
         itemStyle: {
           color: '#5B8FF9',
@@ -94,7 +99,7 @@ export const getRangeOptions = (
         },
       }),
       buildRangeLineSeries({
-        name: t('dashboard.usageRateLegend'),
+        name: usageName || t('dashboard.usageRateLegend'),
         data: normalizedUsage,
         itemStyle: {
           color: '#42C090',

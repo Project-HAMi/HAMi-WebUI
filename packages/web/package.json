@@ -13,7 +13,7 @@
     "test:i18n": "node --test test/locale-resolution.test.mjs",
     "test:metrics": "node --test src/hooks/request-state.test.mjs projects/vgpu/components/tab-top-state.test.mjs projects/vgpu/hooks/detail-resource-state.test.mjs projects/vgpu/hooks/use-detail-resource.test.mjs projects/vgpu/hooks/instant-vector-state.test.mjs projects/vgpu/hooks/range-vector-query-state.test.mjs projects/vgpu/metrics/query-contract.test.mjs projects/vgpu/metrics/range-vector-state.test.mjs projects/vgpu/metrics/tooltip-html.test.mjs projects/vgpu/views/monitor/overview/metric-config.test.mjs projects/vgpu/views/monitor/overview/overview-state.test.mjs projects/vgpu/views/monitor/overview/workload-distribution.test.mjs projects/vgpu/views/card/admin/allocation-percent.test.mjs projects/vgpu/views/card/admin/optional-telemetry-display.test.mjs projects/vgpu/views/node/admin/metric-config.test.mjs",
     "test:workload": "node --test projects/vgpu/views/task/admin/workload-identity.test.mjs projects/vgpu/views/task/admin/use-task-monitoring.test.mjs",
-    "test:ui-contracts": "node --test projects/vgpu/views/node/detail-location.test.mjs projects/vgpu/views/node/node-status.test.mjs"
+    "test:ui-contracts": "node --test projects/vgpu/views/memory-domain-labels.test.mjs projects/vgpu/views/node/detail-location.test.mjs projects/vgpu/views/node/node-status.test.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.1.0",
