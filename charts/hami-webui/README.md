@@ -83,7 +83,13 @@ The command removes all the Kubernetes components associated with the chart and 
 | dcgm-exporter.serviceMonitor.interval | string | `"15s"`                                                                            |  |
 | env[0].name | string | `"TZ"` | Default environment variable name for the single application container. Use `frontend.*`, not reserved `HAMI_WEBUI_*` variables, for the public path and iframe policy. |
 | env[0].value | string | `"Asia/Shanghai"` | Default timezone value. |
-| externalPrometheus.address | string | `""` | Required Prometheus or VictoriaMetrics HTTP API address when external mode is enabled. |
+| externalPrometheus.address | string | `""` | Required Prometheus or VictoriaMetrics HTTP API address when external mode is enabled. URL user information is rejected; use the Secret-backed authentication values instead. |
+| externalPrometheus.authorization.type | string | `"Bearer"` | HTTP Authorization scheme. `Basic` is rejected; use `basicAuth` for HTTP Basic Authentication. |
+| externalPrometheus.authorization.existingSecret | string | `""` | Existing same-namespace Secret containing the Authorization credentials. Mutually exclusive with `basicAuth`. |
+| externalPrometheus.authorization.credentialsKey | string | `""` | Data key in the Authorization Secret. Configure together with `existingSecret`. |
+| externalPrometheus.basicAuth.existingSecret | string | `""` | Existing same-namespace Secret containing the Basic Authentication username and password. Mutually exclusive with `authorization`. |
+| externalPrometheus.basicAuth.usernameKey | string | `""` | Data key in the Basic Authentication Secret containing the username. |
+| externalPrometheus.basicAuth.passwordKey | string | `""` | Data key in the Basic Authentication Secret containing the password. |
 | externalPrometheus.enabled | bool | `false`                                                                            | Use an existing metrics backend. Exactly one of this value and `kube-prometheus-stack.enabled` must be true. |
 | externalPrometheus.timeout | string | `"1m"` | Timeout sent with each upstream PromQL request. |
 | externalPrometheus.tls.insecureSkipVerify | bool | `false` | Disable HTTPS certificate verification. Use only as a temporary break-glass setting. |
@@ -216,5 +222,5 @@ kube-prometheus-stack:
 The external path requires a running Prometheus Operator and matching
 ServiceMonitor label/namespace selectors. The self-contained path creates
 cluster-scoped resources. Raw scraping, reuse of an existing Operator, HTTPS
-trust, duplicate-target prevention, and verification queries are documented in
+trust and authentication, duplicate-target prevention, and verification queries are documented in
 the [installation guide](../../docs/installation/helm/index.md#select-a-prometheus-ownership-mode).

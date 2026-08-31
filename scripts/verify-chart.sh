@@ -337,6 +337,22 @@ assert_prometheus_mode_rejected 'externalPrometheus.address must include a hostn
 assert_prometheus_mode_rejected 'externalPrometheus.address must include a hostname' \
   --set 'externalPrometheus.enabled=true' \
   --set-string 'externalPrometheus.address=http://:9090'
+prometheus_userinfo_password='must-not-appear%zz'
+if prometheus_userinfo_output="$(helm template test "${work_dir}/hami-webui" \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string "externalPrometheus.address=https://metrics-user:${prometheus_userinfo_password}@prometheus.example.com" 2>&1)"; then
+  echo "Prometheus address user information was accepted" >&2
+  exit 1
+fi
+if ! grep -Fq 'externalPrometheus.address must not include user information' <<<"${prometheus_userinfo_output}" ||
+  grep -Fq "${prometheus_userinfo_password}" <<<"${prometheus_userinfo_output}"; then
+  echo "Prometheus user-information rejection was missing or exposed the password" >&2
+  echo "${prometheus_userinfo_output}" >&2
+  exit 1
+fi
+assert_prometheus_mode_rejected 'externalPrometheus.address must not contain leading or trailing whitespace' \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string "externalPrometheus.address= ${external_address} "
 assert_prometheus_mode_rejected 'kube-prometheus-stack.prometheus.enabled must remain true' \
   --set 'externalPrometheus.enabled=false' \
   --set 'kube-prometheus-stack.enabled=true' \
@@ -400,8 +416,100 @@ fi
 external_deployment_render="$(render_template templates/deployment.yaml \
   --set 'externalPrometheus.enabled=true' \
   --set-string "externalPrometheus.address=${external_address}")"
-if grep -Fq 'prometheus-tls' <<<"${external_deployment_render}"; then
-  echo "External Prometheus must not mount TLS material unless a Secret is configured" >&2
+if grep -Eq 'prometheus-(auth|tls)' <<<"${external_deployment_render}"; then
+  echo "External Prometheus must not mount auth or TLS material unless a Secret is configured" >&2
+  exit 1
+fi
+
+prometheus_authorization_config="$(render_template templates/configmap.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.authorization.existingSecret=prometheus-authorization' \
+  --set-string 'externalPrometheus.authorization.credentialsKey=access-token')"
+prometheus_authorization_deployment="$(render_template templates/deployment.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.authorization.existingSecret=prometheus-authorization' \
+  --set-string 'externalPrometheus.authorization.credentialsKey=access-token')"
+if ! grep -Fq 'type: "Bearer"' <<<"${prometheus_authorization_config}" ||
+  ! grep -Fq 'credentials_file: "/apps/prometheus-auth/credentials"' <<<"${prometheus_authorization_config}" ||
+  grep -Eq 'prometheus-authorization|access-token' <<<"${prometheus_authorization_config}" ||
+  ! grep -Fq 'secretName: "prometheus-authorization"' <<<"${prometheus_authorization_deployment}" ||
+  ! grep -A1 -F 'key: "access-token"' <<<"${prometheus_authorization_deployment}" | grep -Fq 'path: credentials' ||
+  [[ "$(grep -c 'name: prometheus-auth' <<<"${prometheus_authorization_deployment}")" -ne 2 ]] ||
+  ! grep -A2 -F 'mountPath: /apps/prometheus-auth/' <<<"${prometheus_authorization_deployment}" | grep -Fq 'readOnly: true' ||
+  grep -Fq 'subPath:' <<<"${prometheus_authorization_deployment}"; then
+  echo "Authorization Secret was not rendered as a file-backed, read-only mount" >&2
+  exit 1
+fi
+
+prometheus_basic_auth_config="$(render_template templates/configmap.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.basicAuth.existingSecret=prometheus-basic-auth' \
+  --set-string 'externalPrometheus.basicAuth.usernameKey=login-id' \
+  --set-string 'externalPrometheus.basicAuth.passwordKey=login-secret')"
+prometheus_basic_auth_deployment="$(render_template templates/deployment.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.basicAuth.existingSecret=prometheus-basic-auth' \
+  --set-string 'externalPrometheus.basicAuth.usernameKey=login-id' \
+  --set-string 'externalPrometheus.basicAuth.passwordKey=login-secret')"
+if ! grep -Fq 'username_file: "/apps/prometheus-auth/username"' <<<"${prometheus_basic_auth_config}" ||
+  ! grep -Fq 'password_file: "/apps/prometheus-auth/password"' <<<"${prometheus_basic_auth_config}" ||
+  grep -Eq 'prometheus-basic-auth|login-id|login-secret' <<<"${prometheus_basic_auth_config}" ||
+  ! grep -Fq 'secretName: "prometheus-basic-auth"' <<<"${prometheus_basic_auth_deployment}" ||
+  ! grep -A1 -F 'key: "login-id"' <<<"${prometheus_basic_auth_deployment}" | grep -Fq 'path: username' ||
+  ! grep -A1 -F 'key: "login-secret"' <<<"${prometheus_basic_auth_deployment}" | grep -Fq 'path: password' ||
+  [[ "$(grep -c 'name: prometheus-auth' <<<"${prometheus_basic_auth_deployment}")" -ne 2 ]] ||
+  ! grep -A2 -F 'mountPath: /apps/prometheus-auth/' <<<"${prometheus_basic_auth_deployment}" | grep -Fq 'readOnly: true' ||
+  grep -Fq 'subPath:' <<<"${prometheus_basic_auth_deployment}"; then
+  echo "Basic-auth Secret was not rendered as two file-backed credentials" >&2
+  exit 1
+fi
+
+prometheus_custom_authorization_config="$(render_template templates/configmap.yaml \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.authorization.type=Token' \
+  --set-string 'externalPrometheus.authorization.existingSecret=prometheus-authorization' \
+  --set-string 'externalPrometheus.authorization.credentialsKey=access-token')"
+if ! grep -Fq 'type: "Token"' <<<"${prometheus_custom_authorization_config}"; then
+  echo "Custom HTTP Authorization scheme was not preserved" >&2
+  exit 1
+fi
+
+for invalid_prometheus_auth in \
+  '--set-string=externalPrometheus.authorization.existingSecret=auth-only' \
+  '--set-string=externalPrometheus.authorization.credentialsKey=token-only' \
+  '--set-string=externalPrometheus.authorization.existingSecret=auth --set-string=externalPrometheus.authorization.credentialsKey=token --set-string=externalPrometheus.authorization.type=Basic' \
+  '--set-string=externalPrometheus.basicAuth.existingSecret=basic --set-string=externalPrometheus.basicAuth.usernameKey=username' \
+  '--set-string=externalPrometheus.basicAuth.existingSecret=basic --set-string=externalPrometheus.basicAuth.passwordKey=password' \
+  '--set-string=externalPrometheus.authorization.existingSecret=auth --set-string=externalPrometheus.authorization.credentialsKey=token --set-string=externalPrometheus.basicAuth.existingSecret=basic --set-string=externalPrometheus.basicAuth.usernameKey=username --set-string=externalPrometheus.basicAuth.passwordKey=password' \
+  '--set-string=externalPrometheus.authorization.unknownField=value' \
+  '--set-string=externalPrometheus.basicAuth.unknownField=value' \
+  '--set-json=externalPrometheus.authorization=true' \
+  '--set-json=externalPrometheus.basicAuth=true'; do
+  read -r -a invalid_args <<<"${invalid_prometheus_auth}"
+  if helm template test "${work_dir}/hami-webui" "${invalid_args[@]}" >/dev/null 2>&1; then
+    echo "Invalid external Prometheus authentication values were accepted: ${invalid_prometheus_auth}" >&2
+    exit 1
+  fi
+done
+
+if helm template test "${work_dir}/hami-webui" \
+  --set-string 'externalPrometheus.authorization.existingSecret= auth-with-whitespace ' \
+  --set-string 'externalPrometheus.authorization.credentialsKey=token' >/dev/null 2>&1; then
+  echo "External Prometheus authentication accepted surrounding whitespace" >&2
+  exit 1
+fi
+
+if helm template test "${work_dir}/hami-webui" \
+  --set 'externalPrometheus.enabled=false' \
+  --set 'kube-prometheus-stack.enabled=true' \
+  --set-string 'externalPrometheus.authorization.existingSecret=unused-auth' \
+  --set-string 'externalPrometheus.authorization.credentialsKey=token' >/dev/null 2>&1; then
+  echo "Authentication configured for disabled external Prometheus was accepted" >&2
   exit 1
 fi
 
@@ -422,6 +530,31 @@ if ! grep -Fq 'ca_file: "/apps/prometheus-tls/ca.crt"' <<<"${prometheus_tls_ca_c
   [[ "$(grep -c 'name: prometheus-tls' <<<"${prometheus_tls_ca_deployment}")" -ne 2 ]] ||
   ! grep -A2 -F 'mountPath: /apps/prometheus-tls/' <<<"${prometheus_tls_ca_deployment}" | grep -Fq 'readOnly: true'; then
   echo "Private-CA Secret was not rendered as a single unified-container fixed-path mount" >&2
+  exit 1
+fi
+
+prometheus_auth_tls_render="$(helm template test "${work_dir}/hami-webui" \
+  --namespace hami-webui-test \
+  --set 'externalPrometheus.enabled=true' \
+  --set-string 'externalPrometheus.address=https://prometheus.example.com' \
+  --set-string 'externalPrometheus.authorization.existingSecret=prometheus-authorization' \
+  --set-string 'externalPrometheus.authorization.credentialsKey=access-token' \
+  --set-string 'externalPrometheus.tls.existingSecret=prometheus-ca' \
+  --set-string 'externalPrometheus.tls.caKey=company-ca.pem' \
+  --show-only templates/configmap.yaml \
+  --show-only templates/deployment.yaml)"
+for expected in \
+  'credentials_file: "/apps/prometheus-auth/credentials"' \
+  'ca_file: "/apps/prometheus-tls/ca.crt"' \
+  'secretName: "prometheus-authorization"' \
+  'secretName: "prometheus-ca"'; do
+  if ! grep -Fq "${expected}" <<<"${prometheus_auth_tls_render}"; then
+    echo "Combined Prometheus authentication and TLS rendering is missing ${expected}" >&2
+    exit 1
+  fi
+done
+if grep -Fq 'subPath:' <<<"${prometheus_auth_tls_render}"; then
+  echo "Combined Prometheus authentication and TLS rendering used subPath" >&2
   exit 1
 fi
 
@@ -483,7 +616,7 @@ for invalid_prometheus_tls in \
   fi
 done
 
-if grep -Fq 'kind: Secret' <<<"${prometheus_mtls_render}"; then
+if grep -Fq 'kind: Secret' <<<"${prometheus_mtls_render}${prometheus_authorization_deployment}${prometheus_basic_auth_deployment}"; then
   echo "The Chart must reference, not create, Prometheus credential Secrets" >&2
   exit 1
 fi

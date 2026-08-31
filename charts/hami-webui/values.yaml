@@ -168,6 +168,20 @@ externalPrometheus:
   address: ""
   # Single PromQL upstream timeout (sent to Prometheus / VictoriaMetrics as the &timeout= parameter).
   timeout: "1m"
+  # Optional HTTP Authorization credentials. Set existingSecret and
+  # credentialsKey together to enable this mode. The Secret value is mounted as
+  # a file and is never copied into the ConfigMap or Pod environment.
+  authorization:
+    type: "Bearer"
+    existingSecret: ""
+    credentialsKey: ""
+  # Optional HTTP Basic Authentication credentials. This mode is mutually
+  # exclusive with authorization. Use HTTPS unless transport security is
+  # provided outside the application.
+  basicAuth:
+    existingSecret: ""
+    usernameKey: ""
+    passwordKey: ""
   tls:
     # HTTPS certificates are verified by default. Use this only as a temporary
     # escape hatch when a CA cannot yet be supplied.

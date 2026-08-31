@@ -3,8 +3,15 @@
 {{- $podAnnotations := mergeOverwrite (dict) (default (dict) .Values.podAnnotations) (dict "checksum/config" (include (print $.Template.BasePath "/configmap.yaml") . | sha256sum)) -}}
 {{- $env := default (list) .Values.env -}}
 {{- $frontendSettings := default (dict) .Values.frontend -}}
+{{- include "hami-webui.validatePrometheusAuthentication" . -}}
 {{- include "hami-webui.validatePrometheusTLS" . -}}
 {{- $externalPrometheus := default (dict) .Values.externalPrometheus -}}
+{{- $prometheusAuthorization := default (dict) (get $externalPrometheus "authorization") -}}
+{{- $prometheusBasicAuth := default (dict) (get $externalPrometheus "basicAuth") -}}
+{{- $prometheusAuthorizationSecret := default "" (get $prometheusAuthorization "existingSecret") -}}
+{{- $prometheusBasicAuthSecret := default "" (get $prometheusBasicAuth "existingSecret") -}}
+{{- $prometheusAuthSecret := default "" (coalesce $prometheusAuthorizationSecret $prometheusBasicAuthSecret) -}}
+{{- $mountPrometheusAuth := and (get $externalPrometheus "enabled") (ne $prometheusAuthSecret "") -}}
 {{- $prometheusTLS := default (dict) (get $externalPrometheus "tls") -}}
 {{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
 {{- $mountPrometheusTLS := and (get $externalPrometheus "enabled") (ne $prometheusTLSSecret "") -}}
@@ -102,6 +109,11 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /apps/config/
+            {{- if $mountPrometheusAuth }}
+            - name: prometheus-auth
+              mountPath: /apps/prometheus-auth/
+              readOnly: true
+            {{- end }}
             {{- if $mountPrometheusTLS }}
             - name: prometheus-tls
               mountPath: /apps/prometheus-tls/
@@ -123,6 +135,21 @@ spec:
         - name: config
           configMap:
             name: {{ include "hami-webui.fullname" . }}-config
+        {{- if $mountPrometheusAuth }}
+        - name: prometheus-auth
+          secret:
+            secretName: {{ $prometheusAuthSecret | quote }}
+            items:
+              {{- if $prometheusAuthorizationSecret }}
+              - key: {{ get $prometheusAuthorization "credentialsKey" | quote }}
+                path: credentials
+              {{- else }}
+              - key: {{ get $prometheusBasicAuth "usernameKey" | quote }}
+                path: username
+              - key: {{ get $prometheusBasicAuth "passwordKey" | quote }}
+                path: password
+              {{- end }}
+        {{- end }}
         {{- if $mountPrometheusTLS }}
         - name: prometheus-tls
           secret:
