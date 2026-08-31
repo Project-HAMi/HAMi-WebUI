@@ -83,7 +83,7 @@ const handleSetLanguage = (lang) => {
 </style>
 
 <style lang="scss">
-// 全局样式，用于定制 Popper 弹窗
+// The dropdown is teleported outside this component, so these overrides must stay global.
 .lang-dropdown-popper {
   .el-dropdown-menu {
     padding: 6px;
@@ -97,7 +97,7 @@ const handleSetLanguage = (lang) => {
     border-radius: 4px;
     margin: 2px 0;
     line-height: 1.5;
-    font-weight: 400; // 默认正常粗细
+    font-weight: 400;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -109,11 +109,10 @@ const handleSetLanguage = (lang) => {
       color: var(--el-color-primary);
     }
     
-    // 选中状态样式
     &.is-selected {
       color: var(--el-color-primary);
       font-weight: 600;
-      background-color: var(--el-color-primary-light-9); // 非常淡的背景，或者直接透明
+      background-color: var(--el-color-primary-light-9);
     }
 
     .dropdown-item-text {
@@ -126,7 +125,6 @@ const handleSetLanguage = (lang) => {
     }
   }
   
-  // 隐藏默认的箭头，看起来更干净
   .el-popper__arrow {
     display: none;
   }

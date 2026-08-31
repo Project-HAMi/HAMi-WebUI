@@ -4,7 +4,6 @@ import i18n from '@/locales';
 export const getRangeOptions = ({ core = [], memory = [] }) => {
   return {
     legend: {
-      // data: [],
       bottom: 0,
       left: 'center',
     },
@@ -28,10 +27,10 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
       },
     },
     grid: {
-      top: 20, // 上边距
-      bottom: 60, // 下边距
-      left: '8%', // 左边距
-      right: 10, // 右边距
+      top: 20,
+      bottom: 60,
+      left: '8%',
+      right: 10,
     },
     xAxis: {
       type: 'category',
@@ -44,7 +43,6 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
     },
     yAxis: {
       type: 'value',
-      // max: 100,
       axisLabel: {
         formatter: function (value) {
           return `${value} %`;
@@ -57,10 +55,10 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
         data: core,
         type: 'line',
         itemStyle: {
-          color: 'rgb(84, 112, 198)', // 设置线条颜色为橙色
+          color: 'rgb(84, 112, 198)',
         },
         lineStyle: {
-          color: 'rgb(84, 112, 198)', // 设置线条颜色为橙色
+          color: 'rgb(84, 112, 198)',
         },
       },
       {
@@ -68,10 +66,10 @@ export const getRangeOptions = ({ core = [], memory = [] }) => {
         data: memory,
         type: 'line',
         itemStyle: {
-          color: 'rgb(145, 204, 117)', // 设置线条颜色为橙色
+          color: 'rgb(145, 204, 117)',
         },
         lineStyle: {
-          color: 'rgb(145, 204, 117)', // 设置线条颜色为橙色
+          color: 'rgb(145, 204, 117)',
         },
       },
     ],

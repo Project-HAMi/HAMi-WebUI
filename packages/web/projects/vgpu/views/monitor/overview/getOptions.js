@@ -146,7 +146,6 @@ export const getRangeOptions = (data) => {
   return {
     animation: true,
     legend: {
-      // data: [],
       bottom: 10,
       left: 'center',
     },
@@ -184,10 +183,10 @@ export const getRangeOptions = (data) => {
       },
     },
     grid: {
-      top: 20, // 上边距
-      bottom: 60, // 下边距
-      left: '7%', // 左边距
-      right: 10, // 右边距
+      top: 20,
+      bottom: 60,
+      left: '7%',
+      right: 10,
     },
     dataZoom: [
       {
@@ -202,18 +201,11 @@ export const getRangeOptions = (data) => {
       axisLabel: {
         formatter: function (value) {
           return timeParse(value, 'HH:mm');
-          // return timeParse(value, 'MM-DD');
         },
-        // interval: function (index, value) {
-        //   var date = new Date(value);
-        //
-        //   return date.getHours() % 2 === 0 && date.getMinutes() === 0;
-        // },
       },
     },
     yAxis: {
       type: 'value',
-      // max: 100,
       axisLabel: {
         formatter: function (value) {
           return `${value}`;
@@ -223,28 +215,6 @@ export const getRangeOptions = (data) => {
     series: normalizedData.map((item) =>
       buildRangeLineSeries({
         ...item,
-        // areaStyle: {
-        //   normal: {
-        //     color: {
-        //       type: 'linear',
-        //       x: 0, // 渐变起始点 0%
-        //       y: 0, // 渐变起始点 0%
-        //       x2: 0, // 渐变结束点 100%
-        //       y2: 1, // 渐变结束点 100%
-        //       colorStops: [
-        //         {
-        //           offset: 0,
-        //           color: 'rgba(34, 139, 34, 0.16)', // 渐变起始颜色
-        //         },
-        //         {
-        //           offset: 1,
-        //           color: 'rgba(34, 139, 34, 0.00)', // 渐变结束颜色
-        //         },
-        //       ],
-        //       global: false, // 缺省为 false
-        //     },
-        //   },
-        // },
       }),
     ),
   };

@@ -252,7 +252,6 @@ ul {
       overflow-y: auto;
       padding-right: 10px;
 
-      /* 自定义滚动条样式（可选） */
       &::-webkit-scrollbar {
         width: 6px;
       }

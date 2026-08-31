@@ -55,10 +55,10 @@ export const getPreviewBarPie = (statusConfig, { title }) => {
       },
     ],
     grid: {
-      top: 1, // 上边距
-      bottom: 1, // 下边距
-      left: 1, // 左边距
-      right: 1, // 右边距
+      top: 1,
+      bottom: 1,
+      left: 1,
+      right: 1,
     },
   };
 };
@@ -112,10 +112,10 @@ export const getLineOptions = ({
       },
     },
     grid: {
-      top: 20, // 上边距
-      bottom: 30, // 下边距
-      left: 30, // 左边距
-      right: 30, // 右边距
+      top: 20,
+      bottom: 30,
+      left: 30,
+      right: 30,
     },
     dataZoom: [
       {
