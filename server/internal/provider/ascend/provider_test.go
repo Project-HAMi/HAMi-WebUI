@@ -131,3 +131,16 @@ func TestDecodeRegisteredDevicesDiscoversFutureAscendCommonWord(t *testing.T) {
 		t.Fatalf("future Ascend inventory = %#v", devices[0])
 	}
 }
+
+func TestDecodeRegisteredDevicesRejectsNullRecord(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "ascend-node",
+		Annotations: map[string]string{
+			"hami.io/node-register-Ascend910B4": `[null]`,
+		},
+	}}
+
+	if _, err := decodeRegisteredDevices(node); err == nil {
+		t.Fatal("decodeRegisteredDevices() error = nil, want invalid device record error")
+	}
+}

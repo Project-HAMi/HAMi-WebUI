@@ -134,6 +134,9 @@ func decodeRegisteredDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 		}
 		reported, hasReport := parseAscendReportedTime(node.Annotations[handshakeBase+commonWord])
 		for _, device := range nodeDevices {
+			if device == nil {
+				return nil, fmt.Errorf("decode %s on node %s: nil device record", annotationKey, node.Name)
+			}
 			if device.ID == "" || device.Type != commonWord {
 				return nil, fmt.Errorf("decode %s on node %s: device id/type does not match commonWord %q", annotationKey, node.Name, commonWord)
 			}
