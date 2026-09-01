@@ -19,7 +19,7 @@ image:
   # allow '+'); other appVersions are used unchanged.
   tag: "v2.0.0"
   # When set, digest takes precedence over tag and renders repository@digest.
-  digest: "sha256:80a8f63dab912d714dc1c12b90ee46b3557352c9cb11070968d25eba9644ca83"
+  digest: "sha256:963d644a6a5ccfc47dc3c04d76186ccb307b45b86de8dc95427ff1104bcd65d2"
 
 # Image pull secrets used by the WebUI Pod.
 imagePullSecrets: []
