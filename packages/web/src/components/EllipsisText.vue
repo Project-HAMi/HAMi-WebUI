@@ -5,6 +5,7 @@
     placement="top"
     :content="text"
     :show-after="300"
+    :popper-class="tooltipClass"
   >
     <span
       ref="textRef"
@@ -50,6 +51,10 @@ const props = defineProps({
   tooltip: {
     type: String,
     default: 'overflow', // 'none' | 'always' | 'overflow'
+  },
+  tooltipClass: {
+    type: String,
+    default: 'vgpu-long-text-tooltip',
   },
   lines: {
     type: Number,
@@ -134,3 +139,17 @@ watch(
 }
 </style>
 
+<style lang="scss">
+.vgpu-long-text-tooltip {
+  max-width: min(320px, calc(100vw - 32px));
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 20px;
+}
+
+.vgpu-long-text-tooltip.vgpu-single-line-tooltip {
+  max-width: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+</style>

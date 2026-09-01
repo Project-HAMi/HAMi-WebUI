@@ -14,9 +14,9 @@
       >
         <t-space :size="8">
           <t-select
-            v-model="filters.isSchedulable"
+            v-model="filters.schedulingEligibility"
             clearable
-            :placeholder="$t('node.allSchedulingStatuses')"
+            :placeholder="$t('node.allSchedulingEligibilityStatuses')"
             :options="statusOptions"
             @change="applyFilters"
           />
@@ -66,6 +66,7 @@ import nodeApi from '~/vgpu/api/node';
 import cardApi from '~/vgpu/api/card';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TextPlus from '@/components/TextPlus.vue';
@@ -79,8 +80,8 @@ import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useFetchList from '@/hooks/useFetchList';
 import {
-  getNodeReadinessStatus,
-  getNodeSchedulingStatus,
+  getNodeSchedulingEligibilityStatus,
+  matchesNodeSchedulingEligibility,
 } from '~/vgpu/views/node/node-status.mjs';
 
 const router = useRouter();
@@ -88,15 +89,15 @@ const route = useRoute();
 const { t, locale } = useI18n();
 const allNodeMap = ref(new Map());
 const filters = reactive({
-  isSchedulable: undefined,
+  schedulingEligibility: undefined,
   type: undefined,
   ip: '',
 });
 const rawCardTypes = ref([]);
 const statusOptions = computed(() => [
-  { label: t('node.allSchedulingStatuses'), value: undefined },
-  { label: t('node.schedulingEnabled'), value: 'true' },
-  { label: t('node.schedulingDisabled'), value: 'false' },
+  { label: t('node.allSchedulingEligibilityStatuses'), value: undefined },
+  { label: t('node.schedulable'), value: 'schedulable' },
+  { label: t('node.temporarilyUnschedulable'), value: 'temporarilyUnschedulable' },
 ]);
 const cardTypeOptions = computed(() => [
   { label: t('node.allTypes'), value: undefined },
@@ -140,12 +141,22 @@ const fetchAllNodeMap = async () => {
   }
 };
 
-const renderNodeStatus = ({ icon, labelKey }) => (
-  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-    <svg-icon icon={icon} style={{ fontSize: '16px' }} />
-    <span>{t(labelKey)}</span>
-  </span>
-);
+const renderNodeStatus = (row) => {
+  const { icon, labelKey, descriptionKey, showHelp } =
+    getNodeSchedulingEligibilityStatus(row);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+      <svg-icon icon={icon} style={{ fontSize: '16px' }} aria-hidden="true" />
+      <span>{t(labelKey)}</span>
+      {showHelp && (
+        <MetricHelp
+          description={t(descriptionKey)}
+          helpLabel={t('node.schedulingStatusHelpLabel')}
+        />
+      )}
+    </span>
+  );
+};
 
 const baseColumns = computed(() => [
   {
@@ -167,16 +178,10 @@ const baseColumns = computed(() => [
     },
   },
   {
-    title: t('node.readiness'),
-    minWidth: 140,
-    dataIndex: 'isReady',
-    render: (row) => renderNodeStatus(getNodeReadinessStatus(row)),
-  },
-  {
-    title: t('node.schedulingStatus'),
-    minWidth: 170,
-    dataIndex: 'isSchedulable',
-    render: (row) => renderNodeStatus(getNodeSchedulingStatus(row)),
+    title: t('node.status'),
+    minWidth: 200,
+    dataIndex: 'schedulingEligibility',
+    render: (row) => renderNodeStatus(row),
   },
   {
     title: t('node.ip'),
@@ -241,13 +246,16 @@ const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibilit
 const tableState = useFetchList(() => {
   const payload = {
     filters: {
-      ...(filters.isSchedulable ? { isSchedulable: filters.isSchedulable } : {}),
       ...(filters.type ? { type: filters.type } : {}),
       ...(getTrimValue(filters.ip) ? { ip: getTrimValue(filters.ip) } : {}),
     },
   };
   return request(nodeApi.getNodeList(payload));
-}, { immediate: false });
+}, {
+  immediate: false,
+  mapData: (items) => items.filter((item) =>
+    matchesNodeSchedulingEligibility(item, filters.schedulingEligibility)),
+});
 const {
   data: tableData,
   refresh: fetchTableData,
@@ -257,19 +265,19 @@ const {
 } = tableState;
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({ fetchTableData });
 
-const parseSchedulableFromQuery = (value) => {
-  if (value === 'true' || value === 'false') return value;
+const parseSchedulingEligibilityFromQuery = (value) => {
+  if (value === 'schedulable' || value === 'temporarilyUnschedulable') return value;
   return undefined;
 };
 
 let hasInitializedByRoute = false;
 watch(
-  () => route.query.isSchedulable,
+  () => route.query.schedulingEligibility,
   (value) => {
-    const next = parseSchedulableFromQuery(value);
-    if (filters.isSchedulable === next && hasInitializedByRoute) return;
+    const next = parseSchedulingEligibilityFromQuery(value);
+    if (filters.schedulingEligibility === next && hasInitializedByRoute) return;
     hasInitializedByRoute = true;
-    filters.isSchedulable = next;
+    filters.schedulingEligibility = next;
     applyFilters();
   },
   { immediate: true },

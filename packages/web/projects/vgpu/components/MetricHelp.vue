@@ -1,5 +1,9 @@
 <template>
-  <t-tooltip :content="description" :visible="visible">
+  <t-tooltip
+    :content="description"
+    :visible="visible"
+    :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
+  >
     <button
       type="button"
       class="metric-help"
@@ -22,6 +26,7 @@
 <script setup>
 import { computed, ref, useId } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
+import { LONG_TEXT_TOOLTIP_STYLE } from './tooltip-policy.mjs';
 
 defineProps({
   description: { type: String, required: true },

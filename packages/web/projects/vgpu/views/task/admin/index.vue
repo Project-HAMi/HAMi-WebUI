@@ -88,20 +88,18 @@ import cardApi from '~/vgpu/api/card';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
-import TextPlus from '@/components/TextPlus.vue';
+import EllipsisText from '@/components/EllipsisText.vue';
 import { roundToDecimal, timeParse } from '@/utils';
 import request from '@/utils/request';
 import { SearchIcon, HelpCircleIcon } from 'tdesign-icons-vue-next';
 import { reactive, ref, computed, onMounted, watch } from 'vue';
+import { RouterLink } from 'vue-router';
 import Top from './top.vue';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
-import {
-  createWorkloadRowKey,
-  formatWorkloadName,
-} from './workload-identity.mjs';
+import { createWorkloadRowKey, formatWorkloadName } from './workload-identity.mjs';
 import useFetchList from '@/hooks/useFetchList';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
@@ -162,17 +160,42 @@ const baseColumns = computed(() => [
     hideTooltip: true,
     render: ({ name, appName, podUid, namespace, namespaceName }) => {
       const to = `/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`;
-      const workloadName = formatWorkloadName({ appName, name });
+      const workloadPodName = appName || '--';
+      const workloadContainerName = name || '--';
       const workloadNamespace = namespace || namespaceName || '--';
+      const workloadName = formatWorkloadName({ appName, name });
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: '10px' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span class="task-name-icon-card vgpu-table-name-icon-card">
             <svg-icon icon="task-name" style={{ fontSize: '20px' }} />
           </span>
           <span class="task-name-text-wrap vgpu-table-name-text-wrap">
-            <span style={{ display: 'inline-flex', flexDirection: 'column', minWidth: 0 }}>
-              <TextPlus text={workloadName} to={to} />
-              <span class="task-namespace-text">{workloadNamespace}</span>
+            <span class="workload-identity">
+              <RouterLink
+                class="workload-identity-primary workload-identity-link"
+                to={to}
+                aria-label={workloadName}
+              >
+                <span class="workload-identity-label">
+                  {workloadPodName !== workloadContainerName && (
+                    <>
+                      <span class="workload-pod-name">
+                        <EllipsisText text={workloadPodName} mode="middle" tooltip="always" />
+                      </span>
+                      <span class="workload-identity-separator" aria-hidden="true">/</span>
+                    </>
+                  )}
+                  <span class="workload-container-name">
+                    <EllipsisText text={workloadContainerName} mode="end" tooltip="overflow" />
+                  </span>
+                </span>
+              </RouterLink>
+              <span class="workload-namespace-line">
+                <span class="workload-namespace-label">{t('task.namespace')}:</span>
+                <span class="task-namespace-text">
+                  <EllipsisText text={workloadNamespace} mode="end" tooltip="overflow" />
+                </span>
+              </span>
             </span>
           </span>
         </span>
@@ -366,6 +389,15 @@ watch(
   :deep(.workload-table) {
     margin-top: 8px;
   }
+
+  :deep(.workload-table .t-table__body td) {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  :deep(.workload-table .t-table__body td:first-child) {
+    line-height: 0;
+  }
 }
 
 :deep(.task-name-icon-card) {
@@ -376,10 +408,107 @@ watch(
   flex: 1;
 }
 
-:deep(.task-namespace-text) {
-  color: #939ea9;
+:deep(.workload-identity) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+:deep(.workload-identity-primary) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  line-height: 20px;
+}
+
+:deep(.workload-identity-link) {
+  color: #324558;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+:deep(.workload-identity-link:hover),
+:deep(.workload-identity-link:focus-visible) {
+  color: var(--el-color-primary);
+}
+
+:deep(.workload-identity-label) {
+  position: relative;
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  line-height: inherit;
+}
+
+:deep(.workload-pod-name) {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  line-height: inherit;
+}
+
+:deep(.workload-identity-separator) {
+  flex: 0 0 auto;
+  color: inherit;
+  line-height: inherit;
+}
+
+:deep(.workload-container-name) {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  line-height: inherit;
+}
+
+:deep(.workload-identity-label::after) {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: currentcolor;
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+}
+
+:deep(.workload-identity-link:hover .workload-identity-label::after),
+:deep(.workload-identity-link:focus-visible .workload-identity-label::after) {
+  opacity: 1;
+}
+
+:deep(.workload-namespace-line) {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
   font-size: 12px;
-  line-height: 18px;
+  line-height: 16px;
+}
+
+:deep(.workload-namespace-label) {
+  flex: 0 0 auto;
+  color: #939ea9;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+:deep(.task-namespace-text) {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  color: #939ea9;
+  line-height: inherit;
 }
 
 :deep(.task-gpu-cell) {
