@@ -94,15 +94,11 @@
           <div class="basic-info-summary">
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.podName') }}</span>
-              <span class="summary-item-value">
-                <EllipsisText :text="detail.appName || '--'" mode="middle" tooltip="always" />
-              </span>
+              <span class="summary-item-value summary-identity-value">{{ detail.appName || '--' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
-              <span class="summary-item-value">
-                <EllipsisText :text="detail.name || '--'" mode="middle" tooltip="always" />
-              </span>
+              <span class="summary-item-value summary-identity-value">{{ detail.name || '--' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.image') }}</span>
@@ -751,6 +747,11 @@ watch(
     line-height: 24px;
     min-width: 0;
     overflow: hidden;
+  }
+
+  .summary-identity-value {
+    overflow: visible;
+    overflow-wrap: anywhere;
   }
 
   .image-reference {

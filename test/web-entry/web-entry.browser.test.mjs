@@ -13,6 +13,7 @@ const basePath = '/gpu-ui/'
 const deepRoute = `${basePath}admin/vgpu/monitor/overview`
 const longImageReference =
   'docker.io/pytorch/pytorch:2.5.1-cuda11.8-cudnn9-runtime@sha256:7aac344854fbc920da85f9abccb8e397a5bf99445553df9f4dfbde18009f4cd3'
+const detailPodName = 'test-sh-65874fcfc4-ppdcc'
 const servers = []
 const processes = []
 const backendRequestCounts = new Map()
@@ -565,7 +566,7 @@ before(async() => {
         : {
             name,
             status: 'success',
-            appName: name === 'long-image-worker' ? 'long-image-pod' : 'job-1',
+            appName: name === 'long-image-worker' ? detailPodName : 'job-1',
             nodeName: 'node-1',
             allocatedDevices: 1,
             allocatedCores: 100,
@@ -1091,6 +1092,34 @@ test('workload and detail views keep dense identity content readable', async() =
       `${target}${basePath}admin/vgpu/task/admin/detail?name=long-image-worker&podUid=pod-long-image`,
       { waitUntil: 'domcontentloaded' }
     )
+    const detailIdentityRows = page.locator('.basic-info-summary .summary-item').filter({
+      has: page.locator('.summary-identity-value')
+    })
+    await detailIdentityRows.first().waitFor()
+    assert.equal(await detailIdentityRows.count(), 2)
+    assert.equal(
+      (await detailIdentityRows.nth(0).locator('.summary-identity-value').textContent()).trim(),
+      detailPodName
+    )
+    assert.equal(
+      (await detailIdentityRows.nth(1).locator('.summary-identity-value').textContent()).trim(),
+      'long-image-worker'
+    )
+    assert.equal(await detailIdentityRows.locator('.ellipsis-text').count(), 0)
+    const detailIdentityAlignment = await detailIdentityRows.evaluateAll((rows) =>
+      rows.map((row) => {
+        const label = row.querySelector('.summary-item-label').getBoundingClientRect()
+        const value = row.querySelector('.summary-identity-value').getBoundingClientRect()
+        return {
+          centerDelta: Math.abs((label.top + label.bottom) / 2 - (value.top + value.bottom) / 2),
+          overflowWrap: getComputedStyle(row.querySelector('.summary-identity-value')).overflowWrap,
+        }
+      })
+    )
+    for (const layout of detailIdentityAlignment) {
+      assert.ok(layout.centerDelta <= 0.5, JSON.stringify(layout))
+      assert.equal(layout.overflowWrap, 'anywhere')
+    }
     const imageReference = page.locator('.image-reference')
     await imageReference.waitFor()
     assert.equal((await imageReference.textContent()).trim(), longImageReference)

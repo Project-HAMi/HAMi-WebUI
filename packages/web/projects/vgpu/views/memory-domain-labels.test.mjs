@@ -12,10 +12,13 @@ const nodeOptions = readSource('./node/admin/getOptions.js');
 const cardDetail = readSource('./card/admin/Detail.vue');
 const metricHelp = readSource('../components/MetricHelp.vue');
 const enLocale = readSource('../../../src/locales/en.js');
+const zhLocale = readSource('../../../src/locales/zh.js');
 
 test('memory labels distinguish schedulable allocation from physical usage', () => {
   assert.match(enLocale, /memAllocRate: 'Schedulable Memory Allocation'/);
   assert.match(enLocale, /memUsageRate: 'Physical Memory Usage'/);
+  assert.match(zhLocale, /computeUsageRate: '计算利用率'/);
+  assert.match(zhLocale, /memUsageRate: '物理显存占用率'/);
 
   for (const source of [nodeDetail, cardDetail]) {
     assert.match(source, /dashboard\.memAllocRateDescription/);
