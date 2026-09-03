@@ -17,8 +17,9 @@ const zhLocale = readSource('../../../src/locales/zh.js');
 test('memory labels distinguish schedulable allocation from physical usage', () => {
   assert.match(enLocale, /memAllocRate: 'Schedulable Memory Allocation'/);
   assert.match(enLocale, /memUsageRate: 'Physical Memory Usage'/);
-  assert.match(zhLocale, /computeUsageRate: '计算利用率'/);
-  assert.match(zhLocale, /memUsageRate: '物理显存占用率'/);
+  assert.match(zhLocale, /computeUsageRate: '算力使用率'/);
+  assert.match(zhLocale, /memUsageRate: '物理显存使用率'/);
+  assert.match(zhLocale, /computeUsageTrend: 'GPU 算力使用率（%）'/);
 
   for (const source of [nodeDetail, cardDetail]) {
     assert.match(source, /dashboard\.memAllocRateDescription/);

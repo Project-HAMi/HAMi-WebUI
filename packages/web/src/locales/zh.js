@@ -77,17 +77,16 @@ export default {
     vgpuAllocRate: 'vGPU 分配率',
     computeAllocRate: '算力分配率',
     memAllocRate: '可调度显存分配率',
-    computeUsageRate: '计算利用率',
-    memUsageRate: '物理显存占用率',
+    computeUsageRate: '算力使用率',
+    memUsageRate: '物理显存使用率',
     vgpuAllocRateDescription:
       '已分配 vGPU 槽位 ÷ HAMi 注册的可调度槽位。槽位容量来自设备拆分配置，不等于物理加速卡数量。',
     computeAllocRateDescription:
       '已分配给工作负载的 vCore ÷ 物理算力基准（每张加速卡按 100 计）。超过 100% 表示算力超配。',
     memAllocRateDescription:
       '已分配给工作负载的显存 ÷ HAMi 注册的可调度显存。启用显存超配时，分母包含扩展后的虚拟容量。',
-    computeUsageRateDescription: '已上报设备的计算利用率平均值。',
-    memUsageRateDescription:
-      '同时上报物理显存已用量和物理容量的设备，其已用量 ÷ 物理容量。缺少任一遥测值的设备不参与计算；它不是显存分配率。',
+    computeUsageRateDescription: '已上报设备的算力使用率平均值。',
+    memUsageRateDescription: '已用物理显存 ÷ 物理显存总量。',
     metricHelpLabel: '查看{metric}指标说明',
     metricNoData: '暂无指标数据',
     metricInvalid: '指标值无效',
@@ -320,7 +319,7 @@ export default {
     appName: '应用名称',
     createTime: '创建时间',
     times: '倍',
-    computeUsageTrend: 'GPU 算力配额利用率（%）',
+    computeUsageTrend: 'GPU 算力使用率（%）',
     memUsageTrend: 'GPU 显存使用率（%）',
     cpuUsageTrend: 'CPU 使用率（%）',
     memoryUsageTrend: '内存使用率（%）',

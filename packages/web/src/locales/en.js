@@ -86,9 +86,8 @@ export default {
       'Allocated vCore divided by the physical compute baseline (100 per accelerator). Values above 100% indicate compute overcommit.',
     memAllocRateDescription:
       'Accelerator memory allocated to workloads divided by the schedulable memory registered by HAMi. With memory overcommit, the denominator includes expanded virtual capacity.',
-    computeUsageRateDescription: 'Average compute utilization across reporting devices.',
-    memUsageRateDescription:
-      'Vendor-reported used physical memory divided by vendor-reported physical capacity across devices that provide both values. Devices without matching telemetry are excluded; this is not memory allocation.',
+    computeUsageRateDescription: 'Average compute-engine activity across reporting devices.',
+    memUsageRateDescription: 'Used physical memory divided by total physical memory.',
     metricHelpLabel: 'View metric definition for {metric}',
     metricNoData: 'No metric data',
     metricInvalid: 'Invalid metric value',
