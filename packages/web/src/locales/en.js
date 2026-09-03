@@ -86,10 +86,8 @@ export default {
       'Allocated vCore divided by the physical compute baseline (100 per accelerator). Values above 100% indicate compute overcommit.',
     memAllocRateDescription:
       'Accelerator memory allocated to workloads divided by the schedulable memory registered by HAMi. With memory overcommit, the denominator includes expanded virtual capacity.',
-    computeUsageRateDescription:
-      'Equal-weight average of provider-native, device-level compute utilization across reporting devices. Definitions may differ by provider; this is not compute allocation.',
-    memUsageRateDescription:
-      'Vendor-reported used physical memory divided by vendor-reported physical capacity across devices that provide both values. Devices without matching telemetry are excluded; this is not memory allocation.',
+    computeUsageRateDescription: 'Average compute-engine activity across reporting devices.',
+    memUsageRateDescription: 'Used physical memory divided by total physical memory.',
     metricHelpLabel: 'View metric definition for {metric}',
     metricNoData: 'No metric data',
     metricInvalid: 'Invalid metric value',
@@ -111,8 +109,8 @@ export default {
     clusterAllocatableMemory: 'Cluster Allocatable Memory',
     memory: 'Memory',
     memoryTotal: 'Schedulable GPU Memory',
-    schedulable: 'Schedulable',
-    unschedulable: 'Unschedulable',
+    schedulable: 'Scheduling Enabled',
+    unschedulable: 'Scheduling Paused',
     allocated: 'Allocated',
     physicalUsed: 'Physical Used',
     used: 'Used',
@@ -160,13 +158,30 @@ export default {
     name: 'Node Name',
     ip: 'Node IP',
     searchIP: 'Search IP',
+    status: 'Status',
     readiness: 'Readiness',
     ready: 'Ready',
     notReady: 'Not Ready',
     schedulingStatus: 'Scheduling',
     allSchedulingStatuses: 'All Scheduling States',
-    schedulingEnabled: 'Enabled',
-    schedulingDisabled: 'Disabled',
+    allSchedulingEligibilityStatuses: 'All Statuses',
+    schedulingEnabled: 'Scheduling Enabled',
+    schedulingDisabled: 'Scheduling Paused',
+    schedulable: 'Schedulable',
+    temporarilyUnschedulable: 'Temporarily Unschedulable',
+    schedulingStatusHelpLabel: 'View node scheduling status details',
+    schedulableDescription:
+      'The node is ready and scheduling is not paused, so it can participate in HAMi scheduling for new accelerator workloads. Placement still depends on device type and health, remaining compute and memory, and other scheduling constraints.',
+    cordonedDescription:
+      'The node is cordoned and is not accepting new accelerator workloads. Running workloads are unaffected.',
+    notInReadyStateDescription:
+      'The node is not in the Ready state. It may be not ready or its readiness may be unknown, so it temporarily cannot host new accelerator workloads.',
+    notInReadyStateAndCordonedDescription:
+      'The node is not in the Ready state and is also cordoned, so it temporarily cannot host new accelerator workloads.',
+    schedulingUnknownDescription:
+      'Node status information is unavailable, so scheduling eligibility cannot currently be determined.',
+    temporarilyUnschedulableOverviewDescription:
+      'These nodes may not be in the Ready state, may be cordoned, or may have unavailable status information. Open the node list to see the specific reason.',
     cardModel: 'Card Model',
     allTypes: 'All Types',
     cardCount: 'Card Count',
@@ -295,7 +310,7 @@ export default {
     statusFailed: 'Failed',
     checkCloudPlatform: 'Please check cloud platform for details',
     count: '',
-    card: 'GPU',
+    card: 'Accelerator Allocation',
     allCards: 'All GPUs',
     cardType: 'GPU Type',
     gpuModel: 'GPU Model',

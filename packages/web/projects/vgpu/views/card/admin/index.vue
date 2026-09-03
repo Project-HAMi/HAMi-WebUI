@@ -217,7 +217,11 @@ const baseColumns = computed(() => [
           </span>
           <div class="card-id-cell-right">
             <span class="card-id-cell-name vgpu-table-name-text-wrap">
-              <TextPlus text={uuid} to={to} />
+              <TextPlus
+                text={uuid}
+                to={to}
+                tooltipClass="vgpu-long-text-tooltip vgpu-single-line-tooltip"
+              />
             </span>
             {gpuModel && <p class="card-id-cell-model">{t('card.typeLabel')}{gpuModel}</p>}
           </div>

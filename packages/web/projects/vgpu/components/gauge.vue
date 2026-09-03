@@ -6,6 +6,7 @@
         v-if="description"
         :content="description"
         :visible="helpVisible"
+        :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
       >
         <button
           type="button"
@@ -103,6 +104,7 @@
 <script setup>
 import { computed, ref, useId } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
+import { LONG_TEXT_TOOLTIP_STYLE } from './tooltip-policy.mjs';
 
 const props = defineProps({
   title: { type: String, required: true },

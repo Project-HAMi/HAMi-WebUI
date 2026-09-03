@@ -47,7 +47,7 @@
                     <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
                   </div>
                   <div v-else-if="status === 'ready'" class="count">
-                    {{ count }}<span v-if="unit" class="count-unit"> {{ unit }}</span>
+                    {{ count }}<span v-if="unit" class="count-unit">{{ unit }}</span>
                   </div>
                   <div v-else class="resource-state-text">
                     {{ getStateText(status, metric) }}
@@ -101,14 +101,28 @@
           </div>
           <ul v-else class="node-all">
             <li
-              v-for="{ title, status, count, color } in nodes"
+              v-for="{ title, status, count, color, showHelp, description } in nodes"
               :key="title"
+              class="node-overview-card"
             >
+              <div class="node-overview-title-wrap">
+                <RouterLink
+                  class="node-overview-title-link"
+                  :to="{ path: '/admin/vgpu/node/admin', query: { schedulingEligibility: status } }"
+                >
+                  {{ title }}
+                </RouterLink>
+                <MetricHelp
+                  v-if="showHelp"
+                  :description="description"
+                  :help-label="$t('node.schedulingStatusHelpLabel')"
+                />
+              </div>
               <RouterLink
-                class="node-overview-link"
-                :to="{ path: '/admin/vgpu/node/admin', query: { isSchedulable: status } }"
+                class="node-overview-value-link"
+                :to="{ path: '/admin/vgpu/node/admin', query: { schedulingEligibility: status } }"
+                :aria-label="`${title}: ${count}`"
               >
-                <div class="title">{{ title }}</div>
                 <div class="node-overview-value">
                   <div class="count" :style="{ color }">
                     {{ count }}
@@ -314,7 +328,7 @@
         <div class="home-bottom-col">
           <Block :title="t('dashboard.nodeWorkloadDistribution')" class="workload-distribution-block">
             <template #extra>
-              <t-tooltip>
+              <t-tooltip :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE">
                 <template #content>
                   <div class="workload-distribution-tooltip">
                     <div>{{ t('dashboard.nodeWorkloadDistributionDesc1') }}</div>
@@ -379,6 +393,8 @@ import useFetchList from '@/hooks/useFetchList';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
+import { LONG_TEXT_TOOLTIP_STYLE } from '~/vgpu/components/tooltip-policy.mjs';
 import { getRangeConfigInit } from './config';
 import {
   createNodeTopQueries,
@@ -398,6 +414,7 @@ import {
   getPartialRangeStates,
   stateTextKey,
 } from './overview-state.mjs';
+import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
 const router = useRouter();
 const { t } = useI18n();
@@ -652,25 +669,28 @@ const resourceOverview = computed(() => [
   },
 ]);
 
-const nodes = computed(() => [
-
-  {
-    title: t('dashboard.schedulable'),
-    count: nodeData.value.filter((item) => !item.isExternal && item.isSchedulable).length,
-    isSchedulable: true,
-    isExternal: false,
-    status: 'true',
-    color: '#16A34A',
-  },
-  {
-    title: t('dashboard.unschedulable'),
-    count: nodeData.value.filter((item) => !item.isExternal && !item.isSchedulable).length,
-    isSchedulable: false,
-    isExternal: false,
-    status: 'false',
-    color: '#1D2B3A',
-  },
-]);
+const nodes = computed(() => {
+  const schedulableCount = nodeData.value.filter(isNodeSchedulingEligible).length;
+  const temporarilyUnschedulableCount = nodeData.value.length - schedulableCount;
+  return [
+    {
+      title: t('node.schedulable'),
+      count: schedulableCount,
+      status: 'schedulable',
+      color: '#16A34A',
+      showHelp: false,
+      description: '',
+    },
+    {
+      title: t('node.temporarilyUnschedulable'),
+      count: temporarilyUnschedulableCount,
+      status: 'temporarilyUnschedulable',
+      color: '#1D2B3A',
+      showHelp: temporarilyUnschedulableCount > 0,
+      description: t('node.temporarilyUnschedulableOverviewDescription'),
+    },
+  ];
+});
 
 const nodeTopQueries = createNodeTopQueries();
 

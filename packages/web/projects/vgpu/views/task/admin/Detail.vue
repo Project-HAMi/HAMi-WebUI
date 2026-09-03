@@ -94,23 +94,23 @@
           <div class="basic-info-summary">
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.podName') }}</span>
-              <span class="summary-item-value">
-                <EllipsisText :text="detail.appName || '--'" mode="middle" tooltip="always" />
-              </span>
+              <span class="summary-item-value summary-identity-value">{{ detail.appName || '--' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
-              <span class="summary-item-value">
-                <EllipsisText :text="detail.name || '--'" mode="middle" tooltip="always" />
-              </span>
+              <span class="summary-item-value summary-identity-value">{{ detail.name || '--' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.image') }}</span>
-              <span class="summary-item-value">
-                <TTooltip v-if="basicImageTooltip" :content="basicImageTooltip">
-                  <span>{{ basicImage }}</span>
+              <span class="summary-item-value summary-item-image">
+                <TTooltip
+                  v-if="basicImageTooltip"
+                  :content="basicImageTooltip"
+                  :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
+                >
+                  <span class="image-reference" tabindex="0">{{ basicImage }}</span>
                 </TTooltip>
-                <span v-else>{{ basicImage }}</span>
+                <EllipsisText v-else :text="basicImage" mode="end" tooltip="overflow" />
               </span>
             </div>
             <div class="summary-item">
@@ -248,6 +248,10 @@ import {
   readReadyMetricField,
 } from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import {
+  GPU_UUID_TOOLTIP_STYLE,
+  LONG_TEXT_TOOLTIP_STYLE,
+} from '~/vgpu/components/tooltip-policy.mjs';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
@@ -358,7 +362,7 @@ const relatedGpuTableColumns = computed(() => [
     width: 236,
     ellipsis: true,
     cell: (_h, { row }) => (
-      <TTooltip content={row.uuid}>
+      <TTooltip content={row.uuid} overlayInnerStyle={GPU_UUID_TOOLTIP_STYLE}>
         <div class="node-link-container" onClick={() => handleGpuJump(row.uuid)}>
           <div class="text">{row.uuid || '--'}</div>
           <svg-icon icon="jump" class="related-gpu-link-icon" />
@@ -379,7 +383,7 @@ const basicImage = computed(() => {
   const imageList = extractImageList(detail.value);
   if (!imageList.length) return '--';
   if (imageList.length === 1) return imageList[0];
-  return `${imageList[0]}...`;
+  return `${imageList[0]} +${imageList.length - 1}`;
 });
 const basicImageTooltip = computed(() => {
   const imageList = extractImageList(detail.value);
@@ -737,10 +741,26 @@ watch(
   }
 
   .summary-item-value {
+    flex: 1;
     color: #324558;
     font-size: 14px;
     line-height: 24px;
     min-width: 0;
+    overflow: hidden;
+  }
+
+  .summary-identity-value {
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+
+  .image-reference {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
   }
 
   &.is-en {

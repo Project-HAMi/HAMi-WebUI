@@ -11,6 +11,9 @@ import { launchWebEntry } from './launch-web-entry.mjs'
 const host = '127.0.0.1'
 const basePath = '/gpu-ui/'
 const deepRoute = `${basePath}admin/vgpu/monitor/overview`
+const longImageReference =
+  'docker.io/pytorch/pytorch:2.5.1-cuda11.8-cudnn9-runtime@sha256:7aac344854fbc920da85f9abccb8e397a5bf99445553df9f4dfbde18009f4cd3'
+const detailPodName = 'test-sh-65874fcfc4-ppdcc'
 const servers = []
 const processes = []
 const backendRequestCounts = new Map()
@@ -298,6 +301,31 @@ async function assertChartRuntime(target) {
       .some((element) => element.textContent?.trim() === '0.4 %')
   )
 
+  const gaugeHelp = page.locator('.gauge-card__help').first()
+  await gaugeHelp.hover()
+  const gaugeTooltip = page.locator('.t-tooltip .t-popup__content').last()
+  await gaugeTooltip.waitFor({ state: 'visible' })
+  const gaugeTooltipBox = await gaugeTooltip.boundingBox()
+  assert.ok(gaugeTooltipBox.width <= 320)
+  assert.equal(
+    await gaugeTooltip.evaluate((element) => getComputedStyle(element).maxWidth),
+    '320px'
+  )
+  await page.mouse.move(0, 0)
+
+  const distributionHelp = page.locator('.workload-distribution-tip-icon')
+  await distributionHelp.scrollIntoViewIfNeeded()
+  await distributionHelp.hover()
+  const distributionTooltip = page.locator('.t-tooltip .t-popup__content').last()
+  await distributionTooltip.waitFor({ state: 'visible' })
+  const distributionTooltipBox = await distributionTooltip.boundingBox()
+  assert.ok(distributionTooltipBox.width <= 320)
+  assert.equal(
+    await distributionTooltip.evaluate((element) => getComputedStyle(element).maxWidth),
+    '320px'
+  )
+  await page.mouse.move(0, 0)
+
   const initialRangeRequests = rangeRequests
   await page.locator('.home-bottom-trend-filter .t-radio-button').nth(1).click()
   await waitUntil(
@@ -498,8 +526,8 @@ before(async() => {
         uid,
         name: uid,
         ip: '192.0.2.10',
-        isSchedulable: true,
-        isReady: true,
+        isSchedulable: uid !== 'node-cordoned',
+        isReady: uid !== 'node-readability',
         type: ['NVIDIA'],
         vgpuUsed: 0,
         vgpuTotal: 1,
@@ -538,7 +566,7 @@ before(async() => {
         : {
             name,
             status: 'success',
-            appName: 'job-1',
+            appName: name === 'long-image-worker' ? detailPodName : 'job-1',
             nodeName: 'node-1',
             allocatedDevices: 1,
             allocatedCores: 100,
@@ -548,13 +576,45 @@ before(async() => {
             nodeUid: 'node-1',
             namespace: 'default',
             deviceIds: ['gpu-1'],
-            images: ['example.invalid/worker:latest']
+            images: name === 'multi-image-worker'
+              ? [
+                  'example.invalid/worker:latest',
+                  'example.invalid/sidecar:latest'
+                ]
+              : [name === 'long-image-worker'
+                  ? longImageReference
+                  : 'example.invalid/worker:latest']
           }
     } else if (pathname === '/v1/nodes') {
       payload = {
         code: 0,
-        list: [{ name: 'node-1', uid: 'node-1', isExternal: false, isSchedulable: true }],
-        total: 1
+        list: [
+          {
+            name: 'node-1',
+            uid: 'node-1',
+            ip: '192.0.2.10',
+            isExternal: false,
+            isReady: true,
+            isSchedulable: true
+          },
+          {
+            name: 'node-readability',
+            uid: 'node-readability',
+            ip: '192.0.2.11',
+            isExternal: false,
+            isReady: false,
+            isSchedulable: true
+          },
+          {
+            name: 'node-cordoned',
+            uid: 'node-cordoned',
+            ip: '192.0.2.12',
+            isExternal: false,
+            isReady: true,
+            isSchedulable: false
+          }
+        ],
+        total: 3
       }
     } else if (pathname === '/v1/gpus') {
       payload = {
@@ -802,6 +862,484 @@ test('browser language selects English without leaking active Chinese UI text', 
     await page.goto(`${target}${basePath}401`, { waitUntil: 'domcontentloaded' })
     await page.getByRole('heading', { name: 'Page not found' }).waitFor()
     assert.equal((await page.locator('body').textContent()).includes('页面未找到'), false)
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('workload and detail views keep dense identity content readable', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({
+    locale: 'en-US',
+    viewport: { width: 1280, height: 900 }
+  })
+  const podName =
+    'distributed-training-pod-with-a-name-long-enough-to-require-ellipsis'
+  const workloads = [
+    {
+      name: 'worker-left',
+      appName: podName,
+      podUid: 'pod-readable',
+      namespace: 'research-space',
+      status: 'success',
+      deviceIds: ['gpu-1'],
+      allocatedCores: 30,
+      allocatedMem: 2048,
+      createTime: '2026-08-31T00:00:00Z'
+    },
+    {
+      name: 'worker-right',
+      appName: podName,
+      podUid: 'pod-readable',
+      namespace: 'research-space',
+      status: 'success',
+      deviceIds: ['gpu-1'],
+      allocatedCores: 30,
+      allocatedMem: 2048,
+      createTime: '2026-08-31T00:00:00Z'
+    },
+    {
+      name: 'torch-two-gpu',
+      appName: 'torch-two-gpu',
+      podUid: 'pod-same-name',
+      namespace: 'research-space',
+      status: 'success',
+      deviceIds: ['gpu-1'],
+      allocatedCores: 50,
+      allocatedMem: 4096,
+      createTime: '2026-08-31T00:00:00Z'
+    }
+  ]
+
+  await page.route('**/api/vgpu/v1/containers', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ code: 0, items: workloads, total: workloads.length })
+  }))
+
+  const assertIconGeometry = async(selector) => {
+    const boxes = await page.locator(selector).evaluateAll((elements) =>
+      elements.map((element) => {
+        const icon = element.querySelector('svg')
+        const outer = element.getBoundingClientRect()
+        const inner = icon?.getBoundingClientRect()
+        return {
+          outer: [outer.width, outer.height],
+          inner: [inner?.width ?? 0, inner?.height ?? 0]
+        }
+      })
+    )
+    assert.ok(boxes.length > 0, `No icons matched ${selector}`)
+    for (const box of boxes) {
+      assert.deepEqual(box.outer, [40, 40])
+      assert.deepEqual(box.inner, [20, 20])
+    }
+  }
+
+  const assertNoHorizontalOverflow = async() => {
+    const dimensions = await page.evaluate(() => ({
+      document: document.documentElement.scrollWidth,
+      viewport: window.innerWidth
+    }))
+    assert.ok(
+      dimensions.document <= dimensions.viewport,
+      `Page overflows horizontally: ${JSON.stringify(dimensions)}`
+    )
+  }
+
+  try {
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const identities = page.locator('.workload-table .workload-identity')
+    await identities.first().waitFor()
+    assert.equal(await identities.count(), 3)
+    assert.equal(
+      (await identities.first().locator('.workload-pod-name').textContent()).trim(),
+      'distribu…lipsis'
+    )
+    assert.equal(
+      (await identities.first().locator('.workload-container-name').textContent()).trim(),
+      'worker-left'
+    )
+    assert.equal(
+      (await identities.nth(1).locator('.workload-container-name').textContent()).trim(),
+      'worker-right'
+    )
+    const sameNameLink = page.locator('.workload-identity-link[aria-label="torch-two-gpu"]')
+    assert.equal(await sameNameLink.count(), 1)
+    assert.equal(await sameNameLink.locator('.workload-pod-name').count(), 0)
+    assert.equal(
+      (await sameNameLink.locator('.workload-container-name').textContent()).trim(),
+      'torch-two-gpu'
+    )
+    assert.equal(
+      (await identities.first().locator('.workload-namespace-label').textContent()).trim(),
+      'Namespace:'
+    )
+    assert.equal(
+      (await identities.first().locator('.task-namespace-text').textContent()).trim(),
+      'research-space'
+    )
+    const workloadLink = identities.first().locator('.workload-identity-link')
+    assert.equal(await workloadLink.count(), 1)
+    assert.equal(await identities.first().locator('a').count(), 1)
+    assert.equal(await workloadLink.getAttribute('aria-label'), `${podName} / worker-left`)
+    assert.equal(
+      await identities.first().locator('.workload-container-name .el-tooltip__trigger').count(),
+      0
+    )
+    assert.equal(
+      await sameNameLink.locator('.workload-container-name .el-tooltip__trigger').count(),
+      0
+    )
+    await workloadLink.hover()
+    const workloadLinkDecoration = await workloadLink.evaluate((element) => {
+      const textRect = (target) => {
+        const range = document.createRange()
+        range.selectNodeContents(target)
+        return range.getBoundingClientRect()
+      }
+      const label = element.querySelector('.workload-identity-label').getBoundingClientRect()
+      const pod = element.querySelector('.workload-pod-name').getBoundingClientRect()
+      const podText = element.querySelector('.workload-pod-name .ellipsis-text')
+      const separator = element.querySelector('.workload-identity-separator')
+      const container = element.querySelector('.workload-container-name').getBoundingClientRect()
+      const decoration = getComputedStyle(element.querySelector('.workload-identity-label'), '::after')
+      const podTextRect = textRect(podText)
+      const separatorTextRect = textRect(separator)
+      const containerTextRect = textRect(element.querySelector('.workload-container-name .ellipsis-text'))
+      return {
+        decorationBottom: decoration.bottom,
+        decorationHeight: decoration.height,
+        decorationOpacity: decoration.opacity,
+        labelLeft: label.left,
+        labelRight: label.right,
+        podLeft: pod.left,
+        containerRight: container.right,
+        podHasSecondaryOverflow: podText.scrollWidth > podText.clientWidth,
+        podTextBottom: podTextRect.bottom,
+        separatorTextBottom: separatorTextRect.bottom,
+        containerTextBottom: containerTextRect.bottom,
+      }
+    })
+    assert.equal(workloadLinkDecoration.decorationBottom, '0px')
+    assert.equal(workloadLinkDecoration.decorationHeight, '1px')
+    assert.equal(workloadLinkDecoration.decorationOpacity, '1')
+    assert.ok(Math.abs(workloadLinkDecoration.labelLeft - workloadLinkDecoration.podLeft) <= 0.5)
+    assert.ok(Math.abs(workloadLinkDecoration.labelRight - workloadLinkDecoration.containerRight) <= 0.5)
+    assert.equal(workloadLinkDecoration.podHasSecondaryOverflow, false)
+    assert.ok(Math.abs(workloadLinkDecoration.podTextBottom - workloadLinkDecoration.separatorTextBottom) <= 0.5)
+    assert.ok(Math.abs(workloadLinkDecoration.separatorTextBottom - workloadLinkDecoration.containerTextBottom) <= 0.5)
+    const namespaceAlignment = await identities.first().locator('.workload-namespace-line')
+      .evaluate((element) => {
+        const textRect = (target) => {
+          const range = document.createRange()
+          range.selectNodeContents(target)
+          return range.getBoundingClientRect()
+        }
+        const label = textRect(element.querySelector('.workload-namespace-label'))
+        const value = textRect(element.querySelector('.task-namespace-text .ellipsis-text'))
+        return {
+          topDelta: Math.abs(label.top - value.top),
+          bottomDelta: Math.abs(label.bottom - value.bottom),
+        }
+      })
+    assert.ok(namespaceAlignment.topDelta <= 0.5)
+    assert.ok(namespaceAlignment.bottomDelta <= 0.5)
+    const sameNameLayout = await sameNameLink.evaluate((element) => {
+      const label = element.querySelector('.workload-identity-label').getBoundingClientRect()
+      const container = element.querySelector('.workload-container-name').getBoundingClientRect()
+      return {
+        leftDelta: Math.abs(label.left - container.left),
+        rightDelta: Math.abs(label.right - container.right),
+      }
+    })
+    assert.ok(sameNameLayout.leftDelta <= 0.5)
+    assert.ok(sameNameLayout.rightDelta <= 0.5)
+    const firstRowLayout = await identities.first().locator('xpath=ancestor::tr')
+      .evaluate((element) => ({ rowHeight: element.getBoundingClientRect().height }))
+    assert.ok(
+      firstRowLayout.rowHeight <= 76,
+      `Workload row is too tall: ${JSON.stringify(firstRowLayout)}`
+    )
+    const primaryLayout = await identities.first().locator('.workload-identity-primary')
+      .evaluate((element) => {
+        const pod = element.querySelector('.workload-pod-name').getBoundingClientRect()
+        const separator = element.querySelector('.workload-identity-separator').getBoundingClientRect()
+        const container = element.querySelector('.workload-container-name').getBoundingClientRect()
+        return {
+          podToSeparator: separator.x - (pod.x + pod.width),
+          separatorToContainer: container.x - (separator.x + separator.width),
+        }
+      })
+    assert.ok(primaryLayout.podToSeparator >= 0 && primaryLayout.podToSeparator <= 7)
+    assert.ok(primaryLayout.separatorToContainer >= 0 && primaryLayout.separatorToContainer <= 7)
+    const containerLayout = await identities.first().locator('.workload-container-name .ellipsis-text')
+      .evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        flexShrink: getComputedStyle(element.closest('.workload-container-name')).flexShrink,
+      }))
+    assert.equal(containerLayout.clientWidth, containerLayout.scrollWidth)
+    assert.equal(containerLayout.flexShrink, '0')
+    await page.getByRole('columnheader', { name: 'Accelerator Allocation' }).waitFor()
+    await assertIconGeometry('.task-name-icon-card')
+
+    const podText = identities.first().locator('.ellipsis-text').first()
+    await podText.hover()
+    const podTooltip = page.locator('[role="tooltip"]').filter({ hasText: podName }).last()
+    await podTooltip.waitFor({ state: 'visible' })
+    assert.equal((await podTooltip.textContent()).trim(), podName)
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=long-image-worker&podUid=pod-long-image`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const detailIdentityRows = page.locator('.basic-info-summary .summary-item').filter({
+      has: page.locator('.summary-identity-value')
+    })
+    await detailIdentityRows.first().waitFor()
+    assert.equal(await detailIdentityRows.count(), 2)
+    assert.equal(
+      (await detailIdentityRows.nth(0).locator('.summary-identity-value').textContent()).trim(),
+      detailPodName
+    )
+    assert.equal(
+      (await detailIdentityRows.nth(1).locator('.summary-identity-value').textContent()).trim(),
+      'long-image-worker'
+    )
+    assert.equal(await detailIdentityRows.locator('.ellipsis-text').count(), 0)
+    const detailIdentityAlignment = await detailIdentityRows.evaluateAll((rows) =>
+      rows.map((row) => {
+        const label = row.querySelector('.summary-item-label').getBoundingClientRect()
+        const value = row.querySelector('.summary-identity-value').getBoundingClientRect()
+        return {
+          centerDelta: Math.abs((label.top + label.bottom) / 2 - (value.top + value.bottom) / 2),
+          overflowWrap: getComputedStyle(row.querySelector('.summary-identity-value')).overflowWrap,
+        }
+      })
+    )
+    for (const layout of detailIdentityAlignment) {
+      assert.ok(layout.centerDelta <= 0.5, JSON.stringify(layout))
+      assert.equal(layout.overflowWrap, 'anywhere')
+    }
+    const imageReference = page.locator('.summary-item-image .ellipsis-text')
+    await imageReference.waitFor()
+    assert.equal((await imageReference.textContent()).trim(), longImageReference)
+    const imageLayout = await imageReference.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        clientWidth: element.clientWidth,
+        overflow: style.overflow,
+        scrollWidth: element.scrollWidth,
+        textOverflow: style.textOverflow,
+        whiteSpace: style.whiteSpace
+      }
+    })
+    assert.equal(imageLayout.overflow, 'hidden')
+    assert.equal(imageLayout.textOverflow, 'ellipsis')
+    assert.equal(imageLayout.whiteSpace, 'nowrap')
+    assert.ok(imageLayout.scrollWidth > imageLayout.clientWidth)
+    await imageReference.hover()
+    const imageTooltip = page.locator('[role="tooltip"].vgpu-long-text-tooltip')
+      .filter({ hasText: longImageReference })
+      .last()
+    await imageTooltip.waitFor({ state: 'visible' })
+    assert.equal((await imageTooltip.textContent()).trim(), longImageReference)
+    const imageTooltipBox = await imageTooltip.boundingBox()
+    assert.ok(imageTooltipBox.width <= 320)
+    assert.equal(
+      await imageTooltip.evaluate((element) => getComputedStyle(element).maxWidth),
+      '320px'
+    )
+    await assertNoHorizontalOverflow()
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=short-image-worker&podUid=pod-short-image`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const shortImageReference = page.locator('.summary-item-image .ellipsis-text')
+    await shortImageReference.waitFor()
+    assert.equal(
+      (await shortImageReference.textContent()).trim(),
+      'example.invalid/worker:latest'
+    )
+    const shortImageLayout = await shortImageReference.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      cursor: getComputedStyle(element).cursor,
+      scrollWidth: element.scrollWidth,
+    }))
+    assert.equal(shortImageLayout.clientWidth, shortImageLayout.scrollWidth)
+    assert.notEqual(shortImageLayout.cursor, 'help')
+    await shortImageReference.hover()
+    await page.waitForTimeout(400)
+    assert.equal(
+      await page.locator('[role="tooltip"]:visible')
+        .filter({ hasText: 'example.invalid/worker:latest' })
+        .count(),
+      0
+    )
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=multi-image-worker&podUid=pod-multi-image`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const multiImageReference = page.locator('.summary-item-image .image-reference')
+    await multiImageReference.waitFor()
+    assert.equal(
+      (await multiImageReference.textContent()).trim(),
+      'example.invalid/worker:latest +1'
+    )
+    await multiImageReference.hover()
+    const multiImageTooltip = page.locator('.t-tooltip .t-popup__content')
+      .filter({ hasText: 'example.invalid/sidecar:latest' })
+      .last()
+    await multiImageTooltip.waitFor({ state: 'visible' })
+    assert.equal(
+      (await multiImageTooltip.textContent()).trim(),
+      'example.invalid/worker:latest\nexample.invalid/sidecar:latest'
+    )
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/node/admin`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const nodeTable = page.locator('.node-table')
+    await nodeTable.getByRole('columnheader', { name: 'Status' }).waitFor()
+    assert.equal(await nodeTable.getByRole('columnheader', { name: 'Readiness' }).count(), 0)
+    assert.equal(await nodeTable.getByRole('columnheader', { name: 'Scheduling' }).count(), 0)
+    const readyRow = nodeTable.getByRole('row').filter({ hasText: 'node-1' })
+    const notReadyRow = nodeTable.getByRole('row').filter({ hasText: '192.0.2.11' })
+    assert.equal((await readyRow.textContent()).includes('Schedulable'), true)
+    assert.equal(
+      await readyRow.getByRole('button', { name: 'View node scheduling status details' }).count(),
+      0
+    )
+    const listStatusHelp = notReadyRow.getByRole('button', {
+      name: 'View node scheduling status details',
+    })
+    assert.equal(
+      await listStatusHelp.count(),
+      1,
+      `Expected help only for the abnormal row: ${(await notReadyRow.textContent()).trim()}`
+    )
+    await listStatusHelp.hover()
+    const listStatusTooltip = page.locator('.t-tooltip .t-popup__content')
+      .filter({ hasText: 'The node is not in the Ready state' })
+      .last()
+    await listStatusTooltip.waitFor({ state: 'visible' })
+    const listStatusTooltipBox = await listStatusTooltip.boundingBox()
+    assert.ok(listStatusTooltipBox.width <= 320)
+    assert.equal(
+      await listStatusTooltip.evaluate((element) => getComputedStyle(element).maxWidth),
+      '320px'
+    )
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/node/admin/node-1?nodeName=node-1`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    assert.equal(
+      (await page.locator('.layout-header-title-run-state-label').textContent()).trim(),
+      'Schedulable'
+    )
+    const schedulableHelp = page.getByRole('button', {
+      name: 'View node scheduling status details',
+    })
+    assert.equal(await schedulableHelp.count(), 0)
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/node/admin/node-readability?nodeName=node-readability`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    assert.equal(
+      (await page.locator('.layout-header-title-run-state-label').textContent()).trim(),
+      'Temporarily Unschedulable'
+    )
+    const notReadyHelp = page.getByRole('button', {
+      name: 'View node scheduling status details',
+    })
+    await notReadyHelp.hover()
+    await page.locator('.t-tooltip .t-popup__content')
+      .filter({ hasText: 'The node is not in the Ready state' })
+      .last()
+      .waitFor({ state: 'visible' })
+    const nodeSummaryLabels = (await page.locator('.summary-item-label').allTextContents())
+      .map((value) => value.trim())
+    assert.equal(nodeSummaryLabels.includes('Scheduling'), false)
+    assert.equal(nodeSummaryLabels.includes('Readiness'), false)
+    assert.deepEqual(
+      (await page.locator('.resource-card-footer-label').allTextContents())
+        .map((value) => value.trim()),
+      ['Alloc Rate', 'Usage Rate', 'Alloc Rate', 'Usage Rate']
+    )
+    await assertIconGeometry('.resource-card-icon')
+    const rateTiles = page.locator('.resource-overview-card').first()
+      .locator('.resource-card-rate-wrap')
+    const rateTileBoxes = await rateTiles.evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect()
+        const title = element.querySelector('.resource-card-footer-title')
+          .getBoundingClientRect()
+        const value = element.querySelector('.resource-card-footer-value')
+          .getBoundingClientRect()
+        return {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          titleCenterY: title.y + title.height / 2,
+          valueCenterY: value.y + value.height / 2,
+        }
+      })
+    )
+    assert.equal(rateTileBoxes.length, 2)
+    assert.ok(Math.abs(rateTileBoxes[0].x - rateTileBoxes[1].x) < 1)
+    assert.ok(rateTileBoxes[0].y + rateTileBoxes[0].height <= rateTileBoxes[1].y)
+    for (const tile of rateTileBoxes) {
+      assert.ok(Math.abs(tile.titleCenterY - tile.valueCenterY) < 2)
+    }
+    await assertNoHorizontalOverflow()
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/node/admin/node-cordoned?nodeName=node-cordoned`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    assert.equal(
+      (await page.locator('.layout-header-title-run-state-label').textContent()).trim(),
+      'Temporarily Unschedulable'
+    )
+    const cordonedHelp = page.getByRole('button', {
+      name: 'View node scheduling status details',
+    })
+    await cordonedHelp.hover()
+    await page.locator('.t-tooltip .t-popup__content')
+      .filter({ hasText: 'The node is cordoned' })
+      .last()
+      .waitFor({ state: 'visible' })
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/card/admin/gpu-1`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    assert.deepEqual(
+      (await page.locator('.resource-card-footer-label').allTextContents())
+        .map((value) => value.trim()),
+      [
+        'Allocated / Alloc Rate',
+        'Used / Usage Rate',
+        'Allocated / Alloc Rate',
+        'Used / Usage Rate'
+      ]
+    )
+    await assertIconGeometry('.resource-card-icon')
+    await assertNoHorizontalOverflow()
   } finally {
     await page.close()
   }
