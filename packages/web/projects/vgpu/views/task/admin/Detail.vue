@@ -110,7 +110,7 @@
                 >
                   <span class="image-reference" tabindex="0">{{ basicImage }}</span>
                 </TTooltip>
-                <span v-else>{{ basicImage }}</span>
+                <EllipsisText v-else :text="basicImage" mode="end" tooltip="overflow" />
               </span>
             </div>
             <div class="summary-item">
@@ -387,7 +387,7 @@ const basicImage = computed(() => {
 });
 const basicImageTooltip = computed(() => {
   const imageList = extractImageList(detail.value);
-  if (!imageList.length) return '';
+  if (imageList.length <= 1) return '';
   return imageList.join('\n');
 });
 const basicCreateTime = computed(() => (

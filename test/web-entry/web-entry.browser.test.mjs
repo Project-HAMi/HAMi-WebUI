@@ -576,9 +576,14 @@ before(async() => {
             nodeUid: 'node-1',
             namespace: 'default',
             deviceIds: ['gpu-1'],
-            images: [name === 'long-image-worker'
-              ? longImageReference
-              : 'example.invalid/worker:latest']
+            images: name === 'multi-image-worker'
+              ? [
+                  'example.invalid/worker:latest',
+                  'example.invalid/sidecar:latest'
+                ]
+              : [name === 'long-image-worker'
+                  ? longImageReference
+                  : 'example.invalid/worker:latest']
           }
     } else if (pathname === '/v1/nodes') {
       payload = {
@@ -1120,7 +1125,7 @@ test('workload and detail views keep dense identity content readable', async() =
       assert.ok(layout.centerDelta <= 0.5, JSON.stringify(layout))
       assert.equal(layout.overflowWrap, 'anywhere')
     }
-    const imageReference = page.locator('.image-reference')
+    const imageReference = page.locator('.summary-item-image .ellipsis-text')
     await imageReference.waitFor()
     assert.equal((await imageReference.textContent()).trim(), longImageReference)
     const imageLayout = await imageReference.evaluate((element) => {
@@ -1138,7 +1143,7 @@ test('workload and detail views keep dense identity content readable', async() =
     assert.equal(imageLayout.whiteSpace, 'nowrap')
     assert.ok(imageLayout.scrollWidth > imageLayout.clientWidth)
     await imageReference.hover()
-    const imageTooltip = page.locator('.t-tooltip .t-popup__content')
+    const imageTooltip = page.locator('[role="tooltip"].vgpu-long-text-tooltip')
       .filter({ hasText: longImageReference })
       .last()
     await imageTooltip.waitFor({ state: 'visible' })
@@ -1150,6 +1155,52 @@ test('workload and detail views keep dense identity content readable', async() =
       '320px'
     )
     await assertNoHorizontalOverflow()
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=short-image-worker&podUid=pod-short-image`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const shortImageReference = page.locator('.summary-item-image .ellipsis-text')
+    await shortImageReference.waitFor()
+    assert.equal(
+      (await shortImageReference.textContent()).trim(),
+      'example.invalid/worker:latest'
+    )
+    const shortImageLayout = await shortImageReference.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      cursor: getComputedStyle(element).cursor,
+      scrollWidth: element.scrollWidth,
+    }))
+    assert.equal(shortImageLayout.clientWidth, shortImageLayout.scrollWidth)
+    assert.notEqual(shortImageLayout.cursor, 'help')
+    await shortImageReference.hover()
+    await page.waitForTimeout(400)
+    assert.equal(
+      await page.locator('[role="tooltip"]:visible')
+        .filter({ hasText: 'example.invalid/worker:latest' })
+        .count(),
+      0
+    )
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=multi-image-worker&podUid=pod-multi-image`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const multiImageReference = page.locator('.summary-item-image .image-reference')
+    await multiImageReference.waitFor()
+    assert.equal(
+      (await multiImageReference.textContent()).trim(),
+      'example.invalid/worker:latest +1'
+    )
+    await multiImageReference.hover()
+    const multiImageTooltip = page.locator('.t-tooltip .t-popup__content')
+      .filter({ hasText: 'example.invalid/sidecar:latest' })
+      .last()
+    await multiImageTooltip.waitFor({ state: 'visible' })
+    assert.equal(
+      (await multiImageTooltip.textContent()).trim(),
+      'example.invalid/worker:latest\nexample.invalid/sidecar:latest'
+    )
 
     await page.goto(
       `${target}${basePath}admin/vgpu/node/admin`,
