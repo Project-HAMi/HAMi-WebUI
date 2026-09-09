@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	klog "k8s.io/klog/v2"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -332,6 +334,12 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			return s.recordFatalError(err)
 		}
 		provider := device.Provider
+		if provider == biz.MthreadsGPUDevice {
+			if err := s.generateMthreadsDeviceMetrics(ctx, device); err != nil {
+				s.recordTelemetryError(ctx, err)
+			}
+			continue
+		}
 		deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
 		var driver, deviceNo = "", ""
 		if err == nil && deviceAdditional != nil {
@@ -967,4 +975,69 @@ func (s *MetricsGenerator) systemComponentHealth(ctx context.Context, componentT
 		return 0, errors.New("componentType not exists")
 	}
 	return s.queryInstantVal(ctx, query)
+}
+
+// generateMthreadsDeviceMetrics fills device-level telemetry for Moore
+// Threads GPUs from the vendor mt-dcgm-exporter, which exposes standard
+// DCGM_FI_DEV_* series labelled with Hostname and numeric gpu index.
+//
+// Mapping of HAMi device ids to DCGM gpu indexes:
+//   - sliced cards  <node>-mthreads-<i>     -> gpu=<i>   (i-th card bound to
+//     sgpu_km; the current cluster slices only card 0)
+//   - whole cards   <node>-mthreads-full-<j> -> gpu=<j+1> (assumes the sliced
+//     pool is laid out before the whole-card pool in physical order)
+func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, device *biz.DeviceInfo) error {
+	const wholeType = "Mthreads-GPU"
+	dashIdx := strings.LastIndex(device.Id, "-")
+	if dashIdx < 0 {
+		return fmt.Errorf("%w: %q", errTelemetryUnsupported, device.Id)
+	}
+	suffix := device.Id[dashIdx+1:]
+	gpuIdx, err := strconv.ParseInt(suffix, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: %q", errTelemetryUnsupported, device.Id)
+	}
+	if device.Type == wholeType {
+		gpuIdx++
+	}
+	klog.Infof("[mthreads-telemetry] device=%s type=%s node=%s -> dcgm_gpu=%d", device.Id, device.Type, device.NodeName, gpuIdx)
+	record := func(metric string, setters ...func(float32)) {
+		query := fmt.Sprintf("avg(DCGM_FI_DEV_%s{Hostname=%q, gpu=\"%d\"})", metric, device.NodeName, gpuIdx)
+		v, err := s.queryRequiredInstantVal(ctx, query)
+		if err != nil {
+			klog.Warningf("[mthreads-telemetry] query failed: %s: %v", query, err)
+			return
+		}
+		for _, set := range setters {
+			set(v)
+		}
+	}
+	node, prov, typ := device.NodeName, device.Provider, device.Type
+
+	record("GPU_TEMP", func(v float32) {
+		s.set(HamiDeviceTemperature, float64(v), node, prov, typ, device.Id, "", "")
+	})
+	record("MEMORY_TEMP", func(v float32) {
+		s.set(HamiDeviceMemoryTemperature, float64(v), node, prov, typ, device.Id, "", "")
+	})
+	record("POWER_USAGE", func(v float32) {
+		s.set(HamiDevicePower, float64(v), node, prov, typ, device.Id, "", "")
+	})
+	util := float32(-1)
+	record("GPU_UTIL", func(v float32) { util = v })
+	if util >= 0 {
+		s.set(HamiCoreUsed, float64(util), node, prov, typ, device.Id, "", "")
+		s.set(HamiCoreUtil, float64(util), node, prov, typ, device.Id, "", "")
+		s.set(HamiCoreUsedAvg, float64(util), node, prov, typ, device.Id, "", "")
+		s.set(HamiCoreUtilAvg, float64(util), node, prov, typ, device.Id, "", "")
+	}
+	memUsed, memTotal := float32(-1), float32(0)
+	record("FB_USED", func(v float32) { memUsed = v })
+	record("FB_FREE", func(v float32) { memTotal = memTotal + v })
+	if memUsed >= 0 && memTotal > 0 {
+		s.set(HamiMemoryUsed, float64(memUsed), node, prov, typ, device.Id, "", "")
+		s.set(HamiMemorySize, float64(memTotal), node, prov, typ, device.Id, "", "")
+		s.set(HamiMemoryUtil, roundToOneDecimal(float64(100*memUsed/memTotal)), node, prov, typ, device.Id, "", "")
+	}
+	return nil
 }

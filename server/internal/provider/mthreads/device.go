@@ -26,10 +26,10 @@ const (
 	// be derived.
 	defaultPerCardMemoryMiB = 0
 
-	// coresPerCard is the vendor core-unit granularity of one physical card.
-	coresPerCard = 16
-	// memoryFactor converts one vendor memory unit into MiB.
-	memoryFactor = 512
+	// CoresPerCard is the vendor core-unit granularity of one physical card.
+	CoresPerCard = 16
+	// MemoryFactorMiB converts one vendor memory unit into MiB.
+	MemoryFactorMiB = 512
 )
 
 func init() {

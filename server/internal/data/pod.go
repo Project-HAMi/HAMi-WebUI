@@ -3,15 +3,18 @@ package data
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
+	"vgpu/internal/provider/mthreads"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/jinzhu/copier"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
@@ -19,10 +22,29 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// wholeGPUPod captures one pod that holds vendor whole-card GPUs
+// (mthreads.com/gpu). Such pods are delivered outside HAMi scheduling and
+// carry no allocation annotations, so their occupancy is synthesized here:
+// slots are assigned per node in a compact, deterministic order at read time.
+type wholeGPUPod struct {
+	pod      *corev1.Pod
+	nodeID   string
+	nodeUID  string
+	nodeName string
+	memMiB   int32
+	ctrs     []wholeGPUContainer // container idx -> requested whole-GPU count
+}
+
+type wholeGPUContainer struct {
+	name  string
+	count int64
+}
+
 type podRepo struct {
 	data                    *Data
 	podLister               listerscorev1.PodLister
 	pods                    map[k8stypes.UID]*biz.PodInfo
+	wholeGPUPods            map[k8stypes.UID]*wholeGPUPod
 	mutex                   sync.RWMutex
 	log                     *log.Helper
 	podIndexer              cache.Indexer
@@ -42,6 +64,7 @@ func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap) (*podRepo
 	repo := &podRepo{
 		data:                    data,
 		pods:                    make(map[k8stypes.UID]*biz.PodInfo),
+		wholeGPUPods:            make(map[k8stypes.UID]*wholeGPUPod),
 		log:                     log.NewHelper(logger),
 		schedulingResourceNames: resources,
 		schedulingEvents:        newSchedulingEventReader(eventsClient),
@@ -73,6 +96,9 @@ func (r *podRepo) onAddPod(obj interface{}) {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		r.log.Error("unknown add object type")
+		return
+	}
+	if r.refreshWholeGPUPod(pod) {
 		return
 	}
 	nodeID, ok := pod.Annotations[util.AssignedNodeAnnotations]
@@ -245,13 +271,150 @@ func (r *podRepo) GetStartTime(pod *corev1.Pod) time.Time {
 }
 
 func (r *podRepo) ListAll(context.Context) ([]*biz.Container, error) {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 	var containerList []*biz.Container
 	for _, pod := range r.pods {
 		containerList = append(containerList, pod.Ctrs...)
 	}
+	containerList = append(containerList, r.listWholeGPUContainers()...)
 	return containerList, nil
+}
+
+// refreshWholeGPUPod upserts the ledger entry for a pod that requests vendor
+// whole-card GPUs. It returns true when the pod is whole-GPU-delivered (HAMi
+// annotation absent, mthreads.com/gpu present), false when it should flow
+// through the regular HAMi annotation path.
+func (r *podRepo) refreshWholeGPUPod(pod *corev1.Pod) bool {
+	if _, ham := pod.Annotations[util.AssignedNodeAnnotations]; ham {
+		return false
+	}
+	counts := make([]wholeGPUContainer, 0, len(pod.Spec.Containers))
+	for _, ctr := range pod.Spec.Containers {
+		q, ok := ctr.Resources.Limits[corev1.ResourceName(mthreads.NodeWholeGPUResource)]
+		if !ok {
+			q, ok = ctr.Resources.Requests[corev1.ResourceName(mthreads.NodeWholeGPUResource)]
+		}
+		if !ok {
+			continue
+		}
+		if n, ok := q.AsInt64(); ok && n > 0 {
+			counts = append(counts, wholeGPUContainer{name: ctr.Name, count: n})
+		}
+	}
+	if len(counts) == 0 {
+		return false
+	}
+	if biz.IsPodInTerminatedState(pod) || pod.Spec.NodeName == "" {
+		r.removeWholeGPUPod(pod.UID)
+		return true
+	}
+
+	nodeID, nodeUID, memMiB := r.wholeGPUNodeContext(pod.Spec.NodeName)
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	sort.Slice(counts, func(i, j int) bool { return counts[i].name < counts[j].name })
+	r.wholeGPUPods[pod.UID] = &wholeGPUPod{
+		pod: pod, nodeID: nodeID, nodeUID: nodeUID,
+		nodeName: pod.Spec.NodeName, memMiB: memMiB, ctrs: counts,
+	}
+	r.log.Infof("Whole-GPU pod tracked: %s/%s on %s, %d container(s)", pod.Namespace, pod.Name, pod.Spec.NodeName, len(counts))
+	return true
+}
+
+func (r *podRepo) removeWholeGPUPod(uid k8stypes.UID) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	delete(r.wholeGPUPods, uid)
+}
+
+// wholeGPUNodeContext resolves node identifiers and the per-card memory of
+// the node, derived from the sGPU pool when present (same card model).
+func (r *podRepo) wholeGPUNodeContext(nodeName string) (string, string, int32) {
+	node, err := r.data.k8sCl.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		r.log.Warnf("cannot read node %s for whole-GPU context: %v", nodeName, err)
+		return nodeName, "", 0
+	}
+	cores, _ := node.Status.Capacity.Name(corev1.ResourceName(mthreads.NodeSGPUCoresResource), resource.DecimalSI).AsInt64()
+	memUnits, _ := node.Status.Capacity.Name(corev1.ResourceName(mthreads.NodeSGPUMemoryResource), resource.DecimalSI).AsInt64()
+	var memMiB int32
+	if cards := cores / mthreads.CoresPerCard; cards > 0 {
+		memMiB = int32(memUnits * mthreads.MemoryFactorMiB / cards)
+	}
+	return nodeName, string(node.UID), memMiB
+}
+
+// listWholeGPUContainers synthesizes container/device records for whole-GPU
+// pods. Slots are assigned per node in pod-name order so the mapping stays
+// compact and stable across WebUI restarts; the vendor kubelet allocation
+// does not expose which physical slot a pod received, so the specific index
+// is an approximation while the per-node occupancy counts are exact.
+func (r *podRepo) listWholeGPUContainers() []*biz.Container {
+	if len(r.wholeGPUPods) == 0 {
+		return nil
+	}
+	entries := make([]*wholeGPUPod, 0, len(r.wholeGPUPods))
+	for _, e := range r.wholeGPUPods {
+		entries = append(entries, e)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].pod.Name < entries[j].pod.Name })
+
+	slots := map[string]int64{} // node -> next free whole-GPU slot
+	out := make([]*biz.Container, 0, len(entries))
+	for _, e := range entries {
+		for _, wc := range e.ctrs {
+			cds := biz.ContainerDevices{}
+			for k := int64(0); k < wc.count; k++ {
+				slot := slots[e.nodeName]
+				slots[e.nodeName] = slot + 1
+				cds = append(cds, biz.ContainerDevice{
+					Idx:       int(slot),
+					UUID:      fmt.Sprintf("%s-mthreads-full-%d", e.nodeName, slot),
+					Type:      mthreads.MthreadsWholeGPUType,
+					Usedmem:   e.memMiB,
+					Usedcores: biz.PhysicalCoreBaselinePerDevice,
+				})
+			}
+			out = append(out, &biz.Container{
+				Name:             wc.name,
+				NodeName:         e.nodeName,
+				PodName:          e.pod.Name,
+				PodUID:           string(e.pod.UID),
+				NodeUID:          e.nodeUID,
+				Namespace:        e.pod.Namespace,
+				Image:            r.containerImage(e.pod, wc.name),
+				Status:           r.wholeGPUStatus(e.pod),
+				CreateTime:       r.GetCreateTime(e.pod),
+				ContainerDevices: cds,
+			})
+		}
+	}
+	return out
+}
+
+func (r *podRepo) containerImage(pod *corev1.Pod, name string) string {
+	for _, ctr := range pod.Spec.Containers {
+		if ctr.Name == name {
+			return ctr.Image
+		}
+	}
+	for _, ctr := range pod.Spec.InitContainers {
+		if ctr.Name == name {
+			return ctr.Image
+		}
+	}
+	return ""
+}
+
+func (r *podRepo) wholeGPUStatus(pod *corev1.Pod) string {
+	if pod.Status.Phase == corev1.PodRunning {
+		return biz.ContainerStatusSuccess
+	}
+	if pod.Status.Phase == corev1.PodFailed {
+		return biz.ContainerStatusFailed
+	}
+	return biz.ContainerStatusUnknown
 }
 
 func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.Container, error) {

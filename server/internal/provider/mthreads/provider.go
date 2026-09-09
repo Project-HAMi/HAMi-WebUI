@@ -51,10 +51,10 @@ func (m *Mthreads) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 	devices := make([]*util.DeviceInfo, 0, 8)
 
 	// sGPU-sliceable cards, scheduled and accounted by HAMi.
-	cards := cores / coresPerCard
+	cards := cores / CoresPerCard
 	var devmemPerCard int64
 	if cards > 0 {
-		devmemPerCard = memoryUnits * memoryFactor / cards
+		devmemPerCard = memoryUnits * MemoryFactorMiB / cards
 		for i := int64(0); i < cards; i++ {
 			id := fmt.Sprintf("%s-mthreads-%d", node.Name, i)
 			devices = append(devices, &util.DeviceInfo{
