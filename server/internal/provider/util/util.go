@@ -27,6 +27,7 @@ const (
 	CambriconGPUDevice  = "MLU"
 	MetaxGPUDevice      = "Metax-GPU"
 	MetaxSGPUDevice     = "Metax-SGPU"
+	MthreadsGPUDevice   = "Mthreads"
 
 	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
 
@@ -455,6 +456,29 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper, ascendMode AscendAllocat
 				cd, err := DecodeDCUContainerDevices(s, priorities[i], nodeName)
 				if err != nil {
 					return PodDevices{}, nil
+				}
+				pd[devType] = append(pd[devType], cd)
+			}
+		case MthreadsGPUDevice:
+			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+				if i >= podContainerCount(pod) {
+					break
+				}
+				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
+					continue
+				}
+				cd, err := DecodeContainerDevices(s, priorities[i])
+				if err != nil {
+					return PodDevices{}, nil
+				}
+				// HAMi accounts mthreads cores on a 16-unit scale per card;
+				// normalize to the WebUI 0-100 baseline.
+				for i := range cd {
+					cd[i].Usedcores = cd[i].Usedcores * 100 / 16
+					if cd[i].Usedcores == 0 && cd[i].Usedmem > 0 {
+						cd[i].Usedcores = 1
+					}
 				}
 				pd[devType] = append(pd[devType], cd)
 			}
