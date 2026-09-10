@@ -6,7 +6,6 @@ import (
 	"fmt"
 	klog "k8s.io/klog/v2"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -334,24 +333,33 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			return s.recordFatalError(err)
 		}
 		provider := device.Provider
-		if provider == biz.MthreadsGPUDevice {
-			if err := s.generateMthreadsDeviceMetrics(ctx, device); err != nil {
-				s.recordTelemetryError(ctx, err)
-			}
-			continue
-		}
-		deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
-		var driver, deviceNo = "", ""
-		if err == nil && deviceAdditional != nil {
-			driver = deviceAdditional.DriverVersion
-			deviceNo = deviceAdditional.DeviceNo
-		}
 
+		// Inventory series are provider-agnostic and must be emitted for
+		// every device every cycle (the cycle commit only keeps cells that
+		// were written), so they are recorded before any provider-specific
+		// dispatch below.
+		var driver, deviceNo = "", ""
+		if provider != biz.MthreadsGPUDevice {
+			deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
+			if err == nil && deviceAdditional != nil {
+				driver = deviceAdditional.DriverVersion
+				deviceNo = deviceAdditional.DeviceNo
+			}
+		}
 		s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+
+		if provider == biz.MthreadsGPUDevice {
+			// Vendor telemetry only; the inventory series above already
+			// cover this device.
+			if err := s.generateMthreadsDeviceMetrics(ctx, device); err != nil {
+				s.recordTelemetryError(ctx, err)
+			}
+			continue
+		}
 		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)
 		if memoryUsedErr == nil {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
@@ -982,29 +990,24 @@ func (s *MetricsGenerator) systemComponentHealth(ctx context.Context, componentT
 // DCGM_FI_DEV_* series labelled with Hostname and numeric gpu index.
 //
 // Mapping of HAMi device ids to DCGM gpu indexes:
-//   - sliced cards  <node>-mthreads-<i>     -> gpu=<i>   (i-th card bound to
-//     sgpu_km; the current cluster slices only card 0)
-//   - whole cards   <node>-mthreads-full-<j> -> gpu=<j+1> (assumes the sliced
-//     pool is laid out before the whole-card pool in physical order)
+//   - sliced cards  <node>-mthreads-<i>     -> gpu=<i> (i-th card bound to
+//     sgpu_km)
+//   - whole cards   <node>-mthreads-full-<j> -> gpu=<cards+j>: the provider
+//     preserves the physical ordinal in DeviceInfo.Index, with the sliced
+//     pool laid out before the whole-card pool.
 func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, device *biz.DeviceInfo) error {
-	const wholeType = "Mthreads-GPU"
-	dashIdx := strings.LastIndex(device.Id, "-")
-	if dashIdx < 0 {
-		return fmt.Errorf("%w: %q", errTelemetryUnsupported, device.Id)
-	}
-	suffix := device.Id[dashIdx+1:]
-	gpuIdx, err := strconv.ParseInt(suffix, 10, 64)
-	if err != nil {
-		return fmt.Errorf("%w: %q", errTelemetryUnsupported, device.Id)
-	}
-	if device.Type == wholeType {
-		gpuIdx++
-	}
-	klog.Infof("[mthreads-telemetry] device=%s type=%s node=%s -> dcgm_gpu=%d", device.Id, device.Type, device.NodeName, gpuIdx)
+	gpuIdx := int64(device.Index)
+	klog.V(4).Infof("[mthreads-telemetry] device=%s type=%s node=%s -> dcgm_gpu=%d", device.Id, device.Type, device.NodeName, gpuIdx)
 	record := func(metric string, setters ...func(float32)) {
 		query := fmt.Sprintf("avg(DCGM_FI_DEV_%s{Hostname=%q, gpu=\"%d\"})", metric, device.NodeName, gpuIdx)
 		v, err := s.queryRequiredInstantVal(ctx, query)
 		if err != nil {
+			// Missing samples must mark the refresh degraded, otherwise the
+			// cycle commit prunes the series while reporting success.
+			// Transport failures are already recorded by queryInstant.
+			if errors.Is(err, errNoMetricData) {
+				s.recordTelemetryError(ctx, err)
+			}
 			klog.Warningf("[mthreads-telemetry] query failed: %s: %v", query, err)
 			return
 		}
@@ -1038,10 +1041,11 @@ func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, de
 		s.set(HamiCoreUsedAvg, float64(util), node, prov, typ, device.Id, "", "")
 		s.set(HamiCoreUtilAvg, float64(util), node, prov, typ, device.Id, "", "")
 	}
-	memUsed, memTotal := float32(-1), float32(0)
+	memUsed, memFree := float32(-1), float32(-1)
 	record("FB_USED", func(v float32) { memUsed = v })
-	record("FB_FREE", func(v float32) { memTotal = memTotal + v })
-	if memUsed >= 0 && memTotal > 0 {
+	record("FB_FREE", func(v float32) { memFree = v })
+	if memUsed >= 0 && memFree > 0 {
+		memTotal := memUsed + memFree // framebuffer total = used + free
 		s.set(HamiMemoryUsed, float64(memUsed), node, prov, typ, device.Id, "", "")
 		s.set(HamiMemorySize, float64(memTotal), node, prov, typ, device.Id, "", "")
 		s.set(HamiMemoryUtil, roundToOneDecimal(float64(100*memUsed/memTotal)), node, prov, typ, device.Id, "", "")

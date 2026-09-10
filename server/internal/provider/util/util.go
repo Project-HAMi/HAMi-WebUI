@@ -170,6 +170,39 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 	return retval, nil
 }
 
+// decodeMthreadsContainerDevices decodes an mthreads allocation segment
+// with vendor core semantics: HAMi accounts mthreads cores on a 16-unit
+// scale per card, and a raw value of 0 means the whole sliced card. The
+// generic decoder would map that zero to the 0-100 baseline before the
+// vendor scale is applied, so the conversion happens here instead.
+func decodeMthreadsContainerDevices(str, priority string) (ContainerDevices, error) {
+	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
+	contdev := ContainerDevices{}
+	for i, val := range cd {
+		if !strings.Contains(val, ",") {
+			continue
+		}
+		tmpstr := strings.Split(val, ",")
+		if len(tmpstr) < 4 {
+			return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
+		}
+		tmpdev := ContainerDevice{}
+		tmpdev.Idx = i
+		tmpdev.UUID = tmpstr[0]
+		tmpdev.Type = tmpstr[1]
+		devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
+		tmpdev.Usedmem = int32(devmem)
+		rawCores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
+		if rawCores <= 0 {
+			rawCores = 16 // zero/missing = the whole sliced card
+		}
+		tmpdev.Usedcores = int32(rawCores * 100 / 16)
+		tmpdev.Priority = priority
+		contdev = append(contdev, tmpdev)
+	}
+	return contdev, nil
+}
+
 // DecodeContainerDevices decodes the container devices from a string.
 func DecodeContainerDevices(str, priority string) (ContainerDevices, error) {
 	if len(str) == 0 {
@@ -468,17 +501,9 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper, ascendMode AscendAllocat
 					pd[devType] = append(pd[devType], ContainerDevices{})
 					continue
 				}
-				cd, err := DecodeContainerDevices(s, priorities[i])
+				cd, err := decodeMthreadsContainerDevices(s, priorities[i])
 				if err != nil {
 					return PodDevices{}, nil
-				}
-				// HAMi accounts mthreads cores on a 16-unit scale per card;
-				// normalize to the WebUI 0-100 baseline.
-				for i := range cd {
-					cd[i].Usedcores = cd[i].Usedcores * 100 / 16
-					if cd[i].Usedcores == 0 && cd[i].Usedmem > 0 {
-						cd[i].Usedcores = 1
-					}
 				}
 				pd[devType] = append(pd[devType], cd)
 			}

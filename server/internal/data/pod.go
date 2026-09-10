@@ -130,6 +130,9 @@ func (r *podRepo) onDeletedPod(obj interface{}) {
 		r.log.Error("unknown add object type")
 		return
 	}
+	// Drop the whole-GPU ledger entry before the annotation check: these
+	// pods carry no assigned-node annotation by design.
+	r.removeWholeGPUPod(pod.UID)
 	_, ok = pod.Annotations[util.AssignedNodeAnnotations]
 	if !ok {
 		return
@@ -331,7 +334,11 @@ func (r *podRepo) removeWholeGPUPod(uid k8stypes.UID) {
 // wholeGPUNodeContext resolves node identifiers and the per-card memory of
 // the node, derived from the sGPU pool when present (same card model).
 func (r *podRepo) wholeGPUNodeContext(nodeName string) (string, string, int32) {
-	node, err := r.data.k8sCl.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	// Bound the request: this runs inside informer callbacks, and an
+	// unbounded API call would delay subsequent pod events.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node, err := r.data.k8sCl.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		r.log.Warnf("cannot read node %s for whole-GPU context: %v", nodeName, err)
 		return nodeName, "", 0
