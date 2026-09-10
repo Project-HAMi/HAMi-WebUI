@@ -1013,6 +1013,13 @@ func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, de
 		}
 	}
 	node, prov, typ := device.NodeName, device.Provider, device.Type
+	// Capacity gauges: the card-detail charts derive totals and schedulable
+	// memory from these series (hami_core_size / hami_vmemory_size / ...).
+	s.set(HamiVgpuCount, float64(device.Count), node, prov, typ, device.Id, "", "")
+	s.set(HamiVmemorySize, float64(device.Devmem), node, prov, typ, device.Id, "", "")
+	s.set(HamiVcoreSize, float64(device.Devcore), node, prov, typ, device.Id, "", "")
+	s.set(HamiVCoreScaling, float64(device.Devcore)/100, node, prov, typ, device.Id, "", "")
+	s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), node, prov, typ, device.Id, "", "")
 
 	record("GPU_TEMP", func(v float32) {
 		s.set(HamiDeviceTemperature, float64(v), node, prov, typ, device.Id, "", "")

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math"
+	"strings"
 	"time"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
@@ -31,6 +32,66 @@ func NewMonitorService(
 		nodeUsecase: nodeUsecase,
 		podUsecase:  podUsecase,
 	}
+}
+
+// Summary reports vGPU/memory/core distribution rates (allocated vs
+// capacity, percent) for the cluster or a filtered node/device scope. The
+// numbers come from HAMi accounting (node inventory + pod allocation
+// annotations), so they work for every provider including ones whose
+// telemetry has no Prometheus history yet.
+func (s *MonitorService) Summary(ctx context.Context, req *pb.SummaryFilter) (*pb.SummaryResponse, error) {
+	devices, err := s.nodeUsecase.ListAllDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nodeFilter := strings.TrimSpace(req.GetNode())
+	deviceFilter := strings.TrimSpace(req.GetDevice())
+
+	var totalV, totalM, totalC float64
+	var usedV, usedM, usedC float64
+	for _, device := range devices {
+		if nodeFilter != "" && device.NodeName != nodeFilter {
+			continue
+		}
+		if deviceFilter != "" && device.Id != deviceFilter && device.Type != deviceFilter {
+			continue
+		}
+		totalV += float64(device.Count)
+		totalM += float64(device.Devmem)
+		totalC += float64(biz.PhysicalCoreBaselinePerDevice)
+
+		v, c, m, _, err := s.podUsecase.StatisticsByDeviceId(ctx, device.AliasId)
+		if err != nil {
+			continue
+		}
+		usedV += float64(v)
+		usedC += float64(c)
+		usedM += float64(m)
+	}
+
+	res := &pb.SummaryResponse{}
+	res.DistributionRate = &pb.DistributionRate{}
+	res.Scaling = &pb.Scaling{}
+	if totalV > 0 {
+		rate := roundTo1(usedV / totalV * 100)
+		res.DistributionRate.Vgpu = rate
+		res.Scaling.Vgpu = rate
+	}
+	if totalM > 0 {
+		rate := roundTo1(usedM / totalM * 100)
+		res.DistributionRate.Memory = rate
+		res.Scaling.Memory = rate
+	}
+	if totalC > 0 {
+		rate := roundTo1(usedC / totalC * 100)
+		res.DistributionRate.Core = rate
+		res.Scaling.Core = rate
+	}
+	return res, nil
+}
+
+func roundTo1(v float64) float32 {
+	return float32(math.Round(v*10) / 10)
 }
 
 func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeRequest) (*pb.RangeResponse, error) {

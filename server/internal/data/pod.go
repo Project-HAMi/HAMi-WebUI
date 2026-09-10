@@ -426,6 +426,13 @@ func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.C
 	defer r.mutex.RUnlock()
 	pod, ok := r.pods[k8stypes.UID(podUID)]
 	if !ok {
+		// Whole-card pods are synthesized at read time and are not stored
+		// in r.pods; fall back to the whole-GPU ledger.
+		for _, container := range r.listWholeGPUContainers() {
+			if container.PodUID == podUID && container.Name == name {
+				return container, nil
+			}
+		}
 		return nil, fmt.Errorf("not found")
 	}
 	for _, container := range pod.Ctrs {
