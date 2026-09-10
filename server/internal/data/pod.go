@@ -125,9 +125,14 @@ func (r *podRepo) onUpdatePod(_ interface{}, new interface{}) {
 }
 
 func (r *podRepo) onDeletedPod(obj interface{}) {
+	// A watch that missed a delete delivers a tombstone wrapping the last
+	// known state; both ledgers must still be cleaned up.
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = tombstone.Obj
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		r.log.Error("unknown add object type")
+		r.log.Error("unknown delete object type")
 		return
 	}
 	// Drop the whole-GPU ledger entry before the annotation check: these
@@ -227,7 +232,9 @@ func (r *podRepo) nodeAllocationContext(pod *corev1.Pod) (string, util.AscendAll
 	if pod.Spec.NodeName == "" {
 		return "", resolveAscendAllocationMode(podMode, "")
 	}
-	node, err := r.data.k8sCl.CoreV1().Nodes().Get(context.Background(), pod.Spec.NodeName, metav1.GetOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node, err := r.data.k8sCl.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
 	if err != nil {
 		r.log.Warnf("cannot resolve Ascend allocation mode for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		return "", resolveAscendAllocationMode(podMode, "")
@@ -290,6 +297,9 @@ func (r *podRepo) ListAll(context.Context) ([]*biz.Container, error) {
 // through the regular HAMi annotation path.
 func (r *podRepo) refreshWholeGPUPod(pod *corev1.Pod) bool {
 	if _, ham := pod.Annotations[util.AssignedNodeAnnotations]; ham {
+		// The pod moved to HAMi-managed delivery; drop any stale ledger
+		// entry from an earlier spec revision.
+		r.removeWholeGPUPod(pod.UID)
 		return false
 	}
 	counts := make([]wholeGPUContainer, 0, len(pod.Spec.Containers))
@@ -306,6 +316,8 @@ func (r *podRepo) refreshWholeGPUPod(pod *corev1.Pod) bool {
 		}
 	}
 	if len(counts) == 0 {
+		// The pod no longer requests vendor whole cards; purge the ledger.
+		r.removeWholeGPUPod(pod.UID)
 		return false
 	}
 	if biz.IsPodInTerminatedState(pod) || pod.Spec.NodeName == "" {
