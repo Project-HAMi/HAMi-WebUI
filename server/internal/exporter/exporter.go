@@ -1044,11 +1044,15 @@ func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, de
 	memUsed, memFree := float32(-1), float32(-1)
 	record("FB_USED", func(v float32) { memUsed = v })
 	record("FB_FREE", func(v float32) { memFree = v })
-	if memUsed >= 0 && memFree > 0 {
+	// A fully allocated GPU reports FB_FREE=0; the series must still be
+	// emitted, so only guard the division against an empty framebuffer.
+	if memUsed >= 0 && memFree >= 0 {
 		memTotal := memUsed + memFree // framebuffer total = used + free
 		s.set(HamiMemoryUsed, float64(memUsed), node, prov, typ, device.Id, "", "")
 		s.set(HamiMemorySize, float64(memTotal), node, prov, typ, device.Id, "", "")
-		s.set(HamiMemoryUtil, roundToOneDecimal(float64(100*memUsed/memTotal)), node, prov, typ, device.Id, "", "")
+		if memTotal > 0 {
+			s.set(HamiMemoryUtil, roundToOneDecimal(float64(100*memUsed/memTotal)), node, prov, typ, device.Id, "", "")
+		}
 	}
 	return nil
 }

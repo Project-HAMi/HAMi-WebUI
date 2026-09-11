@@ -14,7 +14,6 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/jinzhu/copier"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/informers"
@@ -31,6 +30,7 @@ type wholeGPUPod struct {
 	nodeID   string
 	nodeUID  string
 	nodeName string
+	nodeObj  *corev1.Node
 	memMiB   int32
 	ctrs     []wholeGPUContainer // container idx -> requested whole-GPU count
 }
@@ -43,6 +43,7 @@ type wholeGPUContainer struct {
 type podRepo struct {
 	data                    *Data
 	podLister               listerscorev1.PodLister
+	nodeLister              listerscorev1.NodeLister
 	pods                    map[k8stypes.UID]*biz.PodInfo
 	wholeGPUPods            map[k8stypes.UID]*wholeGPUPod
 	mutex                   sync.RWMutex
@@ -76,6 +77,7 @@ func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap) (*podRepo
 func (r *podRepo) init() {
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
 	r.podLister = informerFactory.Core().V1().Pods().Lister()
+	r.nodeLister = informerFactory.Core().V1().Nodes().Lister()
 	informer := informerFactory.Core().V1().Pods().Informer()
 	// An index on the existing informer, not another watch.
 	if err := informer.AddIndexers(cache.Indexers{schedulingGPUIndex: r.schedulingIndex}); err != nil {
@@ -325,13 +327,14 @@ func (r *podRepo) refreshWholeGPUPod(pod *corev1.Pod) bool {
 		return true
 	}
 
-	nodeID, nodeUID, memMiB := r.wholeGPUNodeContext(pod.Spec.NodeName)
+	nodeID, nodeUID, nodeObj, memMiB := r.wholeGPUNodeContext(pod.Spec.NodeName)
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	sort.Slice(counts, func(i, j int) bool { return counts[i].name < counts[j].name })
 	r.wholeGPUPods[pod.UID] = &wholeGPUPod{
 		pod: pod, nodeID: nodeID, nodeUID: nodeUID,
 		nodeName: pod.Spec.NodeName, memMiB: memMiB, ctrs: counts,
+		nodeObj: nodeObj,
 	}
 	r.log.Infof("Whole-GPU pod tracked: %s/%s on %s, %d container(s)", pod.Namespace, pod.Name, pod.Spec.NodeName, len(counts))
 	return true
@@ -344,24 +347,24 @@ func (r *podRepo) removeWholeGPUPod(uid k8stypes.UID) {
 }
 
 // wholeGPUNodeContext resolves node identifiers and the per-card memory of
-// the node, derived from the sGPU pool when present (same card model).
-func (r *podRepo) wholeGPUNodeContext(nodeName string) (string, string, int32) {
-	// Bound the request: this runs inside informer callbacks, and an
-	// unbounded API call would delay subsequent pod events.
+// the node (vendor per-card labels first, then the sGPU pool remainder).
+func (r *podRepo) wholeGPUNodeContext(nodeName string) (string, string, *corev1.Node, int32) {
+	// Prefer the shared informer cache: this runs inside informer
+	// callbacks, and a slow live API call would delay subsequent pod
+	// events. Fall back to a bounded live read when the cache misses.
+	if r.nodeLister != nil {
+		if node, err := r.nodeLister.Get(nodeName); err == nil {
+			return node.Name, string(node.UID), node, mthreads.PerCardMemoryMiB(node)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	node, err := r.data.k8sCl.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		r.log.Warnf("cannot read node %s for whole-GPU context: %v", nodeName, err)
-		return nodeName, "", 0
+		return nodeName, "", nil, 0
 	}
-	cores, _ := node.Status.Capacity.Name(corev1.ResourceName(mthreads.NodeSGPUCoresResource), resource.DecimalSI).AsInt64()
-	memUnits, _ := node.Status.Capacity.Name(corev1.ResourceName(mthreads.NodeSGPUMemoryResource), resource.DecimalSI).AsInt64()
-	var memMiB int32
-	if cards := cores / mthreads.CoresPerCard; cards > 0 {
-		memMiB = int32(memUnits * mthreads.MemoryFactorMiB / cards)
-	}
-	return nodeName, string(node.UID), memMiB
+	return node.Name, string(node.UID), node, mthreads.PerCardMemoryMiB(node)
 }
 
 // listWholeGPUContainers synthesizes container/device records for whole-GPU
@@ -382,16 +385,27 @@ func (r *podRepo) listWholeGPUContainers() []*biz.Container {
 	slots := map[string]int64{} // node -> next free whole-GPU slot
 	out := make([]*biz.Container, 0, len(entries))
 	for _, e := range entries {
+		// Resolve the node's whole-card ids from the vendor labels so the
+		// synthesized uuids line up with the device inventory 1:1.
+		_, wholeIDs, perCardMiB := mthreads.NodeCardInventory(e.nodeObj)
 		for _, wc := range e.ctrs {
 			cds := biz.ContainerDevices{}
 			for k := int64(0); k < wc.count; k++ {
 				slot := slots[e.nodeName]
 				slots[e.nodeName] = slot + 1
+				var uuid string
+				if slot < int64(len(wholeIDs)) {
+					uuid = fmt.Sprintf("%s-mthreads-full-%d", e.nodeName, wholeIDs[slot])
+				} else {
+					// More whole-card pods than physical whole cards
+					// (accounting-layer overcommit).
+					uuid = fmt.Sprintf("%s-mthreads-full-ovc-%d", e.nodeName, slot)
+				}
 				cds = append(cds, biz.ContainerDevice{
 					Idx:       int(slot),
-					UUID:      fmt.Sprintf("%s-mthreads-full-%d", e.nodeName, slot),
+					UUID:      uuid,
 					Type:      mthreads.MthreadsWholeGPUType,
-					Usedmem:   e.memMiB,
+					Usedmem:   int32(perCardMiB),
 					Usedcores: biz.PhysicalCoreBaselinePerDevice,
 				})
 			}

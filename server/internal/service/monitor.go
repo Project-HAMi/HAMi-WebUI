@@ -56,14 +56,15 @@ func (s *MonitorService) Summary(ctx context.Context, req *pb.SummaryFilter) (*p
 		if deviceFilter != "" && device.Id != deviceFilter && device.Type != deviceFilter {
 			continue
 		}
+		v, c, m, _, err := s.podUsecase.StatisticsByDeviceId(ctx, device.AliasId)
+		if err != nil {
+			// Skip the device entirely: counting its capacity without its
+			// usage would understate the distribution rates.
+			continue
+		}
 		totalV += float64(device.Count)
 		totalM += float64(device.Devmem)
 		totalC += float64(biz.PhysicalCoreBaselinePerDevice)
-
-		v, c, m, _, err := s.podUsecase.StatisticsByDeviceId(ctx, device.AliasId)
-		if err != nil {
-			continue
-		}
 		usedV += float64(v)
 		usedC += float64(c)
 		usedM += float64(m)

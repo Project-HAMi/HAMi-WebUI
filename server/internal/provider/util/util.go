@@ -190,11 +190,24 @@ func decodeMthreadsContainerDevices(str, priority string) (ContainerDevices, err
 		tmpdev.Idx = i
 		tmpdev.UUID = tmpstr[0]
 		tmpdev.Type = tmpstr[1]
-		devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
+		devmem, err := strconv.ParseInt(tmpstr[2], 10, 32)
+		if err != nil {
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: invalid mthreads memory %q", str, tmpstr[2])
+		}
+		if devmem < 0 {
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: negative mthreads memory %q", str, tmpstr[2])
+		}
 		tmpdev.Usedmem = int32(devmem)
-		rawCores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
-		if rawCores <= 0 {
-			rawCores = 16 // zero/missing = the whole sliced card
+		rawCores, err := strconv.ParseInt(tmpstr[3], 10, 32)
+		if err != nil {
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: invalid mthreads cores %q", str, tmpstr[3])
+		}
+		switch {
+		case rawCores == 0:
+			// Raw core 0 is the valid whole-sliced-card value.
+			rawCores = 16
+		case rawCores < 0 || rawCores > 16:
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: mthreads cores %d outside the vendor range 0..16", str, rawCores)
 		}
 		tmpdev.Usedcores = int32(rawCores * 100 / 16)
 		tmpdev.Priority = priority
@@ -503,7 +516,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper, ascendMode AscendAllocat
 				}
 				cd, err := decodeMthreadsContainerDevices(s, priorities[i])
 				if err != nil {
-					return PodDevices{}, nil
+					return PodDevices{}, err
 				}
 				pd[devType] = append(pd[devType], cd)
 			}
