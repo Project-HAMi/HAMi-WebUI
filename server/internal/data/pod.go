@@ -24,13 +24,13 @@ import (
 // wholeGPUPod captures one pod that holds vendor whole-card GPUs
 // (mthreads.com/gpu). Such pods are delivered outside HAMi scheduling and
 // carry no allocation annotations, so their occupancy is synthesized here:
-// slots are assigned per node in a compact, deterministic order at read time.
+// card ids are allocated per node when the pod is first tracked and retained
+// across refreshes.
 type wholeGPUPod struct {
 	pod      *corev1.Pod
 	nodeID   string
 	nodeUID  string
 	nodeName string
-	nodeObj  *corev1.Node
 	memMiB   int32
 	ctrs     []wholeGPUContainer // container idx -> requested whole-GPU count
 }
@@ -38,6 +38,7 @@ type wholeGPUPod struct {
 type wholeGPUContainer struct {
 	name  string
 	count int64
+	cards []int64 // stable whole-card ids: physical id, or negative when overcommitted
 }
 
 type podRepo struct {
@@ -327,34 +328,104 @@ func (r *podRepo) refreshWholeGPUPod(pod *corev1.Pod) bool {
 		return true
 	}
 
-	nodeID, nodeUID, nodeObj, memMiB := r.wholeGPUNodeContext(pod.Spec.NodeName)
+	nodeObj, ok := r.wholeGPUNodeContext(pod.Spec.NodeName)
+	if !ok {
+		// Node unresolved (informer cache miss and live read failed). Drop any
+		// stale entry and skip storing until a later event resolves it, so
+		// readers never receive a nil node context.
+		r.removeWholeGPUPod(pod.UID)
+		return true
+	}
+	_, wholeIDs, _ := mthreads.NodeCardInventory(nodeObj)
+
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	sort.Slice(counts, func(i, j int) bool { return counts[i].name < counts[j].name })
+	r.assignWholeCardIDs(pod.UID, pod.Spec.NodeName, wholeIDs, counts)
 	r.wholeGPUPods[pod.UID] = &wholeGPUPod{
-		pod: pod, nodeID: nodeID, nodeUID: nodeUID,
-		nodeName: pod.Spec.NodeName, memMiB: memMiB, ctrs: counts,
-		nodeObj: nodeObj,
+		pod: pod, nodeID: nodeObj.Name, nodeUID: string(nodeObj.UID),
+		nodeName: pod.Spec.NodeName, memMiB: mthreads.PerCardMemoryMiB(nodeObj), ctrs: counts,
 	}
 	r.log.Infof("Whole-GPU pod tracked: %s/%s on %s, %d container(s)", pod.Namespace, pod.Name, pod.Spec.NodeName, len(counts))
 	return true
 }
 
+// assignWholeCardIDs picks a stable whole-card id set for each container of a
+// pod, reusing ids the pod already holds and otherwise taking the lowest ids
+// free on the node. Retention matters because consumers resolve the
+// synthesized device UUID back to a physical card; recomputing from map order
+// would let unrelated pods move between cards. Ids beyond the physical pool
+// (accounting-layer overcommit) are synthesized as negative values.
+//
+// Callers must hold r.mutex.
+func (r *podRepo) assignWholeCardIDs(uid k8stypes.UID, nodeName string, wholeIDs []int64, counts []wholeGPUContainer) {
+	used := map[int64]bool{}
+	for otherUID, e := range r.wholeGPUPods {
+		if otherUID == uid || e.nodeName != nodeName {
+			continue
+		}
+		for _, c := range e.ctrs {
+			for _, id := range c.cards {
+				used[id] = true
+			}
+		}
+	}
+	var prev map[string][]int64
+	if e, ok := r.wholeGPUPods[uid]; ok && e.nodeName == nodeName {
+		prev = make(map[string][]int64, len(e.ctrs))
+		for _, c := range e.ctrs {
+			prev[c.name] = c.cards
+		}
+	}
+	for i := range counts {
+		c := &counts[i]
+		cards := make([]int64, 0, c.count)
+		for _, id := range prev[c.name] {
+			if int64(len(cards)) >= c.count {
+				break
+			}
+			if !used[id] {
+				cards = append(cards, id)
+				used[id] = true
+			}
+		}
+		for _, id := range wholeIDs {
+			if int64(len(cards)) >= c.count {
+				break
+			}
+			if !used[id] {
+				cards = append(cards, id)
+				used[id] = true
+			}
+		}
+		for synth := int64(-1); int64(len(cards)) < c.count; synth-- {
+			if !used[synth] {
+				cards = append(cards, synth)
+				used[synth] = true
+			}
+		}
+		sort.Slice(cards, func(a, b int) bool { return cards[a] < cards[b] })
+		c.cards = cards
+	}
+}
+
 func (r *podRepo) removeWholeGPUPod(uid k8stypes.UID) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
+	// Dropping the entry releases its card ids: allocation is derived from the
+	// live ledger, so the next pod to refresh can reclaim them.
 	delete(r.wholeGPUPods, uid)
 }
 
-// wholeGPUNodeContext resolves node identifiers and the per-card memory of
-// the node (vendor per-card labels first, then the sGPU pool remainder).
-func (r *podRepo) wholeGPUNodeContext(nodeName string) (string, string, *corev1.Node, int32) {
-	// Prefer the shared informer cache: this runs inside informer
-	// callbacks, and a slow live API call would delay subsequent pod
-	// events. Fall back to a bounded live read when the cache misses.
+// wholeGPUNodeContext resolves the Node hosting a whole-GPU pod, preferring
+// the shared informer cache (this runs inside informer callbacks, where a slow
+// live API call would delay subsequent pod events) and falling back to a
+// bounded live read. It reports false when neither source resolves, so callers
+// never store a nil node.
+func (r *podRepo) wholeGPUNodeContext(nodeName string) (*corev1.Node, bool) {
 	if r.nodeLister != nil {
 		if node, err := r.nodeLister.Get(nodeName); err == nil {
-			return node.Name, string(node.UID), node, mthreads.PerCardMemoryMiB(node)
+			return node, true
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -362,16 +433,16 @@ func (r *podRepo) wholeGPUNodeContext(nodeName string) (string, string, *corev1.
 	node, err := r.data.k8sCl.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		r.log.Warnf("cannot read node %s for whole-GPU context: %v", nodeName, err)
-		return nodeName, "", nil, 0
+		return nil, false
 	}
-	return node.Name, string(node.UID), node, mthreads.PerCardMemoryMiB(node)
+	return node, true
 }
 
 // listWholeGPUContainers synthesizes container/device records for whole-GPU
-// pods. Slots are assigned per node in pod-name order so the mapping stays
-// compact and stable across WebUI restarts; the vendor kubelet allocation
-// does not expose which physical slot a pod received, so the specific index
-// is an approximation while the per-node occupancy counts are exact.
+// pods from the stable card ids retained when each ledger entry was created.
+// The vendor kubelet allocation does not expose which physical slot a pod
+// received, so the ids are an ordered approximation while the per-node
+// occupancy counts are exact.
 func (r *podRepo) listWholeGPUContainers() []*biz.Container {
 	if len(r.wholeGPUPods) == 0 {
 		return nil
@@ -380,32 +451,37 @@ func (r *podRepo) listWholeGPUContainers() []*biz.Container {
 	for _, e := range r.wholeGPUPods {
 		entries = append(entries, e)
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].pod.Name < entries[j].pod.Name })
+	// Deterministic output order; unrelated to id assignment, which is now
+	// retained per pod.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].nodeName != entries[j].nodeName {
+			return entries[i].nodeName < entries[j].nodeName
+		}
+		if entries[i].pod.Namespace != entries[j].pod.Namespace {
+			return entries[i].pod.Namespace < entries[j].pod.Namespace
+		}
+		if entries[i].pod.Name != entries[j].pod.Name {
+			return entries[i].pod.Name < entries[j].pod.Name
+		}
+		return entries[i].pod.UID < entries[j].pod.UID
+	})
 
-	slots := map[string]int64{} // node -> next free whole-GPU slot
 	out := make([]*biz.Container, 0, len(entries))
 	for _, e := range entries {
-		// Resolve the node's whole-card ids from the vendor labels so the
-		// synthesized uuids line up with the device inventory 1:1.
-		_, wholeIDs, perCardMiB := mthreads.NodeCardInventory(e.nodeObj)
 		for _, wc := range e.ctrs {
 			cds := biz.ContainerDevices{}
-			for k := int64(0); k < wc.count; k++ {
-				slot := slots[e.nodeName]
-				slots[e.nodeName] = slot + 1
-				var uuid string
-				if slot < int64(len(wholeIDs)) {
-					uuid = fmt.Sprintf("%s-mthreads-full-%d", e.nodeName, wholeIDs[slot])
-				} else {
-					// More whole-card pods than physical whole cards
-					// (accounting-layer overcommit).
-					uuid = fmt.Sprintf("%s-mthreads-full-ovc-%d", e.nodeName, slot)
+			for i, cardID := range wc.cards {
+				uuid := fmt.Sprintf("%s-mthreads-full-%d", e.nodeName, cardID)
+				if cardID < 0 {
+					// Accounting-layer overcommit: no physical card backs
+					// this synthesized id.
+					uuid = fmt.Sprintf("%s-mthreads-full-ovc-%d", e.nodeName, -cardID-1)
 				}
 				cds = append(cds, biz.ContainerDevice{
-					Idx:       int(slot),
+					Idx:       i,
 					UUID:      uuid,
 					Type:      mthreads.MthreadsWholeGPUType,
-					Usedmem:   int32(perCardMiB),
+					Usedmem:   e.memMiB,
 					Usedcores: biz.PhysicalCoreBaselinePerDevice,
 				})
 			}

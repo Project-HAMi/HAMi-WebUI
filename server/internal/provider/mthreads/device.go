@@ -106,7 +106,8 @@ func PerCardMemoryMiB(node *corev1.Node) int32 {
 // Sliced ids prefer the vendor sgpu.cores label (non-contiguous bindings
 // such as gpu_ids=0,2,3 are common) and fall back to the contiguous 0..N-1
 // derivation from the sgpu-core capacity. Whole-card ids are the complement
-// within the vendor card count.
+// within the vendor card count, derived from the gpu.count label or, on a
+// node with no sGPU pool, from the whole-card capacity.
 func NodeCardInventory(node *corev1.Node) (slicedIDs []int64, wholeIDs []int64, perCardMemMiB int64) {
 	cores, _ := node.Status.Capacity.Name(corev1.ResourceName(NodeSGPUCoresResource), resource.DecimalSI).AsInt64()
 	memUnits, _ := node.Status.Capacity.Name(corev1.ResourceName(NodeSGPUMemoryResource), resource.DecimalSI).AsInt64()
@@ -117,14 +118,19 @@ func NodeCardInventory(node *corev1.Node) (slicedIDs []int64, wholeIDs []int64, 
 			slicedIDs = append(slicedIDs, i)
 		}
 	}
-	if len(slicedIDs) == 0 {
-		return nil, nil, 0
-	}
 
+	// Total physical cards: the vendor gpu.count label when published, else —
+	// on a node with no sGPU pool — the whole-card capacity itself, so
+	// whole-card-only nodes still enumerate their cards.
 	total := int64(0)
 	if raw, ok := node.Labels[GPUCountLabel]; ok {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
 			total = v
+		}
+	}
+	if total == 0 && len(slicedIDs) == 0 {
+		if whole, _ := node.Status.Capacity.Name(corev1.ResourceName(NodeWholeGPUResource), resource.DecimalSI).AsInt64(); whole > 0 {
+			total = whole
 		}
 	}
 	if total < int64(len(slicedIDs)) {
@@ -140,9 +146,14 @@ func NodeCardInventory(node *corev1.Node) (slicedIDs []int64, wholeIDs []int64, 
 		}
 	}
 
-	perCardMemMiB = 0
-	if memUnits > 0 {
+	if len(slicedIDs) == 0 && len(wholeIDs) == 0 {
+		return nil, nil, 0
+	}
+	if memUnits > 0 && len(slicedIDs) > 0 {
 		perCardMemMiB = memUnits * MemoryFactorMiB / int64(len(slicedIDs))
+	} else {
+		// No sGPU pool: fall back to the vendor per-card memory labels.
+		perCardMemMiB = int64(PerCardMemoryMiB(node))
 	}
 	return slicedIDs, wholeIDs, perCardMemMiB
 }
