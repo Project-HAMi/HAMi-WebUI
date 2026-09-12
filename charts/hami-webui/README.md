@@ -170,6 +170,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | tolerations | list | `[]`                                                                               |  |
 | vendorNodeSelectors.Ascend | string | `"ascend=on"` | Node-label selector used for Ascend device discovery. |
 | vendorNodeSelectors.DCU | string | `"dcu=on"` | Node-label selector used for DCU device discovery. |
+| vendorNodeSelectors.HCU | string | `"hcu=on"` | Node-label selector used for HCU HAMi-mode device discovery. |
 | vendorNodeSelectors.MLU | string | `"mlu=on"` | Node-label selector used for MLU device discovery. |
 | vendorNodeSelectors.Metax | string | `"metax-tech.com/gpu.installed=true"` | Node-label selector used for Metax device discovery. |
 | vendorNodeSelectors.NVIDIA | string | `"gpu=on"` | Node-label selector used for NVIDIA device discovery. |

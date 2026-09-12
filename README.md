@@ -23,7 +23,7 @@ vendor telemetry across Kubernetes nodes. It provides:
   monitoring data available for their devices.
 
 Current provider integrations include NVIDIA GPUs, Huawei Ascend 910B/310P,
-Hygon DCUs, Cambricon MLUs, and MetaX GPUs/sGPUs. Metric coverage depends on the
+Hygon DCUs/HCUs, Cambricon MLUs, and MetaX GPUs/sGPUs. Metric coverage depends on the
 HAMi integration and exporter available for each device type.
 
 ## Scope and security

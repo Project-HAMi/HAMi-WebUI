@@ -8,6 +8,7 @@ vendorNodeSelectors:
   NVIDIA: gpu=on
   Ascend: ascend=on
   DCU: dcu=on
+  HCU: hcu=on
   MLU: mlu=on
   Metax: metax-tech.com/gpu.installed=true
 

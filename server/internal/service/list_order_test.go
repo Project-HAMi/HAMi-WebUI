@@ -88,6 +88,8 @@ func TestGetAllGPUTypesOrderIsIndependentOfRepositoryOrder(t *testing.T) {
 		{Type: "NVIDIA-H100", Provider: biz.NvidiaGPUDevice},
 		{Type: "NVIDIA-A10", Provider: biz.NvidiaGPUDevice},
 		{Type: "Ascend-910B", Provider: biz.AscendGPUDevice},
+		{Type: "DCU-K100", Provider: biz.HygonGPUDevice},
+		{Type: "HCU-K100_AI", Provider: biz.HygonHCUDevice},
 		{Type: "NVIDIA-A10", Provider: biz.NvidiaGPUDevice},
 	}
 	repo := &capacityTestNodeRepo{}
@@ -97,7 +99,17 @@ func TestGetAllGPUTypesOrderIsIndependentOfRepositoryOrder(t *testing.T) {
 		filters *pb.GetAllGpusReq_Filters
 		want    []string
 	}{
-		{name: "all unique types", want: []string{"Ascend-910B", "NVIDIA-A10", "NVIDIA-H100"}},
+		{name: "all unique types", want: []string{"Ascend-910B", "DCU-K100", "HCU-K100_AI", "NVIDIA-A10", "NVIDIA-H100"}},
+		{
+			name:    "HCU provider retains concrete model identity for the browser",
+			filters: &pb.GetAllGpusReq_Filters{Provider: biz.HygonHCUDevice},
+			want:    []string{"HCU-K100_AI"},
+		},
+		{
+			name:    "legacy DCU provider remains selectable",
+			filters: &pb.GetAllGpusReq_Filters{Provider: biz.HygonGPUDevice},
+			want:    []string{"DCU-K100"},
+		},
 		{
 			name:    "provider filter retains the matching subset order",
 			filters: &pb.GetAllGpusReq_Filters{Provider: biz.NvidiaGPUDevice},

@@ -18,7 +18,7 @@ HAMi-WebUI 用于查看 Kubernetes 节点上的加速器清单、分配状态，
 - **加速器可见性：** 查看每个设备的分配情况和厂商监控数据。
 - **工作负载可见性：** 查看当前 HAMi Pod/容器的设备分配，以及对应设备可提供的监控数据。
 
-当前适配 NVIDIA GPU、华为昇腾 910B/310P、海光 DCU、寒武纪 MLU，以及沐曦 GPU/sGPU。不同设备类型可展示的指标取决于对应的 HAMi 适配和 exporter。
+当前适配 NVIDIA GPU、华为昇腾 910B/310P、海光 DCU/HCU、寒武纪 MLU，以及沐曦 GPU/sGPU。不同设备类型可展示的指标取决于对应的 HAMi 适配和 exporter。
 
 ## 范围与安全边界
 

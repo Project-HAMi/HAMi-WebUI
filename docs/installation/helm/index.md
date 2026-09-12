@@ -399,7 +399,9 @@ The manually managed scrape configuration must collect all of these targets:
   `honor_labels: true`;
 - every vendor exporter or monitor used by the enabled hardware providers. The
   consumed metric families include `DCGM_*` for NVIDIA, `npu_*` for Ascend,
-  `dcu_*`/`vdcu_*` for DCU, `mlu_*` for MLU, and `mx_*` for MetaX.
+  `dcu_*`/`vdcu_*` for legacy DCU, `hcu_*`/`vhcu_*` for HCU, `mlu_*` for MLU,
+  and `mx_*` for MetaX. See the [Hygon DCU/HCU contract](../../providers/hygon.md)
+  for HCU HAMi-mode registration and exporter label requirements.
 
 Service names and discovery labels depend on the releases already installed in
 the cluster, so the Chart cannot safely write this external configuration. Raw
@@ -420,6 +422,7 @@ Then query a metric that matches the installed hardware:
 | NVIDIA | `DCGM_FI_DEV_GPU_UTIL` |
 | Ascend | `npu_chip_info_utilization` |
 | DCU | `dcu_utilizationrate` |
+| HCU | `hcu_utilizationrate` |
 | MLU | `mlu_utilization` |
 | MetaX | `mx_gpu_usage` |
 
