@@ -459,8 +459,9 @@ const nodeWorkloadColumns = computed(() => [
     },
     cell: (_h, { row }) =>
       h(
-        'span',
+        'button',
         {
+          type: 'button',
           class: 'node-workload-name-link',
           onClick: (e) => {
             e.stopPropagation();

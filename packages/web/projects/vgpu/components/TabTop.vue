@@ -282,6 +282,7 @@ watch(
 
 .tab-top-content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -297,6 +298,10 @@ watch(
 }
 
 .tab-top-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   font-weight: 400;
   color: #324558;

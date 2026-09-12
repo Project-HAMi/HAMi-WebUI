@@ -489,8 +489,20 @@
   }
 
   .node-workload-name-link {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    text-align: left;
     color: #324558;
     cursor: pointer;
+
+    &:focus-visible {
+      border-radius: 4px;
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
+    }
 
     &:hover {
       color: #2563eb;
