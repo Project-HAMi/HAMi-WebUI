@@ -5,12 +5,14 @@
     to="/"
     aria-label="HAMi WebUI"
   >
-    <img src="@/assets/logo/hami-graph-color.svg" alt="" class="navbar__icon" />
-    <b class="navbar__title" aria-hidden="true">HAMi WebUI</b>
+    <span class="navbar__art" aria-hidden="true" v-html="brandSvg" />
   </router-link>
 </template>
 
 <script setup>
+// Share the complete, local SVG with documentation; keep its geometry intact.
+import brandSvg from '@brand/hami-webui-horizontal-light.svg?raw';
+
 defineProps({
   collapsed: {
     type: Boolean,
@@ -21,11 +23,10 @@ defineProps({
 
 <style scoped>
 .navbar__brand {
-  display: flex;
-  align-items: center;
+  position: relative;
+  display: block;
   flex: 0 0 auto;
-  gap: 10px;
-  width: 160px;
+  width: 148px;
   height: 32px;
   overflow: hidden;
   border-radius: 4px;
@@ -42,31 +43,34 @@ defineProps({
   outline-offset: 4px;
 }
 
-.navbar__icon {
+.navbar__art {
+  position: absolute;
+  top: 0;
+  /* Center the SVG's 111.018937-unit mark in the stable 32px icon column. */
+  left: 2.122633px;
   display: block;
-  flex: 0 0 32px;
-  width: 32px;
+  width: 145.5px;
   height: 32px;
 }
 
-.navbar__title {
-  flex-shrink: 0;
-  font-family: -apple-system, BlinkMacSystemFont, var(--td-font-family);
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 20px;
-  color: #203040;
-  white-space: nowrap;
+.navbar__art :deep(svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.navbar__art :deep(.hami-webui-lettering) {
+  opacity: 1;
   transition: opacity 120ms ease;
 }
 
-.navbar__brand--collapsed .navbar__title {
+.navbar__brand--collapsed :deep(.hami-webui-lettering) {
   opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .navbar__brand,
-  .navbar__title {
+  .navbar__art :deep(.hami-webui-lettering) {
     transition: none;
   }
 }

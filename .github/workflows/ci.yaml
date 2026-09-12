@@ -27,6 +27,7 @@ jobs:
         with:
           filters: |
             unified:
+              - 'brand/svg/**'
               - '.browserslistrc'
               - '.dockerignore'
               - '.github/workflows/ci.yaml'

@@ -28,6 +28,7 @@ jobs:
         with:
           filters: |
             frontend:
+              - 'brand/svg/**'
               - 'packages/**'
               - 'package.json'
               - '.eslintignore'

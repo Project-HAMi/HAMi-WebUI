@@ -30,6 +30,7 @@ HAMi-WebUI への貢献に興味がある方は：
 
 - まず[コントリビューションガイド](CONTRIBUTING.md)をお読みください。
 - [開発者ガイド](docs/contribute/developer-guide.md)に従ってローカル環境をセットアップしてください。
+- [ブランドアセットと利用ガイド](brand/README.md)でロゴファイルと使用方法を確認してください。
 - [Good first issue](https://github.com/Project-HAMi/HAMi-WebUI/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) を確認してみてください。
 
 ## コミュニティ

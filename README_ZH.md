@@ -30,6 +30,7 @@ HAMi-WebUI 是只读界面，不负责调度资源、创建或修改工作负载
 
 - 首先阅读[贡献指南](CONTRIBUTING.md)。
 - 按照我们的[开发者指南](docs/contribute/developer-guide.md)设置本地开发环境。
+- 在[品牌资产与使用指南](brand/README.md)中获取标识文件和使用说明。
 - 查看[适合首次贡献的问题](https://github.com/Project-HAMi/HAMi-WebUI/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)。
 
 ## 参与社区
