@@ -14,6 +14,7 @@ COPY packages/web/package.json packages/web/
 RUN pnpm install --frozen-lockfile --filter hami-webui-web...
 
 COPY packages/web/ packages/web/
+COPY brand/svg/ brand/svg/
 COPY scripts/precompress-web-assets.mjs scripts/precompress-web-assets.mjs
 
 # Build the browser application. Node.js is a build-time dependency only; the

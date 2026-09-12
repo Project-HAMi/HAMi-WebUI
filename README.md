@@ -40,6 +40,7 @@ If you're interested in contributing to HAMi-WebUI:
 
 - Start by reading the [Contributing guide](CONTRIBUTING.md).
 - Set up your local environment by following our [Developer guide](docs/contribute/developer-guide.md).
+- Find the reusable logo files and usage guidance in [Brand assets](brand/README.md).
 - Explore [good first issues](https://github.com/Project-HAMi/HAMi-WebUI/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
 
 ## Get involved
