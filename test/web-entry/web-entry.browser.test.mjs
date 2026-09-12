@@ -1431,6 +1431,105 @@ test('runtime language updates the document and Element Plus services', async() 
   }
 }, { timeout: 60_000 })
 
+test('workload rankings show Pod and container names independently of list filters', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
+  const podName = 'distributed-training-worker-with-a-long-identifiable-pod-name'
+  const workloads = [
+    { name: 'main', appName: podName, podUid: 'pod-research', namespace: 'research' },
+    { name: 'main', appName: podName, podUid: 'pod-production', namespace: 'production' },
+    { name: 'worker', appName: 'worker', podUid: 'pod-worker', namespace: 'default' }
+  ].map((item) => ({ ...item, status: 'success', deviceIds: ['gpu-1'], createTime: '2026-09-12T00:00:00Z' }))
+  let filteredRequests = 0
+  await page.route('**/api/vgpu/v1/containers', (route) => {
+    const name = route.request().postDataJSON()?.filters?.name
+    if (name) filteredRequests += 1
+    const items = name ? workloads.filter((item) => item.name === name) : workloads
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 0, items, total: items.length })
+    })
+  })
+  await page.route('**/api/vgpu/v1/monitor/query/instant-vector', (route) => {
+    if (!route.request().postDataJSON()?.query?.includes('container_pod_uuid')) return route.continue()
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 0, data: [
+        ...workloads.map((item, index) => ({
+          metric: { container_pod_uuid: `${item.name}:${item.podUid}` }, value: 1 - index * 0.2
+        })),
+        { metric: { container_pod_uuid: 'main:pod-no-longer-in-inventory' }, value: 0.1 }
+      ] })
+    })
+  })
+
+  try {
+    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    const rankings = page.locator('.ranking-workload')
+    await rankings.first().getByRole('link', { name: `${podName} / main`, exact: true }).waitFor()
+    assert.equal(await rankings.count(), 4)
+    for (const [index, workload] of workloads.entries()) {
+      const row = rankings.nth(index)
+      const label = workload.appName === workload.name ? workload.name : `${workload.appName} / ${workload.name}`
+      const link = row.getByRole('link', { name: label, exact: true })
+      const href = new URL(await link.getAttribute('href'), target)
+      assert.equal(href.searchParams.get('podUid'), workload.podUid)
+      assert.equal(href.searchParams.get('name'), workload.name)
+      assert.match(await row.locator('.ranking-namespace').textContent(), new RegExp(workload.namespace))
+    }
+    assert.equal(await rankings.nth(2).locator('.ranking-pod-name').count(), 0)
+    const fallback = rankings.nth(3)
+    await fallback.getByRole('link', { name: 'main / Pod UID pod-no-longer-in-inventory', exact: true }).waitFor()
+    assert.match(await fallback.textContent(), /Pod UID/)
+    const firstRankingLink = rankings.first().getByRole('link')
+    await firstRankingLink.hover()
+    const identityLayout = await rankings.first().evaluate((element) => {
+      const label = element.querySelector('.ranking-workload-label').getBoundingClientRect()
+      const namespace = element.querySelector('.ranking-namespace').getBoundingClientRect()
+      const decoration = getComputedStyle(element.querySelector('.ranking-workload-label'), '::after')
+      return {
+        topDelta: Math.abs(label.top - namespace.top),
+        decorationBottom: decoration.bottom,
+        decorationHeight: decoration.height,
+        decorationOpacity: decoration.opacity,
+        decorationColor: decoration.backgroundColor,
+        linkColor: getComputedStyle(element.querySelector('a')).color
+      }
+    })
+    assert.ok(identityLayout.topDelta <= 0.5, JSON.stringify(identityLayout))
+    assert.equal(identityLayout.decorationBottom, '0px')
+    assert.equal(identityLayout.decorationHeight, '1px')
+    assert.equal(identityLayout.decorationOpacity, '1')
+    assert.equal(identityLayout.decorationColor, identityLayout.linkColor)
+    await rankings.first().locator('.ranking-pod-name').hover()
+    const tooltip = page.locator('[role="tooltip"]').filter({ hasText: podName }).last()
+    await tooltip.waitFor({ state: 'visible' })
+    assert.equal((await tooltip.textContent()).trim(), podName)
+
+    const search = page.getByRole('textbox', { name: 'Search Pod or container name', exact: true })
+    await search.fill('worker')
+    await search.press('Enter')
+    await waitUntil(() => filteredRequests > 0, 'Workload name filter did not issue a request')
+    await page.locator('.workload-table .workload-identity-link[aria-label="worker"]').waitFor()
+    await waitUntil(
+      async() => await page.locator('.workload-table .workload-identity-link').count() === 1,
+      'Filtered workload rows did not replace the previous list'
+    )
+    assert.equal(await page.locator('.workload-table .workload-identity-link').count(), 1)
+    assert.equal(await rankings.count(), 4)
+    await rankings.first().getByRole('link', { name: `${podName} / main`, exact: true }).waitFor()
+    const dimensions = await page.evaluate(() => ({
+      document: document.documentElement.scrollWidth, viewport: window.innerWidth
+    }))
+    assert.ok(dimensions.document <= dimensions.viewport, JSON.stringify(dimensions))
+    await rankings.nth(1).getByRole('link').click()
+    await page.waitForURL((url) => url.pathname.endsWith('/admin/vgpu/task/admin/detail') &&
+      url.searchParams.get('podUid') === 'pod-production' && url.searchParams.get('name') === 'main')
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
 test('workload list exposes deterministic loading, empty, error and refresh states', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
@@ -1474,10 +1573,14 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
   })
 
   const initialGate = createGate()
-  enqueue(async(route) => {
+  // The table and the unfiltered ranking inventory each load once.
+  // Both requests share the same response so their arrival order is irrelevant.
+  const initialResponse = async(route) => {
     await initialGate.promise
     await fulfill(route, { invalid: true })
-  })
+  }
+  enqueue(initialResponse)
+  enqueue(initialResponse)
 
   try {
     await page.goto(
@@ -1490,6 +1593,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
       'true'
     )
 
+    await waitUntil(() => receivedRequests === 2, 'Initial table and ranking inventory requests did not start')
     initialGate.release()
     await page.locator('[data-testid="stateful-table-error"]').waitFor()
     await page.getByText('The server returned an invalid list response. Please try again.')

@@ -1,6 +1,10 @@
 <template>
   <div class="task-top-box">
-    <TabTop class="item" v-for="item in topConfig" :key="item.key" v-bind="item" :onClick="handleChartClick" />
+    <TabTop class="item" v-for="config in topConfig" :key="config.key" v-bind="config" :onClick="handleChartClick">
+      <template v-if="config.key === 'apply'" #item-name="{ item }">
+        <WorkloadRankingName :workload="resolveWorkloadRankingIdentity(item.name, workloadIdentityIndex)" />
+      </template>
+    </TabTop>
   </div>
 </template>
 
@@ -11,6 +15,14 @@ import nodeApi from '~/vgpu/api/node';
 import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { computed } from 'vue';
+import taskApi from '~/vgpu/api/task';
+import useFetchList from '@/hooks/useFetchList';
+import WorkloadRankingName from './WorkloadRankingName.vue';
+import {
+  buildWorkloadIdentityIndex,
+  createWorkloadDetailLocation,
+  resolveWorkloadRankingIdentity,
+} from './workload-identity.mjs';
 import {
   buildTaskAllocationTopQueries,
   buildTaskCountQueries,
@@ -20,6 +32,13 @@ const router = useRouter();
 const { t } = useI18n();
 const taskCountQueries = buildTaskCountQueries();
 const taskAllocationTopQueries = buildTaskAllocationTopQueries();
+
+// Rankings cover the cluster, so their names must not depend on table filters.
+const { data: workloadInventory } = useFetchList(
+  () => taskApi.getTaskListReq({ filters: {} }),
+  { path: 'items' },
+);
+const workloadIdentityIndex = computed(() => buildWorkloadIdentityIndex(workloadInventory.value));
 
 const handleChartClick = async (params) => {
   const name = params.data.name;
@@ -38,14 +57,8 @@ const handleChartClick = async (params) => {
       path: `/admin/vgpu/card/admin/${name}`,
     });
   } else {
-    const [containerName, podUid] = name.split(':');
-    router.push({
-      path: '/admin/vgpu/task/admin/detail',
-      query: {
-        name: containerName,
-        podUid: podUid,
-      },
-    });
+    const location = createWorkloadDetailLocation(name);
+    if (location) router.push(location);
   }
 };
 
@@ -111,6 +124,7 @@ const topConfig = computed(() => [
   gap: 16px;
   .item {
     flex: 1;
+    min-width: 0;
   }
 }
 </style>

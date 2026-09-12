@@ -3,8 +3,12 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  buildWorkloadIdentityIndex,
+  createWorkloadDetailLocation,
   createWorkloadRowKey,
   formatWorkloadName,
+  parseWorkloadMetricIdentity,
+  resolveWorkloadRankingIdentity,
 } from './workload-identity.mjs';
 
 test('containers in the same Pod have distinct workload row keys', () => {
@@ -26,6 +30,77 @@ test('workload name exposes both Pod and container identity', () => {
     'worker',
   );
   assert.equal(formatWorkloadName(), '--');
+});
+
+test('rankings resolve the exact Pod and container without changing their metric identity', () => {
+  const workloads = [
+    { podUid: 'pod-a', name: 'main', appName: 'training', namespace: 'research' },
+    { podUid: 'pod-b', name: 'main', appName: 'training', namespace: 'production' },
+    { podUid: 'pod-a', name: 'sidecar', appName: 'training', namespace: 'research' },
+  ];
+  const index = buildWorkloadIdentityIndex(workloads);
+  for (const workload of workloads) {
+    const metricName = `${workload.name}:${workload.podUid}`;
+    const result = resolveWorkloadRankingIdentity(metricName, index);
+    assert.deepEqual(result, {
+      metricName,
+      identity: { name: workload.name, podUid: workload.podUid },
+      appName: workload.appName,
+      namespace: workload.namespace,
+    });
+  }
+});
+
+test('ranking lookup retains names outside the filtered workload table', () => {
+  const inventory = [
+    { podUid: 'pod-a', name: 'main', appName: 'training', namespace: 'research' },
+    { podUid: 'pod-b', name: 'main', appName: 'serving', namespace: 'production' },
+  ];
+  const index = buildWorkloadIdentityIndex(inventory);
+  const filteredTableRows = inventory.filter((row) => row.appName === 'serving');
+  assert.equal(filteredTableRows.length, 1);
+  assert.equal(resolveWorkloadRankingIdentity('main:pod-a', index).appName, 'training');
+  assert.equal(inventory.length, 2);
+});
+
+test('missing inventory preserves routing identity without guessing a Pod name', () => {
+  const index = buildWorkloadIdentityIndex([
+    { podUid: 'pod-new', name: 'main', appName: 'recreated-pod', namespace: 'research' },
+    { name: 'main', appName: 'missing-uid' },
+  ]);
+  assert.deepEqual(resolveWorkloadRankingIdentity('main:pod-old', index), {
+    metricName: 'main:pod-old',
+    identity: { name: 'main', podUid: 'pod-old' },
+    appName: '',
+    namespace: '',
+  });
+  assert.deepEqual(resolveWorkloadRankingIdentity('main:pod-old'),
+    resolveWorkloadRankingIdentity('main:pod-old', new Map()));
+  assert.deepEqual(createWorkloadDetailLocation('main:pod-old'), {
+    path: '/admin/vgpu/task/admin/detail',
+    query: { name: 'main', podUid: 'pod-old' },
+  });
+});
+
+test('display names do not become workload detail identifiers', () => {
+  const metricName = 'worker:pod-a';
+  const index = buildWorkloadIdentityIndex([
+    { name: 'worker', podUid: 'pod-a', appName: 'training-pod', namespaceName: 'research' },
+  ]);
+  const workload = resolveWorkloadRankingIdentity(metricName, index);
+  const displayName = formatWorkloadName({ ...workload.identity, appName: workload.appName });
+  assert.equal(displayName, 'training-pod / worker');
+  assert.equal(workload.namespace, 'research');
+  assert.equal(createWorkloadDetailLocation(displayName), null);
+  assert.deepEqual(createWorkloadDetailLocation(metricName).query, { name: 'worker', podUid: 'pod-a' });
+});
+
+test('unresolved metric labels do not produce an invalid details link', () => {
+  for (const metricName of ['', '-', undefined, 'main:', ':pod-a', 'main:pod-a:extra']) {
+    assert.equal(parseWorkloadMetricIdentity(metricName), null);
+    assert.equal(createWorkloadDetailLocation(metricName), null);
+    assert.equal(resolveWorkloadRankingIdentity(metricName).identity, null);
+  }
 });
 
 test('workload rows use one link for the middle-truncated Pod and full container', () => {
