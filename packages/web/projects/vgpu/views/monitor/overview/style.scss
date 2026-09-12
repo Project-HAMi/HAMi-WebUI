@@ -43,11 +43,11 @@
   }
 
   &-top-right-card.home-block:first-child {
-    flex: 0.6;
+    flex: 0 0 auto;
   }
 
   &-top-right-card.home-block:last-child {
-    flex: 1.4;
+    flex: 1;
   }
 
   &-top-right-card .home-block-content {
