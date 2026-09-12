@@ -74,6 +74,10 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
   min-width: 0;
 }
 
+.page-aside + .page-main {
+  padding-left: 0 !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .page-aside {
     transition: none;
