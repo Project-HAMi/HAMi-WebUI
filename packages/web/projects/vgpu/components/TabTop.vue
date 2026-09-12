@@ -45,9 +45,11 @@
           </div>
           <div class="tab-top-content">
             <div class="tab-top-header">
-              <span class="tab-top-name" :title="item.name">
-                {{ item.name }}
-              </span>
+              <slot name="item-name" :item="item" :tab-active="tabActive">
+                <span class="tab-top-name" :title="item.name">
+                  {{ item.name }}
+                </span>
+              </slot>
               <span class="tab-top-value">
                 {{ item.valueDisplay }}
               </span>
@@ -315,6 +317,10 @@ watch(
 }
 
 .tab-top-item:hover .tab-top-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #2563eb;
   text-decoration: underline;
   text-decoration-skip-ink: none;
