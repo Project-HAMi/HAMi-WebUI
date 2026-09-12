@@ -311,10 +311,8 @@ export default {
     statusCompleted: 'Completed',
     statusRunning: 'Running',
     statusUnknown: 'Unknown',
-    statusFailed: 'Failed',
-    statusWaiting: 'Waiting',
-    statusNotReady: 'Not Ready',
-    statusError: 'Error',
+    statusStarting: 'Starting',
+    statusAbnormal: 'Abnormal',
     statusTerminating: 'Terminating',
     statusHelpLabel: 'View workload status details',
     statusInfo: {

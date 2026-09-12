@@ -307,10 +307,8 @@ export default {
     statusCompleted: '已完成',
     statusRunning: '运行中',
     statusUnknown: '未知',
-    statusFailed: '失败',
-    statusWaiting: '等待中',
-    statusNotReady: '未就绪',
-    statusError: '异常',
+    statusStarting: '启动中',
+    statusAbnormal: '异常',
     statusTerminating: '终止中',
     statusHelpLabel: '查看工作负载状态说明',
     statusInfo: {

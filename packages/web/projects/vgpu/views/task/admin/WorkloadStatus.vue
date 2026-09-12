@@ -23,6 +23,7 @@ const status = computed(() => getWorkloadStatus(props.workload, t));
 const statusIcons = {
   success: 'status-schedulable',
   closed: 'status-schedulable',
+  not_ready: 'status-unschedulable',
   failed: 'status-unschedulable',
   error: 'status-unschedulable',
 };

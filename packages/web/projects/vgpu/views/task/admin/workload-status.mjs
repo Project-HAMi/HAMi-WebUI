@@ -3,12 +3,12 @@ export const WORKLOAD_STATUS_CODES = Object.freeze([
 ]);
 
 const STATUS_LABEL_KEYS = Object.freeze({
-  waiting: 'statusWaiting',
+  waiting: 'statusStarting',
   success: 'statusRunning',
-  not_ready: 'statusNotReady',
-  error: 'statusError',
+  not_ready: 'statusAbnormal',
+  error: 'statusAbnormal',
   closed: 'statusCompleted',
-  failed: 'statusFailed',
+  failed: 'statusAbnormal',
   terminating: 'statusTerminating',
   unknown: 'statusUnknown',
 });
@@ -72,7 +72,14 @@ export const getWorkloadStatus = (workload = {}, translate) => {
   return { code, label, hasDetails: needsExplanation || lines.length > 1, description: lines.join('\n') };
 };
 
-export const getWorkloadStatusOptions = (translate) => WORKLOAD_STATUS_CODES.map((code) => ({
+// Filters describe common workload outcomes; raw states retain precise explanations.
+const STATUS_FILTER_LABEL_KEYS = Object.freeze({
+  waiting: 'statusStarting',
+  success: 'statusRunning',
+  abnormal: 'statusAbnormal',
+});
+
+export const getWorkloadStatusOptions = (translate) => Object.entries(STATUS_FILTER_LABEL_KEYS).map(([code, labelKey]) => ({
   value: code,
-  label: translate(`task.${STATUS_LABEL_KEYS[code]}`),
+  label: translate(`task.${labelKey}`),
 }));

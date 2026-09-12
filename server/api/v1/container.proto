@@ -31,6 +31,8 @@ message GetAllContainersReq {
   message Filters {
     string name = 1;
     string node_name = 2;
+    // Empty matches all. "abnormal" matches error, not_ready, and failed;
+    // other values match an exact ContainerReply.status.
     string status = 3;
     string device_id = 4;
     string node_uid = 5;

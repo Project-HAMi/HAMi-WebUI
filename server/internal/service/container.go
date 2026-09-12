@@ -11,13 +11,13 @@ import (
 
 var statusOrder = map[string]int{
 	biz.ContainerStatusError:       1,
-	biz.ContainerStatusFailed:      2,
-	biz.ContainerStatusUnknown:     3,
-	biz.ContainerStatusNotReady:    4,
-	biz.ContainerStatusWaiting:     5,
-	biz.ContainerStatusTerminating: 6,
-	biz.ContainerStatusSuccess:     7,
-	biz.ContainerStatusClosed:      8,
+	biz.ContainerStatusFailed:      1,
+	biz.ContainerStatusNotReady:    1,
+	biz.ContainerStatusUnknown:     2,
+	biz.ContainerStatusWaiting:     3,
+	biz.ContainerStatusTerminating: 4,
+	biz.ContainerStatusSuccess:     5,
+	biz.ContainerStatusClosed:      6,
 }
 
 func normalizedContainerStatus(status string) string {
@@ -89,6 +89,15 @@ func matchesWorkloadName(podName, containerName, filter string) bool {
 	return strings.Contains(podName, filter) || strings.Contains(containerName, filter)
 }
 
+// The abnormal filter groups actionable conditions without changing the
+// detailed status returned by the API or the existing exact-status filters.
+func matchesWorkloadStatus(status, filter string) bool {
+	if filter == "abnormal" {
+		return status == biz.ContainerStatusError || status == biz.ContainerStatusFailed || status == biz.ContainerStatusNotReady
+	}
+	return filter == "" || filter == status
+}
+
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {
 	filters := req.GetFilters()
 	if filters == nil {
@@ -107,7 +116,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		if filters.NodeName != "" && filters.NodeName != container.NodeName {
 			continue
 		}
-		if filters.Status != "" && filters.Status != status {
+		if !matchesWorkloadStatus(status, filters.Status) {
 			continue
 		}
 		if filters.NodeUid != "" && filters.NodeUid != container.NodeUID {
@@ -167,8 +176,9 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		if statusOrder[left.Status] != statusOrder[right.Status] {
 			return statusOrder[left.Status] < statusOrder[right.Status]
 		}
-		// Repository map iteration is unordered. Break status ties by workload
-		// identity so refreshing or filtering keeps the remaining rows in place.
+		// Repository map iteration is unordered. Break visible status-group ties
+		// by workload identity, so changing an abnormal condition or refreshing
+		// does not arbitrarily reorder rows with the same displayed status.
 		if left.Namespace != right.Namespace {
 			return left.Namespace < right.Namespace
 		}

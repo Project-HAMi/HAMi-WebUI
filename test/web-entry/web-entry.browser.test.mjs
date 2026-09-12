@@ -1881,9 +1881,14 @@ test('workload status labels stay concise while accessible help explains contain
     contentType: 'application/json',
     body: JSON.stringify({ code: 0, ...payload }),
   })
+  const requestedStatuses = []
   await page.route('**/api/vgpu/v1/containers', (route) => {
     const status = route.request().postDataJSON()?.filters?.status
-    return fulfill(route, { items: status ? workloads.filter((item) => item.status === status) : workloads })
+    requestedStatuses.push(status)
+    const items = status === 'abnormal'
+      ? workloads.filter((item) => ['not_ready', 'error', 'failed'].includes(item.status))
+      : status ? workloads.filter((item) => item.status === status) : workloads
+    return fulfill(route, { items })
   })
   await page.route('**/api/vgpu/v1/container?*', (route) => {
     const params = new URL(route.request().url()).searchParams
@@ -1897,7 +1902,7 @@ test('workload status labels stay concise while accessible help explains contain
     await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
     assert.deepEqual(
       (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
-      ['Waiting', 'Running', 'Not Ready', 'Error', 'Completed', 'Failed', 'Terminating', 'Unknown', 'Failed', 'Running']
+      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Unknown', 'Abnormal', 'Running']
     )
     assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), workloads.length - 2)
     const assertRunningAppearance = async(status, expectedTextColor) => {
@@ -1919,6 +1924,10 @@ test('workload status labels stay concise while accessible help explains contain
     await assertRunningAppearance(healthyStatus, 'rgb(0, 0, 0)')
     assert.equal(await healthyStatus.locator('.metric-help').count(), 0)
     assert.equal(await page.locator('.workload-table [data-workload-status="closed"] .metric-help').count(), 0)
+    for (const code of ['not_ready', 'error', 'failed']) {
+      const icon = page.locator(`.workload-table [data-workload-status="${code}"] .workload-status__icon use`).first()
+      assert.equal(await icon.evaluate((element) => element.getAttribute('href') || element.getAttribute('xlink:href')), '#icon-status-unschedulable')
+    }
 
     const help = page.locator('.workload-table [data-workload-status="not_ready"] .metric-help')
     const tooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'running, but Kubernetes has not marked it ready' }).last()
@@ -1944,6 +1953,28 @@ test('workload status labels stay concise while accessible help explains contain
     await errorTooltip.waitFor({ state: 'visible' })
     assert.equal(await errorTooltip.locator('unauthorized').count(), 0)
     await imageErrorHelp.press('Escape')
+
+    const statusSelect = page.getByPlaceholder('All Status')
+    await statusSelect.click()
+    const options = page.locator('.t-select-option:visible')
+    await options.first().waitFor()
+    assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), ['All Status', 'Starting', 'Running', 'Abnormal'])
+    await options.filter({ hasText: /^Abnormal$/ }).click()
+    await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 4, 'Abnormal group did not include all error, failed and not-ready containers')
+    assert.equal(requestedStatuses.at(-1), 'abnormal')
+    assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), ['not_ready', 'error', 'failed', 'failed'])
+
+    for (const [label, filter, codes] of [
+      ['Starting', 'waiting', ['waiting']],
+      ['Running', 'success', ['success', 'success']],
+      ['All Status', undefined, workloads.map((item) => item.status)],
+    ]) {
+      await statusSelect.click()
+      await options.filter({ hasText: new RegExp(`^${label}$`) }).click()
+      await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === codes.length, `${label} filter returned unexpected workloads`)
+      assert.equal(requestedStatuses.at(-1), filter)
+      assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), codes)
+    }
 
     await page.goto(
       `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-success&podUid=uid-success`,

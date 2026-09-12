@@ -12,10 +12,22 @@ const translator = (messages) => (key, params = {}) => {
 const english = translator(en);
 const chinese = translator(zh);
 
-test('all workload states have standalone labels and compatible filter values in both languages', () => {
-  const expected = ['等待中', '运行中', '未就绪', '异常', '已完成', '失败', '终止中', '未知'];
-  assert.deepEqual(getWorkloadStatusOptions(chinese).map((item) => item.label), expected);
-  assert.deepEqual(getWorkloadStatusOptions(english).map((item) => item.value), WORKLOAD_STATUS_CODES);
+test('common workload filters offer only starting, running and grouped abnormal states', () => {
+  assert.deepEqual(getWorkloadStatusOptions(chinese), [
+    { value: 'waiting', label: '启动中' },
+    { value: 'success', label: '运行中' },
+    { value: 'abnormal', label: '异常' },
+  ]);
+  assert.deepEqual(getWorkloadStatusOptions(english), [
+    { value: 'waiting', label: 'Starting' },
+    { value: 'success', label: 'Running' },
+    { value: 'abnormal', label: 'Abnormal' },
+  ]);
+});
+
+test('grouped row labels retain precise raw states and standalone exceptional outcomes', () => {
+  const expected = ['启动中', '运行中', '异常', '异常', '已完成', '异常', '终止中', '未知'];
+  assert.deepEqual(WORKLOAD_STATUS_CODES.map((status) => getWorkloadStatus({ status }, chinese).label), expected);
   for (const translate of [english, chinese]) {
     for (const status of WORKLOAD_STATUS_CODES) {
       const result = getWorkloadStatus({ status, statusDetail: { reason: 'CrashLoopBackOff' } }, translate);
@@ -31,7 +43,7 @@ test('not-ready explanation preserves false readiness without repeating status f
     status: 'not_ready',
     statusDetail: { containerState: 'Running', ready: false, restartCount: 0, podPhase: 'Running', podReady: 'False' },
   }, english);
-  assert.equal(result.label, 'Not Ready');
+  assert.equal(result.label, 'Abnormal');
   assert.equal(result.hasDetails, true);
   assert.match(result.description, /running, but Kubernetes has not marked it ready/);
   assert.doesNotMatch(result.description, /Container readiness:|Restart count:|Pod phase:|Pod readiness:/);
@@ -43,7 +55,7 @@ test('normal exits awaiting restart are not described as completed', () => {
     status: 'waiting',
     statusDetail: { containerState: 'Terminated', ready: false, restartCount: 2, exitCode: 0, restartPending: true },
   }, english);
-  assert.equal(result.label, 'Waiting');
+  assert.equal(result.label, 'Starting');
   assert.match(result.description, /Exit code: 0/);
   assert.match(result.description, /will restart according to the Pod restart policy/);
   assert.doesNotMatch(result.description, /not awaiting/);
@@ -76,7 +88,7 @@ test('raw reasons and messages remain plain evidence with applicable exit codes'
       exitCode: 0, podReason: 'Pending', podMessage: 'image not available', lastExitCode: 0,
     },
   }, english);
-  assert.equal(result.label, 'Error');
+  assert.equal(result.label, 'Abnormal');
   assert.ok(result.description.includes(message));
   assert.doesNotMatch(result.description, /Last exit code:|Restart count:/);
   assert.doesNotMatch(result.description, /\nExit code:/);
