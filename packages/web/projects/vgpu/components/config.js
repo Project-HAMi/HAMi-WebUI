@@ -1,6 +1,7 @@
 import { timeParse } from '@/utils';
 import i18n from '@/locales';
 import {
+  buildRangeDataZoom,
   buildRangeLineSeries,
   formatRangeTooltipValue,
   normalizeRangeValues,
@@ -117,13 +118,7 @@ export const getLineOptions = ({
       left: 30,
       right: 30,
     },
-    dataZoom: [
-      {
-        type: 'inside',
-        xAxisIndex: 0,
-        filterMode: 'none',
-      },
-    ],
+    dataZoom: buildRangeDataZoom(),
     xAxis: {
       type: 'category',
       data: normalizedData.map((item) => timeParse(item.timestamp)),

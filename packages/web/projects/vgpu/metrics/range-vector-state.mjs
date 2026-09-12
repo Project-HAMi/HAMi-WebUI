@@ -59,6 +59,18 @@ export function buildRangeLineSeries(series, presentation) {
   };
 }
 
+export function buildRangeDataZoom() {
+  return [
+    {
+      type: 'inside',
+      xAxisIndex: 0,
+      // Keep only visible samples. With 'none', ECharts collapses every sample
+      // onto one x coordinate when a category axis is zoomed to a single slot.
+      filterMode: 'filter',
+    },
+  ];
+}
+
 export function formatRangeTooltipValue(
   rawValue,
   { digits = 1, unit = '', separator = '' } = {},
