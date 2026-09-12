@@ -106,9 +106,18 @@
                 <TTooltip
                   v-if="basicImageTooltip"
                   :content="basicImageTooltip"
+                  :visible="imageTooltipHovered || imageTooltipFocused"
                   :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
                 >
-                  <span class="image-reference" tabindex="0">{{ basicImage }}</span>
+                  <span
+                    class="image-reference"
+                    tabindex="0"
+                    @mouseenter="imageTooltipHovered = true"
+                    @mouseleave="imageTooltipHovered = false"
+                    @focus="imageTooltipFocused = true"
+                    @blur="imageTooltipFocused = false"
+                    @keydown.esc="dismissImageTooltip"
+                  >{{ basicImage }}</span>
                 </TTooltip>
                 <EllipsisText v-else :text="basicImage" mode="end" tooltip="overflow" />
               </span>
@@ -390,6 +399,13 @@ const basicImageTooltip = computed(() => {
   if (imageList.length <= 1) return '';
   return imageList.join('\n');
 });
+const imageTooltipHovered = ref(false);
+const imageTooltipFocused = ref(false);
+const dismissImageTooltip = () => {
+  imageTooltipHovered.value = false;
+  imageTooltipFocused.value = false;
+};
+watch(basicImageTooltip, dismissImageTooltip);
 const basicCreateTime = computed(() => (
   detail.value?.createTime ? timeParse(detail.value.createTime) : '--'
 ));

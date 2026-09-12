@@ -1205,7 +1205,8 @@ test('workload and detail views keep dense identity content readable', async() =
       (await multiImageReference.textContent()).trim(),
       'example.invalid/worker:latest +1'
     )
-    await multiImageReference.hover()
+    await page.mouse.move(0, 0)
+    await multiImageReference.focus()
     const multiImageTooltip = page.locator('.t-tooltip .t-popup__content')
       .filter({ hasText: 'example.invalid/sidecar:latest' })
       .last()
@@ -1214,6 +1215,29 @@ test('workload and detail views keep dense identity content readable', async() =
       (await multiImageTooltip.textContent()).trim(),
       'example.invalid/worker:latest\nexample.invalid/sidecar:latest'
     )
+
+    await multiImageReference.hover()
+    await page.mouse.move(0, 0)
+    assert.equal(await multiImageTooltip.isVisible(), true)
+    await multiImageReference.press('Tab')
+    await multiImageTooltip.waitFor({ state: 'hidden' })
+
+    await multiImageReference.hover()
+    await multiImageTooltip.waitFor({ state: 'visible' })
+    await multiImageReference.focus()
+    await multiImageReference.press('Tab')
+    assert.equal(await multiImageTooltip.isVisible(), true)
+    await page.mouse.move(0, 0)
+    await multiImageTooltip.waitFor({ state: 'hidden' })
+
+    await page.setViewportSize({ width: 300, height: 900 })
+    await multiImageReference.focus()
+    await multiImageTooltip.waitFor({ state: 'visible' })
+    const narrowImageTooltipBox = await multiImageTooltip.boundingBox()
+    assert.ok(narrowImageTooltipBox.width <= 268, JSON.stringify(narrowImageTooltipBox))
+    await multiImageReference.press('Escape')
+    await multiImageTooltip.waitFor({ state: 'hidden' })
+    await page.setViewportSize({ width: 1280, height: 900 })
 
     await page.goto(
       `${target}${basePath}admin/vgpu/node/admin`,

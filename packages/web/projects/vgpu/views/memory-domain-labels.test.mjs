@@ -57,7 +57,7 @@ test('metric help is available to pointer, keyboard and assistive technology', (
   assert.match(metricHelp, /:aria-describedby="descriptionId"/);
   assert.match(metricHelp, /class="metric-help__description"/);
   assert.match(metricHelp, /LONG_TEXT_TOOLTIP_STYLE/);
-  assert.equal(LONG_TEXT_TOOLTIP_STYLE.maxWidth, '320px');
+  assert.equal(LONG_TEXT_TOOLTIP_STYLE.maxWidth, 'min(320px, calc(100vw - 32px))');
   assert.equal(LONG_TEXT_TOOLTIP_STYLE.overflowWrap, 'anywhere');
 });
 

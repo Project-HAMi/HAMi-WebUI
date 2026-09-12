@@ -18,7 +18,7 @@ const gauge = readSource('../components/gauge.vue');
 
 test('long text tooltips wrap at a consistent readable width', () => {
   assert.deepEqual(LONG_TEXT_TOOLTIP_STYLE, {
-    maxWidth: '320px',
+    maxWidth: 'min(320px, calc(100vw - 32px))',
     whiteSpace: 'normal',
     overflowWrap: 'anywhere',
     lineHeight: '20px',

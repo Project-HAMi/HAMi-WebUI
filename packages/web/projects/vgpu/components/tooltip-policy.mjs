@@ -1,5 +1,5 @@
 export const LONG_TEXT_TOOLTIP_STYLE = Object.freeze({
-  maxWidth: '320px',
+  maxWidth: 'min(320px, calc(100vw - 32px))',
   whiteSpace: 'normal',
   overflowWrap: 'anywhere',
   lineHeight: '20px',
