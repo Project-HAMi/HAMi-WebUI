@@ -25,15 +25,16 @@
     </div>
   </div>
   <div v-else-if="sidebar" class="lang-select--sidebar is-collapsed">
-    <button
-      type="button"
-      class="lang-select-container"
-      :aria-label="switchLanguageLabel"
-      :title="switchLanguageLabel"
-      @click="handleSetLanguage(nextLanguage)"
-    >
-      <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
-    </button>
+    <t-tooltip :content="switchLanguageLabel" placement="right">
+      <button
+        type="button"
+        class="lang-select-container"
+        :aria-label="switchLanguageLabel"
+        @click="handleSetLanguage(nextLanguage)"
+      >
+        <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
+      </button>
+    </t-tooltip>
   </div>
   <el-dropdown
     v-else
