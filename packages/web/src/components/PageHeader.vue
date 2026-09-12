@@ -59,7 +59,7 @@ defineProps({
 
 .layout-header-title {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   color: #1d2b3a;
   font-size: 18px;
@@ -79,6 +79,10 @@ defineProps({
   color: #324558;
   font-size: 14px;
   line-height: 24px;
+
+  &-label {
+    align-self: baseline;
+  }
 }
 
 :deep(.el-page-header__back) {

@@ -23,6 +23,7 @@ const status = computed(() => getWorkloadStatus(props.workload, t));
 const statusIcons = {
   success: 'status-schedulable',
   closed: 'status-schedulable',
+  not_ready: 'status-unschedulable',
   failed: 'status-unschedulable',
   error: 'status-unschedulable',
 };
@@ -40,6 +41,10 @@ const statusIcon = computed(() => statusIcons[status.value.code] || 'status-unma
   &__icon {
     flex: none;
     font-size: 16px;
+  }
+
+  &__label {
+    align-self: baseline;
   }
 }
 </style>

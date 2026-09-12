@@ -12,16 +12,28 @@ const translator = (messages) => (key, params = {}) => {
 const english = translator(en);
 const chinese = translator(zh);
 
-test('all workload states have standalone labels and compatible filter values in both languages', () => {
-  const expected = ['等待中', '运行中', '未就绪', '异常', '已完成', '失败', '终止中', '未知'];
-  assert.deepEqual(getWorkloadStatusOptions(chinese).map((item) => item.label), expected);
-  assert.deepEqual(getWorkloadStatusOptions(english).map((item) => item.value), WORKLOAD_STATUS_CODES);
+test('common workload filters offer only starting, running and grouped abnormal states', () => {
+  assert.deepEqual(getWorkloadStatusOptions(chinese), [
+    { value: 'waiting', label: '启动中' },
+    { value: 'success', label: '运行中' },
+    { value: 'abnormal', label: '异常' },
+  ]);
+  assert.deepEqual(getWorkloadStatusOptions(english), [
+    { value: 'waiting', label: 'Starting' },
+    { value: 'success', label: 'Running' },
+    { value: 'abnormal', label: 'Abnormal' },
+  ]);
+});
+
+test('grouped row labels retain precise raw states and standalone exceptional outcomes', () => {
+  const expected = ['启动中', '运行中', '异常', '异常', '已完成', '异常', '终止中', '未知'];
+  assert.deepEqual(WORKLOAD_STATUS_CODES.map((status) => getWorkloadStatus({ status }, chinese).label), expected);
   for (const translate of [english, chinese]) {
     for (const status of WORKLOAD_STATUS_CODES) {
       const result = getWorkloadStatus({ status, statusDetail: { reason: 'CrashLoopBackOff' } }, translate);
       assert.equal(result.code, status);
       assert.equal(result.label.includes('CrashLoopBackOff'), false);
-      if (!['success', 'closed'].includes(status)) assert.ok(result.description.includes('CrashLoopBackOff'));
+      assert.ok(result.description.split('\n').length <= 3);
     }
   }
 });
@@ -31,11 +43,9 @@ test('not-ready explanation preserves false readiness without repeating status f
     status: 'not_ready',
     statusDetail: { containerState: 'Running', ready: false, restartCount: 0, podPhase: 'Running', podReady: 'False' },
   }, english);
-  assert.equal(result.label, 'Not Ready');
+  assert.equal(result.label, 'Abnormal');
   assert.equal(result.hasDetails, true);
-  assert.match(result.description, /running, but Kubernetes has not marked it ready/);
-  assert.doesNotMatch(result.description, /Container readiness:|Restart count:|Pod phase:|Pod readiness:/);
-  assert.doesNotMatch(result.description, /Exit code:/);
+  assert.equal(result.description, 'Started, but not ready yet.');
 });
 
 test('normal exits awaiting restart are not described as completed', () => {
@@ -43,10 +53,8 @@ test('normal exits awaiting restart are not described as completed', () => {
     status: 'waiting',
     statusDetail: { containerState: 'Terminated', ready: false, restartCount: 2, exitCode: 0, restartPending: true },
   }, english);
-  assert.equal(result.label, 'Waiting');
-  assert.match(result.description, /Exit code: 0/);
-  assert.match(result.description, /will restart according to the Pod restart policy/);
-  assert.doesNotMatch(result.description, /not awaiting/);
+  assert.equal(result.label, 'Starting');
+  assert.equal(result.description, 'The program exited normally and is restarting.\nExit code: 0\nRestart count: 2');
 });
 
 test('Pod readiness and previous termination do not override a recovered container', () => {
@@ -60,14 +68,10 @@ test('Pod readiness and previous termination do not override a recovered contain
   }, english);
   assert.equal(result.label, 'Running');
   assert.equal(result.hasDetails, true);
-  assert.match(result.description, /container is running and ready/);
-  assert.match(result.description, /Last termination reason: OOMKilled/);
-  assert.match(result.description, /Last exit code: 137/);
-  assert.match(result.description, /sidecar is not ready/);
-  assert.match(result.description, /does not mean this container is in error/);
+  assert.equal(result.description, 'This container is ready, but the overall Pod is not ready.\nLast exit code: 137\nRestart count: 3');
 });
 
-test('raw reasons and messages remain plain evidence with applicable exit codes', () => {
+test('image pull errors use one conclusion instead of exposing registry and Pod messages', () => {
   const message = 'registry returned <unauthorized>\nplease check credentials';
   const result = getWorkloadStatus({
     status: 'error',
@@ -76,19 +80,15 @@ test('raw reasons and messages remain plain evidence with applicable exit codes'
       exitCode: 0, podReason: 'Pending', podMessage: 'image not available', lastExitCode: 0,
     },
   }, english);
-  assert.equal(result.label, 'Error');
-  assert.ok(result.description.includes(message));
-  assert.doesNotMatch(result.description, /Last exit code:|Restart count:/);
-  assert.doesNotMatch(result.description, /\nExit code:/);
-  assert.match(result.description, /Pod message: image not available/);
+  assert.equal(result.label, 'Abnormal');
+  assert.equal(result.description, 'Image pull failed; retrying.');
 });
 
 test('missing container status does not manufacture readiness or restart evidence', () => {
   const result = getWorkloadStatus({
     status: 'waiting', statusDetail: { podPhase: 'Pending', restartCount: 0 },
   }, english);
-  assert.match(result.description, /waiting to start or restart/);
-  assert.doesNotMatch(result.description, /Container readiness|Restart count|Exit code/);
+  assert.equal(result.description, 'Preparing to run.');
 });
 
 test('older API responses retain their state without claiming new readiness evidence', () => {
@@ -96,7 +96,7 @@ test('older API responses retain their state without claiming new readiness evid
     const result = getWorkloadStatus({ status }, english);
     assert.equal(result.code, status);
     assert.equal(result.hasDetails, !['success', 'closed'].includes(status));
-    assert.match(result.description, /this API does not provide container status details/);
+    assert.match(result.description, /no further details/);
     assert.doesNotMatch(result.description, /Container readiness:|running and ready/);
   }
   assert.equal(getWorkloadStatus({ status: 'new-future-state' }, english).label, 'Unknown');
@@ -129,7 +129,7 @@ test('recovered failures are historical and require meaningful observed restart 
   const recovered = getWorkloadStatus({ status: 'success', statusDetail: { ...detail, restartCount: 1 } }, english);
   assert.equal(recovered.hasDetails, true);
   assert.equal(recovered.label, 'Running');
-  assert.match(recovered.description, /Restart count: 1\nLast termination reason: OOMKilled\nLast exit code: 137/);
+  assert.equal(recovered.description, 'The program recovered after running out of memory.\nLast exit code: 137\nRestart count: 1');
   const normalExit = getWorkloadStatus({
     status: 'success',
     statusDetail: { ...detail, restartCount: 1, lastTerminationReason: 'Completed', lastExitCode: 0 },
@@ -143,10 +143,7 @@ test('unknown status describes lost information without presenting stale running
     statusDetail: { containerState: 'Running', ready: true, podPhase: 'Running', podReady: 'Unknown', podReadyReason: 'NodeStatusUnknown', podReadyMessage: 'Kubelet stopped posting node status.' },
   }, english);
   assert.equal(result.hasDetails, true);
-  assert.match(result.description, /not enough information/);
-  assert.match(result.description, /NodeStatusUnknown/);
-  assert.match(result.description, /Kubelet stopped posting node status/);
-  assert.doesNotMatch(result.description, /running|Running|readiness: Ready/);
+  assert.equal(result.description, 'The workload state cannot currently be confirmed.');
 });
 
 test('a ready container with unknown Pod readiness keeps useful additional context', () => {
@@ -155,7 +152,58 @@ test('a ready container with unknown Pod readiness keeps useful additional conte
     statusDetail: { containerState: 'Running', ready: true, restartCount: 0, podReady: 'Unknown', podReadyReason: 'ReadinessGateUnknown' },
   }, english);
   assert.equal(result.hasDetails, true);
-  assert.match(result.description, /readiness of the entire Pod is unknown/);
-  assert.match(result.description, /ReadinessGateUnknown/);
-  assert.doesNotMatch(result.description, /Restart count: 0/);
+  assert.equal(result.description, 'This container is ready; overall Pod readiness is unknown.');
+});
+
+test('crash loops expose the last exit and restart count without repeating error messages', () => {
+  const workload = {
+    status: 'error',
+    statusDetail: {
+      containerState: 'Waiting', reason: 'CrashLoopBackOff', restartCount: 5,
+      lastTerminationReason: 'Error', lastExitCode: 42,
+      message: 'Back-off restarting failed container main in pod webui-demo-crashloop',
+      podReadyReason: 'ContainersNotReady', podReadyMessage: 'containers with unready status: [main]',
+      lastTerminationMessage: 'duplicated diagnostic message',
+    },
+  };
+  assert.equal(getWorkloadStatus(workload, chinese).description, '程序反复退出，正在重试。\n上次退出码: 42\n重启次数: 5');
+  assert.equal(getWorkloadStatus(workload, english).description, 'The program keeps exiting; retrying.\nLast exit code: 42\nRestart count: 5');
+  workload.statusDetail.lastExitCode = 0;
+  assert.match(getWorkloadStatus(workload, english).description, /Last exit code: 0/);
+});
+
+test('terminated errors show the current exit only and distinguish retrying from a final failure', () => {
+  const detail = {
+    containerState: 'Terminated', reason: 'Error', restartCount: 5, exitCode: 42,
+    lastTerminationReason: 'Error', lastExitCode: 42, restartPending: true,
+  };
+  assert.equal(getWorkloadStatus({ status: 'error', statusDetail: detail }, chinese).description, '程序异常退出，正在重试。\n退出码: 42\n重启次数: 5');
+  assert.equal(getWorkloadStatus({ status: 'failed', statusDetail: { ...detail, restartPending: false } }, english).description, 'The program exited with an error and will not restart automatically.\nExit code: 42\nRestart count: 5');
+});
+
+test('known startup failures are translated and memory failure never claims GPU memory exhaustion', () => {
+  for (const translate of [english, chinese]) {
+    for (const reason of ['ImagePullBackOff', 'ErrImagePull', 'InvalidImageName', 'ErrImageNeverPull', 'ImageInspectError', 'CreateContainerConfigError', 'CreateContainerError', 'RunContainerError', 'PreCreateHookError', 'PreStartHookError', 'PostStartHookError']) {
+      const result = getWorkloadStatus({ status: 'error', statusDetail: { containerState: 'Waiting', reason, restartCount: 0 } }, translate);
+      assert.equal(result.description.split('\n').length, 1);
+      assert.equal(result.description.includes(reason), false);
+    }
+    const result = getWorkloadStatus({
+      status: 'error',
+      statusDetail: { containerState: 'Waiting', reason: 'CrashLoopBackOff', lastTerminationReason: 'OOMKilled', lastExitCode: 137, restartCount: 2 },
+    }, translate);
+    assert.equal(result.description.split('\n').length, 3);
+    assert.doesNotMatch(result.description, /GPU|显存/);
+  }
+});
+
+test('unknown failure reasons retain only a short identifier and never raw diagnostic blobs', () => {
+  const statusDetail = {
+    containerState: 'Waiting', reason: 'VendorStartupError', message: 'a long diagnostic message\n'.repeat(100),
+    podReadyMessage: 'duplicated message', restartCount: 0,
+  };
+  assert.equal(getWorkloadStatus({ status: 'error', statusDetail }, english).description, 'Error reason: VendorStartupError.');
+  for (const reason of ['a long diagnostic message\n'.repeat(100), '<unauthorized>']) {
+    assert.equal(getWorkloadStatus({ status: 'error', statusDetail: { ...statusDetail, reason } }, english).description, 'The program encountered an error.');
+  }
 });

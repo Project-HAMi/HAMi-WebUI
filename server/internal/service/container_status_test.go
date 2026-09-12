@@ -80,7 +80,7 @@ func TestWorkloadStatusFiltersMatchReturnedStatusAndPreserveAllocationScope(t *t
 	for _, row := range reply.Items {
 		got = append(got, row.Status)
 	}
-	want := []string{"error", "failed", "unknown", "unknown", "unknown", "not_ready", "waiting", "terminating", "success", "closed"}
+	want := []string{"error", "failed", "not_ready", "unknown", "unknown", "unknown", "waiting", "terminating", "success", "closed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("status priority = %#v, want %#v", got, want)
 	}
@@ -92,6 +92,95 @@ func TestWorkloadStatusFiltersMatchReturnedStatusAndPreserveAllocationScope(t *t
 		if err != nil || detail.Status != biz.ContainerStatusUnknown {
 			t.Fatalf("detail must normalize unknown in the same way as list: %#v, %v", detail, err)
 		}
+	}
+}
+
+func TestAbnormalWorkloadFilterPreservesRawStatusesAndAllocationScope(t *testing.T) {
+	containers := []*biz.Container{
+		{Name: "main", PodName: "alpha", PodUID: "error", Status: biz.ContainerStatusError},
+		{Name: "main", PodName: "bravo", PodUID: "not-ready", Status: biz.ContainerStatusNotReady},
+		{Name: "main", PodName: "charlie", PodUID: "failed", Status: biz.ContainerStatusFailed},
+		{Name: "main", PodName: "delta", PodUID: "waiting", Status: biz.ContainerStatusWaiting},
+		{Name: "main", PodName: "echo", PodUID: "running", Status: biz.ContainerStatusSuccess},
+		{Name: "main", PodName: "foxtrot", PodUID: "unknown", Status: "future-status"},
+		{Name: "main", PodName: "golf", PodUID: "invalid-group", Status: "abnormal"},
+	}
+	for _, container := range containers {
+		container.ContainerDevices = biz.ContainerDevices{{UUID: "GPU-1", Usedmem: 1024, Usedcores: 10}}
+	}
+	containers = append(containers, &biz.Container{Name: "main", PodUID: "unassigned", Status: biz.ContainerStatusError})
+	service := workloadStatusService(containers)
+	for _, tc := range []struct {
+		name   string
+		filter *pb.GetAllContainersReq_Filters
+		want   []string
+	}{
+		{
+			name:   "group combines actionable conditions",
+			filter: &pb.GetAllContainersReq_Filters{Status: "abnormal"},
+			want:   []string{biz.ContainerStatusError, biz.ContainerStatusNotReady, biz.ContainerStatusFailed},
+		},
+		{
+			name:   "group combines with workload name filter",
+			filter: &pb.GetAllContainersReq_Filters{Status: "abnormal", Name: "bravo"},
+			want:   []string{biz.ContainerStatusNotReady},
+		},
+		{
+			name:   "group does not accept an invalid raw status",
+			filter: &pb.GetAllContainersReq_Filters{Status: "unknown"},
+			want:   []string{biz.ContainerStatusUnknown, biz.ContainerStatusUnknown},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := service.GetAllContainers(context.Background(), &pb.GetAllContainersReq{Filters: tc.filter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make([]string, 0, len(reply.Items))
+			for _, row := range reply.Items {
+				got = append(got, row.Status)
+				if row.AllocatedMem != 1024 || row.AllocatedCores != 10 {
+					t.Fatalf("filter changed allocation: %#v", row)
+				}
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("filtered statuses = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAbnormalWorkloadOrderUsesVisibleGroupAndStableIdentity(t *testing.T) {
+	containers := []*biz.Container{
+		{Name: "main", PodName: "alpha", Namespace: "team-b", PodUID: "other-team", Status: biz.ContainerStatusError},
+		{Name: "worker", PodName: "alpha", Namespace: "team-a", PodUID: "alpha-b", Status: biz.ContainerStatusFailed},
+		{Name: "worker", PodName: "alpha", Namespace: "team-a", PodUID: "alpha-a", Status: biz.ContainerStatusNotReady},
+		{Name: "main", PodName: "alpha", Namespace: "team-a", PodUID: "alpha-a", Status: biz.ContainerStatusFailed},
+		{Name: "main", PodName: "bravo", Namespace: "team-a", PodUID: "bravo", Status: biz.ContainerStatusError},
+	}
+	for _, container := range containers {
+		container.ContainerDevices = biz.ContainerDevices{{UUID: "GPU-1"}}
+	}
+	want := []string{"alpha-a/main", "alpha-a/worker", "alpha-b/worker", "bravo/main", "other-team/main"}
+	for inputName, input := range listOrderInputs(containers) {
+		t.Run(inputName, func(t *testing.T) {
+			service := workloadStatusService(input)
+			for _, filter := range []string{"", "abnormal"} {
+				reply, err := service.GetAllContainers(context.Background(), &pb.GetAllContainersReq{
+					Filters: &pb.GetAllContainersReq_Filters{Status: filter},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := make([]string, 0, len(reply.Items))
+				for _, row := range reply.Items {
+					got = append(got, row.PodUid+"/"+row.Name)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("filter %q workload order = %v, want %v", filter, got, want)
+				}
+			}
+		})
 	}
 }
 
