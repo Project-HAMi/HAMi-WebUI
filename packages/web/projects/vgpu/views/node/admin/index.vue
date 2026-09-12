@@ -168,7 +168,7 @@ const baseColumns = computed(() => [
       const to = `/admin/vgpu/node/admin/${uid}?nodeName=${name}`;
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-          <span class="vgpu-table-name-icon-card node-name-icon-card" onClick={() => router.push(to)}>
+          <span class="vgpu-table-name-icon-card node-name-icon-card">
             <svg-icon icon="node-name" style={{ fontSize: '20px' }} />
           </span>
           <span class="vgpu-table-name-text-wrap">
@@ -314,7 +314,6 @@ onMounted(() => {
 }
 
 :deep(.node-name-icon-card) {
-  cursor: pointer;
   user-select: none;
 }
 

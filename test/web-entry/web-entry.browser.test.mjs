@@ -1977,3 +1977,57 @@ test('workload status labels stay concise while accessible help explains contain
     await page.close()
   }
 }, { timeout: 60_000 })
+
+test('resource names navigate while decorative table icons do not', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  await page.route('**/api/vgpu/v1/containers', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      items: [{
+        name: 'worker', appName: 'job-1', podUid: 'pod-icon', namespace: 'default',
+        status: 'success', deviceIds: ['gpu-1'], allocatedCores: 10, allocatedMem: 256,
+      }],
+      total: 1,
+    }),
+  }))
+  const cases = [
+    {
+      path: 'node/admin',
+      icon: '.node-table .node-name-icon-card',
+      name: '.node-table .text-plus .link',
+      detail: 'node/admin/node-1?nodeName=node-1',
+    },
+    {
+      path: 'card/admin',
+      icon: '.accelerator-table .card-id-cell-icon',
+      name: '.accelerator-table .text-plus .link',
+      detail: 'card/admin/gpu-1',
+    },
+    {
+      path: 'task/admin',
+      icon: '.workload-table .task-name-icon-card',
+      name: '.workload-table .workload-identity-link',
+      detail: 'task/admin/detail?name=worker&podUid=pod-icon',
+    },
+  ]
+
+  try {
+    for (const entry of cases) {
+      const listURL = `${target}${basePath}admin/vgpu/${entry.path}`
+      await page.goto(listURL, { waitUntil: 'domcontentloaded' })
+      const icon = page.locator(entry.icon).first()
+      await icon.waitFor()
+      await icon.click()
+      await delay(100)
+      assert.equal(page.url(), listURL, `${entry.path}: a decorative icon navigated`)
+      assert.notEqual(await icon.evaluate((element) => getComputedStyle(element).cursor), 'pointer')
+      await page.locator(entry.name).first().click()
+      await page.waitForURL(`${target}${basePath}admin/vgpu/${entry.detail}`)
+      await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
