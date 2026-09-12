@@ -1,4 +1,9 @@
-<img src="docs/logo-horizontal.png" alt="HAMi-WebUI Logo (Light)" width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)"
+    srcset="brand/svg/hami-webui-horizontal-dark.svg">
+  <img src="brand/svg/hami-webui-horizontal-light.svg"
+    alt="HAMi WebUI" width="320">
+</picture>
 
 English | [简体中文](README_ZH.md) | [日本語](README_JA.md)
 
