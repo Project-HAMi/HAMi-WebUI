@@ -1855,20 +1855,21 @@ test('workload status labels stay concise while accessible help explains contain
     success: { containerState: 'Running', ready: true, restartCount: 0, podReady: 'True', podPhase: 'Running' },
     recovered: { containerState: 'Running', ready: true, restartCount: 3, podReady: 'False', lastTerminationReason: 'OOMKilled', lastExitCode: 137 },
     not_ready: { containerState: 'Running', ready: false, restartCount: 0, podPhase: 'Running', podReady: 'False', podReadyReason: 'ContainersNotReady', podReadyMessage: 'worker is not ready' },
-    error: { containerState: 'Waiting', reason: 'ImagePullBackOff', message: 'registry returned <unauthorized>', ready: false, restartCount: 0 },
+    error: { containerState: 'Waiting', reason: 'ImagePullBackOff', message: 'registry returned <unauthorized>\n'.repeat(100), ready: false, restartCount: 0 },
+    crashloop: { containerState: 'Waiting', reason: 'CrashLoopBackOff', lastTerminationReason: 'Error', lastExitCode: 42, restartCount: 5, message: 'Back-off restarting failed container main in pod webui-demo-crashloop', podReadyReason: 'ContainersNotReady', podReadyMessage: 'containers with unready status: [main]' },
     closed: { containerState: 'Terminated', reason: 'Completed', exitCode: 0, restartCount: 0, podPhase: 'Succeeded' },
     failed: { containerState: 'Terminated', reason: 'Error', exitCode: 1, restartCount: 0, podPhase: 'Failed' },
     terminating: { containerState: 'Running', ready: true, restartCount: 0, podPhase: 'Running' },
     unknown: { podPhase: 'Unknown', podReady: 'Unknown' },
   }
-  const workloads = [...statuses, 'legacy', 'recovered'].map((code) => ({
+  const workloads = [...statuses, 'crashloop', 'legacy', 'recovered'].map((code) => ({
     name: `worker-${code}`,
     appName: `pod-${code}`,
     podUid: `uid-${code}`,
     namespace: 'default',
     nodeName: 'node-1',
     nodeUid: 'node-1',
-    status: code === 'legacy' ? 'failed' : code === 'recovered' ? 'success' : code,
+    status: code === 'legacy' ? 'failed' : code === 'recovered' ? 'success' : code === 'crashloop' ? 'error' : code,
     ...(code === 'legacy' ? {} : { statusDetail: details[code] }),
     deviceIds: ['gpu-1'],
     allocatedDevices: 1,
@@ -1902,7 +1903,7 @@ test('workload status labels stay concise while accessible help explains contain
     await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
     assert.deepEqual(
       (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
-      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Unknown', 'Abnormal', 'Running']
+      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Unknown', 'Abnormal', 'Abnormal', 'Running']
     )
     assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), workloads.length - 2)
     const assertRunningAppearance = async(status, expectedTextColor) => {
@@ -1930,11 +1931,10 @@ test('workload status labels stay concise while accessible help explains contain
     }
 
     const help = page.locator('.workload-table [data-workload-status="not_ready"] .metric-help')
-    const tooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'running, but Kubernetes has not marked it ready' }).last()
+    const tooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Started, but not ready yet.' }).last()
     await help.hover()
     await tooltip.waitFor({ state: 'visible' })
-    assert.doesNotMatch(await tooltip.textContent(), /Restart count: 0|Container readiness:|Pod readiness:/)
-    assert.match(await tooltip.textContent(), /worker is not ready/)
+    assert.equal((await tooltip.textContent()).trim(), 'Started, but not ready yet.')
     assert.equal(await tooltip.evaluate((element) => getComputedStyle(element).whiteSpace), 'pre-line')
     assert.ok((await tooltip.boundingBox()).width <= 320)
     await help.focus()
@@ -1947,12 +1947,22 @@ test('workload status labels stay concise while accessible help explains contain
     await help.press('Escape')
     await tooltip.waitFor({ state: 'hidden' })
 
-    const imageErrorHelp = page.locator('.workload-table [data-workload-status="error"] .metric-help')
+    const imageErrorHelp = page.locator('.workload-table [data-workload-status="error"] .metric-help').first()
     await imageErrorHelp.focus()
-    const errorTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'registry returned <unauthorized>' }).last()
+    const errorTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Image pull failed; retrying.' }).last()
     await errorTooltip.waitFor({ state: 'visible' })
+    assert.equal((await errorTooltip.textContent()).trim(), 'Image pull failed; retrying.')
     assert.equal(await errorTooltip.locator('unauthorized').count(), 0)
+    assert.ok((await errorTooltip.boundingBox()).height <= 80)
     await imageErrorHelp.press('Escape')
+
+    const crashHelp = page.locator('.workload-table [data-workload-status="error"] .metric-help').nth(1)
+    await crashHelp.focus()
+    const crashTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'The program keeps exiting; retrying.' }).last()
+    await crashTooltip.waitFor({ state: 'visible' })
+    assert.equal((await crashTooltip.textContent()).trim(), 'The program keeps exiting; retrying.\nLast exit code: 42\nRestart count: 5')
+    assert.ok((await crashTooltip.boundingBox()).height <= 120)
+    await crashHelp.press('Escape')
 
     const statusSelect = page.getByPlaceholder('All Status')
     await statusSelect.click()
@@ -1960,9 +1970,9 @@ test('workload status labels stay concise while accessible help explains contain
     await options.first().waitFor()
     assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), ['All Status', 'Starting', 'Running', 'Abnormal'])
     await options.filter({ hasText: /^Abnormal$/ }).click()
-    await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 4, 'Abnormal group did not include all error, failed and not-ready containers')
+    await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 5, 'Abnormal group did not include all error, failed and not-ready containers')
     assert.equal(requestedStatuses.at(-1), 'abnormal')
-    assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), ['not_ready', 'error', 'failed', 'failed'])
+    assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), ['not_ready', 'error', 'failed', 'error', 'failed'])
 
     for (const [label, filter, codes] of [
       ['Starting', 'waiting', ['waiting']],
@@ -1991,9 +2001,9 @@ test('workload status labels stay concise while accessible help explains contain
       { waitUntil: 'domcontentloaded' }
     )
     await headerStatus.getByRole('button', { name: 'View workload status details' }).focus()
-    const recoveredTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Last termination reason: OOMKilled' }).last()
+    const recoveredTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'This container is ready, but the overall Pod is not ready.' }).last()
     await recoveredTooltip.waitFor({ state: 'visible' })
-    assert.match(await recoveredTooltip.textContent(), /does not mean this container is in error/)
+    assert.equal((await recoveredTooltip.textContent()).trim(), 'This container is ready, but the overall Pod is not ready.\nLast exit code: 137\nRestart count: 3')
 
     await page.goto(
       `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-legacy&podUid=uid-legacy`,
@@ -2002,7 +2012,7 @@ test('workload status labels stay concise while accessible help explains contain
     await page.locator('.layout-header-title-run-state [data-workload-status="failed"]').waitFor()
     await page.locator('.layout-header-title-run-state .metric-help').focus()
     await page.locator('.t-tooltip .t-popup__content')
-      .filter({ hasText: 'this API does not provide container status details' })
+      .filter({ hasText: 'Reported as Abnormal; no further details.' })
       .last().waitFor({ state: 'visible' })
   } finally {
     await page.close()
