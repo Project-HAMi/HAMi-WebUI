@@ -19,10 +19,14 @@ const (
 
 	CambriconGPUDevice = "MLU"
 
-	ContainerStatusSuccess = "success"
-	ContainerStatusFailed  = "failed"
-	ContainerStatusClosed  = "closed"
-	ContainerStatusUnknown = "unknown"
+	ContainerStatusSuccess     = "success"
+	ContainerStatusFailed      = "failed"
+	ContainerStatusClosed      = "closed"
+	ContainerStatusUnknown     = "unknown"
+	ContainerStatusWaiting     = "waiting"
+	ContainerStatusNotReady    = "not_ready"
+	ContainerStatusError       = "error"
+	ContainerStatusTerminating = "terminating"
 
 	ComponentTypeDeployment  = "deployment"
 	ComponentTypeStatefulSet = "statefulset"

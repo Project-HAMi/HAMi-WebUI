@@ -119,20 +119,20 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 		return containers
 	}
 
-	ctrIdMaps := map[string]string{}
-	containerStat := map[string]string{}
-	for _, ctr := range pod.Status.ContainerStatuses {
-		ctrIdMaps[ctr.Name] = ctr.ContainerID
-		containerStat[ctr.Name] = biz.ContainerStatusUnknown
-		if pod.Status.Phase == corev1.PodRunning && ctr.Ready {
-			containerStat[ctr.Name] = biz.ContainerStatusSuccess
-		} else if pod.Status.Phase == corev1.PodFailed {
-			containerStat[ctr.Name] = biz.ContainerStatusFailed
-		}
+	containerStatuses := map[string]*corev1.ContainerStatus{}
+	for i := range pod.Status.ContainerStatuses {
+		ctr := &pod.Status.ContainerStatuses[i]
+		containerStatuses[ctr.Name] = ctr
 	}
 
 	initContainerOffset := len(pod.Spec.InitContainers)
 	for i, ctr := range pod.Spec.Containers {
+		observed := containerStatuses[ctr.Name]
+		status, statusDetail := classifyContainerStatus(pod, observed)
+		containerID := ""
+		if observed != nil {
+			containerID = observed.ContainerID
+		}
 		deviceIdx := initContainerOffset + i
 		var containerDevices biz.ContainerDevices
 		if deviceIdx < len(bizContainerDevices) {
@@ -140,13 +140,14 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 		}
 		c := &biz.Container{
 			Name:             ctr.Name,
-			UUID:             ctrIdMaps[ctr.Name],
+			UUID:             containerID,
 			ContainerIdx:     i,
 			NodeName:         pod.Spec.NodeName,
 			PodName:          pod.Name,
 			PodUID:           string(pod.UID),
 			Image:            ctr.Image,
-			Status:           containerStat[ctr.Name],
+			Status:           status,
+			StatusDetail:     statusDetail,
 			NodeUID:          nodeUID,
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
