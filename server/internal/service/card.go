@@ -104,6 +104,9 @@ func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq)
 		}
 	}
 
+	sort.Slice(res.List, func(i, j int) bool {
+		return res.List[i].Type < res.List[j].Type
+	})
 	return res, nil
 }
 

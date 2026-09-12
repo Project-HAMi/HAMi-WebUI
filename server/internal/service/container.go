@@ -126,7 +126,22 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		res.Items = append(res.Items, containerReply)
 	}
 	sort.SliceStable(res.Items, func(i, j int) bool {
-		return statusOrder[res.Items[i].Status] < statusOrder[res.Items[j].Status]
+		left, right := res.Items[i], res.Items[j]
+		if statusOrder[left.Status] != statusOrder[right.Status] {
+			return statusOrder[left.Status] < statusOrder[right.Status]
+		}
+		// Repository map iteration is unordered. Break status ties by workload
+		// identity so refreshing or filtering keeps the remaining rows in place.
+		if left.Namespace != right.Namespace {
+			return left.Namespace < right.Namespace
+		}
+		if left.AppName != right.AppName {
+			return left.AppName < right.AppName
+		}
+		if left.Name != right.Name {
+			return left.Name < right.Name
+		}
+		return left.PodUid < right.PodUid
 	})
 	return res, nil
 }
