@@ -18,10 +18,30 @@ type Container struct {
 	Image            string
 	ContainerDevices ContainerDevices
 	Status           string
+	StatusDetail     *ContainerStatusDetail
 	CreateTime       time.Time
 	Priority         string
 	NodeUID          string
 	Namespace        string
+}
+
+type ContainerStatusDetail struct {
+	ContainerState         string
+	Reason                 string
+	Message                string
+	Ready                  *bool
+	RestartCount           int32
+	ExitCode               *int32
+	PodPhase               string
+	PodReady               string
+	PodReadyReason         string
+	PodReadyMessage        string
+	RestartPending         bool
+	LastTerminationReason  string
+	LastExitCode           *int32
+	LastTerminationMessage string
+	PodReason              string
+	PodMessage             string
 }
 
 type PodInfo struct {

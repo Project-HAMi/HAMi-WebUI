@@ -2,7 +2,7 @@
   <t-tooltip
     :content="description"
     :visible="visible"
-    :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
+    :overlay-inner-style="tooltipStyle"
   >
     <button
       type="button"
@@ -28,11 +28,15 @@ import { computed, ref, useId } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
 import { LONG_TEXT_TOOLTIP_STYLE } from './tooltip-policy.mjs';
 
-defineProps({
+const props = defineProps({
   description: { type: String, required: true },
   helpLabel: { type: String, required: true },
+  multiline: { type: Boolean, default: false },
 });
 
+const tooltipStyle = computed(() => props.multiline
+  ? { ...LONG_TEXT_TOOLTIP_STYLE, whiteSpace: 'pre-line' }
+  : LONG_TEXT_TOOLTIP_STYLE);
 const descriptionId = useId();
 const hovered = ref(false);
 const focused = ref(false);

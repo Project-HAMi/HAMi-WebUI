@@ -6,11 +6,13 @@
           <h3 class="layout-title">{{ title }}：{{ name }}</h3>
         </slot>
         <div v-if="status" class="layout-header-title-run-state">
-          <slot name="icon">
-            <svg-icon v-if="statusIcon" :icon="statusIcon" style="font-size: 16px" />
+          <slot name="status">
+            <slot name="icon">
+              <svg-icon v-if="statusIcon" :icon="statusIcon" style="font-size: 16px" />
+            </slot>
+            <span class="layout-header-title-run-state-label">{{ status }}</span>
+            <slot name="titleSuffix"></slot>
           </slot>
-          <span class="layout-header-title-run-state-label">{{ status }}</span>
-          <slot name="titleSuffix"></slot>
         </div>
       </div>
     </template>

@@ -10,10 +10,45 @@ import (
 )
 
 var statusOrder = map[string]int{
-	biz.ContainerStatusFailed:  1,
-	biz.ContainerStatusUnknown: 2,
-	biz.ContainerStatusSuccess: 3,
-	biz.ContainerStatusClosed:  4,
+	biz.ContainerStatusError:       1,
+	biz.ContainerStatusFailed:      2,
+	biz.ContainerStatusUnknown:     3,
+	biz.ContainerStatusNotReady:    4,
+	biz.ContainerStatusWaiting:     5,
+	biz.ContainerStatusTerminating: 6,
+	biz.ContainerStatusSuccess:     7,
+	biz.ContainerStatusClosed:      8,
+}
+
+func normalizedContainerStatus(status string) string {
+	if _, known := statusOrder[status]; known {
+		return status
+	}
+	return biz.ContainerStatusUnknown
+}
+
+func containerStatusDetailReply(detail *biz.ContainerStatusDetail) *pb.ContainerStatusDetail {
+	if detail == nil {
+		return nil
+	}
+	return &pb.ContainerStatusDetail{
+		ContainerState:         detail.ContainerState,
+		Reason:                 detail.Reason,
+		Message:                detail.Message,
+		Ready:                  detail.Ready,
+		RestartCount:           detail.RestartCount,
+		ExitCode:               detail.ExitCode,
+		PodPhase:               detail.PodPhase,
+		PodReady:               detail.PodReady,
+		PodReadyReason:         detail.PodReadyReason,
+		PodReadyMessage:        detail.PodReadyMessage,
+		RestartPending:         detail.RestartPending,
+		LastTerminationReason:  detail.LastTerminationReason,
+		LastExitCode:           detail.LastExitCode,
+		LastTerminationMessage: detail.LastTerminationMessage,
+		PodReason:              detail.PodReason,
+		PodMessage:             detail.PodMessage,
+	}
 }
 
 type ContainerService struct {
@@ -65,13 +100,14 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 	}
 	var res = &pb.ContainersReply{Items: []*pb.ContainerReply{}}
 	for _, container := range containers {
+		status := normalizedContainerStatus(container.Status)
 		if !matchesWorkloadName(container.PodName, container.Name, filters.Name) {
 			continue
 		}
 		if filters.NodeName != "" && filters.NodeName != container.NodeName {
 			continue
 		}
-		if filters.Status != "" && filters.Status != container.Status {
+		if filters.Status != "" && filters.Status != status {
 			continue
 		}
 		if filters.NodeUid != "" && filters.NodeUid != container.NodeUID {
@@ -86,7 +122,8 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		}
 		containerReply := &pb.ContainerReply{}
 		containerReply.Name = container.Name
-		containerReply.Status = container.Status
+		containerReply.Status = status
+		containerReply.StatusDetail = containerStatusDetailReply(container.StatusDetail)
 		containerReply.AppName = container.PodName
 		containerReply.Images = uniqueNonEmpty([]string{container.Image})
 		containerReply.NodeName = container.NodeName
@@ -153,7 +190,8 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	}
 	ctrReply := &pb.ContainerReply{}
 	ctrReply.Name = container.Name
-	ctrReply.Status = container.Status
+	ctrReply.Status = normalizedContainerStatus(container.Status)
+	ctrReply.StatusDetail = containerStatusDetailReply(container.StatusDetail)
 	ctrReply.AppName = container.PodName
 	ctrReply.NodeName = container.NodeName
 	ctrReply.PodUid = container.PodUID

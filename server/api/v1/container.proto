@@ -68,6 +68,28 @@ message ContainerReply {
   repeated string device_ids = 18;
   repeated string images = 19;
   optional bool allocated_cores_known = 20;
+  ContainerStatusDetail status_detail = 21;
+}
+
+// The current regular container and its Pod context, without inferring health
+// from GPU telemetry. Optional values distinguish false/zero from unavailable.
+message ContainerStatusDetail {
+  string container_state = 1;
+  string reason = 2;
+  string message = 3;
+  optional bool ready = 4;
+  int32 restart_count = 5;
+  optional int32 exit_code = 6;
+  string pod_phase = 7;
+  string pod_ready = 8;
+  string pod_ready_reason = 9;
+  string pod_ready_message = 10;
+  bool restart_pending = 11;
+  string last_termination_reason = 12;
+  optional int32 last_exit_code = 13;
+  string last_termination_message = 14;
+  string pod_reason = 15;
+  string pod_message = 16;
 }
 
 message ContainersReply {

@@ -1845,3 +1845,135 @@ test('ECharts runtime renders, updates and handles interaction in Chromium', asy
   const target = await startWebEntry({ frameAncestors: undefined })
   await assertChartRuntime(target)
 }, { timeout: 60_000 })
+
+test('workload status labels stay concise while accessible help explains container evidence', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const statuses = ['waiting', 'success', 'not_ready', 'error', 'closed', 'failed', 'terminating', 'unknown']
+  const details = {
+    waiting: { containerState: 'Waiting', reason: 'ContainerCreating', ready: false, restartCount: 0, podPhase: 'Pending' },
+    success: { containerState: 'Running', ready: true, restartCount: 0, podReady: 'True', podPhase: 'Running' },
+    recovered: { containerState: 'Running', ready: true, restartCount: 3, podReady: 'False', lastTerminationReason: 'OOMKilled', lastExitCode: 137 },
+    not_ready: { containerState: 'Running', ready: false, restartCount: 0, podPhase: 'Running', podReady: 'False', podReadyReason: 'ContainersNotReady', podReadyMessage: 'worker is not ready' },
+    error: { containerState: 'Waiting', reason: 'ImagePullBackOff', message: 'registry returned <unauthorized>', ready: false, restartCount: 0 },
+    closed: { containerState: 'Terminated', reason: 'Completed', exitCode: 0, restartCount: 0, podPhase: 'Succeeded' },
+    failed: { containerState: 'Terminated', reason: 'Error', exitCode: 1, restartCount: 0, podPhase: 'Failed' },
+    terminating: { containerState: 'Running', ready: true, restartCount: 0, podPhase: 'Running' },
+    unknown: { podPhase: 'Unknown', podReady: 'Unknown' },
+  }
+  const workloads = [...statuses, 'legacy', 'recovered'].map((code) => ({
+    name: `worker-${code}`,
+    appName: `pod-${code}`,
+    podUid: `uid-${code}`,
+    namespace: 'default',
+    nodeName: 'node-1',
+    nodeUid: 'node-1',
+    status: code === 'legacy' ? 'failed' : code === 'recovered' ? 'success' : code,
+    ...(code === 'legacy' ? {} : { statusDetail: details[code] }),
+    deviceIds: ['gpu-1'],
+    allocatedDevices: 1,
+    allocatedCores: 100,
+    allocatedMem: 1024,
+    createTime: '2026-08-31T00:00:00Z',
+  }))
+  const fulfill = (route, payload) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ code: 0, ...payload }),
+  })
+  await page.route('**/api/vgpu/v1/containers', (route) => {
+    const status = route.request().postDataJSON()?.filters?.status
+    return fulfill(route, { items: status ? workloads.filter((item) => item.status === status) : workloads })
+  })
+  await page.route('**/api/vgpu/v1/container?*', (route) => {
+    const params = new URL(route.request().url()).searchParams
+    const workload = workloads.find((item) => item.name === params.get('name') && item.podUid === params.get('podUid'))
+    assert.ok(workload, 'Unexpected workload details identity')
+    return fulfill(route, workload)
+  })
+
+  try {
+    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
+    assert.deepEqual(
+      (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
+      ['Waiting', 'Running', 'Not Ready', 'Error', 'Completed', 'Failed', 'Terminating', 'Unknown', 'Failed', 'Running']
+    )
+    assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), workloads.length - 2)
+    const assertRunningAppearance = async(status, expectedTextColor) => {
+      const appearance = await status.evaluate((element) => {
+        const icon = element.querySelector('.workload-status__icon')
+        const use = icon?.querySelector('use')
+        const box = icon?.getBoundingClientRect()
+        return {
+          icon: use?.getAttribute('href') || use?.getAttribute('xlink:href'),
+          size: [box?.width, box?.height],
+          textColor: getComputedStyle(element.querySelector('.workload-status__label')).color,
+        }
+      })
+      assert.deepEqual(appearance, {
+        icon: '#icon-status-schedulable', size: [16, 16], textColor: expectedTextColor,
+      })
+    }
+    const healthyStatus = page.locator('.workload-table [data-workload-status="success"]').first()
+    await assertRunningAppearance(healthyStatus, 'rgb(0, 0, 0)')
+    assert.equal(await healthyStatus.locator('.metric-help').count(), 0)
+    assert.equal(await page.locator('.workload-table [data-workload-status="closed"] .metric-help').count(), 0)
+
+    const help = page.locator('.workload-table [data-workload-status="not_ready"] .metric-help')
+    const tooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'running, but Kubernetes has not marked it ready' }).last()
+    await help.hover()
+    await tooltip.waitFor({ state: 'visible' })
+    assert.doesNotMatch(await tooltip.textContent(), /Restart count: 0|Container readiness:|Pod readiness:/)
+    assert.match(await tooltip.textContent(), /worker is not ready/)
+    assert.equal(await tooltip.evaluate((element) => getComputedStyle(element).whiteSpace), 'pre-line')
+    assert.ok((await tooltip.boundingBox()).width <= 320)
+    await help.focus()
+    await help.press('Escape')
+    await tooltip.waitFor({ state: 'hidden' })
+    await page.mouse.move(0, 0)
+    await page.getByPlaceholder('Search Pod or container name').focus()
+    await help.focus()
+    await tooltip.waitFor({ state: 'visible' })
+    await help.press('Escape')
+    await tooltip.waitFor({ state: 'hidden' })
+
+    const imageErrorHelp = page.locator('.workload-table [data-workload-status="error"] .metric-help')
+    await imageErrorHelp.focus()
+    const errorTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'registry returned <unauthorized>' }).last()
+    await errorTooltip.waitFor({ state: 'visible' })
+    assert.equal(await errorTooltip.locator('unauthorized').count(), 0)
+    await imageErrorHelp.press('Escape')
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-success&podUid=uid-success`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    const headerStatus = page.locator('.layout-header-title-run-state .workload-status')
+    await headerStatus.waitFor()
+    assert.equal((await headerStatus.locator('.workload-status__label').textContent()).trim(), 'Running')
+    await assertRunningAppearance(headerStatus, 'rgb(50, 69, 88)')
+    assert.equal(await headerStatus.locator('.metric-help').count(), 0)
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-recovered&podUid=uid-recovered`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await headerStatus.getByRole('button', { name: 'View workload status details' }).focus()
+    const recoveredTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Last termination reason: OOMKilled' }).last()
+    await recoveredTooltip.waitFor({ state: 'visible' })
+    assert.match(await recoveredTooltip.textContent(), /does not mean this container is in error/)
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-legacy&podUid=uid-legacy`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await page.locator('.layout-header-title-run-state [data-workload-status="failed"]').waitFor()
+    await page.locator('.layout-header-title-run-state .metric-help').focus()
+    await page.locator('.t-tooltip .t-popup__content')
+      .filter({ hasText: 'this API does not provide container status details' })
+      .last().waitFor({ state: 'visible' })
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })

@@ -2,26 +2,10 @@
   <page-header
     :title="$t('task.workload')"
     :name="workloadDisplayName"
-    :status="headerStatusDisplay.text"
-    :status-icon="headerStatusDisplay.icon"
+    :status="headerStatusDisplay.label"
   >
-    <template #titleSuffix>
-      <ElPopover
-        v-if="
-          detailStatus === REQUEST_STATUS.READY &&
-          (detail.status === 'unknown' || detail.status === 'failed')
-        "
-        placement="top"
-        trigger="hover"
-        popper-style="width: 180px"
-      >
-        <template #reference>
-          <el-icon color="#939EA9" size="14">
-            <QuestionFilled />
-          </el-icon>
-        </template>
-        <span style="margin-left: 5px">{{ $t('task.checkCloudPlatform') }}</span>
-      </ElPopover>
+    <template #status>
+      <WorkloadStatus v-if="detailStatus === REQUEST_STATUS.READY" :workload="detail" />
     </template>
   </page-header>
 
@@ -240,8 +224,6 @@ import useInstantVector from '~/vgpu/hooks/useInstantVector';
 
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
-import { QuestionFilled } from '@element-plus/icons-vue';
-import { ElPopover } from 'element-plus';
 import { timeParse, calculatePrometheusStep, roundToDecimal } from '@/utils';
 import taskApi from '~/vgpu/api/task';
 import BlockBox from '@/components/BlockBox.vue';
@@ -249,6 +231,8 @@ import { getLineOptions } from '~/vgpu/components/config';
 import VChart from 'vue-echarts';
 import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
+import WorkloadStatus from './WorkloadStatus.vue';
+import { getWorkloadStatus } from './workload-status.mjs';
 import useTaskMonitoring, {
   getTaskMonitoringAllocationShape,
 } from './useTaskMonitoring';
@@ -312,28 +296,6 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-
-const getStatusDisplay = (status) => {
-  const enums = {
-    closed: {
-      text: t('task.statusCompleted'),
-      icon: 'status-schedulable',
-    },
-    success: {
-      text: t('task.statusRunning'),
-      icon: 'status-schedulable',
-    },
-    unknown: {
-      text: t('task.statusUnknown'),
-      icon: 'status-unmanaged',
-    },
-    failed: {
-      text: t('task.statusFailed'),
-      icon: 'status-unschedulable',
-    },
-  };
-  return enums[status] || enums.unknown;
-};
 
 const safeDeviceIds = computed(() => (
   Array.isArray(detail.value?.deviceIds) ? detail.value.deviceIds : []
@@ -492,8 +454,8 @@ const handleGpuJump = (uuid) => {
 
 const headerStatusDisplay = computed(() => (
   detailStatus.value === REQUEST_STATUS.READY
-    ? getStatusDisplay(detail.value?.status)
-    : { text: '', icon: '' }
+    ? getWorkloadStatus(detail.value, t)
+    : { label: '' }
 ));
 
 const taskMonitoringSource = computed(() => {

@@ -92,7 +92,7 @@ import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
 import { roundToDecimal, timeParse } from '@/utils';
 import request from '@/utils/request';
-import { SearchIcon, HelpCircleIcon } from 'tdesign-icons-vue-next';
+import { SearchIcon } from 'tdesign-icons-vue-next';
 import { reactive, ref, computed, onMounted, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import Top from './top.vue';
@@ -101,6 +101,8 @@ import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 import { createWorkloadRowKey, formatWorkloadName } from './workload-identity.mjs';
+import WorkloadStatus from './WorkloadStatus.vue';
+import { getWorkloadStatusOptions } from './workload-status.mjs';
 import useFetchList from '@/hooks/useFetchList';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
@@ -130,10 +132,7 @@ const cardOptions = computed(() => {
 });
 const statusOptions = computed(() => [
   { label: t('task.allStatus'), value: undefined },
-  { label: t('task.statusCompleted'), value: 'closed' },
-  { label: t('task.statusRunning'), value: 'success' },
-  { label: t('task.statusFailed'), value: 'failed' },
-  { label: t('task.statusUnknown'), value: 'unknown' },
+  ...getWorkloadStatusOptions(t),
 ]);
 
 const fetchFilterOptions = async () => {
@@ -206,50 +205,7 @@ const baseColumns = computed(() => [
   {
     title: t('task.status'),
     dataIndex: 'status',
-    render: ({ status }) => {
-      const enums = {
-        closed: {
-          text: t('task.statusCompleted'),
-          icon: 'status-schedulable',
-        },
-        success: {
-          text: t('task.statusRunning'),
-          icon: 'status-schedulable',
-        },
-        unknown: {
-          text: t('task.statusUnknown'),
-          icon: 'status-unmanaged',
-        },
-        failed: {
-          text: t('task.statusFailed'),
-          icon: 'status-unschedulable',
-        },
-      };
-      const { text, icon } = enums[status] || enums.unknown;
-      return (
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-          }}
-        >
-          <svg-icon icon={icon} style={{ fontSize: '16px' }} />
-          <span>{text}</span>
-          {(status === 'unknown' || status === 'failed') && (
-            <t-popup
-              trigger="hover"
-              placement="top"
-              content={t('task.checkCloudPlatform')}
-              overlay-inner-style={{ maxWidth: '180px' }}
-            >
-              <help-circle-icon style={{ color: '#939EA9', fontSize: '14px', cursor: 'pointer' }} />
-            </t-popup>
-          )}
-        </span>
-      );
-    },
+    render: (workload) => <WorkloadStatus workload={workload} />,
   },
   {
     title: t('task.card'),
