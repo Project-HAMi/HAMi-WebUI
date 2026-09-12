@@ -1,10 +1,63 @@
 <template>
-  <el-dropdown trigger="click" @command="handleSetLanguage" popper-class="lang-dropdown-popper">
-    <div class="lang-select-container">
-      <svg-icon icon="language" class-name="lang-icon" />
-      <span class="lang-text">{{ language === 'zh' ? $t('common.lang.zh') : $t('common.lang.en') }}</span>
-      <el-icon class="el-icon--right"><arrow-down /></el-icon>
+  <div v-if="sidebar && !collapsed" class="lang-select--sidebar lang-segment-row">
+    <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
+    <div
+      class="lang-segments"
+      :class="{ 'is-english': language === 'en' }"
+      role="group"
+      :aria-label="$t('common.switchLanguage')"
+    >
+      <span class="lang-segment-indicator" aria-hidden="true" />
+      <button
+        type="button"
+        class="lang-segment"
+        :aria-pressed="language === 'zh'"
+        :aria-label="$t('common.lang.zh')"
+        @click="handleSetLanguage('zh')"
+      >{{ $t('common.lang.zh') }}</button>
+      <button
+        type="button"
+        class="lang-segment"
+        :aria-pressed="language === 'en'"
+        :aria-label="$t('common.lang.en')"
+        @click="handleSetLanguage('en')"
+      >EN</button>
     </div>
+  </div>
+  <div v-else-if="sidebar" class="lang-select--sidebar is-collapsed">
+    <button
+      type="button"
+      class="lang-select-container"
+      :aria-label="switchLanguageLabel"
+      :title="switchLanguageLabel"
+      @click="handleSetLanguage(nextLanguage)"
+    >
+      <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
+    </button>
+  </div>
+  <el-dropdown
+    v-else
+    trigger="click"
+    :class="{ 'lang-select--sidebar': sidebar, 'is-collapsed': collapsed }"
+    :placement="sidebar ? 'top-start' : 'bottom-end'"
+    popper-class="lang-dropdown-popper"
+    @command="handleSetLanguage"
+    @visible-change="menuVisible = $event"
+  >
+    <button
+      type="button"
+      class="lang-select-container"
+      :aria-label="`${$t('common.switchLanguage')}: ${currentLanguage}`"
+      :aria-expanded="menuVisible"
+      aria-haspopup="menu"
+      :title="collapsed ? `${$t('common.switchLanguage')}: ${currentLanguage}` : undefined"
+    >
+      <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
+      <span v-if="!collapsed" class="lang-text">{{ currentLanguage }}</span>
+      <el-icon v-if="!collapsed" class="lang-chevron">
+        <arrow-down />
+      </el-icon>
+    </button>
     <template #dropdown>
       <el-dropdown-menu class="lang-dropdown">
         <el-dropdown-item 
@@ -29,17 +82,30 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Cookies from 'js-cookie';
 import { LANG_KEY } from '@/locales';
 import { ArrowDown } from '@element-plus/icons-vue';
+import LanguageToggleIcon from './LanguageToggleIcon.vue';
+
+defineProps({
+  sidebar: { type: Boolean, default: false },
+  collapsed: { type: Boolean, default: false },
+});
 
 const i18n = useI18n();
 
 const language = computed(() => i18n.locale.value);
+const currentLanguage = computed(() => i18n.t(`common.lang.${language.value === 'zh' ? 'zh' : 'en'}`));
+const nextLanguage = computed(() => language.value === 'zh' ? 'en' : 'zh');
+const switchLanguageLabel = computed(() => i18n.t('common.switchToLanguage', {
+  language: i18n.t(`common.lang.${nextLanguage.value}`),
+}));
+const menuVisible = ref(false);
 
 const handleSetLanguage = (lang) => {
+  if (lang === language.value) return;
   i18n.locale.value = lang;
   Cookies.set(LANG_KEY, lang);
 };
@@ -54,7 +120,9 @@ const handleSetLanguage = (lang) => {
   padding: 0 8px;
   border-radius: 4px;
   color: #1f2933;
-  transition: all 0.3s ease;
+  background: transparent;
+  font: inherit;
+  transition: background-color 120ms ease, color 120ms ease;
   border: none;
   margin-right: 16px;
 
@@ -63,9 +131,20 @@ const handleSetLanguage = (lang) => {
     background: transparent;
   }
 
+  &:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: -2px;
+  }
+
+  .lang-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+  }
+
   .lang-icon {
     font-size: 18px;
-    margin-right: 8px;
   }
   
   .lang-text {
@@ -75,9 +154,134 @@ const handleSetLanguage = (lang) => {
     font-weight: 500;
   }
 
-  .el-icon--right {
+  .lang-chevron {
     font-size: 12px;
     opacity: 0.7;
+  }
+}
+
+.lang-select--sidebar {
+  display: flex;
+  width: 100%;
+
+  .lang-select-container {
+    gap: 10px;
+    width: 100%;
+    height: 44px;
+    padding: 0 12px;
+    margin: 0;
+    border-radius: 8px;
+    color: #526477;
+    text-align: left;
+    white-space: nowrap;
+    box-sizing: border-box;
+
+    &:hover,
+    &[aria-expanded='true'] {
+      background: #eaf0f5;
+      color: #203040;
+    }
+  }
+
+  .lang-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    margin: 0;
+  }
+
+  .lang-icon {
+    font-size: 20px;
+  }
+
+  .lang-text {
+    flex: 1;
+    margin: 0;
+    font-weight: 400;
+  }
+
+  .lang-chevron {
+    flex-shrink: 0;
+  }
+}
+
+.lang-segment-row {
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px;
+  color: #526477;
+  box-sizing: border-box;
+}
+
+.lang-segments {
+  position: relative;
+  display: flex;
+  flex: 0 0 102px;
+  height: 30px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #e7edf4;
+  box-sizing: border-box;
+
+  &.is-english .lang-segment-indicator {
+    transform: translateX(100%);
+  }
+}
+
+.lang-segment-indicator {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(32 48 64 / 10%);
+  transition: transform 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.lang-segment {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #526477;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 24px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease;
+
+  &:hover {
+    color: #203040;
+  }
+
+  &[aria-pressed='true'] {
+    color: #2563eb;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: -1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lang-select-container,
+  .lang-segment,
+  .lang-segment-indicator {
+    transition: none;
   }
 }
 </style>

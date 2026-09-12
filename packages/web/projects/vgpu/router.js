@@ -5,7 +5,7 @@ export default (Layout) => ({
   name: 'vgpu',
   meta: {
     title: 'routes.gpuAdmin',
-    icon: 'vgpu-gpu-l',
+    icon: 'vgpu-card',
   },
   children: [
     {

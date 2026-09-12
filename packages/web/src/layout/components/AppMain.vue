@@ -1,10 +1,7 @@
 <template>
   <div id="content">
-    <div class="content-header-row">
-      <div class="content-header-spacer" />
-      <div class="content-header-actions">
-        <LangSelect />
-      </div>
+    <div v-if="showLanguageSwitch" class="content-header-row">
+      <LangSelect />
     </div>
     <div class="content-main-card">
       <div class="content-body">
@@ -16,6 +13,10 @@
 
 <script setup>
 import LangSelect from '@/components/LangSelect/index.vue';
+
+defineProps({
+  showLanguageSwitch: { type: Boolean, default: false },
+});
 </script>
 
 <style lang="scss" scoped>
@@ -41,14 +42,6 @@ import LangSelect from '@/components/LangSelect/index.vue';
   border-radius: 0;
   border: none;
   box-shadow: none;
-}
-
-.content-header-spacer {
-  flex: 1;
-}
-
-.content-header-actions {
-  flex-shrink: 0;
 }
 
 .content-main-card {

@@ -843,7 +843,9 @@ test('browser language selects English without leaking active Chinese UI text', 
       `${target}${basePath}admin/vgpu/task/admin`,
       { waitUntil: 'domcontentloaded' }
     )
-    await page.locator('.lang-text').filter({ hasText: 'English' }).waitFor()
+    const englishButton = page.getByRole('button', { name: 'English', exact: true })
+    await englishButton.waitFor()
+    assert.equal(await englishButton.getAttribute('aria-pressed'), 'true')
     await page.locator('.workload-table .vgpu-table-name-text-wrap .ellipsis-text')
       .filter({ hasText: 'worker' })
       .waitFor()
@@ -858,6 +860,17 @@ test('browser language selects English without leaking active Chinese UI text', 
     const value = requestsCard.locator('.tab-top-value').first()
     await value.waitFor()
     assert.equal((await value.textContent()).trim(), '0.4 slots')
+
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+    await page.getByRole('button', { name: 'Switch to 中文', exact: true }).click()
+    await page.locator('html[lang="zh-CN"]').waitFor()
+    assert.equal(await page.locator('.sidebar.is-collapsed').count(), 1)
+    assert.equal(await page.locator('.lang-dropdown-popper:visible').count(), 0)
+    await page.getByRole('button', { name: '切换到 English', exact: true }).click()
+    await page.locator('html[lang="en"]').waitFor()
+    await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click()
+    assert.equal(await englishButton.getAttribute('aria-pressed'), 'true')
+    assert.equal(page.url(), `${target}${basePath}admin/vgpu/task/admin`)
 
     await page.goto(`${target}${basePath}401`, { waitUntil: 'domcontentloaded' })
     await page.getByRole('heading', { name: 'Page not found' }).waitFor()
@@ -1376,10 +1389,7 @@ test('runtime language updates the document and Element Plus services', async() 
       .filter({ hasText: 'OK' })
       .click()
 
-    await page.locator('.lang-select-container').click()
-    await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
-      .filter({ hasText: '中文' })
-      .click()
+    await page.getByRole('button', { name: '中文', exact: true }).click()
     await page.locator('html[lang="zh-CN"]').waitFor()
 
     failNextNodesRequest = true
@@ -1390,10 +1400,7 @@ test('runtime language updates the document and Element Plus services', async() 
       .filter({ hasText: '确定' })
       .click()
 
-    await page.locator('.lang-select-container').click()
-    await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
-      .filter({ hasText: 'English' })
-      .click()
+    await page.getByRole('button', { name: 'English', exact: true }).click()
     await page.locator('html[lang="en"]').waitFor()
   } finally {
     await page.close()
