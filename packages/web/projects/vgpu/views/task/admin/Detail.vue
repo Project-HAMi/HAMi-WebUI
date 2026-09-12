@@ -94,23 +94,32 @@
           <div class="basic-info-summary">
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.podName') }}</span>
-              <span class="summary-item-value">
-                <EllipsisText :text="detail.appName || '--'" mode="middle" tooltip="always" />
-              </span>
+              <span class="summary-item-value summary-identity-value">{{ detail.appName || '--' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
-              <span class="summary-item-value">
-                <EllipsisText :text="detail.name || '--'" mode="middle" tooltip="always" />
-              </span>
+              <span class="summary-item-value summary-identity-value">{{ detail.name || '--' }}</span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.image') }}</span>
-              <span class="summary-item-value">
-                <TTooltip v-if="basicImageTooltip" :content="basicImageTooltip">
-                  <span>{{ basicImage }}</span>
+              <span class="summary-item-value summary-item-image">
+                <TTooltip
+                  v-if="basicImageTooltip"
+                  :content="basicImageTooltip"
+                  :visible="imageTooltipHovered || imageTooltipFocused"
+                  :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
+                >
+                  <span
+                    class="image-reference"
+                    tabindex="0"
+                    @mouseenter="imageTooltipHovered = true"
+                    @mouseleave="imageTooltipHovered = false"
+                    @focus="imageTooltipFocused = true"
+                    @blur="imageTooltipFocused = false"
+                    @keydown.esc="dismissImageTooltip"
+                  >{{ basicImage }}</span>
                 </TTooltip>
-                <span v-else>{{ basicImage }}</span>
+                <EllipsisText v-else :text="basicImage" mode="end" tooltip="overflow" />
               </span>
             </div>
             <div class="summary-item">
@@ -127,7 +136,7 @@
     <div class="row">
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="vgpu-card" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.gpuCards }}</div>
             <div class="row-card-sub-title">{{ $t('task.gpuCardCount') }}</div>
@@ -136,7 +145,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="node-cpu-total" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="vgpu-core" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.computeLimit }}</div>
             <div class="row-card-sub-title">{{ $t('task.computePowerLimit') }}</div>
@@ -145,7 +154,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="vgpu-mem" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.singleCardMemory }}</div>
             <div class="row-card-sub-title">{{ $t('task.singleCardMemory') }}</div>
@@ -154,7 +163,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="cpu-limit" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="node-cpu-total" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.cpuLimit }}</div>
             <div class="row-card-sub-title">{{ $t('task.cpuLimit') }}</div>
@@ -163,7 +172,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="card-id" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.memoryLimit }}</div>
             <div class="row-card-sub-title">{{ $t('task.memoryLimit') }}</div>
@@ -248,6 +257,10 @@ import {
   readReadyMetricField,
 } from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import {
+  GPU_UUID_TOOLTIP_STYLE,
+  LONG_TEXT_TOOLTIP_STYLE,
+} from '~/vgpu/components/tooltip-policy.mjs';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
@@ -358,7 +371,7 @@ const relatedGpuTableColumns = computed(() => [
     width: 236,
     ellipsis: true,
     cell: (_h, { row }) => (
-      <TTooltip content={row.uuid}>
+      <TTooltip content={row.uuid} overlayInnerStyle={GPU_UUID_TOOLTIP_STYLE}>
         <div class="node-link-container" onClick={() => handleGpuJump(row.uuid)}>
           <div class="text">{row.uuid || '--'}</div>
           <svg-icon icon="jump" class="related-gpu-link-icon" />
@@ -379,13 +392,20 @@ const basicImage = computed(() => {
   const imageList = extractImageList(detail.value);
   if (!imageList.length) return '--';
   if (imageList.length === 1) return imageList[0];
-  return `${imageList[0]}...`;
+  return `${imageList[0]} +${imageList.length - 1}`;
 });
 const basicImageTooltip = computed(() => {
   const imageList = extractImageList(detail.value);
   if (imageList.length <= 1) return '';
   return imageList.join('\n');
 });
+const imageTooltipHovered = ref(false);
+const imageTooltipFocused = ref(false);
+const dismissImageTooltip = () => {
+  imageTooltipHovered.value = false;
+  imageTooltipFocused.value = false;
+};
+watch(basicImageTooltip, dismissImageTooltip);
 const basicCreateTime = computed(() => (
   detail.value?.createTime ? timeParse(detail.value.createTime) : '--'
 ));
@@ -458,8 +478,8 @@ const resourceOverviewTexts = computed(() => {
   const singleCardMemory = toNumOrUndefined(get('singleCardMemory'));
   return {
     gpuCards: gpuCards === undefined ? '--' : `${Math.round(gpuCards)}`,
-    computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 1)}`,
-    singleCardMemory: singleCardMemory === undefined ? '--' : `${singleCardMemory.toFixed(1)} GiB`,
+    computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
+    singleCardMemory: singleCardMemory === undefined ? '--' : `${roundToDecimal(singleCardMemory, 2)} GiB`,
     cpuLimit: formatLimit('cpuLimit', (value) => `${roundToDecimal(value, 3)} Core`),
     memoryLimit: formatLimit('memoryLimit', (value) => `${value.toFixed(1)} GiB`),
   };
@@ -737,10 +757,26 @@ watch(
   }
 
   .summary-item-value {
+    flex: 1;
     color: #324558;
     font-size: 14px;
     line-height: 24px;
     min-width: 0;
+    overflow: hidden;
+  }
+
+  .summary-identity-value {
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+
+  .image-reference {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
   }
 
   &.is-en {
@@ -771,6 +807,7 @@ watch(
 
 .workload-overview {
   margin-top: 16px;
+  margin-bottom: 24px;
   padding: 20px;
 
   .row {

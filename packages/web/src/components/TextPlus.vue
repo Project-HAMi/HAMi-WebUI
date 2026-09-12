@@ -3,7 +3,8 @@
     <span :class="{ link: !!to }" @click="handleClick">
       <EllipsisText
         :text="text"
-        mode="middle"
+        :mode="mode"
+        :tooltip-class="tooltipClass"
         tooltip="always"
       />
     </span>
@@ -19,6 +20,14 @@ const router = useRouter();
 const props = defineProps({
   text: String,
   to: null,
+  mode: {
+    type: String,
+    default: 'middle',
+  },
+  tooltipClass: {
+    type: String,
+    default: 'vgpu-long-text-tooltip',
+  },
 });
 
 const handleClick = () => {

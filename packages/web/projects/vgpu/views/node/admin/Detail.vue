@@ -5,7 +5,15 @@
       :name="headerName"
       :status="headerStatusDisplay.text"
       :status-icon="headerStatusDisplay.icon"
-    />
+    >
+      <template #titleSuffix>
+        <metric-help
+          v-if="headerStatusDisplay.showHelp"
+          :description="headerStatusDisplay.description"
+          :help-label="$t('node.schedulingStatusHelpLabel')"
+        />
+      </template>
+    </page-header>
 
     <detail-page-state :status="detailStatus" @retry="retryDetail">
     <section class="node-overview-wrap">
@@ -58,7 +66,9 @@
               <div class="resource-card-footer">
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
-                    <div class="resource-card-footer-title">{{ $t('dashboard.allocRateLegend') }}</div>
+                    <div class="resource-card-footer-title">
+                      <span class="resource-card-footer-label">{{ $t('dashboard.allocRateLegend') }}</span>
+                    </div>
                     <div class="resource-card-footer-value">
                       <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
                       <t-progress
@@ -75,7 +85,9 @@
 
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
-                    <div class="resource-card-footer-title">{{ $t('dashboard.usageRateLegend') }}</div>
+                    <div class="resource-card-footer-title">
+                      <span class="resource-card-footer-label">{{ $t('dashboard.usageRateLegend') }}</span>
+                    </div>
                     <div class="resource-card-footer-value">
                       <span class="resource-card-footer-percent">{{ computeUsagePercentText }}</span>
                       <t-progress
@@ -97,7 +109,7 @@
             <div class="resource-card">
               <div class="resource-card-header">
                 <div class="resource-card-icon">
-                  <svg-icon icon="vgpu-mem" />
+                  <svg-icon icon="node-memory-total" />
                 </div>
                 <div class="resource-card-header-info">
                   <div class="resource-card-value resource-card-value--compute">
@@ -113,7 +125,7 @@
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
                     <div class="resource-card-footer-title">
-                      <span>{{ $t('dashboard.memAllocRate') }}</span>
+                      <span class="resource-card-footer-label">{{ $t('dashboard.allocRateLegend') }}</span>
                       <metric-help
                         :description="$t('dashboard.memAllocRateDescription')"
                         :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memAllocRate') })"
@@ -136,7 +148,7 @@
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
                     <div class="resource-card-footer-title">
-                      <span>{{ $t('dashboard.memUsageRate') }}</span>
+                      <span class="resource-card-footer-label">{{ $t('dashboard.usageRateLegend') }}</span>
                       <metric-help
                         :description="$t('dashboard.memUsageRateDescription')"
                         :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
@@ -185,8 +197,8 @@
               getRangeOptions({
                 allocation: gaugeConfig[1].data,
                 usage: gaugeConfig[3].data,
-                allocationName: t('dashboard.memAllocRate'),
-                usageName: t('dashboard.memUsageRate'),
+                allocationName: t('dashboard.allocRateLegend'),
+                usageName: t('dashboard.usageRateLegend'),
               }, t)
             "
             :autoresize="true"
@@ -226,10 +238,7 @@ import {
 } from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
-import {
-  getNodeReadinessStatus,
-  getNodeSchedulingStatus,
-} from '~/vgpu/views/node/node-status.mjs';
+import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -403,16 +412,14 @@ const headerStatusDisplay = computed(() => {
   if (detailStatus.value !== REQUEST_STATUS.READY) {
     return { icon: '', text: '' };
   }
-  const status = getNodeReadinessStatus(detail.value);
-  return { icon: status.icon, text: t(status.labelKey) };
+  const status = getNodeSchedulingEligibilityStatus(detail.value);
+  return {
+    icon: status.icon,
+    text: t(status.labelKey),
+    description: status.descriptionKey ? t(status.descriptionKey) : '',
+    showHelp: status.showHelp,
+  };
 });
-
-const renderNodeStatus = ({ icon, labelKey }) => (
-  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-    <svg-icon icon={icon} style={{ fontSize: '16px' }} />
-    <span>{t(labelKey)}</span>
-  </span>
-);
 
 const toDisplayText = (value) => (value === '' || value === undefined || value === null ? '--' : value);
 
@@ -428,11 +435,6 @@ const detailColumns = computed(() => [
     render: ({ uid }) => (
       <EllipsisText text={uid || '--'} mode="middle" tooltip="always" />
     ),
-  },
-  {
-    label: t('node.schedulingStatus'),
-    value: 'isSchedulable',
-    render: (row) => renderNodeStatus(getNodeSchedulingStatus(row)),
   },
   {
     label: t('node.detail.osVersion'),
@@ -490,7 +492,7 @@ const detailColumnGroups = computed(() => {
 .node-overview-wrap {
   display: flex;
   margin-top: 16px;
-  margin-bottom: 15px;
+  margin-bottom: 24px;
   gap: 16px;
 }
 
@@ -620,6 +622,7 @@ const detailColumnGroups = computed(() => {
 }
 
 .resource-card-icon {
+  flex: 0 0 40px;
   width: 40px;
   height: 40px;
   display: flex;
@@ -628,6 +631,7 @@ const detailColumnGroups = computed(() => {
   background: #ffffff;
   border-radius: 8px;
   box-shadow: 0 4px 10px rgba(2, 5, 8, 0.06);
+  font-size: 20px;
 }
 
 .resource-card-header-info {
@@ -656,7 +660,6 @@ const detailColumnGroups = computed(() => {
 .resource-card-footer {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 8px;
   margin-top: 15px;
   width: 100%;
@@ -664,6 +667,7 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-rate-wrap {
   width: 100%;
+  min-width: 0;
   background: #ffffff;
   border-radius: 6px;
   padding: 10px 12px;
@@ -673,7 +677,6 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-footer-item {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -681,13 +684,14 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-footer-title {
   display: inline-flex;
-  flex: 1 1 160px;
+  flex: 1 1 auto;
   align-items: center;
   gap: 4px;
   min-width: 0;
   font-size: 12px;
   color: #939ea9;
   line-height: 20px;
+  white-space: nowrap;
 }
 
 .resource-card-footer-value {
@@ -757,4 +761,5 @@ const detailColumnGroups = computed(() => {
     flex-direction: column;
   }
 }
+
 </style>

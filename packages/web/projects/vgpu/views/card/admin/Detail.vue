@@ -74,7 +74,7 @@
           <div class="resource-card">
             <div class="resource-card-header">
               <div class="resource-card-icon">
-                <svg-icon icon="vgpu-resource" />
+                <svg-icon icon="vgpu-core" />
               </div>
               <div class="resource-card-header-info">
                 <div class="resource-card-value resource-card-value--compute">
@@ -90,7 +90,9 @@
               <div class="resource-card-rate-wrap">
                 <div class="resource-card-footer-item">
                   <div class="resource-card-footer-title">
-                    {{ $t('dashboard.allocated') }} / {{ $t('dashboard.allocRateLegend') }}
+                    <span class="resource-card-footer-label">
+                      {{ $t('dashboard.allocated') }} / {{ $t('dashboard.allocRateLegend') }}
+                    </span>
                   </div>
                   <div class="resource-card-footer-value">
                     <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ computeAllocUsedText }}</span>
@@ -111,7 +113,9 @@
               <div class="resource-card-rate-wrap">
                 <div class="resource-card-footer-item">
                   <div class="resource-card-footer-title">
-                    {{ $t('dashboard.used') }} / {{ $t('dashboard.usageRateLegend') }}
+                    <span class="resource-card-footer-label">
+                      {{ $t('dashboard.used') }} / {{ $t('dashboard.usageRateLegend') }}
+                    </span>
                   </div>
                   <div class="resource-card-footer-value">
                     <span class="resource-card-footer-metric">{{ computeUsageUsedText }}</span>
@@ -135,7 +139,7 @@
           <div class="resource-card">
             <div class="resource-card-header">
               <div class="resource-card-icon">
-                <svg-icon icon="vgpu-resource" />
+                <svg-icon icon="node-memory-total" />
               </div>
               <div class="resource-card-header-info">
                 <div class="resource-card-value resource-card-value--compute">{{ memoryTotalText }}</div>
@@ -149,7 +153,9 @@
               <div class="resource-card-rate-wrap">
                 <div class="resource-card-footer-item">
                   <div class="resource-card-footer-title">
-                    <span>{{ $t('dashboard.allocated') }} / {{ $t('dashboard.memAllocRate') }}</span>
+                    <span class="resource-card-footer-label">
+                      {{ $t('dashboard.allocated') }} / {{ $t('dashboard.allocRateLegend') }}
+                    </span>
                     <metric-help
                       :description="$t('dashboard.memAllocRateDescription')"
                       :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memAllocRate') })"
@@ -174,7 +180,9 @@
               <div class="resource-card-rate-wrap">
                 <div class="resource-card-footer-item">
                   <div class="resource-card-footer-title">
-                    <span>{{ $t('dashboard.physicalUsed') }} / {{ $t('dashboard.memUsageRate') }}</span>
+                    <span class="resource-card-footer-label">
+                      {{ $t('dashboard.used') }} / {{ $t('dashboard.usageRateLegend') }}
+                    </span>
                     <metric-help
                       :description="$t('dashboard.memUsageRateDescription')"
                       :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
@@ -248,7 +256,7 @@
               {
                 ...getRangeOptions([
                   {
-                    name: t('dashboard.memAllocRate'),
+                    name: t('dashboard.allocRateLegend'),
                     data: gaugeConfig[1]?.data,
                     itemStyle: {
                       color: '#5B8FF9',
@@ -260,7 +268,7 @@
                     },
                   },
                   {
-                    name: t('dashboard.memUsageRate'),
+                    name: t('dashboard.usageRateLegend'),
                     data: gaugeConfig[3]?.data,
                     itemStyle: {
                       color: '#42C090',
@@ -845,6 +853,7 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 }
 
 .resource-card-icon {
+  flex: 0 0 40px;
   width: 40px;
   height: 40px;
   display: flex;
@@ -853,6 +862,7 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   background: #ffffff;
   border-radius: 8px;
   box-shadow: 0 4px 10px rgba(2, 5, 8, 0.06);
+  font-size: 20px;
 }
 
 .resource-card-header-info {
@@ -1013,6 +1023,7 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 }
 
 .resource-overview-block {
+  margin-bottom: 24px;
   box-shadow: none;
 }
 </style>

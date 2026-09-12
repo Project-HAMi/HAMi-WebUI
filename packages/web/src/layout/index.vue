@@ -4,21 +4,12 @@
       <el-aside :width="sidebarWidth + 'px'" class="page-aside">
         <Sidebar
           :collapsed="isSidebarCollapsed"
-          :menu-width="tMenuWidth"
+          @toggle="toggleSidebar"
         />
-        <div class="side-nav-compact-button" @click="toggleSidebar">
-          <div
-            class="side-nav-compact-icon"
-            :class="{
-              'side-nav-compact-active': isSidebarCollapsed,
-              'side-nav-compact-inactive': !isSidebarCollapsed,
-            }"
-          />
-        </div>
       </el-aside>
     </template>
     <el-main class="page-main">
-      <AppMain />
+      <AppMain :show-language-switch="isNoSidebar" />
     </el-main>
   </el-container>
 </template>
@@ -38,8 +29,6 @@ const isSidebarCollapsed = ref(false);
 const sidebarWidth = computed(() =>
   isSidebarCollapsed.value ? collapsedWidth : expandedWidth,
 );
-
-const tMenuWidth = computed(() => [`${expandedWidth}px`, `${collapsedWidth}px`]);
 
 const toggleSidebar = () => {
   isSidebarCollapsed.value = !isSidebarCollapsed.value;
@@ -71,8 +60,8 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
   padding: 0;
   background-color: transparent;
   border: none;
-  overflow: visible;
-  transition: width 0.3s ease;
+  overflow: hidden;
+  transition: width 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .page-main {
@@ -85,55 +74,9 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
   min-width: 0;
 }
 
-.side-nav-compact-button {
-  position: absolute;
-  top: 50%;
-  left: calc(100% - 20px);
-  transform: translateY(-50%);
-  z-index: 10000;
-
-  &:hover {
-    left: calc(100% - 12px);
-  }
-
-  .side-nav-compact-icon {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    z-index: 100;
-    height: 24px;
-    width: 24px;
-    border-radius: 99px;
-    transition: transform 0.5s;
-
-    &::after {
-      content: '';
-      position: absolute;
-      width: 2px;
-      height: 16px;
-      background: #d5dee7;
-    }
-
-    &:hover {
-      justify-content: center;
-      border-radius: 50%;
-      cursor: pointer;
-      background-size: 12px 12px;
-
-      &::after {
-        display: none;
-      }
-
-      &.side-nav-compact-active {
-        background: url('@/assets/assets-compact-inactive.svg') no-repeat center center;
-        background-color: #fff;
-      }
-
-      &.side-nav-compact-inactive {
-        background: url('@/assets/assets-compact-active.svg') no-repeat center center;
-        background-color: #fff;
-      }
-    }
+@media (prefers-reduced-motion: reduce) {
+  .page-aside {
+    transition: none;
   }
 }
 </style>

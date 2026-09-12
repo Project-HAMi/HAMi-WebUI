@@ -9,7 +9,7 @@
           <slot name="icon">
             <svg-icon v-if="statusIcon" :icon="statusIcon" style="font-size: 16px" />
           </slot>
-          <span>{{ status }}</span>
+          <span class="layout-header-title-run-state-label">{{ status }}</span>
           <slot name="titleSuffix"></slot>
         </div>
       </div>
