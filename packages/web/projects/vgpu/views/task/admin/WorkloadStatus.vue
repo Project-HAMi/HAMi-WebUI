@@ -1,7 +1,9 @@
 <template>
   <span class="workload-status" :data-workload-status="status.code">
+    <svg-icon :icon="statusIcon" class="workload-status__icon" aria-hidden="true" />
     <span class="workload-status__label">{{ status.label }}</span>
     <MetricHelp
+      v-if="status.hasDetails"
       :description="status.description"
       :help-label="$t('task.statusHelpLabel')"
       multiline
@@ -18,29 +20,26 @@ import { getWorkloadStatus } from './workload-status.mjs';
 const props = defineProps({ workload: { type: Object, default: () => ({}) } });
 const { t } = useI18n();
 const status = computed(() => getWorkloadStatus(props.workload, t));
+const statusIcons = {
+  success: 'status-schedulable',
+  closed: 'status-schedulable',
+  failed: 'status-unschedulable',
+  error: 'status-unschedulable',
+};
+const statusIcon = computed(() => statusIcons[status.value.code] || 'status-unmanaged');
 </script>
 
 <style scoped lang="scss">
 .workload-status {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   line-height: 24px;
   white-space: nowrap;
-  color: #526477;
 
-  &[data-workload-status='success'] {
-    color: #15803d;
-  }
-
-  &[data-workload-status='waiting'],
-  &[data-workload-status='not_ready'] {
-    color: #a16207;
-  }
-
-  &[data-workload-status='error'],
-  &[data-workload-status='failed'] {
-    color: #b91c1c;
+  &__icon {
+    flex: none;
+    font-size: 16px;
   }
 }
 </style>

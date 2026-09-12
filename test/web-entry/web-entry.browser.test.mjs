@@ -1852,7 +1852,8 @@ test('workload status labels stay concise while accessible help explains contain
   const statuses = ['waiting', 'success', 'not_ready', 'error', 'closed', 'failed', 'terminating', 'unknown']
   const details = {
     waiting: { containerState: 'Waiting', reason: 'ContainerCreating', ready: false, restartCount: 0, podPhase: 'Pending' },
-    success: { containerState: 'Running', ready: true, restartCount: 3, podReady: 'False', lastTerminationReason: 'OOMKilled', lastExitCode: 137 },
+    success: { containerState: 'Running', ready: true, restartCount: 0, podReady: 'True', podPhase: 'Running' },
+    recovered: { containerState: 'Running', ready: true, restartCount: 3, podReady: 'False', lastTerminationReason: 'OOMKilled', lastExitCode: 137 },
     not_ready: { containerState: 'Running', ready: false, restartCount: 0, podPhase: 'Running', podReady: 'False', podReadyReason: 'ContainersNotReady', podReadyMessage: 'worker is not ready' },
     error: { containerState: 'Waiting', reason: 'ImagePullBackOff', message: 'registry returned <unauthorized>', ready: false, restartCount: 0 },
     closed: { containerState: 'Terminated', reason: 'Completed', exitCode: 0, restartCount: 0, podPhase: 'Succeeded' },
@@ -1860,14 +1861,14 @@ test('workload status labels stay concise while accessible help explains contain
     terminating: { containerState: 'Running', ready: true, restartCount: 0, podPhase: 'Running' },
     unknown: { podPhase: 'Unknown', podReady: 'Unknown' },
   }
-  const workloads = [...statuses, 'legacy'].map((code) => ({
+  const workloads = [...statuses, 'legacy', 'recovered'].map((code) => ({
     name: `worker-${code}`,
     appName: `pod-${code}`,
     podUid: `uid-${code}`,
     namespace: 'default',
     nodeName: 'node-1',
     nodeUid: 'node-1',
-    status: code === 'legacy' ? 'failed' : code,
+    status: code === 'legacy' ? 'failed' : code === 'recovered' ? 'success' : code,
     ...(code === 'legacy' ? {} : { statusDetail: details[code] }),
     deviceIds: ['gpu-1'],
     allocatedDevices: 1,
@@ -1896,16 +1897,34 @@ test('workload status labels stay concise while accessible help explains contain
     await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
     assert.deepEqual(
       (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
-      ['Waiting', 'Running', 'Not Ready', 'Error', 'Completed', 'Failed', 'Terminating', 'Unknown', 'Failed']
+      ['Waiting', 'Running', 'Not Ready', 'Error', 'Completed', 'Failed', 'Terminating', 'Unknown', 'Failed', 'Running']
     )
-    assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), workloads.length)
+    assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), workloads.length - 2)
+    const assertRunningAppearance = async(status, expectedTextColor) => {
+      const appearance = await status.evaluate((element) => {
+        const icon = element.querySelector('.workload-status__icon')
+        const use = icon?.querySelector('use')
+        const box = icon?.getBoundingClientRect()
+        return {
+          icon: use?.getAttribute('href') || use?.getAttribute('xlink:href'),
+          size: [box?.width, box?.height],
+          textColor: getComputedStyle(element.querySelector('.workload-status__label')).color,
+        }
+      })
+      assert.deepEqual(appearance, {
+        icon: '#icon-status-schedulable', size: [16, 16], textColor: expectedTextColor,
+      })
+    }
+    const healthyStatus = page.locator('.workload-table [data-workload-status="success"]').first()
+    await assertRunningAppearance(healthyStatus, 'rgb(0, 0, 0)')
+    assert.equal(await healthyStatus.locator('.metric-help').count(), 0)
+    assert.equal(await page.locator('.workload-table [data-workload-status="closed"] .metric-help').count(), 0)
 
     const help = page.locator('.workload-table [data-workload-status="not_ready"] .metric-help')
-    const tooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Container readiness: Not ready' }).last()
+    const tooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'running, but Kubernetes has not marked it ready' }).last()
     await help.hover()
     await tooltip.waitFor({ state: 'visible' })
-    assert.match(await tooltip.textContent(), /Restart count: 0/)
-    assert.match(await tooltip.textContent(), /Pod readiness: Not ready/)
+    assert.doesNotMatch(await tooltip.textContent(), /Restart count: 0|Container readiness:|Pod readiness:/)
     assert.match(await tooltip.textContent(), /worker is not ready/)
     assert.equal(await tooltip.evaluate((element) => getComputedStyle(element).whiteSpace), 'pre-line')
     assert.ok((await tooltip.boundingBox()).width <= 320)
@@ -1933,6 +1952,13 @@ test('workload status labels stay concise while accessible help explains contain
     const headerStatus = page.locator('.layout-header-title-run-state .workload-status')
     await headerStatus.waitFor()
     assert.equal((await headerStatus.locator('.workload-status__label').textContent()).trim(), 'Running')
+    await assertRunningAppearance(headerStatus, 'rgb(50, 69, 88)')
+    assert.equal(await headerStatus.locator('.metric-help').count(), 0)
+
+    await page.goto(
+      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-recovered&podUid=uid-recovered`,
+      { waitUntil: 'domcontentloaded' }
+    )
     await headerStatus.getByRole('button', { name: 'View workload status details' }).focus()
     const recoveredTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Last termination reason: OOMKilled' }).last()
     await recoveredTooltip.waitFor({ state: 'visible' })
