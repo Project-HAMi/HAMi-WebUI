@@ -605,6 +605,8 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 		query = fmt.Sprintf("avg(npu_chip_info_hbm_used_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("avg(hcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
@@ -628,6 +630,8 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(npu_chip_info_hbm_total_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("avg(hcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
@@ -642,7 +646,7 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 
 func deviceMemoryToMiB(provider string, value float32) float32 {
 	switch provider {
-	case biz.CambriconGPUDevice, biz.HygonGPUDevice:
+	case biz.CambriconGPUDevice, biz.HygonGPUDevice, biz.HygonHCUDevice:
 		return value / bytesPerMiB
 	case biz.MetaxGPUDevice:
 		return value / bytesPerKiB
@@ -662,6 +666,8 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(npu_chip_info_utilization{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("avg(hcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
 	default:
@@ -681,6 +687,10 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_percent{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
+	case biz.HygonHCUDevice:
+		// hcu-exporter reads an instantaneous busy percent; average the last
+		// minute like NVIDIA container utilization.
+		query = hcuTaskQuery("utilizationrate", "1m", deviceUUID, hostname, namespace, pod, container)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})", deviceUUID, namespace, pod, container)
 	case metax.MetaxSGPUDevice:
@@ -697,8 +707,34 @@ func nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container string) strin
 	return fmt.Sprintf("avg(avg_over_time(%s[1m]))", selector)
 }
 
+func hcuTaskQuery(metric, window, deviceUUID, node, namespace, pod, container string) string {
+	workload := fmt.Sprintf("device_id=%q, node=%q, hcu_pod_namespace=%q, hcu_pod_name=%q", deviceUUID, node, namespace, pod)
+	// hcu-exporter prefixes its namespace and Pod labels, but its container
+	// label is bare and collides with the target label Prometheus Operator
+	// attaches. Without honor_labels the workload value is kept as
+	// exported_container, so accept either spelling.
+	selectors := []string{
+		fmt.Sprintf("%s, container=%q", workload, container),
+		fmt.Sprintf("%s, exported_container=%q", workload, container),
+	}
+	// Dynamic vHCU allocations use vhcu_*. Whole-card allocations have explicit
+	// workload labels on hcu_* instead. Never use an unlabelled physical-card
+	// sample as a substitute for a missing container sample.
+	parts := make([]string, 0, 2*len(selectors))
+	for _, family := range []string{"vhcu_", "hcu_"} {
+		for _, selector := range selectors {
+			series := fmt.Sprintf("%s%s{%s}", family, metric, selector)
+			if window != "" {
+				series = fmt.Sprintf("avg_over_time(%s[%s])", series, window)
+			}
+			parts = append(parts, fmt.Sprintf("avg(%s)", series))
+		}
+	}
+	return strings.Join(parts, " or ")
+}
+
 // containerCoreMetrics preserves each provider's existing task-compute conversion.
-// For NVIDIA, used estimates active allocated compute in vCore percentage points
+// For NVIDIA and HCU, used estimates active allocated compute in vCore percentage points
 // and excludes elastic borrowing; util is allocated-compute activity (0-100), not
 // physical-card utilization.
 func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int, allocatedCore int32) (float64, float64, error) {
@@ -714,7 +750,7 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 	used := float64(0)
 	util := float64(0)
 	switch provider {
-	case biz.NvidiaGPUDevice:
+	case biz.NvidiaGPUDevice, biz.HygonHCUDevice:
 		rawActivity := float64(taskCoreUsed)
 		if math.IsNaN(rawActivity) || math.IsInf(rawActivity, 0) {
 			return 0, 0, errNoMetricData
@@ -732,8 +768,8 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 	}
 
 	// Keep the legacy fallback for providers whose task-level metrics still need it.
-	// It must not be used for NVIDIA: physical-card activity cannot be attributed to
-	// one container when several workloads share the same GPU.
+	// It must not be used for NVIDIA or HCU: physical-card activity cannot be
+	// attributed to one container when several workloads share the same card.
 	cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, deviceUUID)
 	if err == nil && used != 0 && cardCoreUtil > 95 {
 		used = float64(cardCoreUtil) / 100 * float64(allocatedCore)
@@ -755,6 +791,8 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_usage_memory_size{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
+	case biz.HygonHCUDevice:
+		query = hcuTaskQuery("usedmemory_bytes", "", deviceUUID, hostname, namespace, pod, container)
 	case metax.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"})", deviceUUID, namespace, pod, container)
 	case metax.MetaxSGPUDevice:
@@ -777,6 +815,8 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(npu_chip_info_temperature{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_temp{device_id=\"%s\"})", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("avg(hcu_temp{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_chip_hotspot_temp{uuid=\"%s\"})", deviceUUID)
 	default:
@@ -794,6 +834,8 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 		query = fmt.Sprintf("avg(mlu_memory_temperature{uuid=\"%s\",memory_die=\"\"})", deviceUUID)
 	case biz.AscendGPUDevice:
 		query = fmt.Sprintf("avg(npu_chip_info_hbm_temperature{vdie_id=\"%s\"})", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("avg(hcu_temp_mem{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_chip_hbm_temp{uuid=\"%s\"})", deviceUUID)
 	default:
@@ -813,6 +855,8 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 		query = fmt.Sprintf("avg(npu_chip_info_power{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_power_usage{device_id=\"%s\"})", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("avg(hcu_power_usage{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_board_power{uuid=\"%s\"})", deviceUUID) // mW
 	default:
@@ -873,6 +917,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		query = fmt.Sprintf("mlu_power_usage{uuid=\"%s\",vf=\"\"}", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("dcu_power_usage{device_id=\"%s\"}", deviceUUID)
+	case biz.HygonHCUDevice:
+		query = fmt.Sprintf("hcu_power_usage{device_id=\"%s\"}", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("mx_board_power{uuid=\"%s\"}", deviceUUID)
 	default:
@@ -897,6 +943,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 			info.DeviceNo = "ascend-" + metric["id"]
 		case biz.HygonGPUDevice:
 			info.DeviceNo = "dcu-" + metric["minor_number"]
+		case biz.HygonHCUDevice:
+			info.DeviceNo = "hcu-" + metric["minor_number"]
 		case biz.MetaxGPUDevice:
 			info.DriverVersion = metric["driver_version"]
 			info.DeviceNo = metric["deviceId"]

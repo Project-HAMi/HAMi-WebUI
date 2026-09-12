@@ -44,6 +44,7 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger)
 			mlu.NewCambricon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.CambriconGPUDevice]),
 			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice]),
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
+			hygon.NewHCU(log.NewHelper(logger), nodeSelectors[biz.HygonHCUDevice]),
 			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
 		},
 	}

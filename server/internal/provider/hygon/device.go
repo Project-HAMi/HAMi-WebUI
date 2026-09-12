@@ -7,6 +7,8 @@ const (
 	RegisterAnnos      = "hami.io/node-dcu-register"
 	HygonDCUDevice     = "DCU"
 	HygonDCUCommonWord = "DCU"
+	HygonHCUDevice     = "HCU"
+	HCURegisterAnnos   = "hami.io/node-hcu-register"
 	DCUInUse           = "hygon.com/use-dcutype"
 	DCUNoUse           = "hygon.com/nouse-dcutype"
 	// DCUUseUUID is user can use specify DCU device for set DCU UUID.
@@ -24,4 +26,6 @@ var (
 func init() {
 	util.InRequestDevices[HygonDCUDevice] = "hami.io/dcu-devices-to-allocate"
 	util.SupportDevices[HygonDCUDevice] = "hami.io/dcu-devices-allocated"
+	util.InRequestDevices[HygonHCUDevice] = "hami.io/hcu-devices-to-allocate"
+	util.SupportDevices[HygonHCUDevice] = "hami.io/hcu-devices-allocated"
 }

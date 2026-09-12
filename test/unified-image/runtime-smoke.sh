@@ -60,6 +60,7 @@ node_selectors:
   NVIDIA: hami-webui-smoke-nvidia=true
   Ascend: hami-webui-smoke-ascend=true
   DCU: hami-webui-smoke-dcu=true
+  HCU: hami-webui-smoke-hcu=true
   MLU: hami-webui-smoke-mlu=true
   Metax: hami-webui-smoke-metax=true
 EOF
