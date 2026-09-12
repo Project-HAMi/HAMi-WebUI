@@ -2,7 +2,6 @@
   <block-box :title="title">
     <template #extra>
       <t-radio-group
-        v-if="radioOptions.length > 1"
         v-model="tabActive"
         theme="button"
         variant="outline"
@@ -87,7 +86,7 @@ import {
   startRequest,
 } from '@/hooks/request-state.mjs';
 import {
-  buildRankingItems,
+  formatRankingValue,
   readRankingRows,
 } from './tab-top-state.mjs';
 
@@ -96,7 +95,6 @@ const props = defineProps({
   itemKey: String,
   config: Array,
   onClick: Function,
-  emptyText: String,
 });
 const { t } = useI18n();
 const createStatefulConfigs = (configs = []) =>
@@ -124,7 +122,31 @@ const displayItems = computed(() => {
   const config = currentConfig.value.find(
     (item) => item.key === tabActive.value,
   );
-  return buildRankingItems(config?.data ?? [], config?.unit ?? '%');
+  const data = cloneDeep(config?.data) || [];
+  const unit = config?.unit || '%';
+
+  if (!data.length) return [];
+
+  const values = data.map((item) => Number(item.value) || 0);
+  const isPercent = !config?.unit || config.unit.trim() === '%';
+  const maxValue = isPercent ? 100 : Math.max(...values, 0);
+
+  const getPercentage = (val) => {
+    const num = Number(val) || 0;
+    if (!maxValue) return 0;
+    const percent = isPercent ? num : (num / maxValue) * 100;
+    return Math.max(0, Math.min(100, percent));
+  };
+
+  return data
+    .slice()
+    .sort((a, b) => Number(b.value) - Number(a.value))
+    .map((item, index) => ({
+      ...item,
+      index: index + 1,
+      percentage: getPercentage(item.value),
+      valueDisplay: formatRankingValue(item.value, unit),
+    }));
 });
 
 const activeConfig = computed(() =>
@@ -140,7 +162,7 @@ const activeStateText = computed(() => {
   if (activeStatus.value === REQUEST_STATUS.INVALID) {
     return t('dashboard.metricInvalid');
   }
-  return props.emptyText || t('common.noData');
+  return t('common.noData');
 });
 
 const handleItemClick = (item) => {
@@ -200,7 +222,6 @@ watch(
 
 <style lang="scss" scoped>
 :deep(.home-block-header) {
-  min-height: 42px;
   padding-bottom: 10px;
 }
 

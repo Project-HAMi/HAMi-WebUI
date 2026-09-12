@@ -362,7 +362,8 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .range-chart-skeleton {
+  .range-chart-skeleton,
+  .workload-table-skeleton {
     min-height: 250px;
   }
 
@@ -431,5 +432,83 @@
     height: 32px;
     font-size: 12px;
     box-sizing: border-box;
+  }
+
+  .top5-item-list-table .t-table {
+    border: none;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  .top5-item-list-table .t-table__header th {
+    padding: 10px 16px;
+    background: #f5f7fa;
+    color: #697886;
+    border-bottom: none;
+  }
+
+  .top5-item-list-table-row td {
+    padding: 12px 16px;
+    border-bottom: none;
+    background: transparent;
+  }
+
+  .top5-item-list-table .t-table__body tr:nth-child(even) td {
+    background: #f5f7fa;
+  }
+
+  .top5-item-list-table .t-table__body tr:nth-child(odd) td {
+    background: #fff;
+  }
+
+  .top5-item-list-table .t-table__header th:first-child,
+  .top5-item-list-table .t-table__body td:first-child {
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
+  }
+
+  .top5-item-list-table .t-table__header th:last-child,
+  .top5-item-list-table .t-table__body td:last-child {
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+  }
+
+  .top5-item-list-table-row .row-tag.t-tag {
+    font-size: 12px;
+    justify-content: center;
+    border-radius: 4px;
+    background: #e4ebf1;
+    color: #324558;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    padding: 0;
+  }
+
+  .node-workload-name-link {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    text-align: left;
+    color: #324558;
+    cursor: pointer;
+
+    &:focus-visible {
+      border-radius: 4px;
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: 2px;
+    }
+
+    &:hover {
+      color: #2563eb;
+      text-decoration: underline;
+      text-decoration-skip-ink: none;
+      text-underline-offset: 4px;
+    }
   }
 }

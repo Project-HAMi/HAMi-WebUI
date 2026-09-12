@@ -298,11 +298,32 @@
           />
         </div>
         <div class="home-bottom-col">
-          <TabTop
-            v-bind="nodeWorkloadTop5"
-            :empty-text="t('dashboard.metricNoData')"
-            :onClick="(params) => handleChartClick(params, router)"
-          />
+          <Block :title="t('dashboard.nodeWorkloadTop5')">
+            <div
+              v-if="nodeWorkloadTop5State.status === 'loading'"
+              class="workload-table-skeleton"
+              aria-busy="true"
+            >
+              <t-skeleton
+                animation="gradient"
+                :row-col="workloadTableSkeletonRows"
+                aria-hidden="true"
+              />
+              <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
+            </div>
+            <t-table
+              v-else-if="nodeWorkloadTop5State.status === 'ready'"
+              :columns="nodeWorkloadColumns"
+              :data="nodeWorkloadTop5TableData"
+              row-key="name"
+              row-class-name="top5-item-list-table-row"
+              class="top5-item-list-table"
+              :bordered="false"
+            />
+            <div v-else class="overview-state overview-state--chart">
+              {{ getStateText(nodeWorkloadTop5State.status) }}
+            </div>
+          </Block>
         </div>
         <div class="home-bottom-col">
           <Block :title="t('dashboard.nodeWorkloadDistribution')" class="workload-distribution-block">
@@ -351,7 +372,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted } from 'vue';
+import { ref, computed, reactive, onMounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
 import VChart from 'vue-echarts';
 import {
@@ -403,6 +424,10 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
+const workloadTableSkeletonRows = Array.from({ length: 6 }, () => ({
+  width: '100%',
+  height: '32px',
+}));
 
 const handlePieClick = (params) => {
   router.push({
@@ -413,7 +438,50 @@ const handlePieClick = (params) => {
 
 const chartWidth = ref(200);
 
+const nodeWorkloadTop5State = reactive(createRequestState([]));
 const nodeWorkloadDistributionState = reactive(createRequestState([]));
+const nodeWorkloadColumns = computed(() => [
+  {
+    colKey: 'index',
+    title: '',
+    width: 56,
+    cell: (_h, { row }) => {
+      const Tag = resolveComponent('t-tag');
+      return h(Tag, { class: 'row-tag' }, () => row.index);
+    },
+  },
+  {
+    colKey: 'name',
+    title: t('dashboard.node'),
+    ellipsis: {
+      props: { theme: 'default' },
+      content: (_h, cellParams) => cellParams.row.name,
+    },
+    cell: (_h, { row }) =>
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'node-workload-name-link',
+          onClick: (e) => {
+            e.stopPropagation();
+            handleChartClick({ data: row }, router);
+          },
+        },
+        row.name,
+      ),
+  },
+  {
+    colKey: 'value',
+    title: t('dashboard.workloadCount'),
+  },
+]);
+const nodeWorkloadTop5TableData = computed(() =>
+  nodeWorkloadTop5State.data.map((item, idx) => ({
+    ...item,
+    index: idx + 1,
+  })),
+);
 
 const nodeWorkloadDistributionOptions = computed(() => {
   return createWorkloadDistributionOptions({
@@ -422,7 +490,8 @@ const nodeWorkloadDistributionOptions = computed(() => {
   });
 });
 
-// The distribution keeps its page-specific request state and data transform.
+// These page-specific vectors share request-state mechanics without introducing
+// a universal query component for two one-off presentations.
 const fetchVectorRows = async (state, query, transform) => {
   const hasResolved = state.hasResolved;
   const requestId = startRequest(state, { hasResolved });
@@ -452,6 +521,22 @@ const fetchVectorRows = async (state, query, transform) => {
     rejectRequest(state, error, { hasResolved, requestId });
   }
 };
+
+const fetchNodeWorkloadTop5 = () =>
+  fetchVectorRows(
+    nodeWorkloadTop5State,
+    'topk(5, count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node))',
+    (item) => ({
+      name: item?.metric?.node || '-',
+      value: Number(item?.value),
+    }),
+  ).then(() => {
+    if (nodeWorkloadTop5State.status === REQUEST_STATUS.READY) {
+      nodeWorkloadTop5State.data = nodeWorkloadTop5State.data
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+    }
+  });
 
 const fetchNodeWorkloadDistribution = () =>
   fetchVectorRows(
@@ -610,20 +695,6 @@ const nodes = computed(() => {
 
 const nodeTopQueries = createNodeTopQueries();
 
-const nodeWorkloadTop5 = computed(() => ({
-  title: t('dashboard.nodeWorkloadTop5'),
-  config: [
-    {
-      tab: t('dashboard.workloadCount'),
-      key: 'count',
-      nameKey: 'node',
-      data: [],
-      unit: '',
-      query: 'topk(5, count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node))',
-    },
-  ],
-}));
-
 const nodeComputeTop5 = computed(() => ({
   title: t('dashboard.nodeComputeTop5'),
   key: 'compute',
@@ -716,6 +787,7 @@ const getStateText = (status, metric = true) =>
   t(stateTextKey(status, { metric }));
 
 onMounted(() => {
+  fetchNodeWorkloadTop5();
   fetchNodeWorkloadDistribution();
 });
 

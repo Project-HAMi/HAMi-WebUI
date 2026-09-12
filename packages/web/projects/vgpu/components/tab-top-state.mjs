@@ -22,27 +22,6 @@ export const formatRankingValue = (value, unit = '%') => {
   return normalizedUnit ? `${display} ${normalizedUnit}` : display;
 };
 
-export const buildRankingItems = (rows = [], unit = '%') => {
-  const displayUnit = unit ?? '%';
-  const isPercent = displayUnit.trim() === '%';
-  const values = rows.map((item) => Number(item.value) || 0);
-  const maxValue = isPercent ? 100 : Math.max(...values, 0);
-
-  return rows
-    .slice()
-    .sort((a, b) => Number(b.value) - Number(a.value))
-    .map((item, index) => {
-      const value = Number(item.value) || 0;
-      const percentage = isPercent ? value : maxValue ? (value / maxValue) * 100 : 0;
-      return {
-        ...item,
-        index: index + 1,
-        percentage: Math.max(0, Math.min(100, percentage)),
-        valueDisplay: formatRankingValue(item.value, displayUnit),
-      };
-    });
-};
-
 export const readRankingRows = (response, nameKey) => {
   if (!Array.isArray(response?.data)) {
     return { data: [], status: REQUEST_STATUS.INVALID };
