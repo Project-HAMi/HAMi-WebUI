@@ -95,9 +95,9 @@ test('card detail footers preserve labels and values at narrow widths', () => {
   );
 });
 
-test('memory trends use explicit labels while compute trends keep generic labels', () => {
-  assert.match(nodeDetail, /allocationName: t\('dashboard\.memAllocRate'\)/);
-  assert.match(nodeDetail, /usageName: t\('dashboard\.memUsageRate'\)/);
+test('memory and compute trend legends use the same compact labels', () => {
+  assert.match(nodeDetail, /allocationName: t\('dashboard\.allocRateLegend'\)/);
+  assert.match(nodeDetail, /usageName: t\('dashboard\.usageRateLegend'\)/);
   assert.match(
     nodeOptions,
     /name: allocationName \|\| t\('dashboard\.allocRateLegend'\)/,
@@ -119,6 +119,7 @@ test('memory trends use explicit labels while compute trends keep generic labels
   assert.match(computeTrend, /dashboard\.allocRateLegend/);
   assert.match(computeTrend, /dashboard\.usageRateLegend/);
   assert.doesNotMatch(computeTrend, /dashboard\.mem(?:Alloc|Usage)Rate/);
-  assert.match(memoryTrend, /dashboard\.memAllocRate/);
-  assert.match(memoryTrend, /dashboard\.memUsageRate/);
+  assert.match(memoryTrend, /dashboard\.allocRateLegend/);
+  assert.match(memoryTrend, /dashboard\.usageRateLegend/);
+  assert.doesNotMatch(memoryTrend, /dashboard\.mem(?:Alloc|Usage)Rate/);
 });

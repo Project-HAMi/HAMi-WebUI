@@ -257,15 +257,15 @@ const baseColumns = computed(() => [
       const ids = Array.isArray(deviceIds) ? deviceIds : [];
       const gpuCount = ids.length || '--';
       const cores = allocatedCoresKnown !== false && (allocatedCores === 0 || allocatedCores)
-        ? roundToDecimal(allocatedCores / 100, 1)
+        ? roundToDecimal(allocatedCores / 100, 2)
         : '--';
       const memoryGiB = allocatedMem === 0 || allocatedMem
-        ? `${roundToDecimal(allocatedMem / 1024, 1)} GiB`
+        ? `${roundToDecimal(allocatedMem / 1024, 2)} GiB`
         : '--';
       return (
         <div class="task-gpu-cell">
           <span class="task-gpu-cell-icon" aria-hidden="true">
-            <svg-icon icon="card-id" style={{ fontSize: '14px' }} />
+            <svg-icon icon="vgpu-card" style={{ fontSize: '14px' }} />
           </span>
           <span class="task-gpu-cell-info">
             <span>{gpuCount}</span>
@@ -389,15 +389,6 @@ watch(
   :deep(.workload-table) {
     margin-top: 8px;
   }
-
-  :deep(.workload-table .t-table__body td) {
-    padding-top: 4px;
-    padding-bottom: 4px;
-  }
-
-  :deep(.workload-table .t-table__body td:first-child) {
-    line-height: 0;
-  }
 }
 
 :deep(.task-name-icon-card) {
@@ -411,7 +402,7 @@ watch(
 :deep(.workload-identity) {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   width: 100%;
   min-width: 0;
 }

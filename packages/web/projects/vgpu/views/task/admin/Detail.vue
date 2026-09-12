@@ -127,7 +127,7 @@
     <div class="row">
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="vgpu-card" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.gpuCards }}</div>
             <div class="row-card-sub-title">{{ $t('task.gpuCardCount') }}</div>
@@ -136,7 +136,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="node-cpu-total" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="vgpu-core" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.computeLimit }}</div>
             <div class="row-card-sub-title">{{ $t('task.computePowerLimit') }}</div>
@@ -145,7 +145,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="vgpu-mem" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.singleCardMemory }}</div>
             <div class="row-card-sub-title">{{ $t('task.singleCardMemory') }}</div>
@@ -154,7 +154,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="cpu-limit" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="node-cpu-total" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.cpuLimit }}</div>
             <div class="row-card-sub-title">{{ $t('task.cpuLimit') }}</div>
@@ -163,7 +163,7 @@
       </div>
       <div class="row-card">
         <div class="row-card-content">
-          <div class="row-card-content-icon"><svg-icon icon="card-id" /></div>
+          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.memoryLimit }}</div>
             <div class="row-card-sub-title">{{ $t('task.memoryLimit') }}</div>
@@ -462,8 +462,8 @@ const resourceOverviewTexts = computed(() => {
   const singleCardMemory = toNumOrUndefined(get('singleCardMemory'));
   return {
     gpuCards: gpuCards === undefined ? '--' : `${Math.round(gpuCards)}`,
-    computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 1)}`,
-    singleCardMemory: singleCardMemory === undefined ? '--' : `${singleCardMemory.toFixed(1)} GiB`,
+    computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
+    singleCardMemory: singleCardMemory === undefined ? '--' : `${roundToDecimal(singleCardMemory, 2)} GiB`,
     cpuLimit: formatLimit('cpuLimit', (value) => `${roundToDecimal(value, 3)} Core`),
     memoryLimit: formatLimit('memoryLimit', (value) => `${value.toFixed(1)} GiB`),
   };
@@ -791,6 +791,7 @@ watch(
 
 .workload-overview {
   margin-top: 16px;
+  margin-bottom: 24px;
   padding: 20px;
 
   .row {

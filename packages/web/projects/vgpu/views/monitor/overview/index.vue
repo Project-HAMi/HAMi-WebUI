@@ -618,7 +618,7 @@ const resourceOverview = computed(() => [
     count: cardData.value.length,
     status: cardListState.status.value,
     metric: false,
-    icon: 'vgpu-gpu-d',
+    icon: 'vgpu-card',
     unit: '',
     to: '/admin/vgpu/card/admin',
   },
@@ -631,7 +631,7 @@ const resourceOverview = computed(() => [
     ),
     status: clusterResourceConfig.value[0]?.status,
     metric: true,
-    icon: 'vgpu-card',
+    icon: 'node-cpu-total',
     unit: t('dashboard.cpuCoreUnit'),
   },
   {
@@ -652,7 +652,7 @@ const resourceOverview = computed(() => [
     ),
     status: _cardGaugeConfig.value[2]?.status,
     metric: true,
-    icon: 'vgpu-mem',
+    icon: 'node-memory-total',
     unit: 'GiB',
   },
   {
@@ -664,7 +664,7 @@ const resourceOverview = computed(() => [
     ),
     status: clusterResourceConfig.value[1]?.status,
     metric: true,
-    icon: 'vgpu-core',
+    icon: 'node-memory-total',
     unit: 'GiB',
   },
 ]);

@@ -109,7 +109,7 @@
             <div class="resource-card">
               <div class="resource-card-header">
                 <div class="resource-card-icon">
-                  <svg-icon icon="vgpu-mem" />
+                  <svg-icon icon="node-memory-total" />
                 </div>
                 <div class="resource-card-header-info">
                   <div class="resource-card-value resource-card-value--compute">
@@ -197,8 +197,8 @@
               getRangeOptions({
                 allocation: gaugeConfig[1].data,
                 usage: gaugeConfig[3].data,
-                allocationName: t('dashboard.memAllocRate'),
-                usageName: t('dashboard.memUsageRate'),
+                allocationName: t('dashboard.allocRateLegend'),
+                usageName: t('dashboard.usageRateLegend'),
               }, t)
             "
             :autoresize="true"
@@ -492,7 +492,7 @@ const detailColumnGroups = computed(() => {
 .node-overview-wrap {
   display: flex;
   margin-top: 16px;
-  margin-bottom: 15px;
+  margin-bottom: 24px;
   gap: 16px;
 }
 

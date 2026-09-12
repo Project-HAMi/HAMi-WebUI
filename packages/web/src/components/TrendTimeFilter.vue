@@ -109,23 +109,24 @@ watch(
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  flex-wrap: nowrap;
+  min-width: 0;
   margin-bottom: 16px;
-  overflow-x: auto;
 
   .left {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
     flex: 1;
     min-width: 0;
-    overflow-x: auto;
   }
 
   :deep(.t-radio-group) {
-    flex-shrink: 0;
+    flex: 0 1 auto;
     flex-wrap: nowrap;
+    min-width: 0;
+    overflow-x: auto;
     white-space: nowrap;
   }
 
@@ -135,6 +136,8 @@ watch(
 }
 
 .trend-time-filter-custom {
-  flex-shrink: 0;
+  flex: 0 1 420px;
+  min-width: 0;
+  max-width: 100%;
 }
 </style>

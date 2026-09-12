@@ -213,7 +213,7 @@ const baseColumns = computed(() => [
       return (
         <div class="card-id-cell">
           <span class="card-id-cell-icon vgpu-table-name-icon-card" onClick={() => router.push(to)}>
-            <svg-icon icon="card-id" style={{ fontSize: '20px' }} />
+            <svg-icon icon="vgpu-card" style={{ fontSize: '20px' }} />
           </span>
           <div class="card-id-cell-right">
             <span class="card-id-cell-name vgpu-table-name-text-wrap">
@@ -540,6 +540,7 @@ onMounted(() => {
 
 :deep(.card-id-cell-name) {
   display: flex;
+  line-height: 20px;
 }
 
 :deep(.card-id-cell-model) {
@@ -547,6 +548,6 @@ onMounted(() => {
   color: #939ea9;
   font-size: 12px;
   font-weight: 400;
-  line-height: 1.4;
+  line-height: 16px;
 }
 </style>

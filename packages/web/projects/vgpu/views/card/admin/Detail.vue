@@ -74,7 +74,7 @@
           <div class="resource-card">
             <div class="resource-card-header">
               <div class="resource-card-icon">
-                <svg-icon icon="vgpu-resource" />
+                <svg-icon icon="vgpu-core" />
               </div>
               <div class="resource-card-header-info">
                 <div class="resource-card-value resource-card-value--compute">
@@ -139,7 +139,7 @@
           <div class="resource-card">
             <div class="resource-card-header">
               <div class="resource-card-icon">
-                <svg-icon icon="vgpu-resource" />
+                <svg-icon icon="node-memory-total" />
               </div>
               <div class="resource-card-header-info">
                 <div class="resource-card-value resource-card-value--compute">{{ memoryTotalText }}</div>
@@ -256,7 +256,7 @@
               {
                 ...getRangeOptions([
                   {
-                    name: t('dashboard.memAllocRate'),
+                    name: t('dashboard.allocRateLegend'),
                     data: gaugeConfig[1]?.data,
                     itemStyle: {
                       color: '#5B8FF9',
@@ -268,7 +268,7 @@
                     },
                   },
                   {
-                    name: t('dashboard.memUsageRate'),
+                    name: t('dashboard.usageRateLegend'),
                     data: gaugeConfig[3]?.data,
                     itemStyle: {
                       color: '#42C090',
@@ -1023,6 +1023,7 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 }
 
 .resource-overview-block {
+  margin-bottom: 24px;
   box-shadow: none;
 }
 </style>
