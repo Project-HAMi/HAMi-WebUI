@@ -381,7 +381,7 @@ const extractLetters = (value) => {
 const gpuTypeIcon = computed(() => {
   const vendor = extractLetters(detail.value?.type)?.[0]?.toUpperCase();
   if (!vendor) return '';
-  return CARD_TYPE_ICON_MAP[vendor] || 'GPU';
+  return CARD_TYPE_ICON_MAP[vendor] || 'vgpu-card';
 });
 const getCardStatusDisplay = ({ health, isExternal }) => {
   if (isExternal || health === undefined || health === null) {
