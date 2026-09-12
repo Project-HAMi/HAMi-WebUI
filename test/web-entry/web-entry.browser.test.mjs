@@ -1903,9 +1903,10 @@ test('workload status labels stay concise while accessible help explains contain
     await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
     assert.deepEqual(
       (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
-      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Unknown', 'Abnormal', 'Abnormal', 'Running']
+      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Unknown', 'Abnormal', 'Abnormal']
     )
-    assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), workloads.length - 2)
+    // The recovered workload is on page two with the default ten-row page size.
+    assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), 8)
     const assertRunningAppearance = async(status, expectedTextColor) => {
       const appearance = await status.evaluate((element) => {
         const icon = element.querySelector('.workload-status__icon')
@@ -1967,7 +1968,7 @@ test('workload status labels stay concise while accessible help explains contain
     const statusSelect = page.getByPlaceholder('All Status')
     await statusSelect.click()
     const options = page.locator('.t-select-option:visible')
-    await options.first().waitFor()
+    await waitUntil(async() => await options.count() === 4, 'Status dropdown did not finish opening all four options')
     assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), ['All Status', 'Starting', 'Running', 'Abnormal'])
     await options.filter({ hasText: /^Abnormal$/ }).click()
     await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 5, 'Abnormal group did not include all error, failed and not-ready containers')
@@ -1977,7 +1978,7 @@ test('workload status labels stay concise while accessible help explains contain
     for (const [label, filter, codes] of [
       ['Starting', 'waiting', ['waiting']],
       ['Running', 'success', ['success', 'success']],
-      ['All Status', undefined, workloads.map((item) => item.status)],
+      ['All Status', undefined, workloads.slice(0, 10).map((item) => item.status)],
     ]) {
       await statusSelect.click()
       await options.filter({ hasText: new RegExp(`^${label}$`) }).click()

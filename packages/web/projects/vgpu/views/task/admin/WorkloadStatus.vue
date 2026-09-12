@@ -42,5 +42,9 @@ const statusIcon = computed(() => statusIcons[status.value.code] || 'status-unma
     flex: none;
     font-size: 16px;
   }
+
+  &__label {
+    align-self: baseline;
+  }
 }
 </style>
