@@ -1514,13 +1514,29 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
       .filter({ hasText: 'stable-worker' })
       .waitFor()
 
+    const tableOffsetFromToolbar = () => page.locator('.workload-table').evaluate((table) => (
+      table.getBoundingClientRect().top -
+      document.querySelector('.table-toolbar').getBoundingClientRect().bottom
+    ))
+    const readyTableOffset = await tableOffsetFromToolbar()
+    const assertTablePosition = async() => {
+      const offset = await tableOffsetFromToolbar()
+      assert.ok(
+        Math.abs(offset - readyTableOffset) < 0.5,
+        `Refreshing moved the table: ${readyTableOffset}px to ${offset}px below the toolbar`
+      )
+    }
+
     const failedRefreshGate = createGate()
     enqueue(async(route) => {
       await failedRefreshGate.promise
       await fulfill(route, [], 503)
     })
     await refreshButton.click()
-    await page.locator('[data-testid="stateful-table-refreshing"]').waitFor()
+    await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'attached' })
+    assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'true')
+    assert.equal(await refreshButton.isEnabled(), true)
+    await assertTablePosition()
     await page.locator('.workload-table .ellipsis-text')
       .filter({ hasText: 'stable-worker' })
       .waitFor()
@@ -1536,6 +1552,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
     await page.locator('.workload-table .ellipsis-text')
       .filter({ hasText: 'fixed-worker' })
       .waitFor()
+    await assertTablePosition()
 
     const slowRefreshGate = createGate()
     enqueue(async(route) => {
@@ -1548,12 +1565,14 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
       () => receivedRequests === requestsBeforeRace + 1,
       'The slow list refresh did not start'
     )
+    await assertTablePosition()
 
     enqueue((route) => fulfill(route, [workload('newest-worker')]))
     await refreshButton.click()
     await page.locator('.workload-table .ellipsis-text')
       .filter({ hasText: 'newest-worker' })
       .waitFor()
+    await assertTablePosition()
 
     const completedBeforeSlowRelease = completedRequests
     slowRefreshGate.release()

@@ -16,6 +16,7 @@
       <toolbar
         v-model="eyeColumnKeys"
         :column-options="columnOptions"
+        :refreshing="tableRefreshing"
         @refresh="refreshTable"
       >
         <t-space :size="8">

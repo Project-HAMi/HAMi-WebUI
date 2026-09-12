@@ -49,12 +49,11 @@
     <template v-else>
       <div
         v-if="refreshing"
-        class="stateful-table__notice"
+        class="stateful-table__sr-only"
         data-testid="stateful-table-refreshing"
         role="status"
       >
-        <t-loading size="small" />
-        <span>{{ $t('common.refreshing') }}</span>
+        {{ $t('common.refreshing') }}
       </div>
       <div
         v-else-if="refreshError"
