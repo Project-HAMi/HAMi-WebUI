@@ -10,6 +10,12 @@ message Bootstrap {
   Prometheus prometheus = 2;
   map<string, string> node_selectors = 3;
   Exporter exporter = 4;
+  Scheduling scheduling = 5;
+}
+
+// Exact resource names; empty uses the NVIDIA HAMi defaults.
+message Scheduling {
+  repeated string resource_names = 1;
 }
 
 message Server {

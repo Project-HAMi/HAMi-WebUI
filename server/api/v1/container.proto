@@ -3,6 +3,7 @@ syntax = "proto3";
 package api.v1;
 
 import "google/api/annotations.proto";
+import "api/v1/scheduling_types.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "vgpu/api/v1;v1";
@@ -71,6 +72,11 @@ message ContainerReply {
   repeated string images = 19;
   optional bool allocated_cores_known = 20;
   ContainerStatusDetail status_detail = 21;
+  // Unified workload list only. Requested resources are not allocations.
+  bool pending = 22;
+  SchedulingPod scheduling = 23;
+  SchedulingContainerRequest request = 24;
+  string container_kind = 25;
 }
 
 // The current regular container and its Pod context, without inferring health

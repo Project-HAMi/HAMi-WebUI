@@ -12,6 +12,11 @@ vendorNodeSelectors:
   MLU: mlu=on
   Metax: metax-tech.com/gpu.installed=true
 
+# GPU request keys for the pending-workload view. Empty uses the NVIDIA defaults;
+# a list replaces them, so include every count, compute and memory key.
+scheduling:
+  resourceNames: []
+
 image:
   repository: projecthami/hami-webui
   pullPolicy: IfNotPresent

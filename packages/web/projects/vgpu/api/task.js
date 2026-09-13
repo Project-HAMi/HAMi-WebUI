@@ -30,6 +30,26 @@ class taskApi {
     });
   }
 
+  getWorkloads(data, signal) {
+    return request({
+      url: apiPrefix + '/v1/workloads',
+      method: 'post',
+      errorFeedback: 'inline',
+      data,
+      signal,
+    });
+  }
+
+  getSchedulingDetail(params, signal) {
+    return request({
+      url: apiPrefix + '/v1/scheduling/pod',
+      method: 'get',
+      errorFeedback: 'inline',
+      params,
+      signal,
+    });
+  }
+
   deleteTask(data) {
     return request({
       url: apiPrefix +  '/v1/task/delete',

@@ -13,7 +13,7 @@ var statusOrder = map[string]int{
 	biz.ContainerStatusError:       1,
 	biz.ContainerStatusFailed:      1,
 	biz.ContainerStatusNotReady:    1,
-	biz.ContainerStatusUnknown:     2,
+	biz.ContainerStatusUnknown:     1,
 	biz.ContainerStatusWaiting:     3,
 	biz.ContainerStatusTerminating: 4,
 	biz.ContainerStatusSuccess:     5,
@@ -93,9 +93,12 @@ func matchesWorkloadName(podName, containerName, filter string) bool {
 // detailed status returned by the API or the existing exact-status filters.
 func matchesWorkloadStatus(status, filter string) bool {
 	if filter == "abnormal" {
-		return status == biz.ContainerStatusError || status == biz.ContainerStatusFailed || status == biz.ContainerStatusNotReady
+		// Unconfirmed states, such as after node loss, count as abnormal.
+		return status == biz.ContainerStatusError || status == biz.ContainerStatusFailed ||
+			status == biz.ContainerStatusNotReady || status == biz.ContainerStatusUnknown
 	}
-	return filter == "" || filter == status
+	// "all" is also the key of the unfiltered count in status_counts.
+	return filter == "" || filter == "all" || filter == status
 }
 
 func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllContainersReq) (*pb.ContainersReply, error) {

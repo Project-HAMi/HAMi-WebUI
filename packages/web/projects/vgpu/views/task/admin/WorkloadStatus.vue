@@ -21,11 +21,15 @@ const props = defineProps({ workload: { type: Object, default: () => ({}) } });
 const { t } = useI18n();
 const status = computed(() => getWorkloadStatus(props.workload, t));
 const statusIcons = {
+  pending: 'status-unmanaged',
+  waiting: 'status-unmanaged',
+  terminating: 'status-unmanaged',
   success: 'status-schedulable',
   closed: 'status-schedulable',
   not_ready: 'status-unschedulable',
   failed: 'status-unschedulable',
   error: 'status-unschedulable',
+  unknown: 'status-unschedulable',
 };
 const statusIcon = computed(() => statusIcons[status.value.code] || 'status-unmanaged');
 </script>

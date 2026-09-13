@@ -156,6 +156,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | resources.limits.memory | string | `"750Mi"` | Memory limit for the single application container. |
 | resources.requests.cpu | string | `"250m"` | CPU request for the single application container. |
 | resources.requests.memory | string | `"750Mi"` | Memory request for the single application container. |
+| scheduling.resourceNames | list | `[]` | GPU request keys for pending-workload discovery. Empty uses default NVIDIA keys; a nonempty list replaces them. Custom keys retain raw quantities. See the [scheduling diagnostics guide](../../docs/operations/scheduling-diagnostics.md). |
 | securityContext | object | `{}`                                                                               |  |
 | service.port | int | `3000` | Public SPA and browser API Service port. The internal metrics Service keeps port 8000 separate. |
 | service.type | string | `"ClusterIP"`                                                                      |  |

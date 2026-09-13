@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package api.v1;
+
+option go_package = "vgpu/api/v1;v1";
+
+message SchedulingPod {
+  string name = 1;
+  string namespace = 2;
+  string uid = 3;
+  string created_at = 4;
+  string scheduler_name = 5;
+  string node_name = 6;
+  // waiting, gated, bound, unknown, terminating, or finished.
+  string stage = 7;
+  repeated string reason_codes = 8;
+  // hami, kubernetes, mixed, or unknown. This is not the scheduler identity.
+  string reason_source = 9;
+  SchedulingCondition condition = 10;
+  repeated SchedulingContainerRequest requests = 11;
+  repeated string gates = 12;
+  repeated SchedulingConstraint constraints = 13;
+  bool preallocated = 14;
+  repeated string allocated_containers = 15;
+}
+
+message SchedulingCondition {
+  string status = 1;
+  string reason = 2;
+  string message = 3;
+  // Condition status transition time, NOT the latest scheduling attempt time.
+  string transition_at = 4;
+  bool message_truncated = 5;
+}
+
+message SchedulingContainerRequest {
+  string container = 1;
+  // regular, init, or sidecar (restartable init).
+  string container_kind = 2;
+  repeated SchedulingResource resources = 3;
+}
+
+message SchedulingResource {
+  string name = 1;
+  string value = 2;
+  string unit = 3;
+  // count, core, memory, memory_percentage, or raw.
+  string kind = 4;
+}
+
+message SchedulingConstraint {
+  string name = 1;
+  string value = 2;
+}
+
+message SchedulingEvent {
+  string uid = 1;
+  string reason = 2;
+  string type = 3;
+  string message = 4;
+  string source = 5;
+  string last_observed_at = 6;
+  int32 count = 7;
+  bool message_truncated = 8;
+}

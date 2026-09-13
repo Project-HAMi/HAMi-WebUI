@@ -16,6 +16,8 @@ func NewGRPCServer(c *conf.Bootstrap,
 	card *service.CardService,
 	ctr *service.ContainerService,
 	monitor *service.MonitorService,
+	scheduling *service.SchedulingService,
+	workload *service.WorkloadService,
 	logger log.Logger) *grpc.Server {
 	var opts = []grpc.ServerOption{
 		grpc.Middleware(
@@ -36,5 +38,7 @@ func NewGRPCServer(c *conf.Bootstrap,
 	v1.RegisterCardServer(srv, card)
 	v1.RegisterContainerServer(srv, ctr)
 	v1.RegisterMonitorServer(srv, monitor)
+	v1.RegisterSchedulingServer(srv, scheduling)
+	v1.RegisterWorkloadServer(srv, workload)
 	return srv
 }

@@ -43,6 +43,8 @@ export const createRequestErrorNotificationGate = ({
   const entryLimit = Math.max(1, maxEntries);
 
   return (details) => {
+    // Aborted requests and inline errors need no toast.
+    if (details.code === 'ERR_CANCELED' || details.config?.errorFeedback === 'inline') return false;
     const currentTime = now();
     const fingerprint = requestErrorFingerprint(details);
     const previousTime = firstSeen.get(fingerprint);

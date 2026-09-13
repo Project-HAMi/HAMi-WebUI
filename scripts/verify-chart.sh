@@ -1092,4 +1092,45 @@ for validation_mode in schema template; do
   done
 done
 
-echo "Chart lint, single-container, migration, and image reference checks passed."
+diagnostic_config_render="$(render_template templates/configmap.yaml \
+  --set-string 'scheduling.resourceNames[0]=example.com/gpu' \
+  --set-string 'scheduling.resourceNames[1]=example.com/gpu-memory')"
+for expected in 'scheduling:' 'resource_names:' 'example.com/gpu' 'example.com/gpu-memory'; do
+  if ! grep -Fq "${expected}" <<<"${diagnostic_config_render}"; then
+    echo "Scheduling resource-name override was lost in rendered backend configuration" >&2
+    exit 1
+  fi
+done
+
+diagnostic_role_render="$(render_template templates/role.yaml)"
+diagnostic_event_rule="$(awk '/resources:.*"events"/ { print; getline; print }' <<<"${diagnostic_role_render}")"
+if ! grep -Fq 'verbs: [ "list" ]' <<<"${diagnostic_event_rule}"; then
+  echo "Scheduling diagnostics require only core events/list permission" >&2
+  exit 1
+fi
+if render_template templates/configmap.yaml --set-string 'scheduling.resourceNames[0]=cpu' >/dev/null 2>&1; then
+  echo "Scheduling discovery accepted an unqualified host resource key" >&2
+  exit 1
+fi
+# The backend refuses to start with these names.
+for invalid in 'a..b/gpu' "example.com/$(printf 'x%.0s' {1..64})"; do
+  if render_template templates/configmap.yaml --set-string "scheduling.resourceNames[0]=${invalid}" >/dev/null 2>&1; then
+    echo "Scheduling discovery accepted a resource name the backend rejects: ${invalid}" >&2
+    exit 1
+  fi
+done
+
+# Simulate --reuse-values from a release without a scheduling block.
+awk '
+  /^scheduling:$/ { skip = 1; next }
+  skip && /^[^[:space:]#]/ { skip = 0 }
+  !skip { print }
+' "${work_dir}/hami-webui/values.yaml" >"${test_values_tmp}"
+mv "${test_values_tmp}" "${work_dir}/hami-webui/values.yaml"
+diagnostic_upgrade_render="$(render_template templates/configmap.yaml)"
+if grep -Fq 'resource_names:' <<<"${diagnostic_upgrade_render}"; then
+  echo "An upgrade without scheduling values must retain backend defaults" >&2
+  exit 1
+fi
+
+echo "Chart lint, single-container, migration, image reference, and scheduling checks passed."

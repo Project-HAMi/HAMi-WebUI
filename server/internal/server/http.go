@@ -39,6 +39,8 @@ func NewHTTPServer(c *conf.Bootstrap,
 	card *service.CardService,
 	ctr *service.ContainerService,
 	monitor *service.MonitorService,
+	scheduling *service.SchedulingService,
+	workload *service.WorkloadService,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
 		http.Middleware(
@@ -62,6 +64,8 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterCardHTTPServer(srv, card)
 	v1.RegisterContainerHTTPServer(srv, ctr)
 	v1.RegisterMonitorHTTPServer(srv, monitor)
+	v1.RegisterSchedulingHTTPServer(srv, scheduling)
+	v1.RegisterWorkloadHTTPServer(srv, workload)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.Handler())
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {

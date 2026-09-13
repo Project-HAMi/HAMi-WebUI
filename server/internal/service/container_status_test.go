@@ -80,7 +80,8 @@ func TestWorkloadStatusFiltersMatchReturnedStatusAndPreserveAllocationScope(t *t
 	for _, row := range reply.Items {
 		got = append(got, row.Status)
 	}
-	want := []string{"error", "failed", "not_ready", "unknown", "unknown", "unknown", "waiting", "terminating", "success", "closed"}
+	// Unconfirmed states share the abnormal group, ordered by identity within it.
+	want := []string{"unknown", "error", "failed", "unknown", "not_ready", "unknown", "waiting", "terminating", "success", "closed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("status priority = %#v, want %#v", got, want)
 	}
@@ -116,9 +117,9 @@ func TestAbnormalWorkloadFilterPreservesRawStatusesAndAllocationScope(t *testing
 		want   []string
 	}{
 		{
-			name:   "group combines actionable conditions",
+			name:   "group combines failures and unconfirmed states",
 			filter: &pb.GetAllContainersReq_Filters{Status: "abnormal"},
-			want:   []string{biz.ContainerStatusError, biz.ContainerStatusNotReady, biz.ContainerStatusFailed},
+			want:   []string{biz.ContainerStatusError, biz.ContainerStatusNotReady, biz.ContainerStatusFailed, biz.ContainerStatusUnknown, biz.ContainerStatusUnknown},
 		},
 		{
 			name:   "group combines with workload name filter",

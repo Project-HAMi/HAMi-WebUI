@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "api/v1/container.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Workload {
+  rpc ListWorkloads (ListWorkloadsRequest) returns (WorkloadsReply) {
+    option (google.api.http) = { post: "/v1/workloads" body: "*" };
+  }
+}
+
+message ListWorkloadsRequest {
+  message Filters {
+    string name = 1;
+    string node_name = 2;
+    // "pending" matches unbound GPU requests; "abnormal" groups failures.
+    string status = 3;
+    string device_id = 4;
+    string node_uid = 5;
+    string namespace = 6;
+    string priority = 7;
+  }
+  Filters filters = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message WorkloadsReply {
+  repeated ContainerReply items = 1;
+  int32 total = 2;
+  // Rows per status (all, pending, waiting, success, abnormal), ignoring the status filter.
+  map<string, int32> status_counts = 3;
+}

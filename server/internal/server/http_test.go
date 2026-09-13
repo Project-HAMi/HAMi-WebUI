@@ -97,6 +97,8 @@ func newTestHTTPHandler() nethttp.Handler {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 	return srv.Handler
 }

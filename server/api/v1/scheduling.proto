@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "api/v1/scheduling_types.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Scheduling {
+  rpc GetSchedulingPod (GetSchedulingPodRequest) returns (SchedulingPodReply) {
+    option (google.api.http) = { get: "/v1/scheduling/pod" };
+  }
+}
+
+message GetSchedulingPodRequest {
+  string namespace = 1;
+  string name = 2;
+  string uid = 3;
+}
+
+message SchedulingPodReply {
+  SchedulingPod pod = 1;
+  repeated SchedulingEvent events = 2;
+  // available, empty, forbidden, timeout, limited, or error.
+  string event_status = 3;
+  bool events_incomplete = 4;
+  string events_fetched_at = 5;
+}
