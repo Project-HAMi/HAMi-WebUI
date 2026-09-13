@@ -77,8 +77,8 @@ test('missing inventory preserves routing identity without guessing a Pod name',
   assert.deepEqual(resolveWorkloadRankingIdentity('main:pod-old'),
     resolveWorkloadRankingIdentity('main:pod-old', new Map()));
   assert.deepEqual(createWorkloadDetailLocation('main:pod-old'), {
-    path: '/admin/vgpu/task/admin/detail',
-    query: { name: 'main', podUid: 'pod-old' },
+    name: 'workload-detail',
+    params: { podUid: 'pod-old', container: 'main' },
   });
 });
 
@@ -92,7 +92,7 @@ test('display names do not become workload detail identifiers', () => {
   assert.equal(displayName, 'training-pod / worker');
   assert.equal(workload.namespace, 'research');
   assert.equal(createWorkloadDetailLocation(displayName), null);
-  assert.deepEqual(createWorkloadDetailLocation(metricName).query, { name: 'worker', podUid: 'pod-a' });
+  assert.deepEqual(createWorkloadDetailLocation(metricName).params, { podUid: 'pod-a', container: 'worker' });
 });
 
 test('unresolved metric labels do not produce an invalid details link', () => {

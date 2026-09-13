@@ -48,13 +48,13 @@ const handleChartClick = async (params) => {
     const node = list.find((node) => node.name === name);
     if (node) {
       const uuid = node.uid;
-      router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
+      router.push(`/nodes/${uuid}?nodeName=${name}`);
     } else {
       ElMessage.error(t('node.nodeNotFound'));
     }
   } else if (activeTabKey === 'device_uuid') {
     router.push({
-      path: `/admin/vgpu/card/admin/${name}`,
+      path: `/accelerators/${name}`,
     });
   } else {
     const location = createWorkloadDetailLocation(name);

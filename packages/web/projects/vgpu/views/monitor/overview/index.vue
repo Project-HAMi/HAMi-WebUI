@@ -8,7 +8,7 @@
           <template #extra>
             <RouterLink
               class="all-btn"
-              to="/admin/vgpu/card/admin"
+              to="/accelerators"
               :aria-label="$t('dashboard.viewAllGpuResources')"
             >
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
@@ -73,7 +73,7 @@
           <template #extra>
             <RouterLink
               class="all-btn"
-              to="/admin/vgpu/node/admin"
+              to="/nodes"
               :aria-label="$t('dashboard.viewAllNodes')"
             >
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
@@ -108,7 +108,7 @@
               <div class="node-overview-title-wrap">
                 <RouterLink
                   class="node-overview-title-link"
-                  :to="{ path: '/admin/vgpu/node/admin', query: { schedulingEligibility: status } }"
+                  :to="{ path: '/nodes', query: { schedulingEligibility: status } }"
                 >
                   {{ title }}
                 </RouterLink>
@@ -120,7 +120,7 @@
               </div>
               <RouterLink
                 class="node-overview-value-link"
-                :to="{ path: '/admin/vgpu/node/admin', query: { schedulingEligibility: status } }"
+                :to="{ path: '/nodes', query: { schedulingEligibility: status } }"
                 :aria-label="`${title}: ${count}`"
               >
                 <div class="node-overview-value">
@@ -137,7 +137,7 @@
           <template #extra>
             <RouterLink
               class="all-btn"
-              to="/admin/vgpu/card/admin"
+              to="/accelerators"
               :aria-label="$t('dashboard.viewAllGpuTypes')"
             >
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
@@ -431,7 +431,7 @@ const workloadTableSkeletonRows = Array.from({ length: 6 }, () => ({
 
 const handlePieClick = (params) => {
   router.push({
-    path: '/admin/vgpu/card/admin',
+    path: '/accelerators',
     query: { type: params.data.name },
   });
 };
@@ -612,7 +612,7 @@ const resourceOverview = computed(() => [
     metric: false,
     icon: 'vgpu-node',
     unit: '',
-    to: '/admin/vgpu/node/admin',
+    to: '/nodes',
   },
   {
     title: t('dashboard.gpuCardCount'),
@@ -621,7 +621,7 @@ const resourceOverview = computed(() => [
     metric: false,
     icon: 'vgpu-card',
     unit: '',
-    to: '/admin/vgpu/card/admin',
+    to: '/accelerators',
   },
   {
     title: t('dashboard.clusterAllocatableCpu'),
@@ -642,7 +642,7 @@ const resourceOverview = computed(() => [
     metric: false,
     icon: 'vgpu-workload',
     unit: '',
-    to: '/admin/vgpu/task/admin',
+    to: '/workloads',
   },
   {
     title: t('dashboard.memoryTotal'),

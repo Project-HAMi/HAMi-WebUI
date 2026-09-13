@@ -48,14 +48,14 @@ func TestHandlerRoutes(t *testing.T) {
 		{
 			name:       "deep route serves index",
 			method:     http.MethodGet,
-			path:       "/admin/vgpu/monitor/overview",
+			path:       "/nodes/node-1",
 			wantStatus: http.StatusOK,
 			wantBody:   indexFixture,
 		},
 		{
 			name:       "deep route with trailing slash serves index",
 			method:     http.MethodGet,
-			path:       "/admin/vgpu/monitor/overview/",
+			path:       "/nodes/node-1/",
 			wantStatus: http.StatusOK,
 			wantBody:   indexFixture,
 		},
@@ -154,7 +154,7 @@ func TestHandlerRoutes(t *testing.T) {
 		{
 			name:       "post to frontend route is not index",
 			method:     http.MethodPost,
-			path:       "/admin/vgpu/monitor/overview",
+			path:       "/nodes/node-1",
 			wantStatus: http.StatusNotFound,
 			wantBody:   "404 page not found\n",
 		},
@@ -396,11 +396,11 @@ func TestHandlerConfiguredBasePath(t *testing.T) {
 	}{
 		{name: "base root", method: http.MethodGet, path: "/gpu-ui", wantStatus: http.StatusOK, wantIndex: true},
 		{name: "base root slash", method: http.MethodGet, path: "/gpu-ui/", wantStatus: http.StatusOK, wantIndex: true},
-		{name: "deep link", method: http.MethodGet, path: "/gpu-ui/admin/vgpu/monitor/overview", wantStatus: http.StatusOK, wantIndex: true},
+		{name: "deep link", method: http.MethodGet, path: "/gpu-ui/nodes/node-1", wantStatus: http.StatusOK, wantIndex: true},
 		{name: "static asset", method: http.MethodGet, path: "/gpu-ui/static/app.js", wantStatus: http.StatusOK},
 		{name: "API", method: http.MethodPost, path: "/gpu-ui/api/vgpu/v1/nodes?limit=10", wantStatus: http.StatusNoContent, wantAPIPath: "/v1/nodes?limit=10"},
 		{name: "unprefixed root", method: http.MethodGet, path: "/", wantStatus: http.StatusNotFound},
-		{name: "unprefixed deep link", method: http.MethodGet, path: "/admin/vgpu/monitor/overview", wantStatus: http.StatusNotFound},
+		{name: "unprefixed deep link", method: http.MethodGet, path: "/nodes/node-1", wantStatus: http.StatusNotFound},
 		{name: "unprefixed API", method: http.MethodPost, path: "/api/vgpu/v1/nodes", wantStatus: http.StatusNotFound},
 		{name: "similar prefix", method: http.MethodGet, path: "/gpu-ui-extra/admin", wantStatus: http.StatusNotFound},
 		{name: "prefixed health is private", method: http.MethodGet, path: "/gpu-ui/health_check", wantStatus: http.StatusNotFound},
@@ -530,7 +530,7 @@ func TestHandlerFrameAncestorsPolicy(t *testing.T) {
 				FrameAncestors: tt.sources,
 			})
 
-			for _, requestPath := range []string{"/", "/admin/vgpu/monitor/overview", "/index.html"} {
+			for _, requestPath := range []string{"/", "/nodes/node-1", "/index.html"} {
 				recorder := httptest.NewRecorder()
 				handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requestPath, nil))
 				if recorder.Code != http.StatusOK {

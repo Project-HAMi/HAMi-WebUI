@@ -48,11 +48,14 @@ The embedding platform can then use a normal iframe:
 
 ```html
 <iframe
-  src="https://hami.example.com/hami/admin/vgpu/monitor/overview"
+  src="https://hami.example.com/hami/overview"
   title="HAMi GPU resources"
   style="width: 100%; min-height: 800px; border: 0"
 ></iframe>
 ```
+
+Pages live at `/overview`, `/nodes`, `/accelerators` and `/workloads` below the
+base path. Earlier `/admin/vgpu/...` addresses still redirect to them.
 
 ## Choose a framing policy
 

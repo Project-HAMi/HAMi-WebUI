@@ -117,8 +117,6 @@ export default {
     searchKeyword: '搜索关键词',
   },
   routes: {
-    gpuAdmin: '算力管理',
-    resourceAdmin: '资源',
     dashboard: '集群概览',
     nodes: '节点管理',
     cards: '算力管理',

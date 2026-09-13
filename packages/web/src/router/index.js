@@ -4,7 +4,7 @@ import { getBasePath } from '@/utils/base-path.mjs';
 /* Layout */
 import Layout from '@/layout';
 /* Router Modules */
-import vgpuRoutes from '../../projects/vgpu/router';
+import vgpuRoutes, { legacyRoutes } from '../../projects/vgpu/router';
 // import vgpuHomeRoutes from '../../projects/vgpu/homeRouter';
 import { nextTick } from 'vue';
 
@@ -26,13 +26,8 @@ export const constantRoutes = [
       },
     ],
   },
-  {
-    path: '/',
-    redirect: '/admin/vgpu/monitor/overview',
-    component: Layout,
-    hidden: true,
-  },
   vgpuRoutes(Layout),
+  ...legacyRoutes,
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',

@@ -29,10 +29,9 @@ export const resolveWorkloadRankingIdentity = (metricName, workloadsByIdentity) 
   };
 };
 
-export const createWorkloadDetailLocation = (metricName) => {
-  const identity = parseWorkloadMetricIdentity(metricName);
-  return identity ? {
-    path: '/admin/vgpu/task/admin/detail',
-    query: identity,
-  } : null;
-};
+export const buildWorkloadDetailLocation = ({ podUid, name } = {}) => (
+  podUid && name ? { name: 'workload-detail', params: { podUid, container: name } } : null
+);
+
+export const createWorkloadDetailLocation = (metricName) =>
+  buildWorkloadDetailLocation(parseWorkloadMetricIdentity(metricName) ?? {});
