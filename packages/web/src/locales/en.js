@@ -217,7 +217,6 @@ export default {
   },
   node: {
     title: 'Node Management',
-    description: 'Manage and monitor compute nodes; view GPUs and workloads.',
     name: 'Node Name',
     ip: 'Node IP',
     searchIP: 'Search IP',
@@ -233,8 +232,6 @@ export default {
     schedulable: 'Schedulable',
     temporarilyUnschedulable: 'Temporarily Unschedulable',
     schedulingStatusHelpLabel: 'View node scheduling status details',
-    schedulableDescription:
-      'The node is ready and scheduling is not paused, so it can participate in HAMi scheduling for new accelerator workloads. Placement still depends on device type and health, remaining compute and memory, and other scheduling constraints.',
     cordonedDescription:
       'The node is cordoned and is not accepting new accelerator workloads. Running workloads are unaffected.',
     notInReadyStateDescription:
@@ -274,10 +271,7 @@ export default {
       resourceAllocTrend: 'Alloc Trend (%)',
       resourceUsageTrend: 'Usage Trend (%)',
       cardList: 'GPU List',
-      taskList: 'Task List',
       noAllocData: 'No allocation data available',
-      unmanagedNoTask: 'Unable to retrieve task data because the node is unmanaged',
-      noTaskData: 'No task data available',
       vgpuOvercommit: 'vGPU Overcommit',
       computeOvercommit: 'Compute Overcommit',
       memoryOvercommit: 'Memory Overcommit',
@@ -296,7 +290,6 @@ export default {
   },
   card: {
     title: 'Accelerators',
-    description: 'Monitor physical GPUs, allocation/usage and running workloads.',
     id: 'GPU ID',
     uuid: 'GPU UUID',
     searchByName: 'Search by name',
@@ -347,8 +340,6 @@ export default {
   },
   task: {
     title: 'Workloads',
-    description: 'Monitor workloads running on GPUs.',
-    name: 'Name',
     workload: 'Workload',
     searchWorkloadName: 'Search Pod or container name',
     status: 'Status',
@@ -428,11 +419,10 @@ export default {
     memUsageTrend: 'GPU Memory Utilization (%)',
     cpuUsageTrend: 'CPU Usage (%)',
     memoryUsageTrend: 'Memory Usage (%)',
-    noCompleteMonitorData: 'No complete task monitoring data for this time range',
+    noCompleteMonitorData: 'No complete workload monitoring data for this time range',
     topCount: 'Workload Count Top5',
     topApply: 'Workload Allocation Top5',
     detail: {
-      title: 'Workload',
       detailInfo: 'Basic Info',
       resourceOverview: 'Resource Overview',
       containerInfo: 'Container',
