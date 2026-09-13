@@ -155,7 +155,6 @@ export default {
   },
   node: {
     title: '节点管理',
-    description: '管理和监控计算节点，查看 GPU 与任务。',
     name: '节点名称',
     ip: '节点 IP',
     searchIP: '搜索 IP',
@@ -171,14 +170,12 @@ export default {
     schedulable: '可调度',
     temporarilyUnschedulable: '暂不可调度',
     schedulingStatusHelpLabel: '查看节点调度状态说明',
-    schedulableDescription:
-      '节点已就绪且未暂停调度，可以参与 HAMi 对新算力任务的调度。具体任务能否运行，还取决于卡型、设备健康、剩余算力与显存以及调度约束。',
     cordonedDescription:
-      '节点已暂停调度（cordon），暂不接收新的算力任务；已运行任务不受影响。',
+      '节点已暂停调度（cordon），暂不接收新的算力工作负载；已在运行的工作负载不受影响。',
     notInReadyStateDescription:
-      '节点当前未处于就绪状态，可能是未就绪或就绪状态未知；暂时无法承载新的算力任务。',
+      '节点当前未处于就绪状态，可能是未就绪或就绪状态未知；暂时无法承载新的算力工作负载。',
     notInReadyStateAndCordonedDescription:
-      '节点当前未处于就绪状态，并且已暂停调度（cordon）；暂时无法承载新的算力任务。',
+      '节点当前未处于就绪状态，并且已暂停调度（cordon）；暂时无法承载新的算力工作负载。',
     schedulingUnknownDescription:
       '节点状态信息不可用，当前无法确认是否具备调度条件。',
     temporarilyUnschedulableOverviewDescription:
@@ -212,10 +209,7 @@ export default {
       resourceAllocTrend: '分配趋势（%）',
       resourceUsageTrend: '使用趋势（%）',
       cardList: 'GPU 列表',
-      taskList: '工作负载',
       noAllocData: '暂无资源分配数据',
-      unmanagedNoTask: '由于节点未纳管，无法获取到任务数据',
-      noTaskData: '暂无任务数据',
       vgpuOvercommit: 'vGPU 超配',
       computeOvercommit: '算力超配',
       memoryOvercommit: '显存超配',
@@ -234,7 +228,6 @@ export default {
   },
   card: {
     title: 'GPU 管理',
-    description: '监控物理 GPU 状态与分配使用，查看其运行任务。',
     id: 'GPU ID',
     uuid: 'GPU UUID',
     searchByName: '输入名称搜索',
@@ -283,9 +276,7 @@ export default {
     }
   },
   task: {
-    title: '任务管理',
-    description: '监控 GPU 上运行的工作负载状态与占用。',
-    name: '任务名称',
+    title: '工作负载',
     workload: '工作负载',
     searchWorkloadName: '搜索 Pod 或容器名称',
     status: '状态',
@@ -364,11 +355,10 @@ export default {
     memUsageTrend: 'GPU 显存使用率（%）',
     cpuUsageTrend: 'CPU 使用率（%）',
     memoryUsageTrend: '内存使用率（%）',
-    noCompleteMonitorData: '当前时间范围内没有完整的任务监控数据',
-    topCount: '任务数量分布 Top5',
+    noCompleteMonitorData: '当前时间范围内没有完整的工作负载监控数据',
+    topCount: '工作负载数量分布 Top5',
     topApply: '工作负载分配 Top5',
     detail: {
-      title: '任务管理',
       detailInfo: '基础信息',
       resourceOverview: '资源概览',
       containerInfo: '容器信息',
