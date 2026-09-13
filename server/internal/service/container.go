@@ -134,6 +134,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		}
 		containerReply := &pb.ContainerReply{}
 		containerReply.Name = container.Name
+		containerReply.ContainerKind = container.Kind
 		containerReply.Status = status
 		containerReply.StatusDetail = containerStatusDetailReply(container.StatusDetail)
 		containerReply.AppName = container.PodName
@@ -203,6 +204,7 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	}
 	ctrReply := &pb.ContainerReply{}
 	ctrReply.Name = container.Name
+	ctrReply.ContainerKind = container.Kind
 	ctrReply.Status = normalizedContainerStatus(container.Status)
 	ctrReply.StatusDetail = containerStatusDetailReply(container.StatusDetail)
 	ctrReply.AppName = container.PodName

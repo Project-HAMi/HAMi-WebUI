@@ -1,10 +1,14 @@
 const METRICS = Object.freeze({
   vgpuAllocated: 'hami_container_vgpu_allocated',
+  vgpuCapacity: 'hami_vgpu_count',
+  deviceVgpuAllocated: 'hami_vgpu_allocated',
   computeAllocated: 'hami_container_vcore_allocated',
+  deviceComputeAllocated: 'hami_vcore_allocated',
   computeAllocationKnown: 'hami_container_vcore_allocation_known',
   computeCapacity: 'hami_core_size',
   computeUsageAverage: 'hami_core_util_avg',
   memoryAllocated: 'hami_container_vmemory_allocated',
+  deviceMemoryAllocated: 'hami_vmemory_allocated',
   memorySchedulableCapacity: 'hami_vmemory_size',
   memoryPhysicalCapacity: 'hami_memory_size',
   memoryUsed: 'hami_memory_used',
@@ -35,6 +39,15 @@ const aggregateAcrossExporterReplicas = (series, groupLabel = '') => {
     : `avg(${perReplica})`;
 };
 
+// Device gauges follow HAMi's init accounting; older samples fall back to per-container sums.
+const aggregateDeviceAllocation = (deviceMetric, containerMetric, selector, groupLabel) => {
+  validateGroupLabel(groupLabel);
+  const labels = groupLabel ? `${groupLabel}, instance` : 'instance';
+  const perReplica = (metric) => `sum by (${labels}) (${metricSeries(metric, selector)})`;
+  const series = `${perReplica(deviceMetric)} or ${perReplica(containerMetric)}`;
+  return groupLabel ? `avg by (${groupLabel}) (${series})` : `avg(${series})`;
+};
+
 const divideForDisplay = (expression, divisor) =>
   divisor === 1 ? expression : `${expression} / ${divisor}`;
 
@@ -60,14 +73,17 @@ const excludeUnknownComputeAllocations = (
 };
 
 const buildAllocationQueries = ({
-  allocatedMetric,
+  deviceMetric,
+  containerMetric,
   capacityMetric,
   selector = '',
   groupLabel = '',
   displayDivisor = 1,
 }) => {
-  const allocated = aggregateAcrossExporterReplicas(
-    metricSeries(allocatedMetric, selector),
+  const allocated = aggregateDeviceAllocation(
+    deviceMetric,
+    containerMetric,
+    selector,
     groupLabel,
   );
   const capacity = aggregateAcrossExporterReplicas(
@@ -87,7 +103,8 @@ const buildAllocationQueries = ({
 
 export const buildComputeAllocationQueries = (options = {}) => {
   const queries = buildAllocationQueries({
-    allocatedMetric: METRICS.computeAllocated,
+    deviceMetric: METRICS.deviceComputeAllocated,
+    containerMetric: METRICS.computeAllocated,
     capacityMetric: METRICS.computeCapacity,
     ...options,
   });
@@ -215,11 +232,14 @@ export const buildClusterAllocatableQueries = () => ({
 export const buildTaskContainerResourceQueries = () => {
   const identity =
     'namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid';
+  // kube-state-metrics reports init and sidecar containers under kube_pod_init_container_*.
+  const anyKind = (metric, labels) =>
+    `max(kube_pod_${metric}{${labels}} or kube_pod_init_${metric}{${labels}})`;
 
   return {
-    cpuLimit: `max(kube_pod_container_resource_limits{resource="cpu",unit="core",${identity}})`,
-    memoryLimit: `max(kube_pod_container_resource_limits{resource="memory",unit="byte",${identity}}) / 1024 / 1024 / 1024`,
-    containerInfo: `max(kube_pod_container_info{${identity}})`,
+    cpuLimit: anyKind('container_resource_limits', `resource="cpu",unit="core",${identity}`),
+    memoryLimit: `${anyKind('container_resource_limits', `resource="memory",unit="byte",${identity}`)} / 1024 / 1024 / 1024`,
+    containerInfo: anyKind('container_info', identity),
   };
 };
 
@@ -232,9 +252,18 @@ export const buildTaskCountQueries = () => ({
 
 export const buildMemoryAllocationQueries = (options = {}) =>
   buildAllocationQueries({
-    allocatedMetric: METRICS.memoryAllocated,
+    deviceMetric: METRICS.deviceMemoryAllocated,
+    containerMetric: METRICS.memoryAllocated,
     capacityMetric: METRICS.memorySchedulableCapacity,
     displayDivisor: 1024,
+    ...options,
+  });
+
+export const buildVgpuAllocationQueries = (options = {}) =>
+  buildAllocationQueries({
+    deviceMetric: METRICS.deviceVgpuAllocated,
+    containerMetric: METRICS.vgpuAllocated,
+    capacityMetric: METRICS.vgpuCapacity,
     ...options,
   });
 

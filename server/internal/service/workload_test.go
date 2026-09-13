@@ -359,11 +359,11 @@ func TestWorkloadNodeUIDFilterFailsWhenNodeCacheFails(t *testing.T) {
 
 func TestWorkloadAllocationMatchesRequestRegardlessOfContainerKind(t *testing.T) {
 	allocated := workloadTestContainer("sidecar-pod", biz.ContainerStatusSuccess)
-	allocated.Name = "helper"
+	allocated.Name, allocated.Kind = "helper", biz.ContainerKindSidecar
 	pod := workloadTestPending("sidecar-pod", workloadTestRequest("helper", "sidecar", "1"))
 	pod.NodeName, pod.Stage = "node-a", "bound"
 	reply, err := workloadTestService([]*biz.Container{allocated}, pod).ListWorkloads(context.Background(), &pb.ListWorkloadsRequest{})
-	if err != nil || reply.Total != 1 || reply.Items[0].Request != nil || reply.Items[0].AllocatedMem != 256 {
+	if err != nil || reply.Total != 1 || reply.Items[0].Request != nil || reply.Items[0].AllocatedMem != 256 || reply.Items[0].ContainerKind != "sidecar" {
 		t.Fatalf("allocation and request for one container = %v, %v", reply, err)
 	}
 }

@@ -3,6 +3,7 @@ import {
   buildGroupedResourceTopQueries,
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
+  buildVgpuAllocationQueries,
 } from '../../../metrics/query-contract.mjs';
 
 export const createComputeUsageGaugeConfig = () => ({
@@ -26,6 +27,7 @@ export const createOverviewGaugeConfigs = () => {
   const computeAllocation = buildComputeAllocationQueries();
   const memoryAllocation = buildMemoryAllocationQueries();
   const memoryUsage = buildMemoryUsageQueries();
+  const vgpuAllocation = buildVgpuAllocationQueries();
 
   return [
     {
@@ -38,9 +40,8 @@ export const createOverviewGaugeConfigs = () => {
       usedPrecision: 0,
       totalPrecision: 0,
       percent: 0,
-      query:
-        'avg(sum(hami_container_vgpu_allocated) by (instance)) or (avg(sum(hami_vgpu_count) by (instance)) * 0)',
-      totalQuery: 'avg(sum(hami_vgpu_count) by (instance))',
+      query: vgpuAllocation.query,
+      totalQuery: vgpuAllocation.totalQuery,
       total: 0,
       used: 0,
       unitKey: 'dashboard.vgpuSlotUnit',

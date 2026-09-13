@@ -1,10 +1,17 @@
 package data
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"vgpu/internal/biz"
 	"vgpu/internal/provider/util"
+
+	"github.com/go-kratos/kratos/v2/log"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 func TestMergeContainerDevicesBySlotKeepsInitAlignmentAndDeviceTypes(t *testing.T) {
@@ -38,5 +45,68 @@ func TestResolveAscendAllocationModeUsesPodThenNodeContract(t *testing.T) {
 				t.Fatalf("resolveAscendAllocationMode(%q, %q) = %v, want %v", tt.podMode, tt.nodeHamiCore, got, tt.want)
 			}
 		})
+	}
+}
+
+func useNvidiaAllocationKey(t *testing.T) string {
+	t.Helper()
+	const key = "hami.io/vgpu-devices-allocated"
+	previous, existed := util.SupportDevices["NVIDIA"]
+	util.SupportDevices["NVIDIA"] = key
+	t.Cleanup(func() {
+		if existed {
+			util.SupportDevices["NVIDIA"] = previous
+		} else {
+			delete(util.SupportDevices, "NVIDIA")
+		}
+	})
+	return key
+}
+
+func TestInitAndSidecarAllocationsFollowHAMiSlotsAndRelease(t *testing.T) {
+	key := useNvidiaAllocationKey(t)
+	always := corev1.ContainerRestartPolicyAlways
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	succeeded := corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}
+	repo := &podRepo{pods: map[k8stypes.UID]*biz.PodInfo{}, log: log.NewHelper(log.DefaultLogger)}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
+			util.AssignedNodeAnnotations: "node-1",
+			key:                          "GPU-1,NVIDIA,1024,10:;GPU-1,NVIDIA,256,5:;;GPU-1,NVIDIA,512,20:;",
+		}},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "prepare"}, {Name: "proxy", RestartPolicy: &always}, {Name: "fetch"}},
+			Containers:     []corev1.Container{{Name: "main"}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, InitContainerStatuses: []corev1.ContainerStatus{
+			{Name: "prepare", State: running}, {Name: "proxy", Ready: true, State: running}, {Name: "fetch"},
+		}},
+	}
+	describe := func() string {
+		containers, _ := repo.ListAll(context.Background())
+		vGPU, cores, memory, _ := biz.ContainersStatisticsInfo(containers, "")
+		result := ""
+		for _, c := range containers {
+			result += fmt.Sprintf("%s/%s/%d/%d/%s ", c.Name, c.Kind, c.ContainerIdx, c.ContainerDevices[0].Usedmem, c.Status)
+		}
+		return result + fmt.Sprintf("= %d slots, %d cores, %d MiB", vGPU, cores, memory)
+	}
+
+	repo.onAddPod(pod)
+	want := "prepare/init/0/1024/success proxy/sidecar/1/256/success main/regular/3/512/waiting = 2 slots, 25 cores, 1024 MiB"
+	if got := describe(); got != want {
+		t.Fatalf("init phase:\n got %s\nwant %s", got, want)
+	}
+
+	released := pod.DeepCopy()
+	released.Status.Phase = corev1.PodRunning
+	released.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "prepare", State: succeeded}, {Name: "proxy", Ready: true, State: running}, {Name: "fetch", State: succeeded},
+	}
+	released.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "main", Ready: true, State: running}}
+	repo.onUpdatePod(pod, released)
+	want = "proxy/sidecar/1/256/success main/regular/3/512/success = 2 slots, 25 cores, 768 MiB"
+	if got := describe(); got != want {
+		t.Fatalf("after every regular init succeeded:\n got %s\nwant %s", got, want)
 	}
 }

@@ -82,7 +82,12 @@
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
-              <span class="summary-item-value summary-identity-value">{{ detail.name || '--' }}</span>
+              <span class="summary-item-value summary-identity-value">
+                {{ detail.name || '--' }}
+                <span v-if="['init', 'sidecar'].includes(detail.containerKind)" class="container-kind">
+                  {{ $t(`scheduling.containerKind.${detail.containerKind}`) }}
+                </span>
+              </span>
             </div>
             <div class="summary-item">
               <span class="summary-item-label">{{ $t('task.image') }}</span>
@@ -727,6 +732,19 @@ watch(
   .summary-identity-value {
     overflow: visible;
     overflow-wrap: anywhere;
+  }
+
+  .container-kind {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #e4ebf1;
+    color: #697886;
+    font-size: 11px;
+    line-height: 18px;
+    vertical-align: 2px;
+    white-space: nowrap;
   }
 
   .image-reference {

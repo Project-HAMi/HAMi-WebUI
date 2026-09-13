@@ -199,16 +199,13 @@ func (r *podRepo) schedulingPodView(pod *corev1.Pod, detail bool) *biz.Schedulin
 		result.ReasonCodes = []string{"NoFeedback"}
 	}
 	for _, ctr := range pod.Spec.Containers {
-		if request := r.schedulingContainerRequest(ctr, "regular"); len(request.Resources) > 0 {
-			request.Status, request.StatusDetail = schedulingContainerStatus(pod, ctr, "regular")
+		if request := r.schedulingContainerRequest(ctr, biz.ContainerKindRegular); len(request.Resources) > 0 {
+			request.Status, request.StatusDetail = schedulingContainerStatus(pod, ctr, biz.ContainerKindRegular)
 			result.Requests = append(result.Requests, request)
 		}
 	}
 	for _, ctr := range pod.Spec.InitContainers {
-		kind := "init"
-		if ctr.RestartPolicy != nil && *ctr.RestartPolicy == corev1.ContainerRestartPolicyAlways {
-			kind = "sidecar"
-		}
+		kind := initContainerKind(ctr)
 		if request := r.schedulingContainerRequest(ctr, kind); len(request.Resources) > 0 {
 			request.Status, request.StatusDetail = schedulingContainerStatus(pod, ctr, kind)
 			result.Requests = append(result.Requests, request)
@@ -232,29 +229,19 @@ func (r *podRepo) schedulingPodView(pod *corev1.Pod, detail bool) *biz.Schedulin
 }
 
 func schedulingContainerStatus(pod *corev1.Pod, ctr corev1.Container, kind string) (string, *biz.ContainerStatusDetail) {
-	statuses := pod.Status.ContainerStatuses
-	if kind != "regular" {
-		statuses = pod.Status.InitContainerStatuses
+	if kind == biz.ContainerKindRegular {
+		return classifyContainerStatus(pod, findContainerStatus(pod.Status.ContainerStatuses, ctr.Name))
 	}
-	var observed *corev1.ContainerStatus
-	for i := range statuses {
-		if statuses[i].Name == ctr.Name {
-			observed = &statuses[i]
-			break
-		}
-	}
-	if kind == "regular" {
-		return classifyContainerStatus(pod, observed)
-	}
+	observed := findContainerStatus(pod.Status.InitContainerStatuses, ctr.Name)
 	statePod := *pod
-	if kind == "sidecar" {
+	if kind == biz.ContainerKindSidecar {
 		statePod.Spec.RestartPolicy = corev1.RestartPolicyAlways
 	} else if observed != nil && observed.State.Terminated != nil && observed.State.Terminated.ExitCode == 0 {
 		// A completed ordinary init container is not restarted by Pod Always.
 		statePod.Spec.RestartPolicy = corev1.RestartPolicyNever
 	}
 	status, detail := classifyContainerStatus(&statePod, observed)
-	if kind == "init" && status == biz.ContainerStatusNotReady && observed != nil && observed.State.Running != nil {
+	if kind == biz.ContainerKindInit && status == biz.ContainerStatusNotReady && observed != nil && observed.State.Running != nil {
 		// Init containers have no readiness probe; not Ready while running is normal.
 		status, detail.Ready = biz.ContainerStatusSuccess, nil
 	}

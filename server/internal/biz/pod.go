@@ -1,17 +1,26 @@
 package biz
 
 import (
+	"cmp"
 	"context"
 	"github.com/go-kratos/kratos/v2/log"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"slices"
 	"strings"
 	"time"
+)
+
+const (
+	ContainerKindRegular = "regular"
+	ContainerKindInit    = "init"
+	ContainerKindSidecar = "sidecar"
 )
 
 type Container struct {
 	Name             string
 	UUID             string
-	ContainerIdx     int
+	Kind             string
+	ContainerIdx     int // Position in HAMi's device annotation: init containers first.
 	NodeName         string
 	PodUID           string
 	PodName          string
@@ -92,23 +101,54 @@ func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 	return uc.repo.ListAll(ctx)
 }
 
+type allocationUsage struct{ vGPU, core, memory int32 }
+
+func (u allocationUsage) plus(o allocationUsage) allocationUsage {
+	return allocationUsage{u.vGPU + o.vGPU, u.core + o.core, u.memory + o.memory}
+}
+
+func (u allocationUsage) atLeast(o allocationUsage) allocationUsage {
+	return allocationUsage{max(u.vGPU, o.vGPU), max(u.core, o.core), max(u.memory, o.memory)}
+}
+
+// ContainersStatisticsInfo follows HAMi's CollapseInitContainerUsage: init at peak, sidecars with apps.
 func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32, bool) {
-	var vGPU int32 = 0
-	var core int32 = 0
-	var memory int32 = 0
+	type deviceState struct{ sidecar, peak, app allocationUsage }
+	ordered := slices.Clone(containers)
+	slices.SortStableFunc(ordered, func(a, b *Container) int {
+		return cmp.Or(strings.Compare(a.PodUID, b.PodUID), cmp.Compare(a.ContainerIdx, b.ContainerIdx))
+	})
+	states := map[string]*deviceState{}
 	coreKnown := true
-	for _, t := range containers {
+	for _, t := range ordered {
 		for _, cd := range t.ContainerDevices {
 			if deviceId != "" && !strings.HasPrefix(cd.UUID, deviceId) {
 				continue
 			}
-			vGPU = vGPU + 1
-			core = core + cd.Usedcores
-			memory = memory + cd.Usedmem
 			if strings.HasPrefix(cd.Type, AscendGPUDevice) && !cd.CoreAllocationKnown {
 				coreKnown = false
 			}
+			key := t.PodUID + "/" + cd.UUID
+			state := states[key]
+			if state == nil {
+				state = &deviceState{}
+				states[key] = state
+			}
+			usage := allocationUsage{1, cd.Usedcores, cd.Usedmem}
+			switch t.Kind {
+			case ContainerKindSidecar:
+				state.sidecar = state.sidecar.plus(usage)
+				state.peak = state.peak.atLeast(state.sidecar)
+			case ContainerKindInit:
+				state.peak = state.peak.atLeast(state.sidecar.plus(usage))
+			default:
+				state.app = state.app.plus(usage)
+			}
 		}
 	}
-	return vGPU, core, memory, coreKnown
+	var total allocationUsage
+	for _, state := range states {
+		total = total.plus(state.peak.atLeast(state.sidecar.plus(state.app)))
+	}
+	return total.vGPU, total.core, total.memory, coreKnown
 }

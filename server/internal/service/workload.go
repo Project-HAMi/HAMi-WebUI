@@ -120,7 +120,9 @@ func mergeWorkloads(allocated []*pb.ContainerReply, pods []*biz.SchedulingPod) [
 	projected := make(map[string]bool)
 	unbound := make([]*pb.ContainerReply, 0)
 	for _, item := range allocated {
-		item.ContainerKind = "regular"
+		if item.ContainerKind == "" {
+			item.ContainerKind = biz.ContainerKindRegular
+		}
 		if item.NodeName == "" {
 			// A HAMi reservation made before binding.
 			unbound = append(unbound, item)

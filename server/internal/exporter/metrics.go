@@ -11,6 +11,9 @@ func init() {
 	prometheus.MustRegister(HamiVgpuCount)
 	prometheus.MustRegister(HamiVmemorySize)
 	prometheus.MustRegister(HamiVcoreSize)
+	prometheus.MustRegister(HamiVgpuAllocated)
+	prometheus.MustRegister(HamiVmemoryAllocated)
+	prometheus.MustRegister(HamiVcoreAllocated)
 	prometheus.MustRegister(HamiMemorySize)
 	prometheus.MustRegister(HamiMemoryUsed)
 	prometheus.MustRegister(HamiMemoryUtil)
@@ -73,6 +76,21 @@ var (
 	HamiVcoreSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hami_vcore_size",
 		Help: "Total vCore size",
+	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
+
+	HamiVgpuAllocated = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hami_vgpu_allocated",
+		Help: "vGPU slots HAMi holds on the device, with init containers at their peak",
+	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
+
+	HamiVmemoryAllocated = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hami_vmemory_allocated",
+		Help: "Device memory HAMi holds on the device, with init containers at their peak, unit is 'MiB'",
+	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
+
+	HamiVcoreAllocated = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hami_vcore_allocated",
+		Help: "Device cores HAMi holds on the device, with init containers at their peak",
 	}, []string{"node", "provider", "device_type", "device_uuid", "driver_version", "device_no"})
 
 	HamiMemoryUsed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
