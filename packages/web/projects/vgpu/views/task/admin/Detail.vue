@@ -741,6 +741,10 @@ watch(
     cursor: help;
   }
 
+  .summary-item-image :deep(.ellipsis-text) {
+    vertical-align: top;
+  }
+
   &.is-en {
     .summary-item-label { width: 120px; }
   }
