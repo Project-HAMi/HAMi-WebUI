@@ -18,7 +18,7 @@ export const handleChartClick = async (params, router) => {
 
   if (node) {
     const uuid = node.uid;
-    router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
+    router.push(`/nodes/${uuid}?nodeName=${name}`);
   } else {
     MessagePlugin.error(i18n.global.t('node.nodeNotFound'));
   }

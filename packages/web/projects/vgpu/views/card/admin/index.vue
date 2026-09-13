@@ -174,7 +174,7 @@ const onTypeChange = () => {
 
 const handleClick = (params) => {
   router.push({
-    path: `/admin/vgpu/card/admin/${params.data.name}`,
+    path: `/accelerators/${params.data.name}`,
   });
 };
 
@@ -209,7 +209,7 @@ const baseColumns = computed(() => [
     width: 250,
     hideTooltip: true,
     render: ({ uuid, type }) => {
-      const to = `/admin/vgpu/card/admin/${uuid}`;
+      const to = `/accelerators/${uuid}`;
       const gpuModel = type || '';
       return (
         <div class="card-id-cell">

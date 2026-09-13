@@ -10,7 +10,7 @@ import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
 const basePath = '/gpu-ui/'
-const deepRoute = `${basePath}admin/vgpu/monitor/overview`
+const deepRoute = `${basePath}overview`
 const longImageReference =
   'docker.io/pytorch/pytorch:2.5.1-cuda11.8-cudnn9-runtime@sha256:7aac344854fbc920da85f9abccb8e397a5bf99445553df9f4dfbde18009f4cd3'
 const detailPodName = 'test-sh-65874fcfc4-ppdcc'
@@ -366,7 +366,7 @@ async function assertChartRuntime(target) {
     position: { x: pieBox.width * 0.75, y: pieBox.height * 0.5 }
   })
   await page.waitForURL((url) =>
-    url.pathname.endsWith('/admin/vgpu/card/admin') &&
+    url.pathname.endsWith('/accelerators') &&
     url.searchParams.get('type') === 'NVIDIA'
   )
 
@@ -861,7 +861,7 @@ test('browser language selects English without leaking active Chinese UI text', 
 
   try {
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin`,
+      `${target}${basePath}workloads`,
       { waitUntil: 'domcontentloaded' }
     )
     const englishButton = page.getByRole('button', { name: 'English', exact: true })
@@ -891,7 +891,7 @@ test('browser language selects English without leaking active Chinese UI text', 
     await page.locator('html[lang="en"]').waitFor()
     await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click()
     assert.equal(await englishButton.getAttribute('aria-pressed'), 'true')
-    assert.equal(page.url(), `${target}${basePath}admin/vgpu/task/admin`)
+    assert.equal(page.url(), `${target}${basePath}workloads`)
 
     await page.goto(`${target}${basePath}401`, { waitUntil: 'domcontentloaded' })
     await page.getByRole('heading', { name: 'Page not found' }).waitFor()
@@ -982,7 +982,7 @@ test('workload and detail views keep dense identity content readable', async() =
 
   try {
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin`,
+      `${target}${basePath}workloads`,
       { waitUntil: 'domcontentloaded' }
     )
     const identities = page.locator('.workload-table .workload-identity')
@@ -1127,7 +1127,7 @@ test('workload and detail views keep dense identity content readable', async() =
     assert.equal((await podTooltip.textContent()).trim(), podName)
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin/detail?name=long-image-worker&podUid=pod-long-image`,
+      `${target}${basePath}workloads/pod-long-image/containers/long-image-worker`,
       { waitUntil: 'domcontentloaded' }
     )
     const detailIdentityRows = page.locator('.basic-info-summary .summary-item').filter({
@@ -1190,7 +1190,7 @@ test('workload and detail views keep dense identity content readable', async() =
     await assertNoHorizontalOverflow()
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin/detail?name=short-image-worker&podUid=pod-short-image`,
+      `${target}${basePath}workloads/pod-short-image/containers/short-image-worker`,
       { waitUntil: 'domcontentloaded' }
     )
     const shortImageReference = page.locator('.summary-item-image .ellipsis-text')
@@ -1216,7 +1216,7 @@ test('workload and detail views keep dense identity content readable', async() =
     )
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin/detail?name=multi-image-worker&podUid=pod-multi-image`,
+      `${target}${basePath}workloads/pod-multi-image/containers/multi-image-worker`,
       { waitUntil: 'domcontentloaded' }
     )
     const multiImageReference = page.locator('.summary-item-image .image-reference')
@@ -1260,7 +1260,7 @@ test('workload and detail views keep dense identity content readable', async() =
     await page.setViewportSize({ width: 1280, height: 900 })
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/node/admin`,
+      `${target}${basePath}nodes`,
       { waitUntil: 'domcontentloaded' }
     )
     const nodeTable = page.locator('.node-table')
@@ -1295,7 +1295,7 @@ test('workload and detail views keep dense identity content readable', async() =
     )
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/node/admin/node-1?nodeName=node-1`,
+      `${target}${basePath}nodes/node-1?nodeName=node-1`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
@@ -1309,7 +1309,7 @@ test('workload and detail views keep dense identity content readable', async() =
     assert.equal(await schedulableHelp.count(), 0)
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/node/admin/node-readability?nodeName=node-readability`,
+      `${target}${basePath}nodes/node-readability?nodeName=node-readability`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
@@ -1363,7 +1363,7 @@ test('workload and detail views keep dense identity content readable', async() =
     await assertNoHorizontalOverflow()
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/node/admin/node-cordoned?nodeName=node-cordoned`,
+      `${target}${basePath}nodes/node-cordoned?nodeName=node-cordoned`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
@@ -1381,7 +1381,7 @@ test('workload and detail views keep dense identity content readable', async() =
       .waitFor({ state: 'visible' })
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/card/admin/gpu-1`,
+      `${target}${basePath}accelerators/gpu-1`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
@@ -1422,7 +1422,7 @@ test('runtime language updates the document and Element Plus services', async() 
 
   try {
     await page.goto(
-      `${target}${basePath}admin/vgpu/node/admin`,
+      `${target}${basePath}nodes`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('html[lang="en"]').waitFor()
@@ -1481,7 +1481,7 @@ test('workload rankings show Pod and container names independently of list filte
   })
 
   try {
-    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
     const rankings = page.locator('.ranking-workload')
     await rankings.first().getByRole('link', { name: `${podName} / main`, exact: true }).waitFor()
     assert.equal(await rankings.count(), 4)
@@ -1490,8 +1490,7 @@ test('workload rankings show Pod and container names independently of list filte
       const label = workload.appName === workload.name ? workload.name : `${workload.appName} / ${workload.name}`
       const link = row.getByRole('link', { name: label, exact: true })
       const href = new URL(await link.getAttribute('href'), target)
-      assert.equal(href.searchParams.get('podUid'), workload.podUid)
-      assert.equal(href.searchParams.get('name'), workload.name)
+      assert.equal(href.pathname, `${basePath}workloads/${workload.podUid}/containers/${workload.name}`)
       assert.match(await row.locator('.ranking-namespace').textContent(), new RegExp(workload.namespace))
     }
     assert.equal(await rankings.nth(2).locator('.ranking-pod-name').count(), 0)
@@ -1540,8 +1539,7 @@ test('workload rankings show Pod and container names independently of list filte
     }))
     assert.ok(dimensions.document <= dimensions.viewport, JSON.stringify(dimensions))
     await rankings.nth(1).getByRole('link').click()
-    await page.waitForURL((url) => url.pathname.endsWith('/admin/vgpu/task/admin/detail') &&
-      url.searchParams.get('podUid') === 'pod-production' && url.searchParams.get('name') === 'main')
+    await page.waitForURL((url) => url.pathname.endsWith('/workloads/pod-production/containers/main'))
   } finally {
     await page.close()
   }
@@ -1598,7 +1596,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
 
   try {
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin`,
+      `${target}${basePath}workloads`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('[data-testid="stateful-table-skeleton"]').waitFor()
@@ -1727,7 +1725,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
     const monitorRequests = trackMonitorRequests(page)
     try {
       await page.goto(
-        `${target}${basePath}admin/vgpu/card/admin/gpu-delayed`,
+        `${target}${basePath}accelerators/gpu-delayed`,
         { waitUntil: 'domcontentloaded' }
       )
       await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
@@ -1768,11 +1766,11 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
   await t.test('zero-value card and task replies are missing, not malformed', async(t) => {
     await t.test('card', () => assertMissingDetail(
       target,
-      `${basePath}admin/vgpu/card/admin/gpu-missing`
+      `${basePath}accelerators/gpu-missing`
     ))
     await t.test('task', () => assertMissingDetail(
       target,
-      `${basePath}admin/vgpu/task/admin/detail?name=missing-worker&podUid=pod-missing`
+      `${basePath}workloads/pod-missing/containers/missing-worker`
     ))
   })
 
@@ -1782,7 +1780,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
     const page = await browser.newPage()
     try {
       await page.goto(
-        `${target}${basePath}admin/vgpu/node/admin/node-retry?nodeName=node-retry`,
+        `${target}${basePath}nodes/node-retry?nodeName=node-retry`,
         { waitUntil: 'domcontentloaded' }
       )
       await page.locator('[data-testid="detail-page-error"]').waitFor()
@@ -1811,7 +1809,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
     const page = await browser.newPage()
     try {
       await page.goto(
-        `${target}${basePath}admin/vgpu/card/admin/gpu-metric-old`,
+        `${target}${basePath}accelerators/gpu-metric-old`,
         { waitUntil: 'domcontentloaded' }
       )
       await page.locator(
@@ -1825,7 +1823,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
       await page.evaluate(async() => {
         const app = document.querySelector('#app')?.__vue_app__
         await app?.config.globalProperties.$router.push(
-          '/admin/vgpu/card/admin/gpu-metric-new'
+          '/accelerators/gpu-metric-new'
         )
       })
       await page.locator('.layout-title').filter({ hasText: 'gpu-metric-new' }).waitFor()
@@ -1913,7 +1911,7 @@ test('workload status labels stay concise while accessible help explains contain
   })
 
   try {
-    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
     await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
     assert.deepEqual(
       (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
@@ -2005,7 +2003,7 @@ test('workload status labels stay concise while accessible help explains contain
     await statusTabs.getByRole('button', { name: /^Running/ }).click()
     await waitUntil(() => new URL(page.url()).searchParams.get('status') === 'success', 'The selected status was not kept in the address')
     await page.locator('.workload-table').getByRole('link', { name: 'pod-success / worker-success', exact: true }).click()
-    await page.waitForURL((url) => url.pathname.endsWith('/admin/vgpu/task/admin/detail'))
+    await page.waitForURL((url) => url.pathname.endsWith('/workloads/uid-success/containers/worker-success'))
     const requestsBeforeReturn = requestedStatuses.length
     await page.goBack({ waitUntil: 'domcontentloaded' })
     await waitUntil(async() => await statusTabs.getByRole('button', { name: /^Running/ }).getAttribute('aria-pressed') === 'true', 'Returning from a workload reset the status tab')
@@ -2013,7 +2011,7 @@ test('workload status labels stay concise while accessible help explains contain
     await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 2, 'The restored status did not filter the table')
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-success&podUid=uid-success`,
+      `${target}${basePath}workloads/uid-success/containers/worker-success`,
       { waitUntil: 'domcontentloaded' }
     )
     const headerStatus = page.locator('.layout-header-title-run-state .workload-status')
@@ -2023,7 +2021,7 @@ test('workload status labels stay concise while accessible help explains contain
     assert.equal(await headerStatus.locator('.metric-help').count(), 0)
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-recovered&podUid=uid-recovered`,
+      `${target}${basePath}workloads/uid-recovered/containers/worker-recovered`,
       { waitUntil: 'domcontentloaded' }
     )
     await headerStatus.getByRole('button', { name: 'View workload status details' }).focus()
@@ -2032,7 +2030,7 @@ test('workload status labels stay concise while accessible help explains contain
     assert.equal((await recoveredTooltip.textContent()).trim(), 'This container is ready, but the overall Pod is not ready.\nLast exit code: 137\nRestart count: 3')
 
     await page.goto(
-      `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-legacy&podUid=uid-legacy`,
+      `${target}${basePath}workloads/uid-legacy/containers/worker-legacy`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('.layout-header-title-run-state [data-workload-status="failed"]').waitFor()
@@ -2057,28 +2055,28 @@ test('resource names navigate while decorative table icons do not', async() => {
   }))
   const cases = [
     {
-      path: 'node/admin',
+      path: 'nodes',
       icon: '.node-table .node-name-icon-card',
       name: '.node-table .text-plus .link',
-      detail: 'node/admin/node-1?nodeName=node-1',
+      detail: 'nodes/node-1?nodeName=node-1',
     },
     {
-      path: 'card/admin',
+      path: 'accelerators',
       icon: '.accelerator-table .card-id-cell-icon',
       name: '.accelerator-table .text-plus .link',
-      detail: 'card/admin/gpu-1',
+      detail: 'accelerators/gpu-1',
     },
     {
-      path: 'task/admin',
+      path: 'workloads',
       icon: '.workload-table .task-name-icon-card',
       name: '.workload-table .workload-identity-link',
-      detail: 'task/admin/detail?name=worker&podUid=pod-icon',
+      detail: 'workloads/pod-icon/containers/worker',
     },
   ]
 
   try {
     for (const entry of cases) {
-      const listURL = `${target}${basePath}admin/vgpu/${entry.path}`
+      const listURL = `${target}${basePath}${entry.path}`
       await page.goto(listURL, { waitUntil: 'domcontentloaded' })
       const icon = page.locator(entry.icon).first()
       await icon.waitFor()
@@ -2087,8 +2085,34 @@ test('resource names navigate while decorative table icons do not', async() => {
       assert.equal(page.url(), listURL, `${entry.path}: a decorative icon navigated`)
       assert.notEqual(await icon.evaluate((element) => getComputedStyle(element).cursor), 'pointer')
       await page.locator(entry.name).first().click()
-      await page.waitForURL(`${target}${basePath}admin/vgpu/${entry.detail}`)
+      await page.waitForURL(`${target}${basePath}${entry.detail}`)
       await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
+test('earlier addresses redirect to the renamed routes', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const cases = [
+    ['', 'overview'],
+    ['admin/vgpu', 'nodes'],
+    ['admin/vgpu/monitor/overview', 'overview'],
+    ['admin/vgpu/node/admin?schedulingEligibility=unschedulable', 'nodes?schedulingEligibility=unschedulable'],
+    ['admin/vgpu/node/admin/node-1?nodeName=node-1', 'nodes/node-1?nodeName=node-1'],
+    ['admin/vgpu/card/admin?type=NVIDIA', 'accelerators?type=NVIDIA'],
+    ['admin/vgpu/card/admin/gpu-1', 'accelerators/gpu-1'],
+    ['admin/vgpu/task/admin?status=pending', 'workloads?status=pending'],
+    ['admin/vgpu/task/admin/detail?name=worker&podUid=pod-icon', 'workloads/pod-icon/containers/worker'],
+    ['admin/vgpu/task/admin/detail?name=worker', 'workloads'],
+  ]
+  try {
+    for (const [from, to] of cases) {
+      await page.goto(`${target}${basePath}${from}`, { waitUntil: 'domcontentloaded' })
+      await page.waitForURL((url) => url.href === `${target}${basePath}${to}`)
+      await page.locator('.side-link[aria-current="page"]').waitFor()
     }
   } finally {
     await page.close()
@@ -2156,7 +2180,7 @@ test('one workload table combines pending requests and allocations with shared f
     })
   })
   try {
-    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
     const table = page.locator('.workload-table')
     await table.getByRole('link', { name: 'already-bound / main', exact: true }).waitFor()
     const pendingEntry = table.getByRole('button', { name: 'pending-00 / main', exact: true })
@@ -2270,7 +2294,7 @@ test('a GPU container assigned without HAMi allocation opens diagnosis with its 
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ pod, events: [], eventStatus: 'empty' }) })
   })
   try {
-    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
     const table = page.locator('.workload-table')
     const entry = table.getByRole('button', { name: 'native-assigned / main', exact: true })
     await entry.waitFor()
@@ -2295,8 +2319,8 @@ test('node and GPU detail pages do not fetch cluster-wide pending Pods', async()
   let schedulingRequests = 0
   page.on('request', (request) => { if (request.url().includes('/v1/scheduling/')) schedulingRequests += 1 })
   try {
-    for (const path of ['node/admin/node-1?nodeName=node-1', 'card/admin/gpu-1']) {
-      await page.goto(`${target}${basePath}admin/vgpu/${path}`, { waitUntil: 'domcontentloaded' })
+    for (const path of ['nodes/node-1?nodeName=node-1', 'accelerators/gpu-1']) {
+      await page.goto(`${target}${basePath}${path}`, { waitUntil: 'domcontentloaded' })
       await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
       assert.equal(await page.locator('.scheduling-tabs').count(), 0)
       assert.equal(schedulingRequests, 0)
@@ -2327,7 +2351,7 @@ test('closing a scheduling diagnosis prevents its delayed response from replacin
     }) })
   })
   try {
-    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
     const first = page.getByRole('button', { name: 'first / main', exact: true })
     await first.waitFor()
     const workloadTable = page.locator('.workload-table')

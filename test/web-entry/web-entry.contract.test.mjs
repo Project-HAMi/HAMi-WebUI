@@ -194,7 +194,7 @@ test('serves the SPA shell at the root and an existing deep link', {
   assert.match(rootResponse.headers.get('content-type') ?? '', /text\/html/)
   assert.match(rootBody, /<div id="app"><\/div>/)
 
-  const deepLinkResponse = await fetchFrontend('/admin/vgpu/monitor/overview')
+  const deepLinkResponse = await fetchFrontend('/nodes/node-1')
   const deepLinkBody = await deepLinkResponse.text()
   assert.equal(deepLinkResponse.status, 200)
   assert.match(
@@ -204,7 +204,7 @@ test('serves the SPA shell at the root and an existing deep link', {
   assert.equal(deepLinkBody, rootBody)
 
   const trailingSlashResponse = await fetchFrontend(
-    '/admin/vgpu/monitor/overview/'
+    '/nodes/node-1/'
   )
   assert.equal(trailingSlashResponse.status, 200)
   assert.equal(await trailingSlashResponse.text(), rootBody)
@@ -217,7 +217,7 @@ test('serves the SPA shell at the root and an existing deep link', {
 test('keeps the Chart 1.x unrestricted iframe baseline', {
   timeout: 10_000
 }, async() => {
-  const response = await fetchFrontend('/admin/vgpu/monitor/overview')
+  const response = await fetchFrontend('/nodes/node-1')
   await response.arrayBuffer()
 
   assert.equal(response.headers.has('x-frame-options'), false)

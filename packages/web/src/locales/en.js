@@ -118,8 +118,6 @@ export default {
     searchKeyword: 'Search keyword',
   },
   routes: {
-    gpuAdmin: 'Accelerators',
-    resourceAdmin: 'Resources',
     dashboard: 'Overview',
     nodes: 'Nodes',
     cards: 'Accelerators',

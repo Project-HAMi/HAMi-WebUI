@@ -50,9 +50,9 @@
               <code v-for="gate in pod.gates" :key="gate" class="sd-chip">{{ gate }}</code>
             </div>
             <p v-if="pod.preallocated && !pod.nodeName" class="sd-note">{{ t('scheduling.preallocated') }}</p>
-            <p v-if="pod.nodeName && (pod.allocatedContainers || []).length" class="sd-note sd-links">
-              <RouterLink v-for="container in pod.allocatedContainers" :key="container" :to="{ path: '/admin/vgpu/task/admin/detail', query: { name: container, podUid: pod.uid } }">
-                {{ t('scheduling.openAllocated', { name: container }) }}
+            <p v-if="pod.nodeName && allocatedLinks.length" class="sd-note sd-links">
+              <RouterLink v-for="link in allocatedLinks" :key="link.container" :to="link.to">
+                {{ t('scheduling.openAllocated', { name: link.container }) }}
               </RouterLink>
             </p>
           </div>
@@ -223,6 +223,7 @@ import {
   describeSchedulingConstraints, formatSchedulingAgo, formatSchedulingDuration, getSchedulingChecks, getSchedulingDetailError,
   getSchedulingReasons, getSchedulingRequestTiles, getSchedulingSummary, schedulingIdentity, tokenizeJSON,
 } from './scheduling-display.mjs';
+import { buildWorkloadDetailLocation } from './workload-identity.mjs';
 
 const props = defineProps({
   identityPod: { type: Object, default: null },
@@ -244,6 +245,9 @@ let controller;
 let opener;
 
 const pod = computed(() => response.value?.pod || props.identityPod || {});
+const allocatedLinks = computed(() => (pod.value.allocatedContainers || [])
+  .map((container) => ({ container, to: buildWorkloadDetailLocation({ podUid: pod.value.uid, name: container }) }))
+  .filter((link) => link.to));
 const stage = computed(() => ['terminating', 'finished'].includes(pod.value.stage)
   ? pod.value.stage : (pod.value.nodeName ? 'bound' : (pod.value.stage || 'unknown')));
 const summary = computed(() => getSchedulingSummary(pod.value, t, props.containerName));

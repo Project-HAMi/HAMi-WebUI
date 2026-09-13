@@ -121,7 +121,7 @@ const handleClick = (params) => {
   const uid = allNodeMap.value.get(name);
   if (uid) {
     const uuid = uid;
-    router.push(`/admin/vgpu/node/admin/${uuid}?nodeName=${name}`);
+    router.push(`/nodes/${uuid}?nodeName=${name}`);
   } else {
     MessagePlugin.error(t('node.nodeNotFound'));
   }
@@ -165,7 +165,7 @@ const baseColumns = computed(() => [
     minWidth: 200,
     dataIndex: 'name',
     render: ({ uid, name }) => {
-      const to = `/admin/vgpu/node/admin/${uid}?nodeName=${name}`;
+      const to = `/nodes/${uid}?nodeName=${name}`;
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
           <span class="vgpu-table-name-icon-card node-name-icon-card">

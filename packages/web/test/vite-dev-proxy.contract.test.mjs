@@ -151,7 +151,7 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     assert.equal(requests[0].headers['x-contract-request'], 'preserved')
 
     const deepLinkResponse = await fetch(
-      `${frontendURL}/admin/vgpu/monitor/overview`,
+      `${frontendURL}/overview`,
       { headers: { accept: 'text/html' } }
     )
     assert.equal(deepLinkResponse.status, 200)

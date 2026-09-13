@@ -258,13 +258,10 @@ const route = useRoute();
 const router = useRouter();
 const { t, locale } = useI18n();
 
-const normalizeRouteQuery = (value) => {
-  const normalized = Array.isArray(value) ? value[0] : value;
-  return typeof normalized === 'string' ? normalized.trim() : '';
-};
+const routeParam = (value) => (typeof value === 'string' ? value.trim() : '');
 const requestedIdentity = computed(() => ({
-  name: normalizeRouteQuery(route.query.name),
-  podUid: normalizeRouteQuery(route.query.podUid),
+  name: routeParam(route.params.container),
+  podUid: routeParam(route.params.podUid),
 }));
 const {
   data: detail,
@@ -449,7 +446,7 @@ const resourceOverviewTexts = computed(() => {
 
 const handleGpuJump = (uuid) => {
   if (!uuid) return;
-  router.push(`/admin/vgpu/card/admin/${uuid}`);
+  router.push(`/accelerators/${uuid}`);
 };
 
 const headerStatusDisplay = computed(() => (

@@ -107,7 +107,7 @@ import Top from './top.vue';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
-import { createWorkloadRowKey, formatWorkloadName } from './workload-identity.mjs';
+import { buildWorkloadDetailLocation, createWorkloadRowKey, formatWorkloadName } from './workload-identity.mjs';
 import WorkloadStatus from './WorkloadStatus.vue';
 import { getWorkloadStatusOptions } from './workload-status.mjs';
 import { createRequestState, isLatestRequest, rejectRequest, REQUEST_STATUS, resolveRequest, startRequest } from '@/hooks/request-state.mjs';
@@ -181,7 +181,7 @@ const baseColumns = computed(() => [
     hideTooltip: true,
     render: (workload) => {
       const { name, appName, podUid, namespace, namespaceName, request: resourceRequest, scheduling, containerKind } = workload;
-      const to = `/admin/vgpu/task/admin/detail?name=${name}&podUid=${podUid}`;
+      const to = buildWorkloadDetailLocation({ podUid, name });
       const workloadPodName = appName || '--';
       const workloadContainerName = name || '--';
       const workloadNamespace = namespace || namespaceName || '--';
@@ -222,11 +222,16 @@ const baseColumns = computed(() => [
                   {identityLabel}
                   {containerKindBadge}
                 </button>
-              ) : (
+              ) : to ? (
                 <RouterLink class="workload-identity-primary workload-identity-link" to={to} aria-label={workloadName}>
                   {identityLabel}
                   {containerKindBadge}
                 </RouterLink>
+              ) : (
+                <span class="workload-identity-primary">
+                  {identityLabel}
+                  {containerKindBadge}
+                </span>
               )}
               <span class="workload-namespace-line">
                 <span class="workload-namespace-label">{t('task.namespace')}:</span>

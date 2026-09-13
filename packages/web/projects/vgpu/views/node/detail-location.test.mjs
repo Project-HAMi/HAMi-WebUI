@@ -7,7 +7,7 @@ test('node detail location uses the named route and normalized identity', () => 
   assert.deepEqual(
     buildNodeDetailLocation({ uid: '  node-uid  ', nodeName: '  worker-1  ' }),
     {
-      name: 'node-admin-detail',
+      name: 'node-detail',
       params: { uid: 'node-uid' },
       query: { nodeName: 'worker-1' },
     },
@@ -16,7 +16,7 @@ test('node detail location uses the named route and normalized identity', () => 
 
 test('node detail location omits an empty display-name query', () => {
   assert.deepEqual(buildNodeDetailLocation({ uid: 'node-uid', nodeName: '  ' }), {
-    name: 'node-admin-detail',
+    name: 'node-detail',
     params: { uid: 'node-uid' },
   });
 });

@@ -74,13 +74,7 @@ defineEmits(['toggle']);
 const route = useRoute();
 
 const navigationItems = computed(() =>
-  (route.matched[0]?.children ?? [])
-    .filter((item) => item.meta)
-    .flatMap((item) =>
-      item.name === 'resource-admin'
-        ? (item.children ?? []).filter((child) => child.meta)
-        : [item],
-    ),
+  (route.matched[0]?.children ?? []).filter((item) => item.meta),
 );
 
 const activeValue = computed(() => {

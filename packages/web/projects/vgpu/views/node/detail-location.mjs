@@ -7,7 +7,7 @@ export const buildNodeDetailLocation = ({ uid, nodeName } = {}) => {
 
   const normalizedNodeName = normalizeText(nodeName);
   const location = {
-    name: 'node-admin-detail',
+    name: 'node-detail',
     params: { uid: normalizedUid },
   };
 
