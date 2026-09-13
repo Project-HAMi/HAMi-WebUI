@@ -5,6 +5,7 @@ import (
 	"github.com/google/wire"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
 )
 
@@ -13,12 +14,15 @@ var ProviderSet = wire.NewSet(
 	NewData,
 	NewNodeRepo,
 	NewPodRepo,
+	wire.Bind(new(biz.PodRepo), new(*podRepo)),
+	wire.Bind(new(biz.SchedulingRepo), new(*podRepo)),
 )
 
 // Data .
 type Data struct {
-	k8sCl  kubernetes.Interface
-	promCl *prom.Client
+	k8sCl    kubernetes.Interface
+	eventsCl kubernetes.Interface
+	promCl   *prom.Client
 }
 
 // NewData .
@@ -27,18 +31,16 @@ func NewData(logger log.Logger, promCl *prom.Client) (*Data, func(), error) {
 	cfg := config.GetConfigOrDie()
 	k8sCl, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		panic(err)
+		return nil, nil, err
 	}
+	eventsCl, err := newBoundedSchedulingEventClient(cfg)
 	if err != nil {
-		panic(err)
-	}
-
-	if err != nil {
-		log.Fatalf("Failed to create session: %v", err)
+		return nil, nil, err
 	}
 	return &Data{
-			k8sCl:  k8sCl,
-			promCl: promCl,
+			k8sCl:    k8sCl,
+			eventsCl: eventsCl,
+			promCl:   promCl,
 		}, func() {
 			log.Info("message", "closing the data resources")
 		}, nil

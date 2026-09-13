@@ -42,7 +42,9 @@ const hovered = ref(false);
 const focused = ref(false);
 const visible = computed(() => hovered.value || focused.value);
 
-const dismiss = () => {
+// Keep Esc from also closing an enclosing drawer.
+const dismiss = (event) => {
+  if (visible.value) event?.stopPropagation();
   hovered.value = false;
   focused.value = false;
 };

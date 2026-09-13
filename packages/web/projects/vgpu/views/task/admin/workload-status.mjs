@@ -1,8 +1,11 @@
+import { formatSchedulingWait, getSchedulingSummary } from './scheduling-display.mjs';
+
 export const WORKLOAD_STATUS_CODES = Object.freeze([
-  'waiting', 'success', 'not_ready', 'error', 'closed', 'failed', 'terminating', 'unknown',
+  'pending', 'waiting', 'success', 'not_ready', 'error', 'closed', 'failed', 'terminating', 'unknown',
 ]);
 
 const STATUS_LABEL_KEYS = Object.freeze({
+  pending: 'statusPending',
   waiting: 'statusStarting',
   success: 'statusRunning',
   not_ready: 'statusAbnormal',
@@ -10,7 +13,8 @@ const STATUS_LABEL_KEYS = Object.freeze({
   closed: 'statusCompleted',
   failed: 'statusAbnormal',
   terminating: 'statusTerminating',
-  unknown: 'statusUnknown',
+  // A state that cannot be confirmed needs the same attention as a failure.
+  unknown: 'statusAbnormal',
 });
 
 const hasText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -25,6 +29,7 @@ const REASON_SUMMARY_KEYS = Object.freeze({
   ImageInspectError: 'imageInspect',
   CreateContainerConfigError: 'configuration',
   CreateContainerError: 'creation',
+  UnexpectedAdmissionError: 'nodeAdmission',
   RunContainerError: 'start',
   PreCreateHookError: 'start',
   PreStartHookError: 'start',
@@ -58,9 +63,15 @@ const getSummary = (code, detail, hasPastFailure, translate) => {
   return summary(`summary.${code}`);
 };
 
-export const getWorkloadStatus = (workload = {}, translate) => {
+export const getWorkloadStatus = (workload = {}, translate, now = Date.now()) => {
   const code = WORKLOAD_STATUS_CODES.includes(workload.status) ? workload.status : 'unknown';
   const label = translate(`task.${STATUS_LABEL_KEYS[code]}`);
+  if (code === 'pending') {
+    const lines = [getSchedulingSummary(workload.scheduling || {}, translate)];
+    const waited = formatSchedulingWait(workload.scheduling?.createdAt || workload.createTime, now, translate);
+    if (waited) lines.push(waited);
+    return { code, label, hasDetails: true, description: lines.join('\n') };
+  }
   const detail = workload.statusDetail;
   const needsExplanation = !['success', 'closed'].includes(code);
   if (!detail || typeof detail !== 'object' || Array.isArray(detail) || !Object.keys(detail).length) {
@@ -93,6 +104,7 @@ export const getWorkloadStatus = (workload = {}, translate) => {
 
 // Filters describe common workload outcomes; raw states retain precise explanations.
 const STATUS_FILTER_LABEL_KEYS = Object.freeze({
+  pending: 'statusPending',
   waiting: 'statusStarting',
   success: 'statusRunning',
   abnormal: 'statusAbnormal',

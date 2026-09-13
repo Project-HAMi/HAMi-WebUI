@@ -1,28 +1,15 @@
 <template>
   <div v-if="sidebar && !collapsed" class="lang-select--sidebar lang-segment-row">
     <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
-    <div
+    <SegmentedControl
       class="lang-segments"
-      :class="{ 'is-english': language === 'en' }"
-      role="group"
+      size="small"
+      equal
+      :model-value="language"
+      :options="languageOptions"
       :aria-label="$t('common.switchLanguage')"
-    >
-      <span class="lang-segment-indicator" aria-hidden="true" />
-      <button
-        type="button"
-        class="lang-segment"
-        :aria-pressed="language === 'zh'"
-        :aria-label="$t('common.lang.zh')"
-        @click="handleSetLanguage('zh')"
-      >{{ $t('common.lang.zh') }}</button>
-      <button
-        type="button"
-        class="lang-segment"
-        :aria-pressed="language === 'en'"
-        :aria-label="$t('common.lang.en')"
-        @click="handleSetLanguage('en')"
-      >EN</button>
-    </div>
+      @change="handleSetLanguage"
+    />
   </div>
   <div v-else-if="sidebar" class="lang-select--sidebar is-collapsed">
     <t-tooltip :content="switchLanguageLabel" placement="right">
@@ -89,6 +76,7 @@ import Cookies from 'js-cookie';
 import { LANG_KEY } from '@/locales';
 import { ArrowDown } from '@element-plus/icons-vue';
 import LanguageToggleIcon from './LanguageToggleIcon.vue';
+import SegmentedControl from '@/components/SegmentedControl/index.vue';
 
 defineProps({
   sidebar: { type: Boolean, default: false },
@@ -104,6 +92,10 @@ const switchLanguageLabel = computed(() => i18n.t('common.switchToLanguage', {
   language: i18n.t(`common.lang.${nextLanguage.value}`),
 }));
 const menuVisible = ref(false);
+const languageOptions = computed(() => [
+  { value: 'zh', label: i18n.t('common.lang.zh'), ariaLabel: i18n.t('common.lang.zh') },
+  { value: 'en', label: 'EN', ariaLabel: i18n.t('common.lang.en') },
+]);
 
 const handleSetLanguage = (lang) => {
   if (lang === language.value) return;
@@ -219,69 +211,11 @@ const handleSetLanguage = (lang) => {
 }
 
 .lang-segments {
-  position: relative;
-  display: flex;
   flex: 0 0 102px;
-  height: 30px;
-  padding: 3px;
-  border-radius: 8px;
-  background: #e7edf4;
-  box-sizing: border-box;
-
-  &.is-english .lang-segment-indicator {
-    transform: translateX(100%);
-  }
-}
-
-.lang-segment-indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: 3px;
-  width: calc(50% - 3px);
-  border-radius: 5px;
-  background: #fff;
-  box-shadow: 0 1px 3px rgb(32 48 64 / 10%);
-  transition: transform 150ms cubic-bezier(0.2, 0, 0, 1);
-}
-
-.lang-segment {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #526477;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 24px;
-  text-align: center;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 120ms ease;
-
-  &:hover {
-    color: #203040;
-  }
-
-  &[aria-pressed='true'] {
-    color: #2563eb;
-  }
-
-  &:focus-visible {
-    outline: 2px solid #2563eb;
-    outline-offset: -1px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lang-select-container,
-  .lang-segment,
-  .lang-segment-indicator {
+  .lang-select-container {
     transition: none;
   }
 }

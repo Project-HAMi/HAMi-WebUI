@@ -20,6 +20,13 @@ const domainError = (overrides = {}) => ({
   ...overrides,
 });
 
+test('cancelled and inline-rendered errors do not emit duplicate global notifications', () => {
+  const shouldNotify = createRequestErrorNotificationGate();
+  assert.equal(shouldNotify({ code: 'ERR_CANCELED', config: { url: '/api/vgpu/v1/scheduling/pod' } }), false);
+  assert.equal(shouldNotify(domainError({ config: { errorFeedback: 'inline' } })), false);
+  assert.equal(shouldNotify(domainError()), true);
+});
+
 test('request error fingerprints ignore query bodies and URL query strings', () => {
   const first = domainError();
   const duplicate = domainError({

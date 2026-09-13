@@ -10,6 +10,7 @@
 {{- $prometheusTLSSecret := default "" (get $prometheusTLS "existingSecret") -}}
 {{- $prometheusCAKey := default "" (get $prometheusTLS "caKey") -}}
 {{- $prometheusCertKey := default "" (get $prometheusTLS "certKey") -}}
+{{- $scheduling := default (dict) .Values.scheduling -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,6 +51,11 @@ data:
     exporter:
       interval: {{ .Values.metricsExporter.interval | default "30s" }}
       timeout:  {{ .Values.metricsExporter.timeout  | default "60s" }}
+    {{- with (get $scheduling "resourceNames") }}
+    scheduling:
+      resource_names:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
     node_selectors:
     {{- range $key, $value := .Values.vendorNodeSelectors }}
       {{ $key }}: {{ $value }}

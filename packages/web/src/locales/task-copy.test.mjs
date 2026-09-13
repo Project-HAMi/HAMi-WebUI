@@ -4,9 +4,9 @@ import test from 'node:test';
 import en from './en.js';
 import zh from './zh.js';
 
-test('workload allocation column names the resource configuration', () => {
-  assert.equal(zh.task.card, '算力配置');
-  assert.equal(en.task.card, 'Accelerator Allocation');
+test('the unified workload column describes both requested and allocated resources', () => {
+  assert.equal(zh.task.resourceConfiguration, '算力配置');
+  assert.equal(en.task.resourceConfiguration, 'Accelerator Configuration');
 });
 
 test('GPU counts use quantity language consistently', () => {

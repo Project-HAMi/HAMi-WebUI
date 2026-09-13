@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 	"vgpu/internal/biz"
+	"vgpu/internal/conf"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -19,27 +20,45 @@ import (
 )
 
 type podRepo struct {
-	data      *Data
-	podLister listerscorev1.PodLister
-	pods      map[k8stypes.UID]*biz.PodInfo
-	mutex     sync.RWMutex
-	log       *log.Helper
+	data                    *Data
+	podLister               listerscorev1.PodLister
+	pods                    map[k8stypes.UID]*biz.PodInfo
+	mutex                   sync.RWMutex
+	log                     *log.Helper
+	podIndexer              cache.Indexer
+	schedulingResourceNames map[corev1.ResourceName]struct{}
+	schedulingEvents        *schedulingEventReader
 }
 
-func NewPodRepo(data *Data, logger log.Logger) biz.PodRepo {
+func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap) (*podRepo, error) {
+	resources, err := schedulingResources(config.GetScheduling())
+	if err != nil {
+		return nil, err
+	}
+	eventsClient := data.eventsCl
+	if eventsClient == nil {
+		eventsClient = data.k8sCl
+	}
 	repo := &podRepo{
-		data: data,
-		pods: make(map[k8stypes.UID]*biz.PodInfo),
-		log:  log.NewHelper(logger),
+		data:                    data,
+		pods:                    make(map[k8stypes.UID]*biz.PodInfo),
+		log:                     log.NewHelper(logger),
+		schedulingResourceNames: resources,
+		schedulingEvents:        newSchedulingEventReader(eventsClient),
 	}
 	repo.init()
-	return repo
+	return repo, nil
 }
 
 func (r *podRepo) init() {
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
 	r.podLister = informerFactory.Core().V1().Pods().Lister()
 	informer := informerFactory.Core().V1().Pods().Informer()
+	// An index on the existing informer, not another watch.
+	if err := informer.AddIndexers(cache.Indexers{schedulingGPUIndex: r.schedulingIndex}); err != nil {
+		panic(err)
+	}
+	r.podIndexer = informer.GetIndexer()
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddPod,
 		UpdateFunc: r.onUpdatePod,

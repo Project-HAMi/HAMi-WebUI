@@ -9,6 +9,7 @@ var ProviderSet = wire.NewSet(
 	NewNodeUsecase,
 	NewPodUseCase,
 	NewSummaryUseCase,
+	NewSchedulingUsecase,
 )
 
 const (

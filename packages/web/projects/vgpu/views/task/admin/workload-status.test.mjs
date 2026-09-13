@@ -12,13 +12,15 @@ const translator = (messages) => (key, params = {}) => {
 const english = translator(en);
 const chinese = translator(zh);
 
-test('common workload filters offer only starting, running and grouped abnormal states', () => {
+test('common workload filters add pending scheduling without exposing container platform states', () => {
   assert.deepEqual(getWorkloadStatusOptions(chinese), [
+    { value: 'pending', label: '待调度' },
     { value: 'waiting', label: '启动中' },
     { value: 'success', label: '运行中' },
     { value: 'abnormal', label: '异常' },
   ]);
   assert.deepEqual(getWorkloadStatusOptions(english), [
+    { value: 'pending', label: 'Pending' },
     { value: 'waiting', label: 'Starting' },
     { value: 'success', label: 'Running' },
     { value: 'abnormal', label: 'Abnormal' },
@@ -26,7 +28,7 @@ test('common workload filters offer only starting, running and grouped abnormal 
 });
 
 test('grouped row labels retain precise raw states and standalone exceptional outcomes', () => {
-  const expected = ['启动中', '运行中', '异常', '异常', '已完成', '异常', '终止中', '未知'];
+  const expected = ['待调度', '启动中', '运行中', '异常', '异常', '已完成', '异常', '终止中', '异常'];
   assert.deepEqual(WORKLOAD_STATUS_CODES.map((status) => getWorkloadStatus({ status }, chinese).label), expected);
   for (const translate of [english, chinese]) {
     for (const status of WORKLOAD_STATUS_CODES) {
@@ -36,6 +38,21 @@ test('grouped row labels retain precise raw states and standalone exceptional ou
       assert.ok(result.description.split('\n').length <= 3);
     }
   }
+});
+
+test('pending scheduling uses one scheduling explanation without raw messages or stale container failures', () => {
+  const workload = {
+    status: 'pending',
+    scheduling: { stage: 'waiting', reasonCodes: ['CardInsufficientMemory'], condition: { message: 'long original error' } },
+    statusDetail: { reason: 'CrashLoopBackOff', restartCount: 10, lastExitCode: 42 },
+  };
+  const result = getWorkloadStatus(workload, english);
+  assert.equal(result.label, 'Pending');
+  assert.equal(result.hasDetails, true);
+  assert.equal(result.description, 'Insufficient allocatable GPU memory');
+  assert.equal(getWorkloadStatus({ ...workload, scheduling: { stage: 'gated' } }, chinese).description, '调度已暂缓');
+  assert.equal(getWorkloadStatus({ ...workload, scheduling: { stage: 'unknown' } }, chinese).description, '暂时无法确认节点绑定状态。');
+  assert.equal(getWorkloadStatus({ status: 'pending' }, english).description, 'No scheduling feedback is available yet');
 });
 
 test('not-ready explanation preserves false readiness without repeating status fields', () => {
@@ -99,7 +116,7 @@ test('older API responses retain their state without claiming new readiness evid
     assert.match(result.description, /no further details/);
     assert.doesNotMatch(result.description, /Container readiness:|running and ready/);
   }
-  assert.equal(getWorkloadStatus({ status: 'new-future-state' }, english).label, 'Unknown');
+  assert.equal(getWorkloadStatus({ status: 'new-future-state' }, english).label, 'Abnormal');
 });
 
 test('healthy running and ordinary completed workloads need no redundant help', () => {
@@ -142,8 +159,9 @@ test('unknown status describes lost information without presenting stale running
     status: 'unknown',
     statusDetail: { containerState: 'Running', ready: true, podPhase: 'Running', podReady: 'Unknown', podReadyReason: 'NodeStatusUnknown', podReadyMessage: 'Kubelet stopped posting node status.' },
   }, english);
+  assert.equal(result.label, 'Abnormal');
   assert.equal(result.hasDetails, true);
-  assert.equal(result.description, 'The workload state cannot currently be confirmed.');
+  assert.equal(result.description, 'The state cannot be confirmed, often because the node is unreachable.');
 });
 
 test('a ready container with unknown Pod readiness keeps useful additional context', () => {
@@ -206,4 +224,24 @@ test('unknown failure reasons retain only a short identifier and never raw diagn
   for (const reason of ['a long diagnostic message\n'.repeat(100), '<unauthorized>']) {
     assert.equal(getWorkloadStatus({ status: 'error', statusDetail: { ...statusDetail, reason } }, english).description, 'The program encountered an error.');
   }
+});
+
+test('pending scheduling adds its wait time without becoming another state', () => {
+  const createdAt = '2026-09-12T08:00:00Z';
+  const now = Date.parse('2026-09-12T08:25:30Z');
+  const workload = { status: 'pending', createTime: createdAt, scheduling: { stage: 'waiting', createdAt, reasonCodes: ['CardInsufficientMemory'] } };
+  const result = getWorkloadStatus(workload, chinese, now);
+  assert.equal(result.label, '待调度');
+  assert.equal(result.description, `${zh.scheduling.reason.memory}\n已等待 25 分钟`);
+  assert.equal(getWorkloadStatus(workload, english, now).description, `${en.scheduling.reason.memory}\nWaiting for 25m`);
+  assert.equal(getWorkloadStatus({ ...workload, createTime: '', scheduling: { stage: 'waiting' } }, english, now).description, 'No scheduling feedback is available yet');
+});
+
+test('an unconfirmed state reads as abnormal and explains the likely cause', () => {
+  const result = getWorkloadStatus({
+    status: 'unknown', statusDetail: { podPhase: 'Unknown', podReady: 'Unknown', podReadyReason: 'NodeStatusUnknown' },
+  }, chinese);
+  assert.equal(result.label, '异常');
+  assert.equal(result.hasDetails, true);
+  assert.equal(result.description, '无法确认状态，常见于节点失联。');
 });

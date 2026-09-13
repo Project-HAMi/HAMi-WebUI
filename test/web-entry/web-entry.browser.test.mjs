@@ -54,6 +54,27 @@ async function readJSONBody(req) {
   }
 }
 
+const workloadListPattern = /\/api\/vgpu\/v1\/(?:containers|workloads)$/
+
+function fulfillWorkloadFixture(route, payload, status = 200) {
+  if (new URL(route.request().url()).pathname.endsWith('/v1/workloads') && Array.isArray(payload.items)) {
+    const query = route.request().postDataJSON() || {}
+    const size = Math.max(1, Math.min(100, Number(query.pageSize || 10)))
+    const start = (Math.max(1, Number(query.page || 1)) - 1) * size
+    payload = { ...payload, total: payload.items.length, items: payload.items.slice(start, start + size) }
+  }
+  return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
+}
+
+function pendingWorkloadFixture(pod) {
+  const request = pod.requests[0]
+  return {
+    name: request.container, appName: pod.name, podUid: pod.uid, namespace: pod.namespace,
+    nodeName: '', status: 'pending', pending: true, containerKind: request.containerKind,
+    createTime: pod.createdAt, scheduling: pod, request,
+  }
+}
+
 function escapeAttribute(value) {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
 }
@@ -622,8 +643,8 @@ before(async() => {
         list: [{ uuid: 'gpu-1', type: 'NVIDIA', node: 'node-1', health: true }],
         total: 1
       }
-    } else if (pathname === '/v1/containers') {
-      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1' }], total: 1 }
+    } else if (pathname === '/v1/containers' || pathname === '/v1/workloads') {
+      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1 }
     } else if (pathname === '/v1/monitor/query/instant-vector') {
       if (body?.query?.includes('gpu-metric-new')) {
         const requestKey = 'monitor:gpu-metric-new'
@@ -894,6 +915,7 @@ test('workload and detail views keep dense identity content readable', async() =
       appName: podName,
       podUid: 'pod-readable',
       namespace: 'research-space',
+      nodeName: 'node-1',
       status: 'success',
       deviceIds: ['gpu-1'],
       allocatedCores: 30,
@@ -905,6 +927,7 @@ test('workload and detail views keep dense identity content readable', async() =
       appName: podName,
       podUid: 'pod-readable',
       namespace: 'research-space',
+      nodeName: 'node-1',
       status: 'success',
       deviceIds: ['gpu-1'],
       allocatedCores: 30,
@@ -916,6 +939,7 @@ test('workload and detail views keep dense identity content readable', async() =
       appName: 'torch-two-gpu',
       podUid: 'pod-same-name',
       namespace: 'research-space',
+      nodeName: 'node-1',
       status: 'success',
       deviceIds: ['gpu-1'],
       allocatedCores: 50,
@@ -924,11 +948,7 @@ test('workload and detail views keep dense identity content readable', async() =
     }
   ]
 
-  await page.route('**/api/vgpu/v1/containers', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ code: 0, items: workloads, total: workloads.length })
-  }))
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { code: 0, items: workloads, total: workloads.length }))
 
   const assertIconGeometry = async(selector) => {
     const boxes = await page.locator(selector).evaluateAll((elements) =>
@@ -1097,7 +1117,7 @@ test('workload and detail views keep dense identity content readable', async() =
       }))
     assert.equal(containerLayout.clientWidth, containerLayout.scrollWidth)
     assert.equal(containerLayout.flexShrink, '0')
-    await page.getByRole('columnheader', { name: 'Accelerator Allocation' }).waitFor()
+    await page.getByRole('columnheader', { name: 'Accelerator Configuration' }).waitFor()
     await assertIconGeometry('.task-name-icon-card')
 
     const podText = identities.first().locator('.ellipsis-text').first()
@@ -1439,16 +1459,13 @@ test('workload rankings show Pod and container names independently of list filte
     { name: 'main', appName: podName, podUid: 'pod-research', namespace: 'research' },
     { name: 'main', appName: podName, podUid: 'pod-production', namespace: 'production' },
     { name: 'worker', appName: 'worker', podUid: 'pod-worker', namespace: 'default' }
-  ].map((item) => ({ ...item, status: 'success', deviceIds: ['gpu-1'], createTime: '2026-09-12T00:00:00Z' }))
+  ].map((item) => ({ ...item, nodeName: 'node-1', status: 'success', deviceIds: ['gpu-1'], createTime: '2026-09-12T00:00:00Z' }))
   let filteredRequests = 0
-  await page.route('**/api/vgpu/v1/containers', (route) => {
+  await page.route(workloadListPattern, (route) => {
     const name = route.request().postDataJSON()?.filters?.name
     if (name) filteredRequests += 1
     const items = name ? workloads.filter((item) => item.name === name) : workloads
-    return route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ code: 0, items, total: items.length })
-    })
+    return fulfillWorkloadFixture(route, { code: 0, items, total: items.length })
   })
   await page.route('**/api/vgpu/v1/monitor/query/instant-vector', (route) => {
     if (!route.request().postDataJSON()?.query?.includes('container_pod_uuid')) return route.continue()
@@ -1538,17 +1555,14 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
   let completedRequests = 0
 
   const enqueue = (handler) => responses.push(handler)
-  const fulfill = (route, items, status = 200) => route.fulfill({
-    status,
-    contentType: 'application/json',
-    body: JSON.stringify(status === 200
+  const fulfill = (route, items, status = 200) => fulfillWorkloadFixture(route, status === 200
       ? { code: 0, items, total: Array.isArray(items) ? items.length : 0 }
-      : { code: status, message: 'temporary list failure' })
-  })
+      : { code: status, message: 'temporary list failure' }, status)
   const workload = (name) => ({
     name,
     appName: '',
     podUid: `pod-${name}`,
+    nodeName: 'node-1',
     namespace: 'default',
     status: 'success',
     deviceIds: ['gpu-1'],
@@ -1564,7 +1578,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
     return { promise, release }
   }
 
-  await page.route('**/api/vgpu/v1/containers', async(route) => {
+  await page.route(workloadListPattern, async(route) => {
     const handler = responses.shift()
     assert.ok(handler, 'Workload list issued an unexpected request')
     receivedRequests += 1
@@ -1877,19 +1891,19 @@ test('workload status labels stay concise while accessible help explains contain
     allocatedMem: 1024,
     createTime: '2026-08-31T00:00:00Z',
   }))
-  const fulfill = (route, payload) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ code: 0, ...payload }),
-  })
+  const fulfill = (route, payload) => fulfillWorkloadFixture(route, { code: 0, ...payload })
   const requestedStatuses = []
-  await page.route('**/api/vgpu/v1/containers', (route) => {
+  await page.route(workloadListPattern, (route) => {
     const status = route.request().postDataJSON()?.filters?.status
     requestedStatuses.push(status)
     const items = status === 'abnormal'
-      ? workloads.filter((item) => ['not_ready', 'error', 'failed'].includes(item.status))
+      ? workloads.filter((item) => ['not_ready', 'error', 'failed', 'unknown'].includes(item.status))
       : status ? workloads.filter((item) => item.status === status) : workloads
-    return fulfill(route, { items })
+    const statusCounts = { all: workloads.length }
+    for (const [key, codes] of Object.entries({ waiting: ['waiting'], success: ['success'], abnormal: ['not_ready', 'error', 'failed', 'unknown'] })) {
+      statusCounts[key] = workloads.filter((item) => codes.includes(item.status)).length
+    }
+    return fulfill(route, { items, statusCounts })
   })
   await page.route('**/api/vgpu/v1/container?*', (route) => {
     const params = new URL(route.request().url()).searchParams
@@ -1903,7 +1917,7 @@ test('workload status labels stay concise while accessible help explains contain
     await page.locator('.workload-table [data-workload-status="not_ready"]').waitFor()
     assert.deepEqual(
       (await page.locator('.workload-table .workload-status__label').allTextContents()).map((value) => value.trim()),
-      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Unknown', 'Abnormal', 'Abnormal']
+      ['Starting', 'Running', 'Abnormal', 'Abnormal', 'Completed', 'Abnormal', 'Terminating', 'Abnormal', 'Abnormal', 'Abnormal']
     )
     // The recovered workload is on page two with the default ten-row page size.
     assert.equal(await page.locator('.workload-table .workload-status .metric-help').count(), 8)
@@ -1926,7 +1940,7 @@ test('workload status labels stay concise while accessible help explains contain
     await assertRunningAppearance(healthyStatus, 'rgb(0, 0, 0)')
     assert.equal(await healthyStatus.locator('.metric-help').count(), 0)
     assert.equal(await page.locator('.workload-table [data-workload-status="closed"] .metric-help').count(), 0)
-    for (const code of ['not_ready', 'error', 'failed']) {
+    for (const code of ['not_ready', 'error', 'failed', 'unknown']) {
       const icon = page.locator(`.workload-table [data-workload-status="${code}"] .workload-status__icon use`).first()
       assert.equal(await icon.evaluate((element) => element.getAttribute('href') || element.getAttribute('xlink:href')), '#icon-status-unschedulable')
     }
@@ -1965,27 +1979,38 @@ test('workload status labels stay concise while accessible help explains contain
     assert.ok((await crashTooltip.boundingBox()).height <= 120)
     await crashHelp.press('Escape')
 
-    const statusSelect = page.getByPlaceholder('All Status')
-    await statusSelect.click()
-    const options = page.locator('.t-select-option:visible')
-    await waitUntil(async() => await options.count() === 4, 'Status dropdown did not finish opening all four options')
-    assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), ['All Status', 'Starting', 'Running', 'Abnormal'])
-    await options.filter({ hasText: /^Abnormal$/ }).click()
-    await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 5, 'Abnormal group did not include all error, failed and not-ready containers')
+    const statusTabs = page.getByRole('group', { name: 'Status', exact: true })
+    const tabLabels = async() => (await statusTabs.getByRole('button').allTextContents()).map((label) => label.replace(/\s+/g, ' ').trim())
+    await waitUntil(async() => (await tabLabels()).at(-1) === 'Abnormal 6', 'Status tabs did not show the four lifecycle filters with counts')
+    assert.deepEqual(await tabLabels(), ['All 11', 'Pending 0', 'Starting 1', 'Running 2', 'Abnormal 6'])
+    assert.equal(await statusTabs.getByRole('button', { name: /^All/ }).getAttribute('aria-pressed'), 'true')
+    await statusTabs.getByRole('button', { name: /^Abnormal/ }).click()
+    await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 6, 'Abnormal group did not include all error, failed, not-ready and unconfirmed containers')
     assert.equal(requestedStatuses.at(-1), 'abnormal')
-    assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), ['not_ready', 'error', 'failed', 'error', 'failed'])
+    assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), ['not_ready', 'error', 'failed', 'unknown', 'error', 'failed'])
 
     for (const [label, filter, codes] of [
       ['Starting', 'waiting', ['waiting']],
       ['Running', 'success', ['success', 'success']],
-      ['All Status', undefined, workloads.slice(0, 10).map((item) => item.status)],
+      ['All', undefined, workloads.slice(0, 10).map((item) => item.status)],
     ]) {
-      await statusSelect.click()
-      await options.filter({ hasText: new RegExp(`^${label}$`) }).click()
+      await statusTabs.getByRole('button', { name: new RegExp(`^${label}\\b`) }).click()
+      assert.equal(await statusTabs.getByRole('button', { name: new RegExp(`^${label}\\b`) }).getAttribute('aria-pressed'), 'true')
       await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === codes.length, `${label} filter returned unexpected workloads`)
       assert.equal(requestedStatuses.at(-1), filter)
       assert.deepEqual(await page.locator('.workload-table .workload-status').evaluateAll((elements) => elements.map((element) => element.dataset.workloadStatus)), codes)
     }
+
+    // Opening a workload and returning keeps the selected status tab.
+    await statusTabs.getByRole('button', { name: /^Running/ }).click()
+    await waitUntil(() => new URL(page.url()).searchParams.get('status') === 'success', 'The selected status was not kept in the address')
+    await page.locator('.workload-table').getByRole('link', { name: 'pod-success / worker-success', exact: true }).click()
+    await page.waitForURL((url) => url.pathname.endsWith('/admin/vgpu/task/admin/detail'))
+    const requestsBeforeReturn = requestedStatuses.length
+    await page.goBack({ waitUntil: 'domcontentloaded' })
+    await waitUntil(async() => await statusTabs.getByRole('button', { name: /^Running/ }).getAttribute('aria-pressed') === 'true', 'Returning from a workload reset the status tab')
+    await waitUntil(() => requestedStatuses.slice(requestsBeforeReturn).includes('success'), 'The restored status was not requested')
+    await waitUntil(async() => await page.locator('.workload-table .workload-status').count() === 2, 'The restored status did not filter the table')
 
     await page.goto(
       `${target}${basePath}admin/vgpu/task/admin/detail?name=worker-success&podUid=uid-success`,
@@ -2023,16 +2048,12 @@ test('workload status labels stay concise while accessible help explains contain
 test('resource names navigate while decorative table icons do not', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
-  await page.route('**/api/vgpu/v1/containers', (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, {
       items: [{
-        name: 'worker', appName: 'job-1', podUid: 'pod-icon', namespace: 'default',
+        name: 'worker', appName: 'job-1', podUid: 'pod-icon', namespace: 'default', nodeName: 'node-1',
         status: 'success', deviceIds: ['gpu-1'], allocatedCores: 10, allocatedMem: 256,
       }],
       total: 1,
-    }),
   }))
   const cases = [
     {
@@ -2070,6 +2091,270 @@ test('resource names navigate while decorative table icons do not', async() => {
       await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
     }
   } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
+test('one workload table combines pending requests and allocations with shared filters and pagination', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
+  const makePod = (index) => ({
+    name: `pending-${String(index).padStart(2, '0')}`, namespace: 'research', uid: `pending-uid-${index}`,
+    createdAt: '2026-09-12T00:00:00Z', schedulerName: 'hami-scheduler', nodeName: '',
+    stage: 'waiting', reasonCodes: ['CardInsufficientMemory'], reasonSource: 'hami',
+    condition: { status: 'False', reason: 'Unschedulable', message: '1/1 CardInsufficientMemory <b>resource feedback</b>', transitionAt: '2026-09-12T00:00:00Z' },
+    requests: [{ container: 'main', containerKind: 'regular', resources: [
+      { name: 'nvidia.com/gpu', value: '1', kind: 'count', unit: '' },
+      { name: 'nvidia.com/gpucores', value: '1', kind: 'core', unit: '%' },
+      { name: 'nvidia.com/gpumem', value: '32768', kind: 'memory', unit: 'MiB' },
+    ] }], gates: [], constraints: [], allocatedContainers: [], preallocated: false,
+  })
+  const pods = Array.from({ length: 23 }, (_, index) => makePod(index))
+  pods[1].reasonCodes = ['NodeAffinity']
+  pods[1].reasonSource = 'kubernetes'
+  pods[2].stage = 'gated'
+  pods[2].reasonCodes = ['SchedulingGated']
+  pods[2].gates = ['example.com/controller-hold']
+  pods[3].schedulerName = 'other-scheduler'
+  pods[3].reasonCodes = ['NoFeedback']
+  pods[3].condition = null
+  const listQueries = []
+  let detailRequests = 0
+  let detailMode = 'forbidden'
+  let releaseDetail
+  const firstDetail = new Promise((resolve) => { releaseDetail = resolve })
+  const reply = (route, payload, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
+  const allocatedRow = { name: 'main', appName: 'already-bound', podUid: 'bound-uid', namespace: 'research', nodeName: 'node-1', status: 'error', deviceIds: ['gpu-1'], allocatedCores: 1, allocatedMem: 64 }
+  await page.route('**/api/vgpu/v1/containers', (route) => reply(route, { items: [
+    allocatedRow,
+    { name: 'main', appName: 'only-preallocated', podUid: 'preallocated-uid', namespace: 'research', nodeName: '', status: 'waiting', deviceIds: ['gpu-1'] },
+  ] }))
+  await page.route('**/api/vgpu/v1/workloads', (route) => {
+    const query = route.request().postDataJSON()
+    listQueries.push(query)
+    const rows = [allocatedRow, ...pods.map(pendingWorkloadFixture)]
+    if (detailMode === 'bound') rows[1] = { ...allocatedRow, appName: pods[0].name, podUid: pods[0].uid, status: 'waiting' }
+    const filters = query.filters || {}
+    const filtered = rows.filter((row) => (!filters.name || row.appName.includes(filters.name) || row.name.includes(filters.name))
+      && (!filters.status || row.status === filters.status)
+      && (!filters.nodeName || row.nodeName === filters.nodeName))
+    return fulfillWorkloadFixture(route, { items: filtered })
+  })
+  await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+    detailRequests += 1
+    const query = new URL(route.request().url()).searchParams
+    assert.equal(query.get('uid'), pods[0].uid)
+    assert.equal(query.get('namespace'), 'research')
+    if (detailRequests === 1) await firstDetail
+    if (detailMode === 'recreated') return reply(route, { reason: 'POD_RECREATED', message: 'Pod was recreated' }, 409)
+    if (detailMode === 'gone') return reply(route, { reason: 'POD_NOT_FOUND', message: 'Pod was deleted' }, 404)
+    return reply(route, {
+      pod: detailMode === 'bound' ? { ...pods[0], nodeName: 'node-1', stage: 'bound', reasonCodes: [], allocatedContainers: ['main'] } : pods[0],
+      events: detailMode === 'bound' ? [{ uid: 'old-event', reason: 'FilteringFailed', type: 'Warning', source: 'hami-scheduler', message: 'Historical CardInsufficientMemory <b>literal evidence</b>', lastObservedAt: '2026-09-12T00:00:00Z', count: 17 }] : [],
+      eventStatus: detailMode === 'bound' ? 'available' : 'forbidden',
+      eventsIncomplete: false, eventsFetchedAt: '2026-09-12T01:00:00Z',
+    })
+  })
+  try {
+    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    const table = page.locator('.workload-table')
+    await table.getByRole('link', { name: 'already-bound / main', exact: true }).waitFor()
+    const pendingEntry = table.getByRole('button', { name: 'pending-00 / main', exact: true })
+    await pendingEntry.waitFor()
+    assert.equal(await page.getByRole('tab').count(), 0, 'Lifecycle states must not split into separate views')
+    assert.equal(await page.locator('.table-toolbar').count(), 1)
+    assert.equal(await table.getByText('only-preallocated', { exact: true }).count(), 0)
+    assert.equal(await page.locator('.task-admin-top-wrap').isVisible(), true)
+    assert.equal(await table.locator('tbody tr').count(), 10)
+    const rowHeights = await table.locator('tbody tr').evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height))
+    assert.ok(Math.max(...rowHeights) - Math.min(...rowHeights) < 1, `Mixed lifecycle rows have different heights: ${rowHeights}`)
+    const pendingRow = table.locator('tbody tr').filter({ has: page.getByRole('button', { name: 'pending-00 / main', exact: true }) })
+    assert.match(await pendingRow.innerText(), /Pending/)
+    const resourceValues = await pendingRow.locator('.task-gpu-cell-info > span').allTextContents()
+    assert.deepEqual(resourceValues, ['1', '0.01', '32 GiB'])
+    assert.doesNotMatch(await pendingRow.locator('.task-gpu-cell').innerText(), /Request|Allocated|Compute|Memory|GPU/)
+    const resourceRows = await table.locator('.task-gpu-cell').evaluateAll((cells) => cells.map((cell) => ({
+      segments: cell.querySelectorAll('.task-gpu-cell-info > span').length,
+      height: cell.getBoundingClientRect().height,
+    })))
+    assert.ok(resourceRows.every((cell) => cell.segments === 3 && cell.height === resourceRows[0].height))
+    assert.equal(detailRequests, 0)
+    await pendingRow.getByRole('button', { name: 'View workload status details' }).hover()
+    const pendingTooltip = page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'Insufficient allocatable GPU memory' }).last()
+    await pendingTooltip.waitFor()
+    assert.match(await pendingTooltip.innerText(), /Waiting for (less than a minute|\d+[mhd])/)
+    assert.equal(detailRequests, 0, 'Hover or listing must not query Events')
+    await page.getByRole('listitem').filter({ hasText: /^2$/ }).click()
+    await table.getByRole('button', { name: 'pending-09 / main', exact: true }).waitFor()
+    assert.ok(listQueries.some((query) => query.page === 2))
+    const search = page.getByRole('textbox', { name: 'Search Pod or container name', exact: true })
+    await search.fill('pending-00')
+    await search.press('Enter')
+    await pendingEntry.waitFor()
+    assert.equal(await table.locator('tbody tr').count(), 1)
+    assert.equal(listQueries.at(-1).page, 1, 'Applying a filter must reset the shared page')
+    await search.fill('')
+    await search.press('Enter')
+    await table.getByRole('link', { name: 'already-bound / main', exact: true }).waitFor()
+    // This backend omits status counts, so the tabs show labels only.
+    const statusTabs = page.getByRole('group', { name: 'Status', exact: true })
+    assert.deepEqual((await statusTabs.getByRole('button').allTextContents()).map((label) => label.trim()), ['All', 'Pending', 'Starting', 'Running', 'Abnormal'])
+    await statusTabs.getByRole('button', { name: 'Pending', exact: true }).click()
+    await waitUntil(() => listQueries.at(-1)?.filters?.status === 'pending', 'The shared status filter did not request pending workloads')
+    await table.getByRole('link', { name: 'already-bound / main', exact: true }).waitFor({ state: 'hidden' })
+    assert.equal(await table.locator('[data-workload-status="pending"]').count(), 10)
+    assert.equal(detailRequests, 0, 'Filtering must not read Events')
+    await statusTabs.getByRole('button', { name: 'All', exact: true }).click()
+    await table.getByRole('link', { name: 'already-bound / main', exact: true }).waitFor()
+    await pendingEntry.click()
+    const dialog = page.getByRole('dialog', { name: 'Scheduling information', exact: true })
+    await dialog.waitFor()
+    await waitUntil(() => detailRequests === 1, 'Opening the selected Pod did not request its scheduling detail')
+    await dialog.locator('.scheduling-summary').waitFor()
+    await dialog.getByRole('button', { name: 'Close scheduling information', exact: true }).waitFor()
+    assert.match(await dialog.locator('.scheduling-summary').innerText(), /Insufficient allocatable GPU memory/)
+    releaseDetail()
+    await dialog.getByText('Event access is not permitted. The Pod scheduling condition is still available.', { exact: true }).waitFor()
+    assert.match(await dialog.locator('.scheduling-summary').innerText(), /Insufficient allocatable GPU memory/)
+    // Esc first hides a focused help tooltip and leaves the drawer open.
+    await dialog.getByRole('button', { name: 'Scheduler', exact: true }).focus()
+    await page.locator('.t-tooltip .t-popup__content').filter({ hasText: 'scheduler' }).last().waitFor({ state: 'visible' })
+    await page.keyboard.press('Escape')
+    await delay(300)
+    assert.equal(await dialog.isVisible(), true, 'Esc on a help tooltip closed the drawer')
+    detailMode = 'bound'
+    await dialog.getByRole('button', { name: 'Refresh scheduling information', exact: true }).click()
+    await dialog.locator('.scheduling-summary[data-scheduling-stage="bound"]').waitFor()
+    assert.doesNotMatch(await dialog.locator('.scheduling-summary').innerText(), /Insufficient|CardInsufficientMemory/)
+    await dialog.getByRole('link', { name: 'View workload details for main', exact: true }).waitFor()
+    await table.getByRole('link', { name: 'pending-00 / main', exact: true }).waitFor()
+    assert.equal(await table.getByRole('button', { name: 'pending-00 / main', exact: true }).count(), 0, 'Binding must replace the pending row, not add another identity')
+    await dialog.locator('summary').filter({ hasText: 'Original scheduling records' }).click()
+    await dialog.getByText('Historical CardInsufficientMemory <b>literal evidence</b>', { exact: true }).waitFor()
+    assert.equal(await dialog.locator('pre b').count(), 0, 'Original messages must remain text')
+    detailMode = 'recreated'
+    await dialog.getByRole('button', { name: 'Refresh scheduling information', exact: true }).click()
+    await dialog.getByRole('alert').filter({ hasText: 'A new Pod has been created with the same name' }).waitFor()
+    assert.equal(await dialog.locator('.scheduling-summary').count(), 0)
+    detailMode = 'gone'
+    await dialog.getByRole('button', { name: 'Refresh scheduling information', exact: true }).click()
+    await dialog.getByRole('alert').filter({ hasText: 'This Pod no longer exists' }).waitFor()
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden' })
+    assert.equal(detailRequests, 4)
+  } finally {
+    releaseDetail()
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('a GPU container assigned without HAMi allocation opens diagnosis with its real startup status', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const pod = {
+    name: 'native-assigned', namespace: 'research', uid: 'native-assigned-uid',
+    schedulerName: 'default-scheduler', nodeName: 'node-1', stage: 'bound', allocatedContainers: [],
+    reasonCodes: [], requests: [{ container: 'main', containerKind: 'regular', resources: [
+      { name: 'nvidia.com/gpu', kind: 'count', value: '1' },
+    ] }],
+  }
+  const row = {
+    ...pendingWorkloadFixture(pod), pending: false, nodeName: 'node-1', status: 'error',
+    statusDetail: { containerState: 'Waiting', reason: 'CreateContainerError', ready: false, restartCount: 0, podPhase: 'Pending' },
+  }
+  let eventRequests = 0
+  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [row] }))
+  await page.route('**/api/vgpu/v1/scheduling/pod?**', (route) => {
+    eventRequests += 1
+    assert.equal(new URL(route.request().url()).searchParams.get('uid'), pod.uid)
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ pod, events: [], eventStatus: 'empty' }) })
+  })
+  try {
+    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    const table = page.locator('.workload-table')
+    const entry = table.getByRole('button', { name: 'native-assigned / main', exact: true })
+    await entry.waitFor()
+    assert.equal(await table.locator('[data-workload-status="error"] .workload-status__label').innerText(), 'Abnormal')
+    assert.deepEqual(await table.locator('.task-gpu-cell-info > span').allTextContents(), ['1', '--', '--'])
+    assert.equal(eventRequests, 0)
+    await entry.click()
+    const dialog = page.getByRole('dialog', { name: 'Scheduling information', exact: true })
+    await dialog.getByText('Assigned to a node, but no HAMi GPU allocation record was found for this container.', { exact: true }).waitFor()
+    await dialog.getByText('default-scheduler', { exact: true }).waitFor()
+    assert.equal(await dialog.getByRole('link', { name: /View workload details/ }).count(), 0)
+    assert.doesNotMatch(await dialog.locator('.scheduling-summary').innerText(), /Insufficient|previous scheduling failures/)
+    await waitUntil(() => eventRequests === 1, 'Opening the assigned container did not request its evidence')
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
+test('node and GPU detail pages do not fetch cluster-wide pending Pods', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  let schedulingRequests = 0
+  page.on('request', (request) => { if (request.url().includes('/v1/scheduling/')) schedulingRequests += 1 })
+  try {
+    for (const path of ['node/admin/node-1?nodeName=node-1', 'card/admin/gpu-1']) {
+      await page.goto(`${target}${basePath}admin/vgpu/${path}`, { waitUntil: 'domcontentloaded' })
+      await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+      assert.equal(await page.locator('.scheduling-tabs').count(), 0)
+      assert.equal(schedulingRequests, 0)
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
+test('closing a scheduling diagnosis prevents its delayed response from replacing another Pod', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const pods = ['first', 'second'].map((name, index) => ({
+    name, namespace: 'research', uid: `switch-${index}`, stage: 'waiting',
+    schedulerName: 'hami-scheduler', reasonCodes: [index ? 'NodeAffinity' : 'CardInsufficientMemory'],
+    reasonSource: index ? 'kubernetes' : 'hami', requests: [{ container: 'main', containerKind: index ? 'sidecar' : 'init', resources: [{ name: 'nvidia.com/gpu', value: '1', kind: 'count' }] }],
+  }))
+  let releaseFirst
+  const delayed = new Promise((resolve) => { releaseFirst = resolve })
+  const requested = []
+  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: pods.map(pendingWorkloadFixture) }))
+  await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+    const uid = new URL(route.request().url()).searchParams.get('uid')
+    requested.push(uid)
+    if (uid === pods[0].uid) await delayed
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      pod: pods.find((pod) => pod.uid === uid), events: [], eventStatus: 'empty',
+    }) })
+  })
+  try {
+    await page.goto(`${target}${basePath}admin/vgpu/task/admin`, { waitUntil: 'domcontentloaded' })
+    const first = page.getByRole('button', { name: 'first / main', exact: true })
+    await first.waitFor()
+    const workloadTable = page.locator('.workload-table')
+    await workloadTable.getByText('Init container', { exact: true }).waitFor()
+    await workloadTable.getByText('Restartable init container', { exact: true }).waitFor()
+    const rowHeights = await workloadTable.locator('tbody tr').evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height))
+    assert.ok(Math.max(...rowHeights) - Math.min(...rowHeights) < 1, `Container kind labels changed row heights: ${rowHeights}`)
+    await first.click()
+    const dialog = page.getByRole('dialog', { name: 'Scheduling information', exact: true })
+    await waitUntil(() => requested.length === 1, 'The first Pod request did not start')
+    const close = dialog.getByRole('button', { name: 'Close scheduling information', exact: true })
+    await close.focus()
+    await page.keyboard.press('Enter')
+    await dialog.waitFor({ state: 'hidden' })
+    await waitUntil(() => first.evaluate((element) => element === document.activeElement), 'Closing did not restore the Pod entry focus')
+    await page.getByRole('button', { name: 'second / main', exact: true }).click()
+    await dialog.getByRole('heading', { name: 'second', exact: true }).waitFor()
+    await waitUntil(() => requested.length === 2, 'The second Pod request did not start')
+    await dialog.getByText('No events found. They may not have been recorded yet or may have expired.', { exact: true }).waitFor()
+    releaseFirst()
+    await delay(150)
+    assert.match(await dialog.locator('.scheduling-summary').innerText(), /Node selection or affinity/)
+    assert.doesNotMatch(await dialog.locator('.scheduling-summary').innerText(), /Insufficient allocatable GPU memory/)
+    assert.equal(await page.locator('.t-notification').count(), 0, 'A canceled diagnosis must not produce a global error toast')
+    assert.deepEqual(requested, ['switch-0', 'switch-1'])
+  } finally {
+    releaseFirst()
     await page.close()
   }
 }, { timeout: 30_000 })
