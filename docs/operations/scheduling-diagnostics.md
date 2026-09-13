@@ -88,17 +88,27 @@ Real allocation records take precedence for the same Pod/container identity.
 These additional rows never enter allocation rankings or GPU-specific filters
 without a device allocation. Node filters use the observed node assignment.
 GPU init containers are labeled; ordinary CPU containers remain outside this view.
-HAMi can also allocate GPUs to init and sidecar containers. Those allocations are
-not yet part of the allocation records, so the list shows such a container as a
-request and its diagnosis can report that no allocation record was found.
+Init and sidecar containers that HAMi allocated GPUs to are listed with their own
+allocation, like app containers.
+
+Device, node and cluster totals follow HAMi's Pod accounting instead of adding up
+containers. While a Pod's init containers run, each device holds the larger of
+the init peak and the sidecars plus app containers. Once every ordinary init
+container has succeeded, HAMi releases the init allocations, and they leave both
+the list and the totals. The rows of one Pod therefore need not add up to its
+device total. The exporter publishes these totals as `hami_vgpu_allocated`,
+`hami_vcore_allocated` and `hami_vmemory_allocated`; the per-container series keep
+each container's own allocation. HAMi v2.9 added up every container and v2.10.0
+counts sidecars like init containers, so its figures can differ for such Pods.
+Usage charts for these containers need HAMi's device monitor to report them,
+which releases up to v2.10.0 do not.
 
 The list covers workloads that currently wait for, hold, or fail to use a GPU.
 Finished Pods, whose phase is Succeeded or Failed, are not listed: they hold no
 HAMi allocation and no longer wait for scheduling, and their retention depends on
 cluster cleanup. A container without an allocation record that has completed
-normally, such as a finished GPU init container, is not listed either. A
-completed container with an allocation record stays visible, because HAMi keeps
-a Pod's allocation until the Pod ends.
+normally is not listed either. A completed app container with an allocation
+record stays visible, because HAMi keeps its allocation until the Pod ends.
 
 ## Configure request discovery
 

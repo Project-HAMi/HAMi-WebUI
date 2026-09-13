@@ -15,6 +15,7 @@ import {
   buildTaskContainerResourceQueries,
   buildTaskMonitoringQueries,
   buildTaskResourceOverviewQueries,
+  buildVgpuAllocationQueries,
 } from './query-contract.mjs';
 import {
   promQLStringLiteral,
@@ -245,17 +246,18 @@ test('Kubernetes resource queries deduplicate replicas and bind the current Pod 
   });
 
   const task = buildTaskContainerResourceQueries();
+  const identity = 'namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid';
   assert.equal(
     task.cpuLimit,
-    'max(kube_pod_container_resource_limits{resource="cpu",unit="core",namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid})',
+    `max(kube_pod_container_resource_limits{resource="cpu",unit="core",${identity}} or kube_pod_init_container_resource_limits{resource="cpu",unit="core",${identity}})`,
   );
   assert.equal(
     task.memoryLimit,
-    'max(kube_pod_container_resource_limits{resource="memory",unit="byte",namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid}) / 1024 / 1024 / 1024',
+    `max(kube_pod_container_resource_limits{resource="memory",unit="byte",${identity}} or kube_pod_init_container_resource_limits{resource="memory",unit="byte",${identity}}) / 1024 / 1024 / 1024`,
   );
   assert.equal(
     task.containerInfo,
-    'max(kube_pod_container_info{namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid})',
+    `max(kube_pod_container_info{${identity}} or kube_pod_init_container_info{${identity}})`,
   );
   for (const query of Object.values(task)) {
     assert.match(query, /uid=\$pod_uid/);
@@ -269,6 +271,21 @@ test('workload counts do not depend on compute-allocation availability', () => {
   for (const query of Object.values(queries)) {
     assert.match(query, /hami_container_vgpu_allocated/);
     assert.doesNotMatch(query, /hami_container_vcore_allocated/);
+  }
+});
+
+test('device allocation totals read device gauges before per-container sums', () => {
+  const cases = [
+    [buildVgpuAllocationQueries, 'hami_vgpu_allocated', 'hami_container_vgpu_allocated'],
+    [buildComputeAllocationQueries, 'hami_vcore_allocated', 'hami_container_vcore_allocated'],
+    [buildMemoryAllocationQueries, 'hami_vmemory_allocated', 'hami_container_vmemory_allocated'],
+  ];
+
+  for (const [build, device, container] of cases) {
+    const { query, percentQuery } = build({ selector: 'node=$node', groupLabel: 'node' });
+    const allocated = `avg by (node) (sum by (node, instance) (${device}{node=$node}) or sum by (node, instance) (${container}{node=$node}))`;
+    assert.ok(query.includes(allocated), query);
+    assert.ok(percentQuery.includes(allocated), percentQuery);
   }
 });
 

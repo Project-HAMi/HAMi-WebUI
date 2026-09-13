@@ -137,30 +137,11 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 	if len(pdevices) == 0 {
 		return containers
 	}
-
-	containerStatuses := map[string]*corev1.ContainerStatus{}
-	for i := range pod.Status.ContainerStatuses {
-		ctr := &pod.Status.ContainerStatuses[i]
-		containerStatuses[ctr.Name] = ctr
-	}
-
-	initContainerOffset := len(pod.Spec.InitContainers)
-	for i, ctr := range pod.Spec.Containers {
-		observed := containerStatuses[ctr.Name]
-		status, statusDetail := classifyContainerStatus(pod, observed)
-		containerID := ""
-		if observed != nil {
-			containerID = observed.ContainerID
-		}
-		deviceIdx := initContainerOffset + i
-		var containerDevices biz.ContainerDevices
-		if deviceIdx < len(bizContainerDevices) {
-			containerDevices = bizContainerDevices[deviceIdx]
-		}
+	newContainer := func(ctr corev1.Container, kind string, slot int, observed *corev1.ContainerStatus, status string, statusDetail *biz.ContainerStatusDetail) *biz.Container {
 		c := &biz.Container{
 			Name:             ctr.Name,
-			UUID:             containerID,
-			ContainerIdx:     i,
+			Kind:             kind,
+			ContainerIdx:     slot,
 			NodeName:         pod.Spec.NodeName,
 			PodName:          pod.Name,
 			PodUID:           string(pod.UID),
@@ -170,14 +151,67 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 			NodeUID:          nodeUID,
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
-			ContainerDevices: containerDevices,
+			ContainerDevices: bizContainerDevices[slot],
 		}
-		if len(containerDevices) > 0 {
-			c.Priority = containerDevices[0].Priority
+		if observed != nil {
+			c.UUID = observed.ContainerID
 		}
-		containers = append(containers, c)
+		if len(c.ContainerDevices) > 0 {
+			c.Priority = c.ContainerDevices[0].Priority
+		}
+		return c
+	}
+
+	// HAMi releases init allocations once every regular init container has succeeded.
+	initReleased := allNonSidecarInitContainersSucceeded(pod)
+	for i, ctr := range pod.Spec.InitContainers {
+		kind := initContainerKind(ctr)
+		if len(bizContainerDevices[i]) == 0 || (kind == biz.ContainerKindInit && initReleased) {
+			continue
+		}
+		status, statusDetail := schedulingContainerStatus(pod, ctr, kind)
+		observed := findContainerStatus(pod.Status.InitContainerStatuses, ctr.Name)
+		containers = append(containers, newContainer(ctr, kind, i, observed, status, statusDetail))
+	}
+	for i, ctr := range pod.Spec.Containers {
+		observed := findContainerStatus(pod.Status.ContainerStatuses, ctr.Name)
+		status, statusDetail := classifyContainerStatus(pod, observed)
+		containers = append(containers, newContainer(ctr, biz.ContainerKindRegular, len(pod.Spec.InitContainers)+i, observed, status, statusDetail))
 	}
 	return containers
+}
+
+func findContainerStatus(statuses []corev1.ContainerStatus, name string) *corev1.ContainerStatus {
+	for i := range statuses {
+		if statuses[i].Name == name {
+			return &statuses[i]
+		}
+	}
+	return nil
+}
+
+func initContainerKind(ctr corev1.Container) string {
+	if ctr.RestartPolicy != nil && *ctr.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+		return biz.ContainerKindSidecar
+	}
+	return biz.ContainerKindInit
+}
+
+// Mirrors HAMi's util.AllNonSidecarInitContainersSucceeded.
+func allNonSidecarInitContainersSucceeded(pod *corev1.Pod) bool {
+	if len(pod.Spec.InitContainers) == 0 {
+		return false
+	}
+	for _, ctr := range pod.Spec.InitContainers {
+		if initContainerKind(ctr) == biz.ContainerKindSidecar {
+			continue
+		}
+		observed := findContainerStatus(pod.Status.InitContainerStatuses, ctr.Name)
+		if observed == nil || observed.State.Terminated == nil || observed.State.Terminated.ExitCode != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices) []biz.ContainerDevices {

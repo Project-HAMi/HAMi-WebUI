@@ -327,6 +327,10 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	if err != nil {
 		return s.recordFatalError(fmt.Errorf("list devices: %w", err))
 	}
+	containers, err := s.podUsecase.ListAll(ctx)
+	if err != nil {
+		return s.recordFatalError(fmt.Errorf("list containers for device allocations: %w", err))
+	}
 	for _, device := range deviceInfos {
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
@@ -342,6 +346,12 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
+		s.set(HamiVgpuAllocated, float64(vGPU), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		s.set(HamiVmemoryAllocated, float64(memory), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		if coreKnown {
+			s.set(HamiVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		}
 		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)

@@ -20,6 +20,7 @@ import (
 	"vgpu/internal/provider/util"
 
 	kratoserrors "github.com/go-kratos/kratos/v2/errors"
+	"github.com/go-kratos/kratos/v2/log"
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -544,5 +545,22 @@ func TestSchedulingReasonsRecognizeCommonNodeAndHAMiFeedback(t *testing.T) {
 		if source != tc.source || !reflect.DeepEqual(codes, tc.want) {
 			t.Errorf("schedulingReasons(%q) = %v, %q; want %v, %q", tc.message, codes, source, tc.want, tc.source)
 		}
+	}
+}
+
+func TestSchedulingDiagnosisFindsSidecarAllocations(t *testing.T) {
+	key := useNvidiaAllocationKey(t)
+	always := corev1.ContainerRestartPolicyAlways
+	pod := schedulingTestPod("sidecar-work", "sidecar-uid")
+	pod.Spec.NodeName = "node-a"
+	pod.Spec.InitContainers = []corev1.Container{{Name: "proxy", RestartPolicy: &always, Resources: pod.Spec.Containers[0].Resources}}
+	pod.Annotations = map[string]string{util.AssignedNodeAnnotations: "node-a", key: "GPU-1,NVIDIA,128,2:;GPU-1,NVIDIA,256,5:;"}
+	pod.Status.Phase = corev1.PodRunning
+	r := schedulingTestRepo(t, fake.NewSimpleClientset(), pod)
+	r.log = log.NewHelper(log.NewStdLogger(io.Discard))
+	r.onAddPod(pod)
+	items, err := r.ListSchedulingPods(context.Background())
+	if err != nil || len(items) != 1 || !reflect.DeepEqual(items[0].AllocatedContainers, []string{"proxy", "main"}) {
+		t.Fatalf("allocated containers = %#v, %v", items, err)
 	}
 }

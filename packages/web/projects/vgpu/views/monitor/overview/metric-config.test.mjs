@@ -69,7 +69,7 @@ test('allocation gauges use their defined capacity contracts', () => {
 test('an idle cluster reports zero allocation when capacity is present', () => {
   const [vgpu, compute, memory] = createOverviewGaugeConfigs();
 
-  assert.match(vgpu.query, /or \(avg\(sum\(hami_vgpu_count\)/);
+  assert.match(vgpu.query, /or \(avg\(sum by \(instance\) \(hami_vgpu_count\)\)/);
   assert.match(
     compute.query,
     /or \(avg\(sum by \(instance\) \(hami_core_size\)\)/,
@@ -98,11 +98,11 @@ test('node allocation rankings keep idle nodes and exclude unknown compute scope
 
   assert.equal(
     queries.computeAllocation,
-    'topk(5, ((avg by (node) (sum by (node, instance) (hami_container_vcore_allocated)) / avg by (node) (sum by (node, instance) (hami_core_size)) * 100) or on (node) (avg by (node) (sum by (node, instance) (hami_core_size)) * 0)) unless on (node) max by (node) (hami_container_vcore_allocation_known == 0))',
+    'topk(5, ((avg by (node) (sum by (node, instance) (hami_vcore_allocated) or sum by (node, instance) (hami_container_vcore_allocated)) / avg by (node) (sum by (node, instance) (hami_core_size)) * 100) or on (node) (avg by (node) (sum by (node, instance) (hami_core_size)) * 0)) unless on (node) max by (node) (hami_container_vcore_allocation_known == 0))',
   );
   assert.equal(
     queries.memoryAllocation,
-    'topk(5, (avg by (node) (sum by (node, instance) (hami_container_vmemory_allocated)) / avg by (node) (sum by (node, instance) (hami_vmemory_size)) * 100) or on (node) (avg by (node) (sum by (node, instance) (hami_vmemory_size)) * 0))',
+    'topk(5, (avg by (node) (sum by (node, instance) (hami_vmemory_allocated) or sum by (node, instance) (hami_container_vmemory_allocated)) / avg by (node) (sum by (node, instance) (hami_vmemory_size)) * 100) or on (node) (avg by (node) (sum by (node, instance) (hami_vmemory_size)) * 0))',
   );
   assert.match(
     queries.memoryUsage,

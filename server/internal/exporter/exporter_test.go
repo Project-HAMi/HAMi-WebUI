@@ -902,12 +902,36 @@ func TestCommitCyclePrunesPhysicalMemorySeriesWhenTelemetryDisappears(t *testing
 	assertGaugeLabelsPresent(t, HamiVMemoryScaling, labels, false)
 }
 
+func TestGenerateDeviceMetricsCountsInitContainersAtTheirPeak(t *testing.T) {
+	const deviceID = "GPU-peak"
+	generator := newDeviceMetricsTestGenerator(&biz.DeviceInfo{
+		Id: deviceID, AliasId: deviceID, Devmem: 24576, Devcore: 100, Count: 10,
+		Type: "A10", NodeName: "node-peak", Provider: biz.NvidiaGPUDevice,
+	}, nil)
+	generator.podUsecase = biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{
+		{PodUID: "p", Name: "prepare", Kind: biz.ContainerKindInit, ContainerIdx: 0,
+			ContainerDevices: biz.ContainerDevices{{UUID: deviceID, Type: "NVIDIA", Usedmem: 4096, Usedcores: 10}}},
+		{PodUID: "p", Name: "main", Kind: biz.ContainerKindRegular, ContainerIdx: 1,
+			ContainerDevices: biz.ContainerDevices{{UUID: deviceID, Type: "NVIDIA", Usedmem: 1024, Usedcores: 30}}},
+	}}, log.NewStdLogger(io.Discard))
+	t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+	if err := generator.GenerateDeviceMetrics(context.Background()); isFatalRefreshFailure(err) {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	labels := []string{"node-peak", biz.NvidiaGPUDevice, "A10", deviceID, "", ""}
+	assertTrackedGaugeValue(t, generator, HamiVgpuAllocated, labels, 1)
+	assertTrackedGaugeValue(t, generator, HamiVmemoryAllocated, labels, 4096)
+	assertTrackedGaugeValue(t, generator, HamiVcoreAllocated, labels, 30)
+}
+
 func newDeviceMetricsTestGenerator(device *biz.DeviceInfo, responses map[string]*pb.InstantResponse) *MetricsGenerator {
 	return &MetricsGenerator{
 		nodeUsecase: biz.NewNodeUsecase(
 			&fakeNodeRepo{devices: []*biz.DeviceInfo{device}},
 			log.NewStdLogger(io.Discard),
 		),
+		podUsecase:     biz.NewPodUseCase(&fakePodRepo{}, log.NewStdLogger(io.Discard)),
 		monitorService: &fakeInstantQuerier{responsesByQuery: responses},
 		log:            log.NewHelper(log.NewStdLogger(io.Discard)),
 	}
