@@ -61,6 +61,8 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.NodeUid = device.NodeUid
 		gpu.Health = device.Health
 		gpu.Mode = device.Mode
+		gpu.Unconfigured = device.Unconfigured
+		gpu.Vendor = device.Provider
 
 		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
 		gpu.VgpuUsed = vGPU
@@ -130,6 +132,8 @@ func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPURep
 		gpu.NodeUid = device.NodeUid
 		gpu.Health = device.Health
 		gpu.Mode = device.Mode
+		gpu.Unconfigured = device.Unconfigured
+		gpu.Vendor = device.Provider
 
 		vGPU, core, memory, coreKnown, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
 		if err == nil {

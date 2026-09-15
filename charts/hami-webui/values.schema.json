@@ -190,6 +190,46 @@
           }
         }
       }
+    },
+    "hami": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deviceConfig": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "namespace": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^[-._a-zA-Z0-9]+$"
+            }
+          }
+        }
+      }
+    },
+    "ascend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "annotationlessPodMode": {
+          "type": "string",
+          "enum": ["unknown", "node", "template"]
+        }
+      }
     }
   },
   "definitions": {

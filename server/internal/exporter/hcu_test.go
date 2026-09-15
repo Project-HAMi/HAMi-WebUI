@@ -78,7 +78,7 @@ func TestHCUContainerTelemetryJoinsRegisteredSerialAndKeepsMissingUsageAbsent(t 
 				}},
 				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}},
 			}
-			allocated, err := util.DecodePodDevices(pod, log.NewHelper(logger), util.AscendAllocationModeUnknown)
+			allocated, err := util.DecodePodDevices(pod, log.NewHelper(logger))
 			if err != nil || len(allocated["HCU"]) != 1 || len(allocated["HCU"][0]) != 1 {
 				t.Fatalf("HCU allocation = %v, %v", allocated, err)
 			}

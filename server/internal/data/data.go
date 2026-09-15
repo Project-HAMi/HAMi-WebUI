@@ -12,6 +12,7 @@ import (
 // ProviderSet is data providers.
 var ProviderSet = wire.NewSet(
 	NewData,
+	NewDeviceCatalog,
 	NewNodeRepo,
 	NewPodRepo,
 	wire.Bind(new(biz.PodRepo), new(*podRepo)),

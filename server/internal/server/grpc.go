@@ -18,6 +18,7 @@ func NewGRPCServer(c *conf.Bootstrap,
 	monitor *service.MonitorService,
 	scheduling *service.SchedulingService,
 	workload *service.WorkloadService,
+	deviceConfig *service.DeviceConfigService,
 	logger log.Logger) *grpc.Server {
 	var opts = []grpc.ServerOption{
 		grpc.Middleware(
@@ -40,5 +41,6 @@ func NewGRPCServer(c *conf.Bootstrap,
 	v1.RegisterMonitorServer(srv, monitor)
 	v1.RegisterSchedulingServer(srv, scheduling)
 	v1.RegisterWorkloadServer(srv, workload)
+	v1.RegisterDeviceConfigServer(srv, deviceConfig)
 	return srv
 }
