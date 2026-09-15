@@ -3,6 +3,10 @@ package data
 import (
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+
 	"vgpu/internal/biz"
 	"vgpu/internal/provider/util"
 )
@@ -18,6 +22,52 @@ func TestMergeContainerDevicesBySlotKeepsInitAlignmentAndDeviceTypes(t *testing.
 	}
 	if got[1][0].Type != "Ascend910B3" || got[2][0].Type != "NVIDIA" {
 		t.Fatalf("device types moved or overwrote one another: %#v", got)
+	}
+}
+
+func TestListWholeGPUContainersKeepsPerContainerStatus(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "whole", Namespace: "ns", UID: k8stypes.UID("uid-1")},
+		Spec: corev1.PodSpec{
+			NodeName:   "node-a",
+			Containers: []corev1.Container{{Name: "serving"}, {Name: "sidecar"}},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "serving", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+				{Name: "sidecar", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}},
+			},
+		},
+	}
+	repo := &podRepo{wholeGPUPods: map[k8stypes.UID]*wholeGPUPod{
+		pod.UID: {
+			pod:      pod,
+			nodeName: "node-a",
+			nodeUID:  "nuid-1",
+			memMiB:   81920,
+			ctrs: []wholeGPUContainer{
+				{name: "serving", cards: []int64{0}},
+				{name: "sidecar", cards: []int64{1}},
+			},
+		},
+	}}
+
+	got := map[string]*biz.Container{}
+	for _, c := range repo.listWholeGPUContainers() {
+		got[c.Name] = c
+	}
+	if len(got) != 2 {
+		t.Fatalf("containers = %#v", got)
+	}
+	if got["serving"].Status != biz.ContainerStatusSuccess {
+		t.Fatalf("serving status = %q, want %q", got["serving"].Status, biz.ContainerStatusSuccess)
+	}
+	if got["sidecar"].Status != biz.ContainerStatusError {
+		t.Fatalf("sidecar status = %q, want %q", got["sidecar"].Status, biz.ContainerStatusError)
+	}
+	if got["sidecar"].StatusDetail == nil || got["sidecar"].StatusDetail.Reason != "CrashLoopBackOff" {
+		t.Fatalf("sidecar detail = %#v", got["sidecar"].StatusDetail)
 	}
 }
 

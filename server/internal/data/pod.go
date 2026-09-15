@@ -469,6 +469,14 @@ func (r *podRepo) listWholeGPUContainers() []*biz.Container {
 	out := make([]*biz.Container, 0, len(entries))
 	for _, e := range entries {
 		for _, wc := range e.ctrs {
+			var observed *corev1.ContainerStatus
+			for i := range e.pod.Status.ContainerStatuses {
+				if e.pod.Status.ContainerStatuses[i].Name == wc.name {
+					observed = &e.pod.Status.ContainerStatuses[i]
+					break
+				}
+			}
+			status, statusDetail := classifyContainerStatus(e.pod, observed)
 			cds := biz.ContainerDevices{}
 			for i, cardID := range wc.cards {
 				uuid := fmt.Sprintf("%s-mthreads-full-%d", e.nodeName, cardID)
@@ -493,7 +501,8 @@ func (r *podRepo) listWholeGPUContainers() []*biz.Container {
 				NodeUID:          e.nodeUID,
 				Namespace:        e.pod.Namespace,
 				Image:            r.containerImage(e.pod, wc.name),
-				Status:           r.wholeGPUStatus(e.pod),
+				Status:           status,
+				StatusDetail:     statusDetail,
 				CreateTime:       r.GetCreateTime(e.pod),
 				ContainerDevices: cds,
 			})
@@ -514,16 +523,6 @@ func (r *podRepo) containerImage(pod *corev1.Pod, name string) string {
 		}
 	}
 	return ""
-}
-
-func (r *podRepo) wholeGPUStatus(pod *corev1.Pod) string {
-	if pod.Status.Phase == corev1.PodRunning {
-		return biz.ContainerStatusSuccess
-	}
-	if pod.Status.Phase == corev1.PodFailed {
-		return biz.ContainerStatusFailed
-	}
-	return biz.ContainerStatusUnknown
 }
 
 func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.Container, error) {
