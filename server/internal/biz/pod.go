@@ -105,7 +105,7 @@ func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, 
 			vGPU = vGPU + 1
 			core = core + cd.Usedcores
 			memory = memory + cd.Usedmem
-			if strings.HasPrefix(cd.Type, AscendGPUDevice) && !cd.CoreAllocationKnown {
+			if cd.CoreAllocationUnknown {
 				coreKnown = false
 			}
 		}

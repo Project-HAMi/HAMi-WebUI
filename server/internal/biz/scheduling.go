@@ -34,7 +34,7 @@ type SchedulingContainerRequest struct {
 }
 
 type SchedulingResource struct {
-	Name, Value, Unit, Kind string
+	Name, Value, Unit, Kind, Vendor string
 }
 
 type SchedulingConstraint struct{ Name, Value string }

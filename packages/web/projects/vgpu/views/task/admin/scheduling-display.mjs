@@ -157,7 +157,7 @@ export const getSchedulingRequestTiles = (request = {}) => {
   if (resources.some((resource) => resource.kind !== 'raw')) {
     const memory = find('memory', 'memory_percentage');
     for (const [kind, resource] of [['count', find('count')], ['core', find('core')], [memory?.kind || 'memory', memory]]) {
-      tiles.push({ kind, value: resource ? formatSchedulingResource(resource) : null });
+      tiles.push({ kind, value: resource ? formatSchedulingResource(resource) : null, ...(resource?.vendor ? { vendor: resource.vendor } : {}) });
     }
   }
   for (const resource of resources.filter((item) => item.kind === 'raw')) {

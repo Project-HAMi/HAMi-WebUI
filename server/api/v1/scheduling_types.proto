@@ -46,6 +46,8 @@ message SchedulingResource {
   string unit = 3;
   // count, core, memory, memory_percentage, or raw.
   string kind = 4;
+  // Provider of a classified resource, such as NVIDIA or Ascend.
+  string vendor = 5;
 }
 
 message SchedulingConstraint {

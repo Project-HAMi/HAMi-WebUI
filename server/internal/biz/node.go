@@ -43,6 +43,8 @@ type DeviceInfo struct {
 	NodeUid  string
 	Provider string
 	Driver   string
+	// Registered but absent from HAMi's device configuration; HAMi will not use it.
+	Unconfigured bool
 }
 
 type DeviceTotal struct {

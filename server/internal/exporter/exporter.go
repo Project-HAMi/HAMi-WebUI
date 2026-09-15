@@ -339,11 +339,14 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			deviceNo = deviceAdditional.DeviceNo
 		}
 
-		s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		// HAMi does not schedule unconfigured devices, so they add no schedulable capacity.
+		if !device.Unconfigured {
+			s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		}
 		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)
 		if memoryUsedErr == nil {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
@@ -351,7 +354,9 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		deviceMemSize, memorySizeErr := s.deviceMemTotal(ctx, provider, device.Id)
 		if memorySizeErr == nil && deviceMemSize > 0 {
 			s.set(HamiMemorySize, float64(deviceMemSize), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-			s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			if !device.Unconfigured {
+				s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			}
 			if memoryUsedErr == nil {
 				s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			}
@@ -513,8 +518,11 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				vGPU = vGPU + 1
 				core = core + cd.Usedcores
 				memory = memory + cd.Usedmem
-				provider = providerutil.VendorOf(cd.Type)
-				if provider == biz.AscendGPUDevice && !cd.CoreAllocationKnown {
+				provider = cd.Vendor
+				if provider == "" {
+					provider = providerutil.VendorOf(cd.Type)
+				}
+				if cd.CoreAllocationUnknown {
 					coreAllocationKnown = false
 				}
 			}
