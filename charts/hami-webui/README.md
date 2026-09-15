@@ -74,6 +74,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | Key | Type | Default                                                                            | Description |
 |-----|------|------------------------------------------------------------------------------------|-------------|
 | affinity | object | `{}`                                                                               |  |
+| ascend.annotationlessPodMode | string | `"unknown"` | How to read Ascend Pods without `huawei.com/vnpu-mode` on `hami-vnpu-core` nodes: `unknown`, `node` (ascend-device-plugin v1.4.1 and later) or `template` (v1.4.0). See the [Ascend guide](../../docs/providers/ascend.md). |
 | backend.http.timeout | string | `"60s"` | Timeout applied to each incoming API request context. |
 | dcgm-exporter.enabled | bool | `true`                                                                             |  |
 | dcgm-exporter.nodeSelector.gpu | string | `"on"`                                                                             |  |
@@ -101,6 +102,10 @@ The command removes all the Kubernetes components associated with the chart and 
 | frontend.basePath | string | `"/"` | Public URL prefix served by the official Go Web entry; a non-stripping Ingress Prefix must cover it. |
 | frontend.frameAncestors | list or null | `null` | CSP framing allowlist. `null` preserves existing behavior, `[]` blocks framing, and a list allows explicit parents. |
 | fullnameOverride | string | `""`                                                                               |  |
+| hami.deviceConfig.enabled | bool | `true` | Read HAMi's device configuration for Ascend models and templates. Grants read access to that one ConfigMap. |
+| hami.deviceConfig.key | string | `"device-config.yaml"` | Data key holding the device configuration. |
+| hami.deviceConfig.name | string | `"hami-scheduler-device"` | HAMi device configuration ConfigMap, `<HAMi release>-scheduler-device`. |
+| hami.deviceConfig.namespace | string | `"kube-system"` | Namespace where HAMi is installed. |
 | hamiServiceMonitor.additionalLabels.jobRelease | string | `"hami-webui-prometheus"`                                                          |  |
 | hamiServiceMonitor.enabled | bool | `true`                                                                             | Preferred HAMi device-plugin monitor. Disable only when another selected monitor preserves workload labels with `honorLabels: true`, or in raw/manual mode. |
 | hamiServiceMonitor.honorLabels | bool | `true`                                                                            | Keep HAMi's workload namespace/pod/container labels when they collide with Prometheus scrape-target labels. |

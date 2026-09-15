@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 	"vgpu/internal/biz"
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/hygon"
@@ -33,7 +34,7 @@ type nodeRepo struct {
 }
 
 // NewNodeRepo .
-func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger) biz.NodeRepo {
+func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source) biz.NodeRepo {
 	nodeRepo := &nodeRepo{
 		data:       data,
 		nodeNotify: make(chan struct{}, 1),
@@ -42,12 +43,19 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger)
 		providers: []provider.Provider{
 			nvidia.NewNvidia(data.promCl, log.NewHelper(logger), nodeSelectors[biz.NvidiaGPUDevice]),
 			mlu.NewCambricon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.CambriconGPUDevice]),
-			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice]),
+			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice], catalog),
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
 			hygon.NewHCU(log.NewHelper(logger), nodeSelectors[biz.HygonHCUDevice]),
 			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
 		},
 	}
+	// Subscribe first: the initial node sync must not miss a catalog change.
+	catalog.Subscribe(func(_, _ *devicecatalog.Snapshot) {
+		select {
+		case nodeRepo.nodeNotify <- struct{}{}:
+		default:
+		}
+	})
 	nodeRepo.init()
 	return nodeRepo
 }
@@ -81,20 +89,21 @@ func (r *nodeRepo) updateLocalNodes() {
 				}
 				for _, device := range devices {
 					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
-						Index:    int(device.Index),
-						Id:       device.ID,
-						AliasId:  device.AliasId,
-						Count:    device.Count,
-						Devmem:   device.Devmem,
-						Devcore:  device.Devcore,
-						Type:     device.Type,
-						Numa:     device.Numa,
-						Mode:     device.Mode,
-						Health:   device.Health,
-						NodeName: node.Name,
-						NodeUid:  string(node.UID),
-						Provider: p.GetProvider(),
-						Driver:   device.Driver,
+						Index:        int(device.Index),
+						Id:           device.ID,
+						AliasId:      device.AliasId,
+						Count:        device.Count,
+						Devmem:       device.Devmem,
+						Devcore:      device.Devcore,
+						Type:         device.Type,
+						Numa:         device.Numa,
+						Mode:         device.Mode,
+						Health:       device.Health,
+						NodeName:     node.Name,
+						NodeUid:      string(node.UID),
+						Provider:     p.GetProvider(),
+						Driver:       device.Driver,
+						Unconfigured: device.Unconfigured,
 					})
 				}
 			}
@@ -106,9 +115,9 @@ func (r *nodeRepo) updateLocalNodes() {
 }
 
 func (r *nodeRepo) init() {
-	go r.updateLocalNodes()
 	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
 	r.nodeLister = informerFactory.Core().V1().Nodes().Lister()
+	go r.updateLocalNodes()
 	informer := informerFactory.Core().V1().Nodes().Informer()
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddNode,

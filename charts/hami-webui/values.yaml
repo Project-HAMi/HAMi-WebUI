@@ -17,6 +17,20 @@ vendorNodeSelectors:
 scheduling:
   resourceNames: []
 
+# HAMi's device configuration, read for Ascend models and templates. WebUI gets
+# read access to this one ConfigMap.
+hami:
+  deviceConfig:
+    enabled: true
+    namespace: kube-system
+    name: hami-scheduler-device
+    key: device-config.yaml
+
+ascend:
+  # How to read Pods without huawei.com/vnpu-mode on hami-vnpu-core nodes:
+  # unknown, node (ascend-device-plugin v1.4.1 and later) or template (v1.4.0).
+  annotationlessPodMode: unknown
+
 image:
   repository: projecthami/hami-webui
   pullPolicy: IfNotPresent

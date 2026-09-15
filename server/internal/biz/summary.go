@@ -52,9 +52,12 @@ func (t *SummaryUseCase) GetGPUSummary(ctx context.Context, deviceId string, nod
 		if deviceId != "" && deviceId != device.Id {
 			continue
 		}
-		res.CoreTotal += PhysicalCoreBaselinePerDevice
-		res.MemoryTotal = res.MemoryTotal + device.Devmem
-		res.VgpuTotal = res.VgpuTotal + device.Count
+		// Existing allocations still count as used.
+		if !device.Unconfigured {
+			res.CoreTotal += PhysicalCoreBaselinePerDevice
+			res.MemoryTotal = res.MemoryTotal + device.Devmem
+			res.VgpuTotal = res.VgpuTotal + device.Count
+		}
 
 		vGPU, core, memory, coreKnown := ContainersStatisticsInfo(containers, device.AliasId)
 		res.CoreUsed = res.CoreUsed + core

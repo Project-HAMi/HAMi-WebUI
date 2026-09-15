@@ -49,7 +49,7 @@ func TestHCURegistrationPreservesPhysicalSerialAndAllocationIdentity(t *testing.
 			Containers:     []corev1.Container{{Name: "worker"}},
 		},
 	}
-	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), util.AscendAllocationModeUnknown)
+	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestLegacyDCUInventoryAndAllocationStillUseMinorNumberAlias(t *testing.T) {
 		}},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}},
 	}
-	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), util.AscendAllocationModeUnknown)
+	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
 	if err != nil || len(allocations[HygonDCUDevice]) != 1 || len(allocations[HygonDCUDevice][0]) != 1 {
 		t.Fatalf("legacy DCU allocations = %v, %v", allocations, err)
 	}

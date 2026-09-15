@@ -1,0 +1,34 @@
+{{- $deviceConfig := include "hami-webui.deviceConfig" . | fromJson -}}
+{{- if $deviceConfig.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hami-webui.fullname" . }}-device-config
+  namespace: {{ $deviceConfig.namespace }}
+  labels:
+    {{- include "hami-webui.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "hami-webui"
+rules:
+  # Named list and watch are authorized by resourceNames.
+  - apiGroups: [ "" ]
+    resources: [ "configmaps" ]
+    resourceNames: [ {{ $deviceConfig.name | quote }} ]
+    verbs: [ "get", "list", "watch" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hami-webui.fullname" . }}-device-config
+  namespace: {{ $deviceConfig.namespace }}
+  labels:
+    {{- include "hami-webui.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "hami-webui"
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hami-webui.serviceAccountName" . }}
+    namespace: {{ include "hami-webui.namespace" . }}
+roleRef:
+  kind: Role
+  name: {{ include "hami-webui.fullname" . }}-device-config
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

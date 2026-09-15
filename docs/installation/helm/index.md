@@ -22,6 +22,9 @@ To install HAMi-WebUI using Helm, ensure you meet these requirements:
 1. Kubectl on your localhost
 
 2. [HAMi](https://github.com/Project-HAMi/HAMi?tab=readme-ov-file#quick-start) (see version compatibility below)
+   WebUI reads HAMi's device configuration ConfigMap for Ascend models and
+   templates. If HAMi is not the `hami` release in `kube-system`, set
+   `hami.deviceConfig`; see the [Ascend guide](../../providers/ascend.md).
 
 ### Version compatibility
 

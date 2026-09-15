@@ -98,6 +98,8 @@ import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 import { getAllocationPercent } from './allocation-percent.mjs';
+import UnconfiguredTag from './components/UnconfiguredTag.vue';
+import { deviceWording } from '~/vgpu/components/device-copy.mjs';
 import useFetchList from '@/hooks/useFetchList';
 
 const props = defineProps(['hideTitle', 'filters']);
@@ -208,7 +210,7 @@ const baseColumns = computed(() => [
     dataIndex: 'uuid',
     width: 250,
     hideTooltip: true,
-    render: ({ uuid, type }) => {
+    render: ({ uuid, type, vendor }) => {
       const to = `/accelerators/${uuid}`;
       const gpuModel = type || '';
       return (
@@ -224,7 +226,7 @@ const baseColumns = computed(() => [
                 tooltipClass="vgpu-long-text-tooltip vgpu-single-line-tooltip"
               />
             </span>
-            {gpuModel && <p class="card-id-cell-model">{t('card.typeLabel')}{gpuModel}</p>}
+            {gpuModel && <p class="card-id-cell-model">{deviceWording(t('card.typeLabel'), vendor)}{gpuModel}</p>}
           </div>
         </div>
       );
@@ -234,12 +236,13 @@ const baseColumns = computed(() => [
     title: t('task.status'),
     dataIndex: 'health',
     width: 150,
-    render: ({ health, isExternal }) => {
+    render: ({ health, isExternal, unconfigured }) => {
       const { icon, text } = getCardStatusDisplay({ health, isExternal });
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
           <svg-icon icon={icon} style={{ fontSize: '16px' }} />
           <span>{text}</span>
+          {unconfigured ? <UnconfiguredTag /> : null}
         </span>
       );
     },
@@ -258,8 +261,8 @@ const baseColumns = computed(() => [
     key: 'card-compute-remaining-total',
     dataIndex: 'used',
     width: 220,
-    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
-      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const stats = getRemainingTotalText({ total: coreTotal, used: coreUsed, divisor: 100 });
       if (!stats) return <span>--</span>;
       return (
@@ -302,8 +305,8 @@ const baseColumns = computed(() => [
     key: 'card-memory-remaining-total',
     dataIndex: 'used',
     width: 220,
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
-      if (isExternal || !memoryTotal) return <span>--</span>;
+    render: ({ memoryTotal, memoryUsed, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || !memoryTotal) return <span>--</span>;
       const stats = getRemainingTotalText({
         total: Number(memoryTotal) / 1024,
         used: Number(memoryUsed) / 1024,

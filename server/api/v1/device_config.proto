@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service DeviceConfig {
+  rpc GetDeviceConfig (GetDeviceConfigReq) returns (DeviceConfigReply) {
+    option (google.api.http) = {
+      get: "/v1/device-config"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Read the HAMi device configuration WebUI uses";
+    };
+  }
+}
+
+message GetDeviceConfigReq {}
+
+// State is disabled, loading, loaded, missing, forbidden, invalid or error.
+message DeviceConfigReply {
+  string state = 1;
+  // What is wrong with the file; set only when state is invalid.
+  string reason = 2;
+  string namespace = 3;
+  string name = 4;
+  string key = 5;
+  string resource_version = 6;
+  string observed_at = 7;
+  repeated string issues = 8;
+  repeated AscendModel ascend_models = 9;
+}
+
+message AscendModel {
+  string common_word = 1;
+  string chip_name = 2;
+  string resource_name = 3;
+  string resource_memory_name = 4;
+  string resource_core_name = 5;
+  int64 memory_allocatable = 6;
+  int64 memory_capacity = 7;
+  int32 ai_core = 8;
+  int32 ai_cpu = 9;
+  repeated AscendTemplate templates = 10;
+  // HAMi allocates modules of two NPUs: a request for 1 becomes 2 and other odd counts are rejected.
+  bool super_pod = 11;
+}
+
+message AscendTemplate {
+  string name = 1;
+  int64 memory = 2;
+  int32 ai_core = 3;
+  int32 ai_cpu = 4;
+  // Template AI Cores over the model's, in percent; absent when not configured.
+  optional int32 compute_share = 5;
+}

@@ -50,22 +50,13 @@ var (
 )
 
 type ContainerDevice struct {
-	Idx                 int
-	UUID                string
-	Type                string
-	Usedmem             int32
-	Usedcores           int32
-	CoreAllocationKnown bool
-	Priority            string
+	Idx       int
+	UUID      string
+	Type      string
+	Usedmem   int32
+	Usedcores int32
+	Priority  string
 }
-
-type AscendAllocationMode int
-
-const (
-	AscendAllocationModeUnknown AscendAllocationMode = iota
-	AscendAllocationModeHamiCore
-	AscendAllocationModeTemplate
-)
 
 type ContainerDeviceRequest struct {
 	Nums             int32
@@ -109,20 +100,22 @@ type DeviceInfo struct {
 	Mode    string
 	Health  bool
 	Driver  string
+	// Registered by a device plugin but absent from HAMi's device configuration.
+	Unconfigured bool
 }
 
 type NewDeviceInfo struct {
-	ID              string          `json:"id,omitempty"`
-	Index           uint            `json:"index,omitempty"`
-	Count           int32           `json:"count,omitempty"`
-	Devmem          int32           `json:"devmem,omitempty"`
-	Devcore         int32           `json:"devcore,omitempty"`
-	Type            string          `json:"type,omitempty"`
-	Numa            int             `json:"numa,omitempty"`
-	Mode            string          `json:"mode,omitempty"`
-	Health          bool            `json:"health,omitempty"`
-	DeviceVendor    string          `json:"devicevendor,omitempty"`
-	CustomInfo      map[string]any  `json:"custominfo,omitempty"`
+	ID           string         `json:"id,omitempty"`
+	Index        uint           `json:"index,omitempty"`
+	Count        int32          `json:"count,omitempty"`
+	Devmem       int32          `json:"devmem,omitempty"`
+	Devcore      int32          `json:"devcore,omitempty"`
+	Type         string         `json:"type,omitempty"`
+	Numa         int            `json:"numa,omitempty"`
+	Mode         string         `json:"mode,omitempty"`
+	Health       bool           `json:"health,omitempty"`
+	DeviceVendor string         `json:"devicevendor,omitempty"`
+	CustomInfo   map[string]any `json:"custominfo,omitempty"`
 }
 
 type NodeInfo struct {
