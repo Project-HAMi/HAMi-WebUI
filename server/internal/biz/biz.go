@@ -19,6 +19,8 @@ const (
 	AscendGPUDevice = "Ascend"
 	MetaxGPUDevice  = "Metax"
 
+	MthreadsGPUDevice = "Mthreads"
+
 	CambriconGPUDevice = "MLU"
 
 	ContainerStatusSuccess     = "success"

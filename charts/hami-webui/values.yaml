@@ -6,6 +6,7 @@ replicaCount: 1
 
 vendorNodeSelectors:
   NVIDIA: gpu=on
+  Mthreads: mthreads.com/gpu-node=true
   Ascend: ascend=on
   DCU: dcu=on
   HCU: hcu=on

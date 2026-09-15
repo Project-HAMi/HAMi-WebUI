@@ -27,6 +27,7 @@ const (
 	CambriconGPUDevice  = "MLU"
 	MetaxGPUDevice      = "Metax-GPU"
 	MetaxSGPUDevice     = "Metax-SGPU"
+	MthreadsGPUDevice   = "Mthreads"
 
 	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
 
@@ -167,6 +168,52 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 		}
 	}
 	return retval, nil
+}
+
+// decodeMthreadsContainerDevices decodes an mthreads allocation segment
+// with vendor core semantics: HAMi accounts mthreads cores on a 16-unit
+// scale per card, and a raw value of 0 means the whole sliced card. The
+// generic decoder would map that zero to the 0-100 baseline before the
+// vendor scale is applied, so the conversion happens here instead.
+func decodeMthreadsContainerDevices(str, priority string) (ContainerDevices, error) {
+	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
+	contdev := ContainerDevices{}
+	for i, val := range cd {
+		if !strings.Contains(val, ",") {
+			continue
+		}
+		tmpstr := strings.Split(val, ",")
+		if len(tmpstr) < 4 {
+			return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
+		}
+		tmpdev := ContainerDevice{}
+		tmpdev.Idx = i
+		tmpdev.UUID = tmpstr[0]
+		tmpdev.Type = tmpstr[1]
+		devmem, err := strconv.ParseInt(tmpstr[2], 10, 32)
+		if err != nil {
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: invalid mthreads memory %q", str, tmpstr[2])
+		}
+		if devmem < 0 {
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: negative mthreads memory %q", str, tmpstr[2])
+		}
+		tmpdev.Usedmem = int32(devmem)
+		rawCores, err := strconv.ParseInt(tmpstr[3], 10, 32)
+		if err != nil {
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: invalid mthreads cores %q", str, tmpstr[3])
+		}
+		switch {
+		case rawCores == 0:
+			// Raw core 0 is the valid whole-sliced-card value.
+			rawCores = 16
+		case rawCores < 0 || rawCores > 16:
+			return ContainerDevices{}, fmt.Errorf("pod annotation %q: mthreads cores %d outside the vendor range 0..16", str, rawCores)
+		}
+		tmpdev.Usedcores = int32(rawCores * 100 / 16)
+		tmpdev.Priority = priority
+		contdev = append(contdev, tmpdev)
+	}
+	return contdev, nil
 }
 
 // DecodeContainerDevices decodes the container devices from a string.
@@ -455,6 +502,21 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper, ascendMode AscendAllocat
 				cd, err := DecodeDCUContainerDevices(s, priorities[i], nodeName)
 				if err != nil {
 					return PodDevices{}, nil
+				}
+				pd[devType] = append(pd[devType], cd)
+			}
+		case MthreadsGPUDevice:
+			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+				if i >= podContainerCount(pod) {
+					break
+				}
+				if s == "" {
+					pd[devType] = append(pd[devType], ContainerDevices{})
+					continue
+				}
+				cd, err := decodeMthreadsContainerDevices(s, priorities[i])
+				if err != nil {
+					return PodDevices{}, err
 				}
 				pd[devType] = append(pd[devType], cd)
 			}
