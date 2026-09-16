@@ -141,6 +141,15 @@ func (r *nodeRepo) onDeletedNode(obj interface{}) {
 	r.nodeNotify <- struct{}{}
 }
 
+// A Node that no kubelet created can lack nodeInfo.
+func capitalize(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return strings.ToUpper(string(runes[0])) + strings.ToLower(string(runes[1:]))
+}
+
 func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
 	n := &biz.Node{IsSchedulable: !node.Spec.Unschedulable}
 	for _, addr := range node.Status.Addresses {
@@ -157,7 +166,7 @@ func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
 	n.Uid = string(node.UID)
 	n.Name = node.Name
 	n.OSImage = node.Status.NodeInfo.OSImage
-	n.OperatingSystem = strings.ToUpper(node.Status.NodeInfo.OperatingSystem[:1]) + strings.ToLower(node.Status.NodeInfo.OperatingSystem[1:])
+	n.OperatingSystem = capitalize(node.Status.NodeInfo.OperatingSystem)
 	n.KernelVersion = node.Status.NodeInfo.KernelVersion
 	n.ContainerRuntimeVersion = node.Status.NodeInfo.ContainerRuntimeVersion
 	n.KubeletVersion = node.Status.NodeInfo.KubeletVersion
