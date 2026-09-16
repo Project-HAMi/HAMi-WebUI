@@ -182,106 +182,20 @@
         <TrendTimeFilter v-model="times" />
       </div>
       <div class="home-bottom-row" v-if="rangeConfig[0] || rangeConfig[1]">
-        <div class="home-bottom-col" v-if="rangeConfig[0]">
-          <Block :title="rangeConfig[0].title">
-            <div
-              class="range-chart-content"
-              :aria-busy="rangeConfig[0].status === 'loading' || rangeConfig[0].refreshing"
-            >
-              <template v-if="rangeConfig[0].status === 'loading'">
-                <t-skeleton
-                  animation="gradient"
-                  :row-col="[
-                    { width: '100%', height: '200px' },
-                    { width: '42%', height: '16px', margin: '16px auto 0' },
-                  ]"
-                  class="range-chart-skeleton"
-                  aria-hidden="true"
-                />
-                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-              </template>
-              <VChart
-                v-else-if="rangeConfig[0].status === 'ready'"
-                :option="getRangeOptions(rangeConfig[0].dataSource)"
-                :autoresize="true"
-                style="height: 250px"
-              />
-              <div v-else class="overview-state overview-state--chart">
-                {{ getStateText(rangeConfig[0].status) }}
-              </div>
-              <div
-                v-if="rangeConfig[0].refreshing || rangeConfig[0].refreshError || rangeConfig[0].partialStatusText"
-                class="range-status-list"
-                role="status"
-              >
-                <span
-                  v-if="rangeConfig[0].partialStatusText"
-                  class="range-partial-status"
-                >
-                  {{ rangeConfig[0].partialStatusText }}
-                </span>
-                <span v-if="rangeConfig[0].refreshing" class="range-refresh-status">
-                  {{ $t('common.loading') }}
-                </span>
-                <span
-                  v-else-if="rangeConfig[0].refreshError"
-                  class="range-refresh-status range-refresh-status--error"
-                >
-                  {{ $t('common.refreshFailedShowingPreviousResult') }}
-                </span>
-              </div>
-            </div>
-          </Block>
-        </div>
-        <div class="home-bottom-col" v-if="rangeConfig[1]">
-          <Block :title="rangeConfig[1].title">
-            <div
-              class="range-chart-content"
-              :aria-busy="rangeConfig[1].status === 'loading' || rangeConfig[1].refreshing"
-            >
-              <template v-if="rangeConfig[1].status === 'loading'">
-                <t-skeleton
-                  animation="gradient"
-                  :row-col="[
-                    { width: '100%', height: '200px' },
-                    { width: '42%', height: '16px', margin: '16px auto 0' },
-                  ]"
-                  class="range-chart-skeleton"
-                  aria-hidden="true"
-                />
-                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-              </template>
-              <VChart
-                v-else-if="rangeConfig[1].status === 'ready'"
-                :option="getRangeOptions(rangeConfig[1].dataSource)"
-                :autoresize="true"
-                style="height: 250px"
-              />
-              <div v-else class="overview-state overview-state--chart">
-                {{ getStateText(rangeConfig[1].status) }}
-              </div>
-              <div
-                v-if="rangeConfig[1].refreshing || rangeConfig[1].refreshError || rangeConfig[1].partialStatusText"
-                class="range-status-list"
-                role="status"
-              >
-                <span
-                  v-if="rangeConfig[1].partialStatusText"
-                  class="range-partial-status"
-                >
-                  {{ rangeConfig[1].partialStatusText }}
-                </span>
-                <span v-if="rangeConfig[1].refreshing" class="range-refresh-status">
-                  {{ $t('common.loading') }}
-                </span>
-                <span
-                  v-else-if="rangeConfig[1].refreshError"
-                  class="range-refresh-status range-refresh-status--error"
-                >
-                  {{ $t('common.refreshFailedShowingPreviousResult') }}
-                </span>
-              </div>
-            </div>
+        <div
+          class="home-bottom-col"
+          v-for="section in rangeConfig"
+          :key="section.title"
+        >
+          <Block :title="section.title">
+            <MetricChart
+              :status="section.status"
+              :option="section.option"
+              :note="section.note"
+              :state-text="getStateText(section.status)"
+              :refreshing="section.refreshing"
+              :refresh-error="Boolean(section.refreshError)"
+            />
           </Block>
         </div>
       </div>
@@ -340,32 +254,11 @@
                 <svg-icon icon="help-circle" class="workload-distribution-tip-icon" />
               </t-tooltip>
             </template>
-            <div
-              class="workload-distribution-content"
-              :aria-busy="nodeWorkloadDistributionState.status === 'loading'"
-            >
-              <template v-if="nodeWorkloadDistributionState.status === 'loading'">
-                <t-skeleton
-                  animation="gradient"
-                  :row-col="[
-                    { width: '100%', height: '200px' },
-                    { width: '42%', height: '16px', margin: '16px auto 0' },
-                  ]"
-                  class="range-chart-skeleton"
-                  aria-hidden="true"
-                />
-                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-              </template>
-              <VChart
-                v-else-if="nodeWorkloadDistributionState.status === 'ready'"
-                :option="nodeWorkloadDistributionOptions"
-                :autoresize="true"
-                style="height: 250px"
-              />
-              <div v-else class="overview-state overview-state--chart">
-                {{ getStateText(nodeWorkloadDistributionState.status) }}
-              </div>
-            </div>
+            <MetricChart
+              :status="nodeWorkloadDistributionState.status"
+              :option="nodeWorkloadDistributionOptions"
+              :state-text="getStateText(nodeWorkloadDistributionState.status)"
+            />
           </Block>
         </div>
       </div>
@@ -378,11 +271,9 @@ import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
 import { ref, computed, reactive, onMounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
 import VChart from 'vue-echarts';
-import {
-  getCardOptions,
-  handleChartClick,
-  getRangeOptions,
-} from './getOptions';
+import { getCardOptions, handleChartClick } from './getOptions';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
 import Block from './Block.vue';
 import './style.scss';
@@ -412,12 +303,12 @@ import {
   resolveRequest,
   startRequest,
 } from '@/hooks/request-state.mjs';
+import { applyUncountedShares } from './overview-state.mjs';
 import {
   aggregateStatuses,
-  applyUncountedShares,
   getPartialRangeStates,
   stateTextKey,
-} from './overview-state.mjs';
+} from '~/vgpu/metrics/metric-state.mjs';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
@@ -789,18 +680,15 @@ const rangeConfig = computed(() => {
     ).map((series) => (series.uncounted
       ? { ...series, name: t('dashboard.allocRateLowerBoundLegend') }
       : series));
-    const status = aggregateStatuses(dataSource);
-    const partialStatusText = getPartialRangeStates(dataSource)
-      .map((item) => `${item.name}: ${t(stateTextKey(item.status))}`)
-      .join(' · ');
     return {
       ...section,
-      dataSource,
-      status,
-      uncounted: dataSource.find((item) => item.uncounted)?.uncounted || 0,
+      status: aggregateStatuses(dataSource),
+      option: buildTimeSeriesOptions({ series: dataSource }),
+      note: getPartialRangeStates(dataSource)
+        .map((item) => `${item.name}: ${t(stateTextKey(item.status))}`)
+        .join(' · '),
       refreshing: dataSource.some((item) => item.refreshing),
       refreshError: dataSource.find((item) => item.refreshError)?.refreshError || null,
-      partialStatusText,
     };
   });
 });

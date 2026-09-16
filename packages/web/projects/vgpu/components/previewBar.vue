@@ -8,7 +8,7 @@
         <div class="pie">
           <VChart
             ref="pieChartRef"
-            :option="getPreviewBarPie(pieData, props)"
+            :option="getPreviewBarPie(pieData)"
             :autoresize="true"
             @click="onPieClick"
           />
@@ -54,7 +54,7 @@
 
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
-import { getPreviewBarPie } from '~/vgpu/components/config';
+import { getPreviewBarPie } from '~/vgpu/components/preview-pie.mjs';
 import { onMounted, ref, computed } from 'vue';
 import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';

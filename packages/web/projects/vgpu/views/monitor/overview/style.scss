@@ -133,6 +133,12 @@
   &-bottom-col {
     flex: 1;
     min-width: 0;
+    display: flex;
+
+    // Equal heights: one panel may carry a caveat line the other does not.
+    > .home-block {
+      width: 100%;
+    }
   }
 
   ul {
@@ -362,56 +368,7 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .range-chart-skeleton,
   .workload-table-skeleton {
-    min-height: 250px;
-  }
-
-  .range-chart-content {
-    position: relative;
-    min-height: 250px;
-  }
-
-  .range-status-list {
-    position: absolute;
-    top: 2px;
-    left: 4px;
-    right: 4px;
-    z-index: 1;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 4px;
-    pointer-events: none;
-  }
-
-  .range-refresh-status,
-  .range-partial-status {
-    max-width: 100%;
-    padding: 3px 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    background: rgb(255 255 255 / 92%);
-    color: #697886;
-    font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .range-refresh-status {
-
-    &--error {
-      color: #b45309;
-      background: #fffbeb;
-    }
-  }
-
-  .range-partial-status {
-    background: #fffbeb;
-    color: #b45309;
-  }
-
-  .workload-distribution-content {
     min-height: 250px;
   }
 

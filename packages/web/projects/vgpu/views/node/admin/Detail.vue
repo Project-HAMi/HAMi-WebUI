@@ -183,33 +183,16 @@
     <TrendTimeFilter v-model="times" />
 
     <div class="line-box">
-      <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-              :option="
-              getRangeOptions({
-                allocation: gaugeConfig[0].data,
-                usage: gaugeConfig[2].data,
-              }, t)
-            "
-            :autoresize="true"
-          />
-        </div>
-      </block-box>
-      <block-box :title="$t('dashboard.gpuMemAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              getRangeOptions({
-                allocation: gaugeConfig[1].data,
-                usage: gaugeConfig[3].data,
-                allocationName: t('dashboard.allocRateLegend'),
-                usageName: t('dashboard.usageRateLegend'),
-              }, t)
-            "
-            :autoresize="true"
-          />
-        </div>
+      <block-box
+        v-for="section in trendSections"
+        :key="section.title"
+        :title="section.title"
+      >
+        <MetricChart
+          :status="section.status"
+          :option="section.option"
+          :state-text="section.stateText"
+        />
       </block-box>
     </div>
     </detail-page-state>
@@ -232,9 +215,11 @@ import {
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
-import VChart from 'vue-echarts';
 import nodeApi from '~/vgpu/api/node';
-import { getRangeOptions } from './getOptions';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
+import { aggregateStatuses, stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
 import {
@@ -385,6 +370,35 @@ const memoryAllocPercentRaw = computed(() => {
 });
 
 const memoryUsagePercentRaw = computed(() => readGaugeField(3, 'percent'));
+
+// Allocation and usage of one resource share a chart; both come from the
+// gauges already queried for this node.
+const trendSections = computed(() => [
+  { title: t('dashboard.gpuComputeAllocUsageTrend'), allocation: 0, usage: 2 },
+  { title: t('dashboard.gpuMemAllocUsageTrend'), allocation: 1, usage: 3 },
+].map(({ title, allocation, usage }) => {
+  const metrics = [gaugeConfig.value?.[allocation], gaugeConfig.value?.[usage]];
+  const status = aggregateStatuses(metrics);
+  return {
+    title,
+    status,
+    stateText: t(stateTextKey(status)),
+    option: buildTimeSeriesOptions({
+      series: [
+        {
+          name: t('dashboard.allocRateLegend'),
+          data: metrics[0]?.data,
+          color: CHART_COLORS.allocation,
+        },
+        {
+          name: t('dashboard.usageRateLegend'),
+          data: metrics[1]?.data,
+          color: CHART_COLORS.usage,
+        },
+      ],
+    }),
+  };
+}));
 
 const clampPercent = (v) => Math.max(0, Math.min(100, v));
 const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
@@ -734,12 +748,6 @@ const detailColumnGroups = computed(() => {
   color: #1d2b3a;
 }
 
-.trend-chart {
-  height: 100%;
-  margin-top: 0;
-  min-width: 0;
-}
-
 .line-box {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -748,18 +756,6 @@ const detailColumnGroups = computed(() => {
 
   > .home-block {
     min-width: 0;
-    height: 320px;
-    display: flex;
-    flex-direction: column;
-  }
-
-  > .home-block :deep(.home-block-content) {
-    flex: 1;
-    min-height: 0;
-  }
-
-  > .home-block :deep(.home-block-content) > .trend-chart {
-    height: 100%;
   }
 }
 

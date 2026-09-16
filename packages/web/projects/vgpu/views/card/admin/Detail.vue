@@ -247,87 +247,28 @@
 
     <TrendTimeFilter v-model="times" />
     <div class="line-box">
-      <block-box :title="dt('dashboard.gpuComputeAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              {
-                ...getRangeOptions([
-                  {
-                    name: t('dashboard.allocRateLegend'),
-                    data: gaugeConfig[0]?.data,
-                    itemStyle: {
-                      color: '#5B8FF9',
-                      borderColor: '#5B8FF9',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#5B8FF9',
-                    },
-                  },
-                  {
-                    name: t('dashboard.usageRateLegend'),
-                    data: gaugeConfig[2]?.data,
-                    itemStyle: {
-                      color: '#42C090',
-                      borderColor: '#42C090',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#42C090',
-                    },
-                  },
-                ]),
-                animation: false,
-              }
-            "
-            :autoresize="true"
-          />
-        </div>
-      </block-box>
-      <block-box :title="dt('dashboard.gpuMemAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              {
-                ...getRangeOptions([
-                  {
-                    name: t('dashboard.allocRateLegend'),
-                    data: gaugeConfig[1]?.data,
-                    itemStyle: {
-                      color: '#5B8FF9',
-                      borderColor: '#5B8FF9',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#5B8FF9',
-                    },
-                  },
-                  {
-                    name: t('dashboard.usageRateLegend'),
-                    data: gaugeConfig[3]?.data,
-                    itemStyle: {
-                      color: '#42C090',
-                      borderColor: '#42C090',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#42C090',
-                    },
-                  },
-                ]),
-                animation: false,
-              }
-            "
-            :autoresize="true"
-          />
-        </div>
+      <block-box
+        v-for="section in trendSections"
+        :key="section.title"
+        :title="section.title"
+      >
+        <MetricChart
+          :status="section.status"
+          :option="section.option"
+          :state-text="section.stateText"
+        />
       </block-box>
 
-      <block-box :title="title" v-for="{ title, data, unit, seriesNameKey } in lineToolsView" :key="title">
-        <div class="trend-chart">
-          <VChart :option="getLineOptions2({ data, unit, seriesName: t(seriesNameKey), animation: false })" :autoresize="true" />
-        </div>
+      <block-box
+        v-for="item in lineToolsView"
+        :key="item.title"
+        :title="item.title"
+      >
+        <MetricChart
+          :status="item.status"
+          :option="item.option"
+          :state-text="item.stateText"
+        />
       </block-box>
     </div>
     </detail-page-state>
@@ -348,13 +289,14 @@ import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource.js';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
-import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
 import { timeParse, calculatePrometheusStep, roundToDecimal, getResourceColor } from '@/utils';
-import { getLineOptions as getLineOptions2 } from '~/vgpu/components/config';
-import { getRangeOptions } from '../../monitor/overview/getOptions';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
+import { aggregateStatuses, stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import {
   buildComputeAllocationQueries,
@@ -685,12 +627,60 @@ const lineTools = ref([
   },
 ]);
 
+const lineLoading = ref(true);
+
 const lineToolsView = computed(() =>
-  lineTools.value.map((item) => ({
-    ...item,
-    title: dt(item.titleKey),
-  })),
+  lineTools.value.map((item) => {
+    const status = lineLoading.value
+      ? REQUEST_STATUS.LOADING
+      : (item.data?.length ? REQUEST_STATUS.READY : REQUEST_STATUS.MISSING);
+    return {
+      ...item,
+      title: dt(item.titleKey),
+      status,
+      stateText: t(stateTextKey(status)),
+      option: buildTimeSeriesOptions({
+        series: [
+          {
+            name: t(item.seriesNameKey),
+            data: item.data,
+            color: CHART_COLORS.single,
+          },
+        ],
+        unit: item.unit,
+      }),
+    };
+  }),
 );
+
+// Allocation and usage of one resource share a chart; both come from the
+// gauges already queried for this card.
+const trendSections = computed(() => [
+  { title: dt('dashboard.gpuComputeAllocUsageTrend'), allocation: 0, usage: 2 },
+  { title: dt('dashboard.gpuMemAllocUsageTrend'), allocation: 1, usage: 3 },
+].map(({ title, allocation, usage }) => {
+  const metrics = [gaugeConfig.value?.[allocation], gaugeConfig.value?.[usage]];
+  const status = aggregateStatuses(metrics);
+  return {
+    title,
+    status,
+    stateText: t(stateTextKey(status)),
+    option: buildTimeSeriesOptions({
+      series: [
+        {
+          name: t('dashboard.allocRateLegend'),
+          data: metrics[0]?.data,
+          color: CHART_COLORS.allocation,
+        },
+        {
+          name: t('dashboard.usageRateLegend'),
+          data: metrics[1]?.data,
+          color: CHART_COLORS.usage,
+        },
+      ],
+    }),
+  };
+}));
 
 let lineRequestGeneration = 0;
 const resetLineData = () => {
@@ -705,8 +695,10 @@ const fetchLineData = async () => {
   const uuid = detailCardUuid.value;
   if (!uuid) {
     resetLineData();
+    lineLoading.value = false;
     return;
   }
+  lineLoading.value = true;
 
   const requests = lineTools.value.flatMap((item, index) => {
     const query = renderPromQLTemplate(item.query, { device_uuid: uuid });
@@ -743,6 +735,7 @@ const fetchLineData = async () => {
   });
 
   await Promise.all(requests);
+  if (generation === lineRequestGeneration) lineLoading.value = false;
 };
 
 let nodeEnrichmentGeneration = 0;
@@ -1074,11 +1067,6 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   color: #324558;
 }
 
-.trend-chart {
-  height: 100%;
-  margin-top: 0;
-}
-
 .line-box {
   display: flex;
   flex-wrap: wrap;
@@ -1087,16 +1075,8 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   > .home-block {
     flex: 1 1 calc(50% - 10px);
     min-width: 0;
-    height: 320px;
     padding: 16px 20px;
     margin-bottom: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  > .home-block :deep(.home-block-content) {
-    flex: 1;
-    min-height: 0;
   }
 }
 
