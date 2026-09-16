@@ -219,6 +219,7 @@ import { useI18n } from 'vue-i18n';
 import { CheckIcon, CloseIcon, CopyIcon, RefreshIcon } from 'tdesign-icons-vue-next';
 import taskApi from '~/vgpu/api/task';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
+import { deviceWording, sharedVendor } from '~/vgpu/components/device-copy.mjs';
 import {
   describeSchedulingConstraints, formatSchedulingAgo, formatSchedulingDuration, getSchedulingChecks, getSchedulingDetailError,
   getSchedulingReasons, getSchedulingRequestTiles, getSchedulingSummary, schedulingIdentity, tokenizeJSON,
@@ -231,7 +232,9 @@ const props = defineProps({
   focusReturnTarget: { type: Object, default: null },
 });
 const emit = defineEmits(['close', 'updated']);
-const { t, locale } = useI18n();
+const { t: translate, locale } = useI18n();
+// Every drawer string names the requested device.
+const t = (...args) => deviceWording(translate(...args), requestVendor.value);
 const response = ref(null);
 const loading = ref(false);
 const loadError = ref(false);
@@ -285,6 +288,7 @@ const REQUEST_ICONS = Object.freeze({
   count: 'vgpu-card', core: 'vgpu-core', memory: 'node-memory-total', memory_percentage: 'node-memory-total', raw: 'vgpu-resource',
 });
 const requestCards = computed(() => (pod.value.requests || []).map((request) => ({ request, tiles: getSchedulingRequestTiles(request) })));
+const requestVendor = computed(() => sharedVendor(requestCards.value.flatMap(({ tiles }) => tiles.filter((tile) => tile.value !== null).map((tile) => tile.vendor))));
 const constraintView = computed(() => describeSchedulingConstraints(pod.value.constraints || [], pod.value.gates || []));
 const hasConstraints = computed(() => {
   const view = constraintView.value;

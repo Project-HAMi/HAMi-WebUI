@@ -41,6 +41,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	monitor *service.MonitorService,
 	scheduling *service.SchedulingService,
 	workload *service.WorkloadService,
+	deviceConfig *service.DeviceConfigService,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
 		http.Middleware(
@@ -66,6 +67,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterMonitorHTTPServer(srv, monitor)
 	v1.RegisterSchedulingHTTPServer(srv, scheduling)
 	v1.RegisterWorkloadHTTPServer(srv, workload)
+	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.Handler())
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {

@@ -66,6 +66,10 @@ message GPUReply {
   bool health = 11;
   string mode = 12;
   optional bool core_used_known = 13;
+  // Registered but absent from HAMi's device configuration.
+  bool unconfigured = 14;
+  // Provider, such as NVIDIA or Ascend.
+  string vendor = 15;
 }
 
 message GPUsReply {

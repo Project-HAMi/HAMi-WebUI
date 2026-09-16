@@ -11,21 +11,24 @@ import (
 	"strings"
 	"time"
 	"vgpu/internal/data/prom"
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/util"
 )
 
 type Ascend struct {
-	prom *prom.Client
-	log  *log.Helper
+	prom    *prom.Client
+	log     *log.Helper
+	catalog devicecatalog.Source
 
 	nodeSelectors string
 }
 
-func NewAscend(prom *prom.Client, log *log.Helper, nodeSelectors string) *Ascend {
+func NewAscend(prom *prom.Client, log *log.Helper, nodeSelectors string, catalog devicecatalog.Source) *Ascend {
 	return &Ascend{
 		prom:          prom,
 		log:           log,
 		nodeSelectors: nodeSelectors,
+		catalog:       catalog,
 	}
 }
 
@@ -76,7 +79,7 @@ func (a *Ascend) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util.De
 }
 
 func (a *Ascend) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
-	nodeDevices, err := decodeRegisteredDevices(node)
+	nodeDevices, err := decodeRegisteredDevices(node, a.catalog.Snapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +108,8 @@ func reconcileRegisteredDevices(nodeDevices []*util.DeviceInfo, telemetryDevices
 	return matched
 }
 
-func decodeRegisteredDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
+// Unlisted Ascend* registrations stay visible, marked unconfigured.
+func decodeRegisteredDevices(node *corev1.Node, snapshot *devicecatalog.Snapshot) ([]*util.DeviceInfo, error) {
 	type candidate struct {
 		device    *util.DeviceInfo
 		reported  time.Time
@@ -113,26 +117,32 @@ func decodeRegisteredDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 		key       string
 	}
 	candidates := make(map[string]candidate)
-	annotationKeys := make([]string, 0)
-	const (
-		registerBase   = "hami.io/node-register-"
-		registerPrefix = registerBase + "Ascend"
-		handshakeBase  = "hami.io/node-handshake-"
-	)
-	for annotationKey := range node.Annotations {
-		if strings.HasPrefix(annotationKey, registerPrefix) && len(annotationKey) > len(registerBase) {
-			annotationKeys = append(annotationKeys, annotationKey)
+	words := map[string]bool{}
+	for _, word := range snapshot.AscendCommonWords() {
+		if _, ok := node.Annotations[registerAnnotationPrefix+word]; ok {
+			words[word] = true
 		}
+	}
+	for annotationKey := range node.Annotations {
+		word := strings.TrimPrefix(annotationKey, registerAnnotationPrefix)
+		if strings.HasPrefix(annotationKey, registerAnnotationPrefix) && strings.HasPrefix(word, legacyCommonWordPrefix) {
+			words[word] = true
+		}
+	}
+	annotationKeys := make([]string, 0, len(words))
+	for word := range words {
+		annotationKeys = append(annotationKeys, registerAnnotationPrefix+word)
 	}
 	sort.Strings(annotationKeys)
 	for _, annotationKey := range annotationKeys {
-		commonWord := strings.TrimPrefix(annotationKey, registerBase)
+		commonWord := strings.TrimPrefix(annotationKey, registerAnnotationPrefix)
+		_, configured := snapshot.AscendModel(commonWord)
 		annotation := node.Annotations[annotationKey]
 		nodeDevices, err := util.UnMarshalNodeDevices(annotation)
 		if err != nil {
 			return nil, fmt.Errorf("decode %s on node %s: %w", annotationKey, node.Name, err)
 		}
-		reported, hasReport := parseAscendReportedTime(node.Annotations[handshakeBase+commonWord])
+		reported, hasReport := parseAscendReportedTime(node.Annotations[handshakeAnnotationPrefix+commonWord])
 		for _, device := range nodeDevices {
 			if device == nil {
 				return nil, fmt.Errorf("decode %s on node %s: nil device record", annotationKey, node.Name)
@@ -145,6 +155,7 @@ func decodeRegisteredDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 			// whole-card percentage. Keep the inventory denominator consistent
 			// with template shares and hami-core mode.
 			device.Devcore = 100
+			device.Unconfigured = snapshot.Loaded() && !configured
 			incoming := candidate{device: device, reported: reported, hasReport: hasReport, key: annotationKey}
 			existing, duplicate := candidates[device.ID]
 			if !duplicate {

@@ -596,6 +596,29 @@ func TestGenerateDeviceMetricsSeparatesPhysicalAndSchedulableMemory(t *testing.T
 	assertTrackedGaugeValue(t, generator, HamiVMemoryScaling, labels, 2)
 }
 
+func TestGenerateDeviceMetricsGivesUnconfiguredDevicesNoSchedulableCapacity(t *testing.T) {
+	const deviceID, nodeName = "B3-stale", "npu-node"
+	generator := newDeviceMetricsTestGenerator(&biz.DeviceInfo{
+		Id: deviceID, AliasId: deviceID, Devmem: 65536, Devcore: 100, Count: 4,
+		Type: "Ascend910B9", NodeName: nodeName, Provider: biz.AscendGPUDevice, Unconfigured: true,
+	}, map[string]*pb.InstantResponse{
+		`avg(npu_chip_info_hbm_used_memory{vdie_id="B3-stale"})`:  instantValue(1024),
+		`avg(npu_chip_info_hbm_total_memory{vdie_id="B3-stale"})`: instantValue(65536),
+	})
+	t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+	if err := generator.GenerateDeviceMetrics(context.Background()); isFatalRefreshFailure(err) {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	labels := []string{nodeName, biz.AscendGPUDevice, "Ascend910B9", deviceID, "", ""}
+	for _, gauge := range []*prometheus.GaugeVec{HamiVgpuCount, HamiVmemorySize, HamiVcoreSize, HamiVCoreScaling, HamiCoreSize, HamiVMemoryScaling} {
+		if _, tracked := generator.current[cellKey{gauge: gauge, joined: strings.Join(labels, labelSep)}]; tracked {
+			t.Fatalf("an unconfigured device exported schedulable capacity")
+		}
+	}
+	assertTrackedGaugeValue(t, generator, HamiMemoryUsed, labels, 1024)
+}
+
 func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -1235,7 +1258,7 @@ func TestAscendContainerAllocationOmitsUnknownCoreAndUnsupportedUsage(t *testing
 				}}}, log.NewStdLogger(io.Discard)),
 				podUsecase: biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{{
 					Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
-					ContainerDevices: biz.ContainerDevices{{UUID: aliasID, Type: "Ascend910B4", Usedmem: 8192, Usedcores: tt.core, CoreAllocationKnown: tt.coreKnown}},
+					ContainerDevices: biz.ContainerDevices{{UUID: aliasID, Type: "Ascend910B4", Usedmem: 8192, Usedcores: tt.core, CoreAllocationUnknown: !tt.coreKnown}},
 				}}}, log.NewStdLogger(io.Discard)),
 				monitorService: &fakeInstantQuerier{},
 				log:            log.NewHelper(log.NewStdLogger(io.Discard)),

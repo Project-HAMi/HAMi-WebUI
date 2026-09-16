@@ -47,7 +47,7 @@
                   </template>
                 </div>
               </div>
-              <div class="basic-info-card-sub-title">{{ $t('task.gpuModel') }}</div>
+              <div class="basic-info-card-sub-title">{{ dt('task.gpuModel') }}</div>
             </div>
             <div class="basic-info-card">
               <div class="basic-info-card-title">
@@ -66,13 +66,13 @@
                   </template>
                   <template #content>
                     <div class="relative-gpu-tooltip-content">
-                      <div class="popup-title">{{ $t('task.relatedGpu') }}：</div>
+                      <div class="popup-title">{{ dt('task.relatedGpu') }}：</div>
                       <t-table row-key="uuid" :data="relatedGpuTableData" :columns="relatedGpuTableColumns" />
                     </div>
                   </template>
                 </t-popup>
               </div>
-              <div class="basic-info-card-sub-title">{{ $t('task.relatedGpu') }}</div>
+              <div class="basic-info-card-sub-title">{{ dt('task.relatedGpu') }}</div>
             </div>
           </div>
           <div class="basic-info-summary">
@@ -110,6 +110,10 @@
               <span class="summary-item-label">{{ $t('task.createTime') }}</span>
               <span class="summary-item-value">{{ basicCreateTime }}</span>
             </div>
+            <div v-if="allocationShapeText" class="summary-item">
+              <span class="summary-item-label">{{ $t('task.allocation.label') }}</span>
+              <span class="summary-item-value">{{ allocationShapeText }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -123,7 +127,7 @@
           <div class="row-card-content-icon"><svg-icon icon="vgpu-card" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.gpuCards }}</div>
-            <div class="row-card-sub-title">{{ $t('task.gpuCardCount') }}</div>
+            <div class="row-card-sub-title">{{ dt('task.gpuCardCount') }}</div>
           </div>
         </div>
       </div>
@@ -132,7 +136,14 @@
           <div class="row-card-content-icon"><svg-icon icon="vgpu-core" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.computeLimit }}</div>
-            <div class="row-card-sub-title">{{ $t('task.computePowerLimit') }}</div>
+            <div class="row-card-sub-title">
+              {{ $t('task.computePowerLimit') }}
+              <MetricHelp
+                v-if="coresUnknownReason"
+                :description="coresUnknownReason"
+                :help-label="$t('task.allocation.reasonLabel')"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -241,6 +252,9 @@ import {
   readReadyMetricField,
 } from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
+import { deviceWording } from '~/vgpu/components/device-copy.mjs';
+import { getAllocationShapeCopy, getCoresUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
 import {
   GPU_UUID_TOOLTIP_STYLE,
   LONG_TEXT_TOOLTIP_STYLE,
@@ -276,6 +290,7 @@ const {
     expectedIdentity: identity,
   }),
 });
+const dt = (key) => deviceWording(t(key), detailStatus.value === REQUEST_STATUS.READY ? detail.value?.vendor : '');
 const workloadDisplayName = computed(() => (
   detailStatus.value === REQUEST_STATUS.READY
     ? formatWorkloadName(detail.value)
@@ -312,6 +327,14 @@ const gpuModelList = computed(() => {
   });
   return Array.from(grouped.entries()).map(([model, count]) => ({ model, count }));
 });
+const allocationShapeText = computed(() => {
+  const copy = detailStatus.value === REQUEST_STATUS.READY ? getAllocationShapeCopy(detail.value) : undefined;
+  return copy ? t(copy.key, copy.params) : '';
+});
+const coresUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getCoresUnknownReasonKey(detail.value) : '';
+  return key ? t(key) : '';
+});
 const relatedGpuCountText = computed(() => t('task.relatedGpuCards', { count: safeDeviceIds.value.length }));
 const relatedGpuTableData = computed(() => safeDeviceIds.value.map((uuid) => ({
   model: cardTypeById.value?.[uuid] || detail.value?.type || '--',
@@ -320,13 +343,13 @@ const relatedGpuTableData = computed(() => safeDeviceIds.value.map((uuid) => ({
 const relatedGpuTableColumns = computed(() => [
   {
     colKey: 'model',
-    title: t('task.gpuModel'),
+    title: dt('task.gpuModel'),
     width: 104,
     ellipsis: true,
   },
   {
     colKey: 'uuid',
-    title: 'GPU',
+    title: dt('card.detail.title'),
     width: 236,
     ellipsis: true,
     cell: (_h, { row }) => (
@@ -437,7 +460,8 @@ const resourceOverviewTexts = computed(() => {
   const singleCardMemory = toNumOrUndefined(get('singleCardMemory'));
   return {
     gpuCards: gpuCards === undefined ? '--' : `${Math.round(gpuCards)}`,
-    computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
+    computeLimit: isUnreservedSoftSplit(detail.value || {}) ? t('common.notLimited')
+      : computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
     singleCardMemory: singleCardMemory === undefined ? '--' : `${roundToDecimal(singleCardMemory, 2)} GiB`,
     cpuLimit: formatLimit('cpuLimit', (value) => `${roundToDecimal(value, 3)} Core`),
     memoryLimit: formatLimit('memoryLimit', (value) => `${value.toFixed(1)} GiB`),
@@ -488,7 +512,7 @@ const {
 const lineConfigView = computed(() =>
   taskMonitoringSeries.value.map((item) => ({
     ...item,
-    title: t(item.titleKey),
+    title: dt(item.titleKey),
   })),
 );
 const getTaskMonitoringStateText = (status) => {
@@ -836,6 +860,9 @@ watch(
   }
 
   .row-card-sub-title {
+    display: flex;
+    align-items: center;
+    gap: 2px;
     color: #939ea9;
     font-size: 12px;
     line-height: 20px;

@@ -77,6 +77,13 @@ message ContainerReply {
   SchedulingPod scheduling = 23;
   SchedulingContainerRequest request = 24;
   string container_kind = 25;
+  // whole, template, soft or unknown; set for allocations interpreted against HAMi's device configuration.
+  string allocation_shape = 26;
+  string template = 27;
+  // Why allocated_cores_known is false.
+  string allocated_cores_reason = 28;
+  // Provider of the allocated devices when they share one, such as Ascend.
+  string vendor = 29;
 }
 
 // The current regular container and its Pod context, without inferring health

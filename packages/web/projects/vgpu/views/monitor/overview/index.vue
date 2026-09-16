@@ -2,6 +2,8 @@
   <div class="home">
     <div class="home-page-title">{{ $t('dashboard.overview') }}</div>
 
+    <DeviceConfigAlert />
+
     <div class="home-top">
       <div class="home-top-left">
         <Block :title="$t('dashboard.cardResource')">
@@ -372,6 +374,7 @@
 </template>
 
 <script setup>
+import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
 import { ref, computed, reactive, onMounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
 import VChart from 'vue-echarts';
