@@ -14,10 +14,10 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/informers"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
@@ -25,6 +25,7 @@ import (
 type podRepo struct {
 	data                    *Data
 	podLister               listerscorev1.PodLister
+	nodeLister              listerscorev1.NodeLister
 	pods                    map[k8stypes.UID]*biz.PodInfo
 	mutex                   sync.RWMutex
 	log                     *log.Helper
@@ -51,29 +52,36 @@ func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap, catalog d
 		schedulingEvents:        newSchedulingEventReader(eventsClient),
 		ascend:                  ascend.Decoder{Catalog: catalog, Policy: config.GetAscend().GetAnnotationlessPodMode()},
 	}
-	repo.init(catalog)
+	if err := repo.init(catalog); err != nil {
+		return nil, err
+	}
 	return repo, nil
 }
 
-func (r *podRepo) init(catalog devicecatalog.Source) {
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
-	r.podLister = informerFactory.Core().V1().Pods().Lister()
+func (r *podRepo) init(catalog devicecatalog.Source) error {
+	// Pod events read their node, so the node cache is filled first.
+	r.nodeLister = r.data.informers.Core().V1().Nodes().Lister()
+	r.data.startInformers()
+
+	pods := r.data.informers.Core().V1().Pods()
+	r.podLister = pods.Lister()
 	// After the lister exists and before the first sync, so no configuration change is missed.
 	catalog.Subscribe(r.onCatalogChange)
-	informer := informerFactory.Core().V1().Pods().Informer()
+	informer := pods.Informer()
 	// An index on the existing informer, not another watch.
 	if err := informer.AddIndexers(cache.Indexers{schedulingGPUIndex: r.schedulingIndex}); err != nil {
-		panic(err)
+		return fmt.Errorf("index pods: %w", err)
 	}
 	r.podIndexer = informer.GetIndexer()
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddPod,
 		UpdateFunc: r.onUpdatePod,
 		DeleteFunc: r.onDeletedPod,
-	})
-	stopCh := make(chan struct{})
-	informerFactory.Start(stopCh)
-	informerFactory.WaitForCacheSync(stopCh)
+	}); err != nil {
+		return fmt.Errorf("watch pods: %w", err)
+	}
+	r.data.startInformers()
+	return nil
 }
 
 func (r *podRepo) onAddPod(obj interface{}) {
@@ -324,11 +332,20 @@ func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices)
 	return containerDevices
 }
 
+const nodeReadTimeout = 10 * time.Second
+
+// assignedNode reads the Pod's node from the shared cache, so Pod events cost no API requests.
 func (r *podRepo) assignedNode(pod *corev1.Pod) *corev1.Node {
 	if pod.Spec.NodeName == "" {
 		return nil
 	}
-	node, err := r.data.k8sCl.CoreV1().Nodes().Get(context.Background(), pod.Spec.NodeName, metav1.GetOptions{})
+	node, err := r.nodeLister.Get(pod.Spec.NodeName)
+	if apierrors.IsNotFound(err) {
+		// The node watch can lag the Pod watch, and nothing re-reads this Pod once the node arrives.
+		ctx, cancel := context.WithTimeout(context.Background(), nodeReadTimeout)
+		node, err = r.data.k8sCl.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
+		cancel()
+	}
 	if err != nil {
 		r.log.Warnf("cannot read node %s for pod %s/%s: %v", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
 		return nil
