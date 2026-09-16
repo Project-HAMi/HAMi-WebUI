@@ -40,7 +40,8 @@ the Ascend models and templates, and any problems found in the file.
 
 While the configuration cannot be read, the accelerator list and the overview
 carry a note saying why, because compute shares of template splits then read
-`--` and allocation rates understate.
+`--`. Allocation rates keep counting the allocations they can measure and are
+presented as a lower bound, with the number they leave out.
 
 ## Devices
 
