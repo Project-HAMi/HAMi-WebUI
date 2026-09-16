@@ -12,6 +12,8 @@
       </t-radio-group>
     </template>
 
+    <p v-if="activeNote" class="tab-top-note">{{ activeNote }}</p>
+
     <div class="tab-top-list" :aria-busy="activeStatus === 'loading'">
       <template v-if="activeStatus === 'loading'">
         <div
@@ -97,6 +99,9 @@ const props = defineProps({
   itemKey: String,
   config: Array,
   onClick: Function,
+  // Per-tab caveats, keyed by tab. Not part of config: that is watched deeply
+  // and a change there refetches every tab.
+  notes: { type: Object, default: () => ({}) },
 });
 const { t } = useI18n();
 const createStatefulConfigs = (configs = []) =>
@@ -157,6 +162,7 @@ const activeConfig = computed(() =>
 const activeStatus = computed(
   () => activeConfig.value?.status || REQUEST_STATUS.LOADING,
 );
+const activeNote = computed(() => props.notes?.[tabActive.value] || '');
 const activeStateText = computed(() => {
   if (activeStatus.value === REQUEST_STATUS.ERROR) {
     return t('dashboard.metricQueryFailed');
@@ -225,6 +231,13 @@ watch(
 <style lang="scss" scoped>
 :deep(.home-block-header) {
   padding-bottom: 10px;
+}
+
+.tab-top-note {
+  margin: 0 0 8px;
+  color: #697886;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 :deep(.tab-top-radio.t-radio-group__outline .t-radio-button) {
