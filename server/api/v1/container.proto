@@ -77,13 +77,36 @@ message ContainerReply {
   SchedulingPod scheduling = 23;
   SchedulingContainerRequest request = 24;
   string container_kind = 25;
-  // whole, template, soft or unknown; set for allocations interpreted against HAMi's device configuration.
+  // How HAMi divided the devices when they agree: whole, template, soft (HAMi-core),
+  // mig or unknown. Set for NVIDIA and Ascend allocations; the device mode for
+  // soft is hami-core.
   string allocation_shape = 26;
   string template = 27;
   // Why allocated_cores_known is false.
   string allocated_cores_reason = 28;
   // Provider of the allocated devices when they share one, such as Ascend.
   string vendor = 29;
+  // One entry per allocated device, so a page can place the allocation on it.
+  repeated ContainerDevice devices = 30;
+  // Why allocation_shape is unknown.
+  string allocation_shape_reason = 31;
+}
+
+message ContainerDevice {
+  string id = 1;
+  string type = 2;
+  int32 allocated_cores = 3;
+  optional bool allocated_cores_known = 4;
+  int32 allocated_mem = 5;
+  // whole, template, soft (HAMi-core), mig or unknown.
+  string allocation_shape = 6;
+  // MIG profile or Ascend vNPU template.
+  string template = 7;
+  // Where the MIG device sits in the GPU's placement space.
+  optional int32 mig_start = 8;
+  optional int32 mig_size = 9;
+  // Why allocation_shape is unknown.
+  string allocation_shape_reason = 10;
 }
 
 // The current regular container and its Pod context, without inferring health

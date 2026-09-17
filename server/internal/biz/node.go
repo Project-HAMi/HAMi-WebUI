@@ -28,6 +28,17 @@ type Node struct {
 	Devices                 []*DeviceInfo
 }
 
+// MigPlacement is where a MIG device sits in the GPU's placement space.
+type MigPlacement struct{ Start, Size int32 }
+
+type MigProfile struct {
+	Name       string
+	MemoryMB   int32
+	SliceCount int32
+	Core       int32
+	Placements []MigPlacement
+}
+
 type DeviceInfo struct {
 	Index    int
 	Id       string
@@ -42,7 +53,9 @@ type DeviceInfo struct {
 	NodeName string
 	NodeUid  string
 	Provider string
-	Driver   string
+	// MIG profiles the device supports, as its plugin registered them.
+	MigProfiles []MigProfile
+	Driver      string
 	// Registered but absent from HAMi's device configuration; HAMi will not use it.
 	Unconfigured bool
 }

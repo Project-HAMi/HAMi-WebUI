@@ -63,6 +63,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.Mode = device.Mode
 		gpu.Unconfigured = device.Unconfigured
 		gpu.Vendor = device.Provider
+		gpu.MigProfiles = migProfiles(device.MigProfiles)
 
 		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
 		gpu.VgpuUsed = vGPU
@@ -134,6 +135,7 @@ func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPURep
 		gpu.Mode = device.Mode
 		gpu.Unconfigured = device.Unconfigured
 		gpu.Vendor = device.Provider
+		gpu.MigProfiles = migProfiles(device.MigProfiles)
 
 		vGPU, core, memory, coreKnown, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
 		if err == nil {
@@ -145,4 +147,22 @@ func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPURep
 		return gpu, nil
 	}
 	return gpu, nil
+}
+
+func migProfiles(profiles []biz.MigProfile) []*pb.MigProfile {
+	result := make([]*pb.MigProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		item := &pb.MigProfile{
+			Name:       profile.Name,
+			MemoryMb:   profile.MemoryMB,
+			SliceCount: profile.SliceCount,
+			Core:       profile.Core,
+			Placements: make([]*pb.MigPlacement, 0, len(profile.Placements)),
+		}
+		for _, placement := range profile.Placements {
+			item.Placements = append(item.Placements, &pb.MigPlacement{Start: placement.Start, Size: placement.Size})
+		}
+		result = append(result, item)
+	}
+	return result
 }

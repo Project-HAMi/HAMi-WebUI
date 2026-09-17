@@ -64,12 +64,33 @@ message GPUReply {
   int32 memory_total = 9;
   string node_uid = 10;
   bool health = 11;
+  // How the plugin divides the device: hami-core, mig or template. Empty for
+  // vendors whose plugins do not register one.
   string mode = 12;
   optional bool core_used_known = 13;
   // Registered but absent from HAMi's device configuration.
   bool unconfigured = 14;
   // Provider, such as NVIDIA or Ascend.
   string vendor = 15;
+  // MIG profiles the device plugin registered for this GPU.
+  repeated MigProfile mig_profiles = 16;
+}
+
+// One MIG device type and where NVML allows it on the GPU.
+message MigProfile {
+  reserved 4;
+  reserved "instance_count";
+  string name = 1;
+  int32 memory_mb = 2;
+  int32 slice_count = 3;
+  // Compute share of the whole GPU, in percent.
+  int32 core = 5;
+  repeated MigPlacement placements = 6;
+}
+
+message MigPlacement {
+  int32 start = 1;
+  int32 size = 2;
 }
 
 message GPUsReply {

@@ -10,6 +10,7 @@ import (
 	"vgpu/internal/conf"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/ascend"
+	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -108,7 +109,11 @@ func (r *podRepo) onAddPod(obj interface{}) {
 		r.log.Errorf("cannot decode device allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		return
 	}
-	bizPodDev := bizPodDevices(podDev)
+	gpus := nvidia.ReadAllocations(pod, nvidia.RegisteredModes(node, r.log))
+	if err := gpus.Err(); err != nil {
+		r.log.Warnf("ignore MIG reservations of pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	bizPodDev := bizPodDevices(gpus, podDev)
 	ascendDevices, err := r.ascend.Decode(pod, node)
 	if err != nil {
 		r.log.Errorf("cannot decode Ascend allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
@@ -120,26 +125,43 @@ func (r *podRepo) onAddPod(obj interface{}) {
 }
 
 // Explicit conversion: copier silently drops devices once the structs differ.
-func bizPodDevices(devices util.PodDevices) biz.PodDevices {
+func bizPodDevices(gpus nvidia.Allocations, devices util.PodDevices) biz.PodDevices {
 	result := make(biz.PodDevices, len(devices))
 	for deviceType, slots := range devices {
 		converted := make(biz.PodSingleDevice, len(slots))
 		for i, slot := range slots {
 			converted[i] = make(biz.ContainerDevices, len(slot))
 			for j, device := range slot {
-				converted[i][j] = biz.ContainerDevice{
+				allocated := biz.ContainerDevice{
 					Idx:       device.Idx,
 					UUID:      device.UUID,
 					Type:      device.Type,
 					Usedmem:   device.Usedmem,
 					Usedcores: device.Usedcores,
 					Priority:  device.Priority,
+					// Non-Ascend providers key their allocations by vendor.
+					Vendor: deviceType,
 				}
+				if deviceType == biz.NvidiaGPUDevice {
+					gpu := gpus.Device(i, j, device.UUID)
+					allocated.UUID = gpu.UUID
+					allocated.Shape = nvidiaShapes[gpu.Mode]
+					allocated.ShapeReason = gpu.Reason
+					allocated.Template = gpu.Profile
+					allocated.MigPlacement = biz.MigPlacement{Start: gpu.Start, Size: gpu.Size}
+				}
+				converted[i][j] = allocated
 			}
 		}
 		result[deviceType] = converted
 	}
 	return result
+}
+
+var nvidiaShapes = map[string]string{
+	nvidia.ModeHamiCore: biz.SplitShapeSoft,
+	nvidia.ModeMig:      biz.SplitShapeMig,
+	"":                  biz.SplitShapeUnknown,
 }
 
 func ascendPodSingleDevice(slots [][]ascend.Device) biz.PodSingleDevice {

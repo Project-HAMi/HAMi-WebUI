@@ -114,7 +114,8 @@ import { createRequestState, isLatestRequest, rejectRequest, REQUEST_STATUS, res
 import SchedulingDrawer from './SchedulingDrawer.vue';
 import SegmentedControl from '@/components/SegmentedControl/index.vue';
 import { getWorkloadRequestTotals } from './scheduling-display.mjs';
-import { getCoresUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getAllocationShapeCopy, getCoresUnknownReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getSplitIcon } from '~/vgpu/components/split-mode.mjs';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
@@ -285,6 +286,26 @@ const baseColumns = computed(() => [
             <span class="task-gpu-cell-segment">{memoryGiB}</span>
           </span>
         </div>
+      );
+    },
+  },
+  {
+    title: t('task.allocation.label'),
+    dataIndex: 'allocationShape',
+    width: 180,
+    render: (row) => {
+      const copy = row.request ? undefined : getAllocationShapeCopy(row);
+      if (!copy) return <span>--</span>;
+      const icon = getSplitIcon(row.allocationShape);
+      const reasonKey = getShapeUnknownReasonKey(row);
+      return (
+        <span class="task-split-cell">
+          <span class="task-split-cell-icon" aria-hidden="true">{icon ? <svg-icon icon={icon} /> : null}</span>
+          <span>{t(copy.key, copy.params)}</span>
+          {reasonKey ? (
+            <MetricHelp description={t(reasonKey)} helpLabel={t('task.allocation.reasonLabel')} />
+          ) : null}
+        </span>
       );
     },
   },
@@ -480,6 +501,26 @@ watch(() => route.query, (query) => {
 </script>
 
 <style scoped lang="scss">
+:deep(.task-split-cell) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+// A fixed slot keeps the text aligned when a shape has no icon.
+:deep(.task-split-cell-icon) {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+}
+
 .task-admin-page {
   &.is-embedded {
     .task-admin-table-wrap {
