@@ -1,66 +1,36 @@
 import { buildClusterTrendQueries } from '../../../metrics/query-contract.mjs';
+import { CHART_COLORS } from '../../../metrics/chart-colors.mjs';
 
 export const getRangeConfigInit = (t) => {
   const queries = buildClusterTrendQueries();
+  const allocation = (key, query) => ({
+    key,
+    name: t('dashboard.allocRateLegend'),
+    color: CHART_COLORS.allocation,
+    data: [],
+    query,
+  });
+  const usage = (key, query) => ({
+    key,
+    name: t('dashboard.usageRateLegend'),
+    color: CHART_COLORS.usage,
+    data: [],
+    query,
+  });
 
   return [
     {
       title: t('dashboard.gpuComputeAllocUsageTrend'),
       dataSource: [
-        {
-          name: t('dashboard.allocRateLegend'),
-          query: queries.computeAllocation,
-          data: [],
-          type: 'line',
-          itemStyle: {
-            color: 'rgb(84, 112, 198)',
-            borderColor: 'rgb(84, 112, 198)',
-          },
-          lineStyle: {
-            color: 'rgb(84, 112, 198)',
-          },
-        },
-        {
-          name: t('dashboard.usageRateLegend'),
-          query: queries.computeUsage,
-          data: [],
-          itemStyle: {
-            color: 'rgb(145, 204, 117)',
-            borderColor: 'rgb(145, 204, 117)',
-          },
-          lineStyle: {
-            color: 'rgb(145, 204, 117)',
-          },
-        },
+        allocation('compute-allocation', queries.computeAllocation),
+        usage('compute-usage', queries.computeUsage),
       ],
     },
     {
       title: t('dashboard.gpuMemAllocUsageTrend'),
       dataSource: [
-        {
-          name: t('dashboard.allocRateLegend'),
-          query: queries.memoryAllocation,
-          data: [],
-          itemStyle: {
-            color: 'rgb(84, 112, 198)',
-            borderColor: 'rgb(84, 112, 198)',
-          },
-          lineStyle: {
-            color: 'rgb(84, 112, 198)',
-          },
-        },
-        {
-          name: t('dashboard.usageRateLegend'),
-          query: queries.memoryUsage,
-          data: [],
-          itemStyle: {
-            color: 'rgb(145, 204, 117)',
-            borderColor: 'rgb(145, 204, 117)',
-          },
-          lineStyle: {
-            color: 'rgb(145, 204, 117)',
-          },
-        },
+        allocation('memory-allocation', queries.memoryAllocation),
+        usage('memory-usage', queries.memoryUsage),
       ],
     },
   ];

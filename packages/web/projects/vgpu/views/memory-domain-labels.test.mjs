@@ -8,7 +8,6 @@ const readSource = (relativePath) =>
   readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
 const nodeDetail = readSource('./node/admin/Detail.vue');
-const nodeOptions = readSource('./node/admin/getOptions.js');
 const cardDetail = readSource('./card/admin/Detail.vue');
 const metricHelp = readSource('../components/MetricHelp.vue');
 const enLocale = readSource('../../../src/locales/en.js');
@@ -96,30 +95,18 @@ test('card detail footers preserve labels and values at narrow widths', () => {
 });
 
 test('memory and compute trend legends use the same compact labels', () => {
-  assert.match(nodeDetail, /allocationName: t\('dashboard\.allocRateLegend'\)/);
-  assert.match(nodeDetail, /usageName: t\('dashboard\.usageRateLegend'\)/);
-  assert.match(
-    nodeOptions,
-    /name: allocationName \|\| t\('dashboard\.allocRateLegend'\)/,
-  );
-  assert.match(
-    nodeOptions,
-    /name: usageName \|\| t\('dashboard\.usageRateLegend'\)/,
-  );
-
-  const computeTrend = cardDetail.slice(
-    cardDetail.indexOf("dashboard.gpuComputeAllocUsageTrend"),
-    cardDetail.indexOf("dashboard.gpuMemAllocUsageTrend"),
-  );
-  const memoryTrend = cardDetail.slice(
-    cardDetail.indexOf("dashboard.gpuMemAllocUsageTrend"),
-    cardDetail.indexOf('lineToolsView'),
-  );
-
-  assert.match(computeTrend, /dashboard\.allocRateLegend/);
-  assert.match(computeTrend, /dashboard\.usageRateLegend/);
-  assert.doesNotMatch(computeTrend, /dashboard\.mem(?:Alloc|Usage)Rate/);
-  assert.match(memoryTrend, /dashboard\.allocRateLegend/);
-  assert.match(memoryTrend, /dashboard\.usageRateLegend/);
-  assert.doesNotMatch(memoryTrend, /dashboard\.mem(?:Alloc|Usage)Rate/);
+  // Both pages build every trend from the shared preset, so a legend label is
+  // written once per page and the two charts cannot drift apart.
+  for (const source of [nodeDetail, cardDetail]) {
+    const sections = source.slice(
+      source.indexOf('const trendSections'),
+      source.indexOf('}));', source.indexOf('const trendSections')),
+    );
+    assert.match(sections, /gpuComputeAllocUsageTrend/);
+    assert.match(sections, /gpuMemAllocUsageTrend/);
+    assert.match(sections, /name: t\('dashboard\.allocRateLegend'\)/);
+    assert.match(sections, /name: t\('dashboard\.usageRateLegend'\)/);
+    assert.doesNotMatch(sections, /dashboard\.mem(?:Alloc|Usage)Rate'/);
+    assert.match(source, /buildTimeSeriesOptions/);
+  }
 });
