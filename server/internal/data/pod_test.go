@@ -80,17 +80,57 @@ func loadedTestCatalog(t *testing.T, extra ...devicecatalog.AscendModel) *device
 	return &devicecatalog.Snapshot{State: devicecatalog.StateLoaded, Ascend: parsed.Ascend}
 }
 
-// The repo reads node-1, which carries no hami-vnpu-core annotation.
-func ascendTestRepo(catalog *mutableCatalog) *podRepo {
-	client := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})
-	repo := &podRepo{data: &Data{k8sCl: client}, pods: map[k8stypes.UID]*biz.PodInfo{}, log: log.NewHelper(log.NewStdLogger(io.Discard)), ascend: ascend.Decoder{Catalog: catalog}}
+// The repo reads its nodes from the cache; node-1 carries no hami-vnpu-core annotation.
+func ascendTestRepo(t *testing.T, catalog *mutableCatalog, nodes ...*corev1.Node) *podRepo {
+	t.Helper()
+	if len(nodes) == 0 {
+		nodes = []*corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}}}
+	}
+	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	for _, node := range nodes {
+		if err := indexer.Add(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := &podRepo{
+		data:       &Data{k8sCl: fake.NewSimpleClientset()},
+		nodeLister: listerscorev1.NewNodeLister(indexer),
+		pods:       map[k8stypes.UID]*biz.PodInfo{},
+		log:        log.NewHelper(log.NewStdLogger(io.Discard)),
+		ascend:     ascend.Decoder{Catalog: catalog},
+	}
 	catalog.Subscribe(repo.onCatalogChange)
 	return repo
 }
 
+func TestPodEventsReadTheirNodeFromTheCache(t *testing.T) {
+	catalog := &mutableCatalog{current: loadedTestCatalog(t)}
+	repo := ascendTestRepo(t, catalog, &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:        "node-1",
+		Annotations: map[string]string{ascend.NodeHamiCoreAnnotation: "true"},
+	}})
+	repo.onAddPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
+			util.AssignedNodeAnnotations:            "node-1",
+			"hami.io/Ascend910B3-devices-allocated": "B3-0,Ascend910B3,16384,0:",
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker"}}},
+	})
+
+	containers, _ := repo.ListAll(context.Background())
+	device := containers[0].ContainerDevices[0]
+	// The node's annotation was read: without the node the reason is node_mode_unknown.
+	if device.CoreReason != ascend.ReasonModeAmbiguous {
+		t.Fatalf("the node was not read from the cache: %+v", device)
+	}
+	if actions := repo.data.k8sCl.(*fake.Clientset).Actions(); len(actions) != 0 {
+		t.Fatalf("a Pod event reached the API server: %v", actions)
+	}
+}
+
 func TestAscendAllocationsFollowTheCurrentConfigurationWithoutRedecoding(t *testing.T) {
 	catalog := &mutableCatalog{current: &devicecatalog.Snapshot{State: devicecatalog.StateForbidden}}
-	repo := ascendTestRepo(catalog)
+	repo := ascendTestRepo(t, catalog)
 	repo.onAddPod(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
 			util.AssignedNodeAnnotations:            "node-1",
@@ -120,9 +160,35 @@ func TestAscendAllocationsFollowTheCurrentConfigurationWithoutRedecoding(t *test
 	}
 }
 
+func TestPodEventsReadANodeTheCacheHasNotSeenYet(t *testing.T) {
+	catalog := &mutableCatalog{current: loadedTestCatalog(t)}
+	repo := ascendTestRepo(t, catalog, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "other-node"}})
+	client := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:        "node-1",
+		UID:         "node-uid-1",
+		Annotations: map[string]string{ascend.NodeHamiCoreAnnotation: "true"},
+	}})
+	repo.data = &Data{k8sCl: client}
+	repo.onAddPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
+			util.AssignedNodeAnnotations:            "node-1",
+			"hami.io/Ascend910B3-devices-allocated": "B3-0,Ascend910B3,16384,0:",
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker"}}},
+	})
+
+	containers, _ := repo.ListAll(context.Background())
+	if containers[0].NodeUID != "node-uid-1" || containers[0].ContainerDevices[0].CoreReason != ascend.ReasonModeAmbiguous {
+		t.Fatalf("the node was not read from the API: %+v", containers[0])
+	}
+	if actions := client.Actions(); len(actions) != 1 || actions[0].GetVerb() != "get" {
+		t.Fatalf("expected one node read, got %v", actions)
+	}
+}
+
 func TestNewlyConfiguredModelsAreDecodedAgain(t *testing.T) {
 	catalog := &mutableCatalog{current: loadedTestCatalog(t)}
-	repo := ascendTestRepo(catalog)
+	repo := ascendTestRepo(t, catalog)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "research", Name: "custom", UID: "pod-2", Annotations: map[string]string{
 			util.AssignedNodeAnnotations:          "node-1",
@@ -148,7 +214,7 @@ func TestNewlyConfiguredModelsAreDecodedAgain(t *testing.T) {
 
 func TestReadsCopyOnlyContainersWithAscendDevices(t *testing.T) {
 	catalog := &mutableCatalog{current: loadedTestCatalog(t)}
-	repo := ascendTestRepo(catalog)
+	repo := ascendTestRepo(t, catalog)
 	nvidiaOnly := &biz.Container{Name: "worker", ContainerDevices: biz.ContainerDevices{{UUID: "GPU-0", Type: "NVIDIA"}}}
 	if got := repo.interpretContainer(catalog.Snapshot(), nvidiaOnly); got != nvidiaOnly {
 		t.Fatal("a container without Ascend devices was copied on read")

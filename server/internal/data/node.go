@@ -7,12 +7,10 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/informers"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"strings"
 	"sync"
-	"time"
 	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider"
@@ -34,7 +32,7 @@ type nodeRepo struct {
 }
 
 // NewNodeRepo .
-func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source) biz.NodeRepo {
+func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source) (biz.NodeRepo, error) {
 	nodeRepo := &nodeRepo{
 		data:       data,
 		nodeNotify: make(chan struct{}, 1),
@@ -56,8 +54,10 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger,
 		default:
 		}
 	})
-	nodeRepo.init()
-	return nodeRepo
+	if err := nodeRepo.init(); err != nil {
+		return nil, err
+	}
+	return nodeRepo, nil
 }
 
 func (r *nodeRepo) updateLocalNodes() {
@@ -114,19 +114,19 @@ func (r *nodeRepo) updateLocalNodes() {
 	}
 }
 
-func (r *nodeRepo) init() {
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
-	r.nodeLister = informerFactory.Core().V1().Nodes().Lister()
+func (r *nodeRepo) init() error {
+	nodes := r.data.informers.Core().V1().Nodes()
+	r.nodeLister = nodes.Lister()
 	go r.updateLocalNodes()
-	informer := informerFactory.Core().V1().Nodes().Informer()
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddNode,
 		UpdateFunc: r.onUpdateNode,
 		DeleteFunc: r.onDeletedNode,
-	})
-	stopCh := make(chan struct{})
-	informerFactory.Start(stopCh)
-	informerFactory.WaitForCacheSync(stopCh)
+	}); err != nil {
+		return fmt.Errorf("watch nodes: %w", err)
+	}
+	r.data.startInformers()
+	return nil
 }
 
 func (r *nodeRepo) onAddNode(obj interface{}) {
