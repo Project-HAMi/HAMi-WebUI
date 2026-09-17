@@ -59,7 +59,12 @@ import { onMounted, ref, computed } from 'vue';
 import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
-import { buildGroupedResourceTopQueries } from '~/vgpu/metrics/query-contract.mjs';
+import {
+  buildGroupedResourceTopQueries,
+  buildUnknownComputeShareQuery,
+} from '~/vgpu/metrics/query-contract.mjs';
+import useInstantVector from '~/vgpu/hooks/useInstantVector';
+import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 
 const props = defineProps({
   title: {
@@ -86,8 +91,20 @@ const resourceTopQueries = computed(() =>
   buildGroupedResourceTopQueries(props.type),
 );
 
+// The compute allocation rankings leave out allocations whose share is unknown.
+const uncountedMetric = useInstantVector([
+  { query: buildUnknownComputeShareQuery() },
+]);
+const computeAllocationNotes = computed(() => {
+  const count = Number(readReadyMetricField(uncountedMetric.value[0], 'count'));
+  return Number.isFinite(count) && count > 0
+    ? { alloc: t('dashboard.metricLowerBoundRanking', { count }) }
+    : {};
+});
+
 const nodeComputeTop5 = computed(() => ({
   title: t('dashboard.nodeComputeTop5'),
+  notes: computeAllocationNotes.value,
   config: [
     {
       tab: t('dashboard.allocRate'),
@@ -128,6 +145,7 @@ const nodeMemoryTop5 = computed(() => ({
 
 const gpuComputeTop5 = computed(() => ({
   title: t('dashboard.gpuComputeTop5'),
+  notes: computeAllocationNotes.value,
   config: [
     {
       tab: t('dashboard.allocRate'),

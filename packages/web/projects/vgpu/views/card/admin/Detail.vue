@@ -127,7 +127,13 @@
                   <div class="resource-card-footer-value">
                     <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ computeAllocUsedText }}</span>
                     <span class="resource-card-footer-sep">/</span>
-                    <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
+                    <t-tooltip
+                      v-if="computeAllocUncounted"
+                      :content="$t('dashboard.metricLowerBound', { count: computeAllocUncounted })"
+                    >
+                      <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
+                    </t-tooltip>
+                    <span v-else class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
                     <t-progress
                       v-if="computeAllocPercentProgress !== undefined"
                       theme="circle"
@@ -352,6 +358,7 @@ import { getRangeOptions } from '../../monitor/overview/getOptions';
 import { useI18n } from 'vue-i18n';
 import {
   buildComputeAllocationQueries,
+  buildUnknownComputeShareQuery,
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
@@ -531,13 +538,27 @@ const _gaugeConfigBase = [
   },
 ];
 
+const renderCardQuery = (query) => renderPromQLTemplate(query, {
+  device_uuid: detailCardUuid.value,
+});
+
 const gaugeData = useInstantVector(
   _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
-  (query) => renderPromQLTemplate(query, {
-    device_uuid: detailCardUuid.value,
-  }),
+  renderCardQuery,
   times,
 );
+
+// The card's allocation rate leaves out allocations whose share HAMi does not
+// state, so it reads as a lower bound while any exist.
+const uncountedMetric = useInstantVector(
+  [{ query: buildUnknownComputeShareQuery({ selector: cardMetricSelector }) }],
+  renderCardQuery,
+  times,
+);
+const computeAllocUncounted = computed(() => {
+  const count = Number(readReadyMetricField(uncountedMetric.value[0], 'count'));
+  return Number.isFinite(count) && count > 0 ? count : 0;
+});
 
 const gaugeConfig = computed(() =>
   gaugeData.value.map((item) => ({
@@ -619,7 +640,9 @@ const computeUsagePercentProgressRounded = computed(() => roundPercentForProgres
 const memoryAllocPercentProgressRounded = computed(() => roundPercentForProgress(memoryAllocPercentProgress.value));
 const memoryUsagePercentProgressRounded = computed(() => roundPercentForProgress(memoryUsagePercentProgress.value));
 
-const computeAllocPercentText = computed(() => (computeAllocPercentRaw.value === undefined ? '--' : `${roundToDecimal(computeAllocPercentRaw.value, 2)}%`));
+const computeAllocPercentText = computed(() => (computeAllocPercentRaw.value === undefined
+  ? '--'
+  : `${computeAllocUncounted.value ? '≥' : ''}${roundToDecimal(computeAllocPercentRaw.value, 2)}%`));
 const computeUsagePercentText = computed(() => (computeUsagePercentRaw.value === undefined ? '--' : `${roundToDecimal(computeUsagePercentRaw.value, 2)}%`));
 const memoryAllocPercentText = computed(() => (memoryAllocPercentRaw.value === undefined ? '--' : `${roundToDecimal(memoryAllocPercentRaw.value, 2)}%`));
 const memoryUsagePercentText = computed(() => (memoryUsagePercentRaw.value === undefined ? '--' : `${roundToDecimal(memoryUsagePercentRaw.value, 2)}%`));

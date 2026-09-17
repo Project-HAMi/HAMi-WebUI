@@ -11,10 +11,11 @@ import {
   buildMemoryUsageQueries,
   buildTaskAllocationTopQueries,
   buildTaskComputeAllocationQuery,
-  buildTaskCountQueries,
   buildTaskContainerResourceQueries,
+  buildTaskCountQueries,
   buildTaskMonitoringQueries,
   buildTaskResourceOverviewQueries,
+  buildUnknownComputeShareQuery,
 } from './query-contract.mjs';
 import {
   promQLStringLiteral,
@@ -66,34 +67,25 @@ test('detail queries do not regex-match exact resource identities', () => {
   }
 });
 
-test('compute allocation stays idle at real zero and hides unknown allocations', () => {
+test('compute allocation stays idle at real zero and keeps what it can measure', () => {
   const queries = buildComputeAllocationQueries();
-
-  assert.match(queries.query, /hami_core_size\)\) \* 0/);
-  assert.match(
-    queries.query,
-    /unless on \(\) max\(hami_container_vcore_allocation_known == 0\)/,
-  );
-  assert.match(
-    queries.percentQuery,
-    /unless on \(\) max\(hami_container_vcore_allocation_known == 0\)/,
-  );
-  assert.doesNotMatch(
-    queries.totalQuery,
-    /hami_container_vcore_allocation_known/,
-  );
-});
-
-test('scoped compute allocation excludes the whole affected group', () => {
-  const queries = buildComputeAllocationQueries({
+  const scoped = buildComputeAllocationQueries({
     selector: 'node=$node',
     groupLabel: 'node',
   });
 
-  assert.match(
+  assert.match(queries.query, /hami_core_size\)\) \* 0/);
+  // A lower bound, never a scope-wide hole: the exporter omits the allocations
+  // it cannot state, and buildUnknownComputeShareQuery counts them.
+  for (const query of [
+    queries.query,
     queries.percentQuery,
-    /unless on \(node\) max by \(node\) \(hami_container_vcore_allocation_known\{node=\$node\} == 0\)/,
-  );
+    queries.totalQuery,
+    scoped.query,
+    scoped.percentQuery,
+  ]) {
+    assert.doesNotMatch(query, /hami_container_vcore_allocation_known/);
+  }
 });
 
 test('task compute queries reject partial unknown allocations', () => {
@@ -368,4 +360,21 @@ test('grouped query labels reject malformed PromQL input', () => {
     () => buildGroupedResourceTopQueries(''),
     /group label is required/,
   );
+});
+
+test('uncounted compute shares are counted once per allocation', () => {
+  // max by the allocation's identity first: every exporter replica repeats it.
+  assert.equal(
+    buildUnknownComputeShareQuery(),
+    'count(max by (container_pod_uuid, device_uuid) (hami_container_vcore_allocation_known == 0))',
+  );
+  assert.equal(
+    buildUnknownComputeShareQuery({ selector: 'node="node-a"' }),
+    'count(max by (container_pod_uuid, device_uuid) (hami_container_vcore_allocation_known{node="node-a"} == 0))',
+  );
+  assert.equal(
+    buildUnknownComputeShareQuery({ groupLabel: 'node' }),
+    'count by (node) (max by (node, container_pod_uuid, device_uuid) (hami_container_vcore_allocation_known == 0))',
+  );
+  assert.throws(() => buildUnknownComputeShareQuery({ groupLabel: '1bad' }), /Invalid Prometheus group label/);
 });

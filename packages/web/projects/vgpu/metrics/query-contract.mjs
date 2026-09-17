@@ -38,10 +38,9 @@ const aggregateAcrossExporterReplicas = (series, groupLabel = '') => {
 const divideForDisplay = (expression, divisor) =>
   divisor === 1 ? expression : `${expression} / ${divisor}`;
 
-// An absent allocated-core series can mean either a genuinely idle scope or an
-// Ascend allocation that WebUI cannot decode without guessing. Keep the idle
-// capacity-derived zero, but remove the entire scope when any explicit unknown
-// allocation is present so a known subset is never presented as the total.
+// One allocation's compute share is either known or not, so a partial sum would
+// misstate that allocation itself. Scopes that are a single allocation drop out
+// entirely; aggregates keep what they can measure and report a lower bound.
 const excludeUnknownComputeAllocations = (
   expression,
   { selector = '', groupLabel = '' } = {},
@@ -85,22 +84,36 @@ const buildAllocationQueries = ({
   };
 };
 
-export const buildComputeAllocationQueries = (options = {}) => {
-  const queries = buildAllocationQueries({
+// Allocations whose compute share HAMi does not state, so a page can say how
+// many its allocation rate leaves out. Counted per container and device, which
+// every exporter replica reports identically.
+export const buildUnknownComputeShareQuery = ({
+  selector = '',
+  groupLabel = '',
+} = {}) => {
+  validateGroupLabel(groupLabel);
+  const identity = groupLabel
+    ? `${groupLabel}, container_pod_uuid, device_uuid`
+    : 'container_pod_uuid, device_uuid';
+  const unknown = `max by (${identity}) (${metricSeries(
+    METRICS.computeAllocationKnown,
+    selector,
+  )} == 0)`;
+
+  return groupLabel ? `count by (${groupLabel}) (${unknown})` : `count(${unknown})`;
+};
+
+// The exporter omits hami_container_vcore_allocated for an allocation whose
+// compute share it cannot state, so these sums are a lower bound of what is
+// allocated: never an overstatement, and the safe side for reading free
+// capacity. Pair them with buildUnknownComputeShareQuery, and present the
+// result as a lower bound whenever it counts anything.
+export const buildComputeAllocationQueries = (options = {}) =>
+  buildAllocationQueries({
     allocatedMetric: METRICS.computeAllocated,
     capacityMetric: METRICS.computeCapacity,
     ...options,
   });
-
-  return {
-    query: excludeUnknownComputeAllocations(queries.query, options),
-    totalQuery: queries.totalQuery,
-    percentQuery: excludeUnknownComputeAllocations(
-      queries.percentQuery,
-      options,
-    ),
-  };
-};
 
 export const buildTaskComputeAllocationQuery = ({
   selector = '',
