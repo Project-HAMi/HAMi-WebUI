@@ -82,7 +82,7 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 				devcore, _ := strconv.ParseInt(items[3], 10, 32)
 				health, _ := strconv.ParseBool(items[6])
 				numa, _ := strconv.Atoi(items[5])
-				mode := "hami-core"
+				mode := ""
 				index := 0
 				if len(items) == 9 {
 					index, _ = strconv.Atoi(items[7])
@@ -366,6 +366,7 @@ func UnMarshalNodeDevices(str string) ([]*DeviceInfo, error) {
 	return dlist, err
 }
 
+// MapNewDeviceInfoToDeviceInfo leaves MigProfiles to ParseMigProfiles.
 func MapNewDeviceInfoToDeviceInfo(newDeviceInfo *NewDeviceInfo) *DeviceInfo {
 	return &DeviceInfo{
 		ID:      newDeviceInfo.ID,
@@ -379,4 +380,15 @@ func MapNewDeviceInfoToDeviceInfo(newDeviceInfo *NewDeviceInfo) *DeviceInfo {
 		Mode:    newDeviceInfo.Mode,
 		Health:  newDeviceInfo.Health,
 	}
+}
+
+func ParseMigProfiles(raw json.RawMessage) ([]MigProfile, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var profiles []MigProfile
+	if err := json.Unmarshal(raw, &profiles); err != nil {
+		return nil, err
+	}
+	return profiles, nil
 }

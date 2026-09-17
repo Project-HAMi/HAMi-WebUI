@@ -9,6 +9,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"math"
 	"strings"
 	"sync"
 	"vgpu/internal/biz"
@@ -19,6 +20,7 @@ import (
 	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/provider/nvidia"
+	"vgpu/internal/provider/util"
 )
 
 type nodeRepo struct {
@@ -103,6 +105,7 @@ func (r *nodeRepo) updateLocalNodes() {
 						NodeUid:      string(node.UID),
 						Provider:     p.GetProvider(),
 						Driver:       device.Driver,
+						MigProfiles:  bizMigProfiles(device.MigProfiles),
 						Unconfigured: device.Unconfigured,
 					})
 				}
@@ -112,6 +115,33 @@ func (r *nodeRepo) updateLocalNodes() {
 		r.nodes = n
 		r.mutex.Unlock()
 	}
+}
+
+func bizMigProfiles(profiles []util.MigProfile) []biz.MigProfile {
+	if len(profiles) == 0 {
+		return nil
+	}
+	result := make([]biz.MigProfile, 0, len(profiles))
+profiles:
+	for _, profile := range profiles {
+		if profile.SliceCount > math.MaxInt32 {
+			continue
+		}
+		converted := biz.MigProfile{
+			Name:       profile.Name,
+			MemoryMB:   profile.MemoryMB,
+			SliceCount: int32(profile.SliceCount),
+			Core:       profile.Core,
+		}
+		for _, placement := range profile.Placements {
+			if placement.Start > math.MaxInt32 || placement.Size > math.MaxInt32 {
+				continue profiles
+			}
+			converted.Placements = append(converted.Placements, biz.MigPlacement{Start: int32(placement.Start), Size: int32(placement.Size)})
+		}
+		result = append(result, converted)
+	}
+	return result
 }
 
 func (r *nodeRepo) init() error {

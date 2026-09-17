@@ -10,6 +10,7 @@ import (
 	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/ascend"
+	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -226,4 +227,60 @@ func TestReadsCopyOnlyContainersWithAscendDevices(t *testing.T) {
 	if got == ascendOne || got.ContainerDevices[0].Usedcores != 25 || ascendOne.ContainerDevices[0].Usedcores != 0 {
 		t.Fatalf("interpreted = %+v, stored = %+v", got.ContainerDevices[0], ascendOne.ContainerDevices[0])
 	}
+}
+func TestSplitModeIsReportedForBothVendors(t *testing.T) {
+	// The allocation vocabulary is shared, so the API never mixes two spellings.
+	if ascend.ShapeSoft != biz.SplitShapeSoft || ascend.ShapeTemplate != biz.SplitShapeTemplate ||
+		ascend.ShapeWhole != biz.SplitShapeWhole || ascend.ShapeUnknown != biz.SplitShapeUnknown {
+		t.Fatal("the Ascend provider and the API disagree on shape names")
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-3", Annotations: map[string]string{
+			util.AssignedNodeAnnotations:     "node-1",
+			"hami.io/vgpu-devices-allocated": "GPU-0,NVIDIA,4096,30:;GPU-1,NVIDIA,40960,100:",
+			nvidia.MigAllocationsAnnotation:  `[{"containerIndex":1,"deviceIndex":0,"gpuUUID":"GPU-1","profile":"3g.40gb","placement":{"start":0,"size":4}}]`,
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", InitContainers: []corev1.Container{{Name: "prepare"}}, Containers: []corev1.Container{{Name: "worker"}}},
+	}
+	modes := map[string]string{"GPU-0": nvidia.ModeHamiCore, "GPU-1": nvidia.ModeMig}
+	devices := bizPodDevices(nvidia.ReadAllocations(pod, modes), mustDecodePodDevices(t, pod))
+	slots := devices[biz.NvidiaGPUDevice]
+	if len(slots) != 2 {
+		t.Fatalf("slots = %v", slots)
+	}
+	if got := slots[0][0]; got.Vendor != biz.NvidiaGPUDevice || got.Shape != biz.SplitShapeSoft || got.Template != "" {
+		t.Fatalf("hami-core device = %+v", got)
+	}
+	if got := slots[1][0]; got.Shape != biz.SplitShapeMig || got.Template != "3g.40gb" || got.MigPlacement != (biz.MigPlacement{Start: 0, Size: 4}) {
+		t.Fatalf("MIG device = %+v", got)
+	}
+}
+
+func TestMigReservationsStayOnNVIDIAGPUs(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "mixed", UID: "pod-4", Annotations: map[string]string{
+			util.AssignedNodeAnnotations:     "node-1",
+			"hami.io/vgpu-devices-allocated": "GPU-1[0-3],NVIDIA,10240,14:",
+			"hami.io/dcu-devices-allocated":  "DCU-1,DCU,8192,50:",
+			nvidia.MigAllocationsAnnotation:  `[{"containerIndex":0,"deviceIndex":0,"gpuUUID":"GPU-1","profile":"1g.10gb","placement":{"start":3,"size":1}}]`,
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker"}}},
+	}
+	devices := bizPodDevices(nvidia.ReadAllocations(pod, map[string]string{"GPU-1": nvidia.ModeMig}), mustDecodePodDevices(t, pod))
+	// A UUID recorded before HAMi v2.10 names its GPU once the suffix is removed.
+	if got := devices[biz.NvidiaGPUDevice][0][0]; got.UUID != "GPU-1" || got.Shape != biz.SplitShapeMig || got.Template != "" {
+		t.Fatalf("NVIDIA device = %+v", got)
+	}
+	if got := devices["DCU"][0][0]; got.Shape != "" || got.Template != "" || got.MigPlacement != (biz.MigPlacement{}) {
+		t.Fatalf("DCU device took the NVIDIA reservation: %+v", got)
+	}
+}
+
+func mustDecodePodDevices(t *testing.T, pod *corev1.Pod) util.PodDevices {
+	t.Helper()
+	decoded, err := util.DecodePodDevices(pod, log.NewHelper(log.NewStdLogger(io.Discard)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoded
 }

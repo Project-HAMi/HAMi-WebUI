@@ -58,7 +58,7 @@ per container, init containers first) and the applied template names in
 
 | Shape | How it is recognised | Compute share |
 | --- | --- | --- |
-| Soft split | `huawei.com/vnpu-mode: hami-core`, or a `hami-vnpu-core` node as below | The requested share. 0 reserves none and shows as not limited: the runtime then shares the NPU by default priority |
+| HAMi-core mode | `huawei.com/vnpu-mode: hami-core`, or a `hami-vnpu-core` node as below | The requested share. 0 reserves none and shows as not limited: the runtime then shares the NPU by default priority |
 | Whole card | Otherwise, HAMi's entry for the device in `huawei.com/<commonWord>` names no template. Without that entry, memory equals the model's `memoryAllocatable` or the card's registered memory | 100% |
 | Template | Otherwise, by the template name in that entry, or a template of exactly that memory | Template `aiCore` / model `aiCore` |
 
@@ -83,9 +83,9 @@ unknown, why:
 
 ### Pods without `huawei.com/vnpu-mode`
 
-A node with `hami-vnpu-core: "true"` has soft split enabled. There, a Pod that
+A node with `hami-vnpu-core: "true"` runs HAMi-core mode. There, a Pod that
 does not set `huawei.com/vnpu-mode` gets a template split from ascend-device-plugin
-v1.4.0 but a soft split from v1.4.1, and both leave the same annotations
+v1.4.0 but HAMi-core mode from v1.4.1, and both leave the same annotations
 ([ascend-device-plugin#134](https://github.com/Project-HAMi/ascend-device-plugin/issues/134)).
 WebUI reports these allocations as `mode_ambiguous` unless you set:
 

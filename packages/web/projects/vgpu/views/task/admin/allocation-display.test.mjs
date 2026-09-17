@@ -5,8 +5,11 @@ import en from '../../../../../src/locales/en.js';
 import zh from '../../../../../src/locales/zh.js';
 import {
   CORES_UNKNOWN_REASONS,
+  SHAPE_UNKNOWN_REASONS,
   getAllocationShapeCopy,
+  getCoresOnlyReasonKey,
   getCoresUnknownReasonKey,
+  getShapeUnknownReasonKey,
   isUnreservedSoftSplit,
 } from './allocation-display.mjs';
 
@@ -21,7 +24,12 @@ test('allocation shapes name the applied template', () => {
   assert.equal(getAllocationShapeCopy({ allocationShape: 'whole' }).key, 'task.allocation.shape.whole');
   assert.equal(getAllocationShapeCopy({ allocationShape: 'soft' }).key, 'task.allocation.shape.soft');
   assert.equal(getAllocationShapeCopy({ allocationShape: 'unknown' }).key, 'task.allocation.shape.unknown');
-  for (const row of [{}, { allocationShape: '' }, { allocationShape: 'mig' }, undefined]) {
+  assert.deepEqual(getAllocationShapeCopy({ allocationShape: 'mig', template: '3g.40gb' }), {
+    key: 'task.allocation.shape.migNamed',
+    params: { template: '3g.40gb' },
+  });
+  assert.equal(getAllocationShapeCopy({ allocationShape: 'mig' }).key, 'task.allocation.shape.mig');
+  for (const row of [{}, { allocationShape: '' }, { allocationShape: 'vgpu' }, undefined]) {
     assert.equal(getAllocationShapeCopy(row), undefined);
   }
 });
@@ -37,7 +45,28 @@ test('unknown compute shares explain why only when the server gives a reason', (
   assert.equal(getCoresUnknownReasonKey({ allocatedCoresReason: 'mode_ambiguous' }), '');
 });
 
-test('only a soft split without a share reads as unreserved', () => {
+test('an unknown shape says why', () => {
+  assert.equal(
+    getShapeUnknownReasonKey({ allocationShape: 'unknown', allocationShapeReason: 'mig_reservation_invalid' }),
+    'task.allocation.shapeReason.mig_reservation_invalid',
+  );
+  assert.equal(
+    getShapeUnknownReasonKey({ allocationShape: 'unknown', allocatedCoresKnown: false, allocatedCoresReason: 'mode_ambiguous' }),
+    'task.allocation.reason.mode_ambiguous',
+  );
+  assert.equal(getShapeUnknownReasonKey({ allocationShape: 'unknown' }), '');
+  assert.equal(getShapeUnknownReasonKey({ allocationShape: 'mig', allocationShapeReason: 'mig_reservation_invalid' }), '');
+  assert.equal(getShapeUnknownReasonKey({ allocationShape: 'unknown', allocationShapeReason: 'future_reason' }), '');
+});
+
+test('one reason is shown once', () => {
+  const ambiguous = { allocationShape: 'unknown', allocatedCoresKnown: false, allocatedCoresReason: 'mode_ambiguous' };
+  assert.equal(getCoresOnlyReasonKey(ambiguous), '');
+  const template = { allocationShape: 'template', allocatedCoresKnown: false, allocatedCoresReason: 'template_not_configured' };
+  assert.equal(getCoresOnlyReasonKey(template), 'task.allocation.reason.template_not_configured');
+});
+
+test('only a HAMi-core allocation without a share reads as unreserved', () => {
   assert.equal(isUnreservedSoftSplit({ allocationShape: 'soft', allocatedCores: 0, allocatedCoresKnown: true }), true);
   assert.equal(isUnreservedSoftSplit({ allocationShape: 'soft', allocatedCores: 25, allocatedCoresKnown: true }), false);
   assert.equal(isUnreservedSoftSplit({ allocationShape: 'template', allocatedCores: 0, allocatedCoresKnown: true }), false);
@@ -47,8 +76,9 @@ test('only a soft split without a share reads as unreserved', () => {
 
 test('every shape and reason has copy in both languages', () => {
   const keys = [
-    ...['whole', 'template', 'templateNamed', 'soft', 'unknown'].map((shape) => `task.allocation.shape.${shape}`),
+    ...['whole', 'template', 'templateNamed', 'soft', 'mig', 'migNamed', 'unknown'].map((shape) => `task.allocation.shape.${shape}`),
     ...CORES_UNKNOWN_REASONS.map((reason) => `task.allocation.reason.${reason}`),
+    ...SHAPE_UNKNOWN_REASONS.map((reason) => `task.allocation.shapeReason.${reason}`),
     'task.allocation.label',
     'task.allocation.reasonLabel',
   ];
@@ -56,6 +86,8 @@ test('every shape and reason has copy in both languages', () => {
     assert.equal(typeof lookup(zh, key), 'string', `zh ${key}`);
     assert.equal(typeof lookup(en, key), 'string', `en ${key}`);
   }
-  assert.match(lookup(zh, 'task.allocation.shape.templateNamed'), /\{template\}/);
-  assert.match(lookup(en, 'task.allocation.shape.templateNamed'), /\{template\}/);
+  for (const key of ['task.allocation.shape.templateNamed', 'task.allocation.shape.migNamed']) {
+    assert.match(lookup(zh, key), /\{template\}/);
+    assert.match(lookup(en, key), /\{template\}/);
+  }
 });

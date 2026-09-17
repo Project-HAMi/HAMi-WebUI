@@ -38,6 +38,13 @@
             </div>
             <div class="basic-info-card">
               <div class="basic-info-title">
+                <svg-icon v-if="splitModeIcon" :icon="splitModeIcon" class="split-mode-icon" aria-hidden="true" />
+                {{ splitModeText }}
+              </div>
+              <div class="basic-info-subtitle">{{ $t('card.splitMode.label') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <div class="basic-info-title">
                 {{ basicTemperatureText }}
               </div>
               <div class="basic-info-subtitle">{{ $t('card.detail.gpuTemperature') }}</div>
@@ -51,35 +58,6 @@
           </div>
         </div>
       </div>
-    </block-box>
-
-    <block-box v-if="npuSpecVisible" class="npu-spec-block" :title="$t('card.deviceConfig.title')">
-      <p v-if="deviceConfigStateText" class="npu-spec-note">{{ deviceConfigStateText }}</p>
-      <template v-else>
-        <div class="npu-spec-facts">
-          <div v-for="fact in ascendModelFacts" :key="fact.key" class="npu-spec-fact">
-            <span class="npu-spec-fact-icon"><svg-icon :icon="fact.icon" aria-hidden="true" /></span>
-            <span>
-              <span class="npu-spec-fact-value">{{ fact.value }}</span>
-              <span class="npu-spec-fact-label">{{ fact.label }}</span>
-            </span>
-          </div>
-        </div>
-        <p v-if="ascendModel.superPod" class="npu-spec-note npu-spec-super-pod">{{ $t('card.deviceConfig.superPod') }}</p>
-        <div class="npu-spec-subtitle">
-          {{ $t('card.deviceConfig.templates') }}
-          <MetricHelp
-            v-if="ascendModel.templates.length"
-            multiline
-            :description="$t('card.deviceConfig.roundingHint')"
-            :help-label="$t('card.deviceConfig.roundingHintLabel')"
-          />
-        </div>
-        <p v-if="!ascendModel.templates.length" class="npu-spec-note">{{ $t('card.deviceConfig.noTemplates') }}</p>
-        <div class="npu-spec-options">
-          <NpuAllocationOption v-for="option in allocationOptions" :key="option.whole ? '' : option.name" :option="option" />
-        </div>
-      </template>
     </block-box>
 
     <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')">
@@ -239,7 +217,46 @@
       </ul>
     </block-box>
 
-    <TrendTimeFilter v-model="times" />
+    <block-box v-if="splitVisible" class="device-split-block" :title="$t('card.split.title')">
+      <template v-if="detail.mode === 'mig'" #extra>
+        <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
+      </template>
+      <DeviceSplit :device="detail" :containers="cardContainers" :status="splitStatus" @retry="loadSplit" />
+    </block-box>
+
+    <block-box v-if="npuSpecVisible" class="npu-spec-block" :title="$t('card.deviceConfig.title')">
+      <p v-if="deviceConfigStateText" class="npu-spec-note">{{ deviceConfigStateText }}</p>
+      <template v-else>
+        <div class="npu-spec-facts">
+          <div v-for="fact in ascendModelFacts" :key="fact.key" class="npu-spec-fact">
+            <span class="npu-spec-fact-icon"><svg-icon :icon="fact.icon" aria-hidden="true" /></span>
+            <span>
+              <span class="npu-spec-fact-value">{{ fact.value }}</span>
+              <span class="npu-spec-fact-label">{{ fact.label }}</span>
+            </span>
+          </div>
+        </div>
+        <p v-if="ascendModel.superPod" class="npu-spec-note npu-spec-super-pod">{{ $t('card.deviceConfig.superPod') }}</p>
+        <!-- HAMi-core allocates what is requested; templates never apply to this card. -->
+        <template v-if="detail.mode !== 'hami-core'">
+          <div class="npu-spec-subtitle">
+            {{ $t('card.deviceConfig.templates') }}
+            <MetricHelp
+              v-if="ascendModel.templates.length"
+              multiline
+              :description="$t('card.deviceConfig.roundingHint')"
+              :help-label="$t('card.deviceConfig.roundingHintLabel')"
+            />
+          </div>
+          <p v-if="!ascendModel.templates.length" class="npu-spec-note">{{ $t('card.deviceConfig.noTemplates') }}</p>
+          <div class="npu-spec-options">
+            <NpuAllocationOption v-for="option in allocationOptions" :key="option.whole ? '' : option.name" :option="option" />
+          </div>
+        </template>
+      </template>
+    </block-box>
+
+    <TrendTimeFilter v-model="times" class="card-trend-filter" />
     <div class="line-box">
       <block-box :title="dt('dashboard.gpuComputeAllocUsageTrend')">
         <div class="trend-chart">
@@ -361,8 +378,11 @@ import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 import UnconfiguredTag from './components/UnconfiguredTag.vue';
 import deviceConfigApi from '~/vgpu/api/deviceConfig';
 import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
+import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
+import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
+import taskApi from '~/vgpu/api/task';
 
 const route = useRoute();
 const { t } = useI18n();
@@ -385,9 +405,34 @@ const isDetailReady = computed(
   () => detailStatus.value === REQUEST_STATUS.READY,
 );
 const dt = (key) => deviceWording(t(key), isDetailReady.value ? detail.value?.vendor : '');
+const splitModeText = computed(() => {
+  const key = isDetailReady.value ? getSplitModeKey(detail.value?.mode) : '';
+  return key ? t(key) : '--';
+});
+const splitModeIcon = computed(() => (isDetailReady.value ? getSplitIcon(detail.value?.mode) : ''));
 const detailCardUuid = computed(() =>
   isDetailReady.value ? detail.value.uuid : undefined,
 );
+// Plugins that register no split mode leave nothing to lay out.
+const splitVisible = computed(() => Boolean(isDetailReady.value && getSplitModeKey(detail.value?.mode)));
+const cardContainers = ref([]);
+const splitStatus = ref('loading');
+let splitGeneration = 0;
+const loadSplit = async () => {
+  const generation = ++splitGeneration;
+  const uuid = detailCardUuid.value;
+  splitStatus.value = 'loading';
+  if (!uuid || !splitVisible.value) return;
+  try {
+    const result = await taskApi.getWorkloads({ filters: { deviceId: uuid }, page: 1, pageSize: 100 });
+    if (generation !== splitGeneration) return;
+    cardContainers.value = Array.isArray(result?.items) ? result.items : [];
+    splitStatus.value = 'ready';
+  } catch {
+    if (generation === splitGeneration) splitStatus.value = 'error';
+  }
+};
+watch(detailCardUuid, loadSplit, { immediate: true });
 const headerName = computed(() =>
   isDetailReady.value ? detail.value.uuid : routeCardUuid.value || '',
 );
@@ -867,6 +912,11 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
     line-height: 20px;
   }
 
+.split-mode-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .gpu-type-icon {
   width: 16px;
   height: 16px;
@@ -1087,8 +1137,17 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 }
 
 .resource-overview-block {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   box-shadow: none;
+}
+
+.device-split-block {
+  margin-bottom: 16px;
+  box-shadow: none;
+
+  :deep(.home-block-content) {
+    padding-top: 12px;
+  }
 }
 
 .npu-spec-block {
@@ -1096,11 +1155,19 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   box-shadow: none;
 }
 
+.card-trend-filter {
+  margin-top: 24px;
+}
+
 .npu-spec-facts {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin: 12px 0 16px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
 }
 
 .npu-spec-fact {
@@ -1145,8 +1212,8 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 .npu-spec-subtitle {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
+  align-items: center;
+  gap: 4px;
   margin-bottom: 12px;
   color: #1d2b3a;
   font-size: 14px;
@@ -1159,7 +1226,7 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   gap: 8px;
 }
 
-.npu-spec-super-pod {
+.npu-spec-super-pod:not(:last-child) {
   margin-bottom: 12px;
 }
 
@@ -1169,6 +1236,5 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   font-size: 14px;
   line-height: 22px;
 }
-
 
 </style>
