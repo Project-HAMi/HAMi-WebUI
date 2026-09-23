@@ -50,7 +50,10 @@
                   {{ item.name }}
                 </span>
               </slot>
-              <span class="tab-top-value">
+              <t-tooltip v-if="item.uncounted" :content="t('dashboard.metricLowerBound', { count: item.uncounted })">
+                <span class="tab-top-value">≥{{ item.valueDisplay }}</span>
+              </t-tooltip>
+              <span v-else class="tab-top-value">
                 {{ item.valueDisplay }}
               </span>
             </div>
@@ -148,6 +151,7 @@ const displayItems = computed(() => {
       index: index + 1,
       percentage: getPercentage(item.value),
       valueDisplay: formatRankingValue(item.value, unit),
+      uncounted: config?.uncounted?.[item.name] || 0,
     }));
 });
 
@@ -190,6 +194,16 @@ const fetchData = (configList) => {
       },
       (error) => rejectRequest(state, error, { hasResolved, requestId }),
     );
+    // Rows whose rate leaves allocations out read as lower bounds; without the count they read as before.
+    if (v.uncountedQuery) {
+      cardApi.getInstantVector({ query: v.uncountedQuery }).then(
+        (res) => {
+          const rows = readRankingRows(res, v.nameKey).data;
+          state.uncounted = Object.fromEntries(rows.map((row) => [row.name, row.value]));
+        },
+        () => { state.uncounted = {}; },
+      );
+    }
   });
 };
 
@@ -209,6 +223,7 @@ watch(
       return {
         ...item,
         data: old.data,
+        uncounted: old.uncounted,
         status: old.status,
         hasResolved: old.hasResolved,
         refreshing: old.refreshing,

@@ -404,7 +404,7 @@ import {
   createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
-import { buildClusterAllocatableQueries } from '~/vgpu/metrics/query-contract.mjs';
+import { buildClusterAllocatableQueries, buildUnknownComputeShareQuery } from '~/vgpu/metrics/query-contract.mjs';
 import {
   createRequestState,
   rejectRequest,
@@ -414,9 +414,11 @@ import {
 } from '@/hooks/request-state.mjs';
 import {
   aggregateStatuses,
+  applyUncountedShares,
   getPartialRangeStates,
   stateTextKey,
 } from './overview-state.mjs';
+import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
 const router = useRouter();
@@ -573,8 +575,15 @@ const clusterResourceConfig = useInstantVector([
   },
 ]);
 
+const uncountedMetric = useInstantVector([{ query: buildUnknownComputeShareQuery() }]);
+const uncountedShares = computed(() => {
+  const value = readReadyMetricField(uncountedMetric.value[0], 'count');
+  const count = Number(value);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+});
+
 const cardGaugeConfig = computed(() => {
-  return _cardGaugeConfig.value.map((item) => ({
+  return applyUncountedShares(_cardGaugeConfig.value, uncountedShares.value).map((item) => ({
     ...item,
     title: t(item.titleKey),
     description: t(item.descriptionKey),
@@ -708,6 +717,7 @@ const nodeComputeTop5 = computed(() => ({
       nameKey: 'node',
       data: [],
       query: nodeTopQueries.computeAllocation,
+      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: 'node' }),
     },
     {
       tab: t('dashboard.usageRateLegend'),
@@ -758,27 +768,34 @@ const { data: rangeSeries } = useRangeVector(
 const rangeConfig = computed(() => {
   const translated = getRangeConfigInit(t);
   return translated.map((section, sectionIndex) => {
-    const dataSource = section.dataSource.map((series, seriesIndex) => {
-      const state = rangeSeries.value.find(
-        (item) =>
-          item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
-      );
-      return {
-        ...series,
-        data: state?.data || [],
-        status: state?.status || REQUEST_STATUS.LOADING,
-        refreshing: state?.refreshing || false,
-        refreshError: state?.refreshError || null,
-      };
-    });
+    const dataSource = applyUncountedShares(
+      section.dataSource.map((series, seriesIndex) => {
+        const state = rangeSeries.value.find(
+          (item) =>
+            item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
+        );
+        return {
+          ...series,
+          data: state?.data || [],
+          status: state?.status || REQUEST_STATUS.LOADING,
+          refreshing: state?.refreshing || false,
+          refreshError: state?.refreshError || null,
+        };
+      }),
+      uncountedShares.value,
+      // The line already draws the allocations it can measure; the legend says so.
+    ).map((series) => (series.uncounted
+      ? { ...series, name: t('dashboard.allocRateLowerBoundLegend') }
+      : series));
     const status = aggregateStatuses(dataSource);
     const partialStatusText = getPartialRangeStates(dataSource)
-      .map((item) => `${item.name}: ${t(stateTextKey(item.status))}`)
-      .join(' · ');
+      .map((item) => t('dashboard.partialState', { name: item.name, state: t(stateTextKey(item.status)) }))
+      .join(t('dashboard.partialStateSeparator'));
     return {
       ...section,
       dataSource,
       status,
+      uncounted: dataSource.find((item) => item.uncounted)?.uncounted || 0,
       refreshing: dataSource.some((item) => item.refreshing),
       refreshError: dataSource.find((item) => item.refreshError)?.refreshError || null,
       partialStatusText,

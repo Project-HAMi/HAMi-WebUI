@@ -59,7 +59,10 @@ import { onMounted, ref, computed } from 'vue';
 import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
-import { buildGroupedResourceTopQueries } from '~/vgpu/metrics/query-contract.mjs';
+import {
+  buildGroupedResourceTopQueries,
+  buildUnknownComputeShareQuery,
+} from '~/vgpu/metrics/query-contract.mjs';
 
 const props = defineProps({
   title: {
@@ -86,6 +89,7 @@ const resourceTopQueries = computed(() =>
   buildGroupedResourceTopQueries(props.type),
 );
 
+
 const nodeComputeTop5 = computed(() => ({
   title: t('dashboard.nodeComputeTop5'),
   config: [
@@ -95,6 +99,7 @@ const nodeComputeTop5 = computed(() => ({
       nameKey: props.type,
       data: [],
       query: resourceTopQueries.value.computeAllocation,
+      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: props.type }),
     },
     {
       tab: t('dashboard.usageRateLegend'),
@@ -135,6 +140,7 @@ const gpuComputeTop5 = computed(() => ({
       nameKey: props.type,
       data: [],
       query: resourceTopQueries.value.computeAllocation,
+      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: props.type }),
     },
     {
       tab: t('dashboard.usageRateLegend'),

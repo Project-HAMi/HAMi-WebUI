@@ -8,6 +8,7 @@ export const getRangeConfigInit = (t) => {
       title: t('dashboard.gpuComputeAllocUsageTrend'),
       dataSource: [
         {
+          key: 'compute-allocation',
           name: t('dashboard.allocRateLegend'),
           query: queries.computeAllocation,
           data: [],
