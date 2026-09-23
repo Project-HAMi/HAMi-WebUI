@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -333,8 +335,12 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
 		}
-		if len(containerDevices) > 0 {
-			c.Priority = containerDevices[0].Priority
+		// Not every device type carries a priority, and those that do may not sort first.
+		for _, device := range containerDevices {
+			if device.Priority != "" {
+				c.Priority = device.Priority
+				break
+			}
 		}
 		containers = append(containers, c)
 	}
@@ -343,8 +349,9 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 
 func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices) []biz.ContainerDevices {
 	containerDevices := make([]biz.ContainerDevices, totalContainers)
-	for _, devicesByContainer := range podDevices {
-		for i, devices := range devicesByContainer {
+	// Sorted so a mixed-type container keeps a stable device order.
+	for _, deviceType := range slices.Sorted(maps.Keys(podDevices)) {
+		for i, devices := range podDevices[deviceType] {
 			if i >= totalContainers {
 				break
 			}

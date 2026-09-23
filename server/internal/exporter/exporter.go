@@ -408,19 +408,20 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, conta
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
 		}
-		if len(c.ContainerDevices) == 0 {
-			continue
-		}
-		if c.ContainerDevices[0].Type != metax.MetaxGPUDevice {
-			continue
-		}
 		// MetaX allocation UUIDs cannot currently be correlated with telemetry UUIDs,
 		// so this path pairs the two lists by index and emits telemetry identities.
+		// A mixed container also lists other vendors' devices, which must not take a MetaX index.
 		var core []int32
 		var memory []int32
 		for _, cd := range c.ContainerDevices {
+			if cd.Type != metax.MetaxGPUDevice {
+				continue
+			}
 			core = append(core, cd.Usedcores)
 			memory = append(memory, cd.Usedmem)
+		}
+		if len(core) == 0 {
+			continue
 		}
 
 		query := fmt.Sprintf("mx_memory_used{exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"}",
@@ -433,7 +434,7 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, conta
 			}
 			continue
 		}
-		reportLen := min(len(res.Data), len(c.ContainerDevices))
+		reportLen := min(len(res.Data), len(core))
 		for i := range reportLen {
 			if err := ctx.Err(); err != nil {
 				return s.recordFatalError(err)
