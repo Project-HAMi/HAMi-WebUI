@@ -170,3 +170,34 @@ func TestDecodeRegisteredDevicesFollowsTheDeviceConfiguration(t *testing.T) {
 		t.Fatalf("without a readable configuration = %v, %v", devices, err)
 	}
 }
+
+func TestRegisteredDevicesReportTheNodeSplitMode(t *testing.T) {
+	registration := `[{"id":"B3-0","index":0,"count":1,"devmem":65536,"devcore":20,"type":"Ascend910B3","health":true}]`
+	loaded := func(hamiVnpuCore bool) *devicecatalog.Snapshot {
+		return &devicecatalog.Snapshot{State: devicecatalog.StateLoaded, HamiVnpuCore: hamiVnpuCore}
+	}
+	for _, tt := range []struct {
+		name       string
+		annotation string
+		snapshot   *devicecatalog.Snapshot
+		want       string
+	}{
+		{"node in HAMi-core mode", "true", loaded(false), VNPUModeHamiCore},
+		{"node in template mode", "false", loaded(true), ModeTemplate},
+		{"node without the annotation follows the configuration", "", loaded(true), VNPUModeHamiCore},
+		{"and its default", "", loaded(false), ModeTemplate},
+		{"nothing states it", "", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := map[string]string{"hami.io/node-register-Ascend910B3": registration}
+			if tt.annotation != "" {
+				annotations[NodeHamiCoreAnnotation] = tt.annotation
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "npu-node", Annotations: annotations}}
+			devices, err := decodeRegisteredDevices(node, tt.snapshot)
+			if err != nil || len(devices) != 1 || devices[0].Mode != tt.want {
+				t.Fatalf("devices = %+v, err = %v, want mode %q", devices, err, tt.want)
+			}
+		})
+	}
+}

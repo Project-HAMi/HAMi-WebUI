@@ -57,6 +57,20 @@ const (
 	ReasonNodeModeUnknown       = "node_mode_unknown"
 )
 
+// NodeSplitMode reports how the device plugin divides the node's NPUs, from the
+// annotation it writes on every registration, in the vocabulary NVIDIA
+// registrations already use. It is empty when the node has no annotation.
+func NodeSplitMode(node *corev1.Node) string {
+	switch node.Annotations[NodeHamiCoreAnnotation] {
+	case "true":
+		return VNPUModeHamiCore
+	case "false":
+		return ModeTemplate
+	default:
+		return ""
+	}
+}
+
 // ResolveMode follows the device plugin; the ambiguous case is Project-HAMi/ascend-device-plugin#134.
 func ResolveMode(podMode, nodeHamiCore, policy string) (mode, reason string) {
 	switch {

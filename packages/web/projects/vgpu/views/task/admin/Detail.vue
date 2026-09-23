@@ -112,7 +112,16 @@
             </div>
             <div v-if="allocationShapeText" class="summary-item">
               <span class="summary-item-label">{{ $t('task.allocation.label') }}</span>
-              <span class="summary-item-value">{{ allocationShapeText }}</span>
+              <span class="summary-item-value summary-item-allocation">
+                <svg-icon v-if="allocationIcon" :icon="allocationIcon" aria-hidden="true" />
+                {{ allocationShapeText }}
+                <MetricHelp
+                  v-if="shapeUnknownReason"
+                  multiline
+                  :description="shapeUnknownReason"
+                  :help-label="$t('task.allocation.shapeReasonLabel')"
+                />
+              </span>
             </div>
           </div>
         </div>
@@ -177,7 +186,25 @@
     </div>
   </block-box>
 
-  <TrendTimeFilter v-model="times" />
+  <block-box v-if="deviceSplits.length" :title="$t('card.split.title')" class="workload-split">
+    <template v-if="deviceSplits.some((split) => split.device.mode === 'mig')" #extra>
+      <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
+    </template>
+    <div class="workload-split-devices">
+      <DeviceSplit
+        v-for="split in deviceSplits"
+        :key="split.uuid"
+        show-device
+        :device="split.device"
+        :containers="split.containers"
+        :status="split.status"
+        :highlight="splitHighlight"
+        @retry="loadDeviceSplit(split)"
+      />
+    </div>
+  </block-box>
+
+  <TrendTimeFilter v-model="times" class="workload-trend-filter" />
 
   <div class="task-trend-row">
     <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
@@ -254,7 +281,9 @@ import {
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { deviceWording } from '~/vgpu/components/device-copy.mjs';
-import { getAllocationShapeCopy, getCoresUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getAllocationShapeCopy, getCoresOnlyReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getSplitIcon } from '~/vgpu/components/split-mode.mjs';
+import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import {
   GPU_UUID_TOOLTIP_STYLE,
   LONG_TEXT_TOOLTIP_STYLE,
@@ -312,6 +341,8 @@ const times = ref([start, end]);
 const safeDeviceIds = computed(() => (
   Array.isArray(detail.value?.deviceIds) ? detail.value.deviceIds : []
 ));
+// One request can hold two MIG instances of the same GPU.
+const distinctDeviceIds = computed(() => [...new Set(safeDeviceIds.value)]);
 const monitoringAllocationShape = computed(() => (
   getTaskMonitoringAllocationShape({
     allocatedDevices: detail.value?.allocatedDevices,
@@ -319,9 +350,9 @@ const monitoringAllocationShape = computed(() => (
   })
 ));
 const gpuModelList = computed(() => {
-  if (!safeDeviceIds.value.length) return [];
+  if (!distinctDeviceIds.value.length) return [];
   const grouped = new Map();
-  safeDeviceIds.value.forEach((id) => {
+  distinctDeviceIds.value.forEach((id) => {
     const model = cardTypeById.value?.[id] || detail.value?.type || '--';
     grouped.set(model, (grouped.get(model) || 0) + 1);
   });
@@ -331,12 +362,52 @@ const allocationShapeText = computed(() => {
   const copy = detailStatus.value === REQUEST_STATUS.READY ? getAllocationShapeCopy(detail.value) : undefined;
   return copy ? t(copy.key, copy.params) : '';
 });
-const coresUnknownReason = computed(() => {
-  const key = detailStatus.value === REQUEST_STATUS.READY ? getCoresUnknownReasonKey(detail.value) : '';
+// Plugins that register no split mode leave the allocation without a shape and nothing to lay out.
+const splitDeviceIds = computed(() => {
+  const devices = Array.isArray(detail.value?.devices) ? detail.value.devices : [];
+  return distinctDeviceIds.value.filter((uuid) => devices.some((device) => device.id === uuid && device.allocationShape));
+});
+const deviceSplits = ref([]);
+const splitHighlight = computed(() => ({ podUid: detail.value?.podUid, container: detail.value?.name }));
+let workloadSplitGeneration = 0;
+const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
+  split.status = 'loading';
+  try {
+    const [card, workloads] = await Promise.all([
+      cardApi.getCardDetail({ uid: split.uuid }),
+      taskApi.getWorkloads({ filters: { deviceId: split.uuid }, page: 1, pageSize: 100 }),
+    ]);
+    if (generation !== workloadSplitGeneration) return;
+    split.device = { ...card, uuid: split.uuid };
+    split.containers = Array.isArray(workloads?.items) ? workloads.items : [];
+    split.status = 'ready';
+  } catch {
+    if (generation === workloadSplitGeneration) split.status = 'error';
+  }
+};
+watch([() => detail.value?.podUid, splitDeviceIds], ([podUid, uuids]) => {
+  const generation = ++workloadSplitGeneration;
+  deviceSplits.value = podUid
+    ? uuids.map((uuid) => ({ uuid, device: { uuid }, containers: [], status: 'loading' }))
+    : [];
+  deviceSplits.value.forEach((split) => loadDeviceSplit(split, generation));
+}, { immediate: true });
+const allocationIcon = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY ? getSplitIcon(detail.value?.allocationShape) : ''
+));
+const shapeUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getShapeUnknownReasonKey(detail.value) : '';
   return key ? t(key) : '';
 });
-const relatedGpuCountText = computed(() => t('task.relatedGpuCards', { count: safeDeviceIds.value.length }));
-const relatedGpuTableData = computed(() => safeDeviceIds.value.map((uuid) => ({
+const coresUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getCoresOnlyReasonKey(detail.value) : '';
+  return key ? t(key) : '';
+});
+const relatedGpuCountText = computed(() => {
+  const count = distinctDeviceIds.value.length;
+  return deviceWording(t('task.relatedGpuCards', { count }, count), detail.value?.vendor);
+});
+const relatedGpuTableData = computed(() => distinctDeviceIds.value.map((uuid) => ({
   model: cardTypeById.value?.[uuid] || detail.value?.type || '--',
   uuid,
 })));
@@ -731,6 +802,18 @@ watch(
     min-width: 0;
   }
 
+  .summary-item-allocation {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+  }
+
   .summary-item-label {
     width: 120px;
     color: #939ea9;
@@ -794,7 +877,6 @@ watch(
 
 .workload-overview {
   margin-top: 16px;
-  margin-bottom: 24px;
   padding: 20px;
 
   .row {
@@ -867,6 +949,26 @@ watch(
     font-size: 12px;
     line-height: 20px;
   }
+}
+
+.workload-split {
+  margin-top: 16px;
+  padding: 20px;
+  box-shadow: none;
+
+  :deep(.home-block-content) {
+    padding-top: 20px;
+  }
+}
+
+.workload-trend-filter {
+  margin-top: 24px;
+}
+
+.workload-split-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .trend-chart {
