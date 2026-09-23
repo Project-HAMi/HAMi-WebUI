@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
@@ -33,6 +34,19 @@ func TestMergeContainerDevicesBySlotKeepsInitAlignmentAndDeviceTypes(t *testing.
 	}
 	if got[1][0].Type != "Ascend910B3" || got[2][0].Type != "NVIDIA" {
 		t.Fatalf("device types moved or overwrote one another: %#v", got)
+	}
+}
+
+func TestMergeContainerDevicesBySlotOrdersDeviceTypesStably(t *testing.T) {
+	podDevices := biz.PodDevices{
+		"NVIDIA": {{{UUID: "GPU-0", Type: "NVIDIA"}}},
+		"HCU":    {{{UUID: "HCU-0", Type: "HCU-K100_AI"}}},
+	}
+	for range 50 {
+		got := mergeContainerDevicesBySlot(1, podDevices)
+		if len(got[0]) != 2 || got[0][0].UUID != "HCU-0" || got[0][1].UUID != "GPU-0" {
+			t.Fatalf("container devices out of device type order: %#v", got[0])
+		}
 	}
 }
 
@@ -126,6 +140,27 @@ func TestPodEventsReadTheirNodeFromTheCache(t *testing.T) {
 	}
 	if actions := repo.data.k8sCl.(*fake.Clientset).Actions(); len(actions) != 0 {
 		t.Fatalf("a Pod event reached the API server: %v", actions)
+	}
+}
+
+func TestMixedContainersKeepTheirGPUPriority(t *testing.T) {
+	catalog := &mutableCatalog{current: loadedTestCatalog(t)}
+	repo := ascendTestRepo(t, catalog)
+	repo.onAddPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
+			util.AssignedNodeAnnotations:            "node-1",
+			"hami.io/vgpu-devices-allocated":        "GPU-0,NVIDIA,1024,10:",
+			"hami.io/Ascend910B3-devices-allocated": "B3-0,Ascend910B3,16384,0:",
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker", Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{util.NVIDIAPriority: resource.MustParse("1")},
+		}}}},
+	})
+
+	containers, _ := repo.ListAll(context.Background())
+	// The Ascend device sorts first and carries no priority.
+	if len(containers[0].ContainerDevices) != 2 || containers[0].ContainerDevices[0].UUID != "B3-0" || containers[0].Priority != "1" {
+		t.Fatalf("container = %+v", containers[0])
 	}
 }
 
