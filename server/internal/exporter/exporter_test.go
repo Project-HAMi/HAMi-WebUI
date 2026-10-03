@@ -1067,6 +1067,83 @@ func TestMetaxMultiDeviceUtilizationUsesEachDeviceAllocation(t *testing.T) {
 	}
 }
 
+func TestMetaxMetricsPairOnlyMetaxAllocations(t *testing.T) {
+	const (
+		podName    = "mixed-pod"
+		container  = "worker"
+		namespace  = "research"
+		podUID     = "pod-uid"
+		nodeName   = "mixed-node"
+		deviceType = "C500"
+	)
+	metaxDevice := func(uuid string, cores, memory int32) biz.ContainerDevice {
+		return biz.ContainerDevice{UUID: uuid, Type: metax.MetaxGPUDevice, Usedcores: cores, Usedmem: memory}
+	}
+	other := func(deviceType string) biz.ContainerDevice {
+		return biz.ContainerDevice{UUID: deviceType + "-0", Type: deviceType, Usedcores: 70, Usedmem: 8192}
+	}
+	type allocation struct{ cores, memory float64 }
+	tests := []struct {
+		name    string
+		devices biz.ContainerDevices
+		want    []allocation
+	}{
+		{name: "MetaX only", devices: biz.ContainerDevices{metaxDevice("MX-0", 20, 1024)}, want: []allocation{{20, 1024}}},
+		{name: "MetaX ahead of NVIDIA", devices: biz.ContainerDevices{metaxDevice("MX-0", 20, 1024), other("NVIDIA")}, want: []allocation{{20, 1024}}},
+		{name: "Ascend ahead of MetaX", devices: biz.ContainerDevices{other("Ascend910B3"), metaxDevice("MX-0", 20, 1024)}, want: []allocation{{20, 1024}}},
+		{name: "DCU ahead of MetaX", devices: biz.ContainerDevices{other("DCU"), metaxDevice("MX-0", 20, 1024)}, want: []allocation{{20, 1024}}},
+		{name: "HCU ahead of MetaX", devices: biz.ContainerDevices{other("HCU-K100_AI"), metaxDevice("MX-0", 20, 1024)}, want: []allocation{{20, 1024}}},
+		{name: "MLU ahead of MetaX", devices: biz.ContainerDevices{other("MLU"), metaxDevice("MX-0", 20, 1024)}, want: []allocation{{20, 1024}}},
+		{
+			name:    "MetaX interleaved with other vendors",
+			devices: biz.ContainerDevices{other("Ascend910B3"), metaxDevice("MX-0", 20, 1024), other("HCU-K100_AI"), metaxDevice("MX-1", 40, 4096)},
+			want:    []allocation{{20, 1024}, {40, 4096}},
+		},
+	}
+	telemetryUUIDs := []string{"MX-T0", "MX-T1", "MX-T2"}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// One sample more than MetaX allocations, which another vendor's allocation must not fill.
+			memoryResponse := &pb.InstantResponse{}
+			for _, uuid := range telemetryUUIDs[:len(tt.want)+1] {
+				memoryResponse.Data = append(memoryResponse.Data, &pb.Sample{
+					Metric: map[string]string{"uuid": uuid, "modelName": deviceType, "Hostname": nodeName},
+					Value:  128,
+				})
+			}
+			generator := &MetricsGenerator{
+				monitorService: &fakeInstantQuerier{query: func(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+					if strings.HasPrefix(req.GetQuery(), "mx_memory_used") {
+						return memoryResponse, nil
+					}
+					return instantValue(10), nil
+				}},
+				log: log.NewHelper(log.NewStdLogger(io.Discard)),
+			}
+			t.Cleanup(func() { deleteTrackedTestCells(generator) })
+			containers := []*biz.Container{{
+				Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
+				ContainerDevices: tt.devices,
+			}}
+
+			if err := generator.generateMetricsForMetaxGPU(context.Background(), containers); err != nil {
+				t.Fatalf("generateMetricsForMetaxGPU() error = %v", err)
+			}
+			for i, sample := range memoryResponse.Data {
+				labels := []string{nodeName, metax.MetaxGPUDevice, deviceType, sample.Metric["uuid"], podName, container, namespace, container + ":" + podUID}
+				if i == len(tt.want) {
+					assertGaugeTracked(t, generator, HamiContainerVcoreAllocated, labels, false)
+					continue
+				}
+				assertTrackedGaugeValue(t, generator, HamiContainerVgpuAllocated, labels, 1)
+				assertTrackedGaugeValue(t, generator, HamiContainerVcoreAllocated, labels, tt.want[i].cores)
+				assertTrackedGaugeValue(t, generator, HamiContainerVmemoryAllocated, labels, tt.want[i].memory)
+			}
+		})
+	}
+}
+
 func TestNvidiaContainerCoreMetrics(t *testing.T) {
 	tests := []struct {
 		name      string
