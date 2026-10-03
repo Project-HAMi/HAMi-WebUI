@@ -56,13 +56,14 @@ verify_contract_in_repo() {
 digest_a="sha256:$(printf 'candidate manifest fixture' | sha256sum | awk '{print $1}')"
 digest_b="sha256:$(printf 'conflicting stable fixture' | sha256sum | awk '{print $1}')"
 
+# Steps are matched by action name and a full commit pin, so pinned actions can be updated.
 # Candidate sealing calls a repository script, so its job must fetch the exact
 # source commit with credentials disabled. Actionlint cannot infer this runtime
 # dependency.
 # shellcheck disable=SC2016
 yq -e '
   [.jobs."candidate-manifest".steps[] |
-    select(.uses == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1") |
+    select((.uses // "") | test("^actions/checkout@[0-9a-f]{40}$")) |
     select(.with.ref == "${{ needs.candidate-preflight.outputs.source_sha }}") |
     select(.with."persist-credentials" == false)] |
   length == 1
@@ -85,7 +86,7 @@ fi
 # publish only the two canonical registry references.
 yq -e '
   [.jobs."publish-development-image".steps[] |
-    select(.uses == "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a") |
+    select((.uses // "") | test("^docker/build-push-action@[0-9a-f]{40}$")) |
     select(.with.context == "." and .with.target == "unified") |
     select((.with.tags | split("\n") | map(select(. != "")) | sort | join(",")) ==
       "ghcr.io/project-hami/hami-webui:main,projecthami/hami-webui:main")] |
@@ -95,7 +96,7 @@ yq -e '
 # shellcheck disable=SC2016
 yq -e '
   [.jobs."candidate-images".steps[] |
-    select(.uses == "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a") |
+    select((.uses // "") | test("^docker/build-push-action@[0-9a-f]{40}$")) |
     select(.with.context == "." and .with.target == "unified") |
     select((.with.tags | split("\n") | map(select(. != "")) | sort | join(",")) ==
       "ghcr.io/project-hami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }},projecthami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }}")] |
