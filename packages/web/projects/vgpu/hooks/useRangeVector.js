@@ -65,7 +65,10 @@ const useRangeVector = (
   };
 
   const fetchGroup = async (groupIndex, range) => {
-    const started = startRangeGroupGeneration(groups.value[groupIndex], range);
+    const scope = groupedConfigs[groupIndex].dataSource
+      .map(({ query }) => safeParseQuery(query) ?? '')
+      .join('\n');
+    const started = startRangeGroupGeneration(groups.value[groupIndex], range, scope);
     replaceGroup(groupIndex, () => started);
     const requestId = started.requestId;
     const isInitialLoad = !started.hasResolved;
@@ -75,11 +78,14 @@ const useRangeVector = (
         const parsedQuery = safeParseQuery(query);
         let outcome;
 
-        if (!parsedQuery || parsedQuery.includes('undefined')) {
+        if (!parsedQuery) {
           outcome = createRangeVectorOutcome(
             { data: [], status: REQUEST_STATUS.INVALID },
             new Error('Invalid range vector query'),
           );
+        } else if (parsedQuery.includes('undefined')) {
+          // The resource is not known yet, as while its detail loads: nothing to show.
+          outcome = createRangeVectorOutcome({ data: [], status: REQUEST_STATUS.LOADING });
         } else {
           try {
             const response = await cardApi.getRangeVector({
@@ -136,7 +142,7 @@ const useRangeVector = (
   };
 
   watch(
-    () => times?.value,
+    [() => times?.value, () => configs.map(({ query }) => safeParseQuery(query)).join('\n')],
     () => fetchData(),
     { immediate: true },
   );

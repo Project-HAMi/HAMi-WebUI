@@ -50,10 +50,14 @@
                   {{ item.name }}
                 </span>
               </slot>
-              <span class="tab-top-value">
+              <t-tooltip v-if="item.note" :content="item.note">
+                <span class="tab-top-value">{{ item.valueDisplay }}</span>
+              </t-tooltip>
+              <span v-else class="tab-top-value">
                 {{ item.valueDisplay }}
               </span>
             </div>
+            <span v-if="item.note" class="tab-top-sr-only">{{ item.note }}</span>
             <t-progress
               theme="line"
               :percentage="item.percentage"
@@ -90,7 +94,9 @@ import {
 import {
   formatRankingValue,
   readRankingRows,
+  readUncountedRows,
 } from './tab-top-state.mjs';
+import { isLowerBound, isNothingCounted, lowerBoundMessage, nothingCountedMessage } from '../metrics/uncounted.mjs';
 
 const props = defineProps({
   title: String,
@@ -143,12 +149,18 @@ const displayItems = computed(() => {
   return data
     .slice()
     .sort((a, b) => Number(b.value) - Number(a.value))
-    .map((item, index) => ({
-      ...item,
-      index: index + 1,
-      percentage: getPercentage(item.value),
-      valueDisplay: formatRankingValue(item.value, unit),
-    }));
+    .map((item, index) => {
+      const uncounted = config?.uncounted === null ? null : config?.uncounted?.[item.name] || 0;
+      const nothingCounted = isNothingCounted(item.value, uncounted);
+      const lowerBound = isLowerBound(uncounted);
+      return {
+        ...item,
+        index: index + 1,
+        percentage: getPercentage(item.value),
+        valueDisplay: nothingCounted ? '--' : `${lowerBound ? '≥' : ''}${formatRankingValue(item.value, unit)}`,
+        note: nothingCounted ? nothingCountedMessage(t, uncounted) : lowerBound ? lowerBoundMessage(t, uncounted) : '',
+      };
+    });
 });
 
 const activeConfig = computed(() =>
@@ -180,9 +192,19 @@ const fetchData = (configList) => {
     const state = configList[i];
     const hasResolved = state.hasResolved;
     const requestId = startRequest(state, { hasResolved });
+    // Rows whose rate leaves allocations out read as lower bounds, and every row
+    // does when that count cannot be read; the list waits for it either way.
+    const uncounted = v.uncountedQuery
+      ? cardApi.getInstantVector({ query: v.uncountedQuery }).then(
+        (res) => readUncountedRows(res, v.nameKey),
+        () => null,
+      )
+      : Promise.resolve({});
     cardApi.getInstantVector({ query: v.query }).then(
-      (res) => {
+      async (res) => {
         const result = readRankingRows(res, v.nameKey);
+        const counts = await uncounted;
+        if (requestId === state.requestId) state.uncounted = counts;
         resolveRequest(state, {
           ...result,
           requestId,
@@ -209,6 +231,7 @@ watch(
       return {
         ...item,
         data: old.data,
+        uncounted: old.uncounted,
         status: old.status,
         hasResolved: old.hasResolved,
         refreshing: old.refreshing,

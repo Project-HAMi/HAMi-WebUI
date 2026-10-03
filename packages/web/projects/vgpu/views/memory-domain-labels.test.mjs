@@ -116,10 +116,23 @@ test('memory and compute trend legends use the same compact labels', () => {
     cardDetail.indexOf('lineToolsView'),
   );
 
-  assert.match(computeTrend, /dashboard\.allocRateLegend/);
+  // The compute allocation legend switches to its lower-bound form.
+  assert.match(computeTrend, /name: computeAllocLegend/);
+  assert.match(cardDetail, /'dashboard\.allocRateLowerBoundLegend'\s*:\s*'dashboard\.allocRateLegend'/);
   assert.match(computeTrend, /dashboard\.usageRateLegend/);
   assert.doesNotMatch(computeTrend, /dashboard\.mem(?:Alloc|Usage)Rate/);
   assert.match(memoryTrend, /dashboard\.allocRateLegend/);
   assert.match(memoryTrend, /dashboard\.usageRateLegend/);
   assert.doesNotMatch(memoryTrend, /dashboard\.mem(?:Alloc|Usage)Rate/);
+});
+
+test('a detail trend chart draws its lines from one range group', () => {
+  for (const source of [cardDetail, nodeDetail]) {
+    // Gauges read current values only, so no line comes from a separate request.
+    assert.match(source, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
+    assert.doesNotMatch(source, /gaugeConfig\[\d\]\??\.data/);
+    assert.match(source, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
+    assert.match(source, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
+    assert.match(source, /common\.refreshFailedShowingPreviousResult/);
+  }
 });

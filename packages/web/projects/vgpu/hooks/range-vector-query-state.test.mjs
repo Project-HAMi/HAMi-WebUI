@@ -183,3 +183,32 @@ test('an older generation cannot overwrite the latest range', () => {
     [7, 8],
   );
 });
+
+test('a group read for another resource starts over instead of keeping the last one', () => {
+  const settleFor = (group, scope, outcomes) => {
+    const started = startRangeGroupGeneration(group, { range: '1h' }, scope);
+    return settleRangeGroupGeneration(started, started.requestId, outcomes);
+  };
+  const shownB = settleFor(startGroup(), 'node=B', [ready(70), ready(80)]);
+
+  // Back on A, A's line fails: B's lines must not stay under A.
+  const backOnA = startRangeGroupGeneration(shownB, { range: '1h' }, 'node=A');
+  assert.equal(backOnA.hasResolved, false);
+  assert.equal(backOnA.range, null);
+  assert.deepEqual(backOnA.dataSource.map((series) => series.status), [REQUEST_STATUS.LOADING, REQUEST_STATUS.LOADING]);
+  const failedOnA = settleRangeGroupGeneration(backOnA, backOnA.requestId, [failed('allocation'), ready(30)]);
+  assert.deepEqual(failedOnA.dataSource.map((series) => series.data[0]?.value), [undefined, 30]);
+  assert.equal(failedOnA.dataSource[0].status, REQUEST_STATUS.ERROR);
+  assert.equal(failedOnA.scope, 'node=A');
+
+  // A reply for B that arrives after A's request was issued cannot land.
+  const late = settleRangeGroupGeneration(backOnA, backOnA.requestId - 1, [ready(71), ready(81)]);
+  assert.equal(late, backOnA);
+
+  // The same resource over a new time range still keeps its whole last range on failure.
+  const shownA = settleFor(startGroup(), 'node=A', [ready(30), ready(40)]);
+  const retried = startRangeGroupGeneration(shownA, { range: '7d' }, 'node=A');
+  const kept = settleRangeGroupGeneration(retried, retried.requestId, [failed('allocation'), ready(41)]);
+  assert.deepEqual(kept.dataSource.map((series) => series.data[0].value), [30, 40]);
+  assert.ok(kept.refreshError);
+});
