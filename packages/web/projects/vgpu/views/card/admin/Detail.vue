@@ -262,93 +262,33 @@
 
     <TrendTimeFilter v-model="times" class="card-trend-filter" />
     <div class="line-box">
-      <block-box :title="dt('dashboard.gpuComputeAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              {
-                ...getRangeOptions([
-                  {
-                    name: computeAllocLegend,
-                    data: computeTrend[0]?.data,
-                    itemStyle: {
-                      color: '#5B8FF9',
-                      borderColor: '#5B8FF9',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#5B8FF9',
-                    },
-                  },
-                  {
-                    name: t('dashboard.usageRateLegend'),
-                    data: computeTrend[1]?.data,
-                    itemStyle: {
-                      color: '#42C090',
-                      borderColor: '#42C090',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#42C090',
-                    },
-                  },
-                ]),
-                animation: false,
-              }
-            "
-            :autoresize="true"
-          />
-        </div>
-        <p v-if="computeTrend[0]?.refreshError" class="trend-refresh-status" role="status">
-          {{ $t('common.refreshFailedShowingPreviousResult') }}
-        </p>
-      </block-box>
-      <block-box :title="dt('dashboard.gpuMemAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              {
-                ...getRangeOptions([
-                  {
-                    name: t('dashboard.allocRateLegend'),
-                    data: memoryTrend[0]?.data,
-                    itemStyle: {
-                      color: '#5B8FF9',
-                      borderColor: '#5B8FF9',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#5B8FF9',
-                    },
-                  },
-                  {
-                    name: t('dashboard.usageRateLegend'),
-                    data: memoryTrend[1]?.data,
-                    itemStyle: {
-                      color: '#42C090',
-                      borderColor: '#42C090',
-                    },
-                    lineStyle: {
-                      width: 3,
-                      color: '#42C090',
-                    },
-                  },
-                ]),
-                animation: false,
-              }
-            "
-            :autoresize="true"
-          />
-        </div>
-        <p v-if="memoryTrend[0]?.refreshError" class="trend-refresh-status" role="status">
-          {{ $t('common.refreshFailedShowingPreviousResult') }}
-        </p>
+      <block-box
+        v-for="section in trendSections"
+        :key="section.key"
+        :title="section.title"
+      >
+        <MetricChart
+          :status="section.status"
+          :option="section.option"
+          :note="section.note"
+          :state-text="section.stateText"
+          :refreshing="section.refreshing"
+          :refresh-error="Boolean(section.refreshError)"
+        />
       </block-box>
 
-      <block-box :title="title" v-for="{ title, data, unit, seriesNameKey } in lineToolsView" :key="title">
-        <div class="trend-chart">
-          <VChart :option="getLineOptions2({ data, unit, seriesName: t(seriesNameKey), animation: false })" :autoresize="true" />
-        </div>
+      <block-box
+        v-for="item in lineToolsView"
+        :key="item.titleKey"
+        :title="item.title"
+      >
+        <MetricChart
+          :status="item.status"
+          :option="item.option"
+          :state-text="item.stateText"
+          :refreshing="item.refreshing"
+          :refresh-error="Boolean(item.refreshError)"
+        />
       </block-box>
     </div>
     </detail-page-state>
@@ -378,13 +318,14 @@ import {
 import useDetailResource from '~/vgpu/hooks/useDetailResource.js';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
-import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
-import { timeParse, calculatePrometheusStep, roundToDecimal, getResourceColor } from '@/utils';
-import { getLineOptions as getLineOptions2 } from '~/vgpu/components/config';
-import { getRangeOptions } from '../../monitor/overview/getOptions';
+import { roundToDecimal, getResourceColor } from '@/utils';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
+import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import {
   buildComputeAllocationQueries,
@@ -543,16 +484,10 @@ const memoryUsageQueries = buildMemoryUsageQueries({
   selector: cardMetricSelector,
 });
 
-const basicPowerText = computed(() => {
-  const v = lineTools.value[1]?.percent;
-  const unit = lineTools.value[1]?.gaugeUnit || 'W';
-  return formatOptionalTelemetry(v, unit);
-});
-const basicTemperatureText = computed(() => {
-  const v = lineTools.value[0]?.percent;
-  const unit = lineTools.value[0]?.gaugeUnit || '℃';
-  return formatOptionalTelemetry(v, unit);
-});
+const basicPowerText = computed(() =>
+  formatOptionalTelemetry(readReadyMetricField(telemetryNow.value[1], 'used'), 'W'));
+const basicTemperatureText = computed(() =>
+  formatOptionalTelemetry(readReadyMetricField(telemetryNow.value[0], 'used'), '℃'));
 
 const _gaugeConfigBase = [
   {
@@ -736,92 +671,73 @@ const workloadCountPercentRaw = computed(() => {
 });
 const workloadCountPercentProgress = computed(() => clampPercent(workloadCountPercentRaw.value));
 
-const lineTools = ref([
+const lineTools = [
   {
     titleKey: 'card.detail.gpuTemperatureTrend',
     seriesNameKey: 'card.detail.gpuTemperature',
     query: `avg by (device_no,driver_version) (hami_device_temperature{device_uuid=$device_uuid})`,
-    data: [],
     unit: '℃',
-    gaugeUnit: '℃',
-    percent: undefined,
-    total: 0,
-    hideInfo: true,
-    showProgress: false,
   },
   {
     titleKey: 'card.detail.gpuPowerTrend',
     seriesNameKey: 'card.detail.gpuPower',
     query: `avg by (device_no,driver_version) (hami_device_power{device_uuid=$device_uuid})`,
-    data: [],
     unit: 'W',
-    gaugeUnit: 'W',
-    percent: undefined,
-    total: 0,
-    hideInfo: true,
-    showProgress: false,
   },
-]);
+];
+// Each line is its own range group: it keeps its last result while a new range loads.
+const { data: telemetryTrend } = useRangeVector(
+  lineTools.map(({ query }, sectionIndex) => ({ query, sectionIndex })),
+  renderCardQuery,
+  times,
+);
+// The current readings do not depend on the chart range.
+const telemetryNow = useInstantVector(lineTools.map(({ query }) => ({ query })), renderCardQuery);
 
 const lineToolsView = computed(() =>
-  lineTools.value.map((item) => ({
-    ...item,
-    title: dt(item.titleKey),
-  })),
+  lineTools.map((item, index) => {
+    const state = telemetryTrend.value[index];
+    const status = state?.status || REQUEST_STATUS.LOADING;
+    return {
+      ...item,
+      title: dt(item.titleKey),
+      status,
+      refreshing: state?.refreshing || false,
+      refreshError: state?.refreshError || null,
+      stateText: t(stateTextKey(status)),
+      option: buildTimeSeriesOptions({
+        series: [
+          {
+            name: t(item.seriesNameKey),
+            data: state?.data,
+            color: CHART_COLORS.single,
+          },
+        ],
+        unit: item.unit,
+        digits: 1,
+      }),
+    };
+  }),
 );
 
-let lineRequestGeneration = 0;
-const resetLineData = () => {
-  lineTools.value.forEach((item) => {
-    item.data = [];
-    item.percent = undefined;
-  });
+const trendSection = (key, title, [allocation, usage], allocationName) => {
+  const series = [
+    { ...allocation, name: allocationName, color: CHART_COLORS.allocation },
+    { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
+  ];
+  const summary = summarizeRangeSeries(series, t);
+  return {
+    key,
+    title,
+    ...summary,
+    stateText: t(stateTextKey(summary.status)),
+    option: buildTimeSeriesOptions({ series }),
+  };
 };
-
-const fetchLineData = async () => {
-  const generation = ++lineRequestGeneration;
-  const uuid = detailCardUuid.value;
-  if (!uuid) {
-    resetLineData();
-    return;
-  }
-
-  const requests = lineTools.value.flatMap((item, index) => {
-    const query = renderPromQLTemplate(item.query, { device_uuid: uuid });
-    const rangeRequest = cardApi
-      .getRangeVector({
-        range: {
-          start: timeParse(times.value[0]),
-          end: timeParse(times.value[1]),
-          step: calculatePrometheusStep(times.value[0], times.value[1]),
-        },
-        query,
-      })
-      .then((res) => {
-        if (generation !== lineRequestGeneration) return;
-        lineTools.value[index].data = res.data?.[0]?.values || [];
-      })
-      .catch(() => {
-        if (generation !== lineRequestGeneration) return;
-        lineTools.value[index].data = [];
-      });
-
-    const instantRequest = cardApi
-      .getInstantVector({ query })
-      .then((res) => {
-        if (generation !== lineRequestGeneration) return;
-        lineTools.value[index].percent = res.data?.[0]?.value;
-      })
-      .catch(() => {
-        if (generation !== lineRequestGeneration) return;
-        lineTools.value[index].percent = undefined;
-      });
-
-    return [rangeRequest, instantRequest];
-  });
-
-  await Promise.all(requests);
-};
+const trendSections = computed(() => [
+  trendSection('compute', dt('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value, computeAllocLegend.value),
+  trendSection('memory', dt('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value, t('dashboard.allocRateLegend')),
+]);
 
 let nodeEnrichmentGeneration = 0;
 watch(
@@ -858,7 +774,6 @@ watch(
   { immediate: true },
 );
 
-watch([times, detailCardUuid], fetchLineData, { immediate: true });
 </script>
 
 <style scoped lang="scss">
@@ -1157,12 +1072,8 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   color: #324558;
 }
 
-.trend-chart {
-  height: 100%;
-  margin-top: 0;
-}
-
 .line-box {
+  container: metric-trends / inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
@@ -1170,16 +1081,15 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
   > .home-block {
     flex: 1 1 calc(50% - 10px);
     min-width: 0;
-    height: 320px;
     padding: 16px 20px;
     margin-bottom: 0;
-    display: flex;
-    flex-direction: column;
   }
+}
 
-  > .home-block :deep(.home-block-content) {
-    flex: 1;
-    min-height: 0;
+// Below 700px half a row cannot fit the longest legend on one line, so the trends stack.
+@container metric-trends (max-width: 699px) {
+  .line-box > .home-block {
+    flex-basis: 100%;
   }
 }
 
@@ -1195,13 +1105,6 @@ watch([times, detailCardUuid], fetchLineData, { immediate: true });
 .resource-overview-block {
   margin-bottom: 16px;
   box-shadow: none;
-}
-
-.trend-refresh-status {
-  margin: 4px 0 0;
-  color: #d54941;
-  font-size: 12px;
-  line-height: 18px;
 }
 
 .resource-card-sr-only {

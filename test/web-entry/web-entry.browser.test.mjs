@@ -358,6 +358,8 @@ async function assertChartRuntime(target) {
     'Trend charts disappeared after an option update'
   )
 
+  await assertTrendRefreshState(page)
+
   const pie = page.locator('.card-type-chart canvas').first()
   const pieBox = await pie.boundingBox()
   assert.ok(pieBox?.width > 0, 'Overview card-type chart has no width')
@@ -399,10 +401,10 @@ async function assertChartRuntime(target) {
     return frame === canvas.toDataURL()
   }), 'Preview chart animation did not settle')
   const previewLegendItem = page.locator('.nodeCard-legend li').first()
-  assert.equal(
-    await previewLegendItem.evaluate((element) => element.style.fontWeight),
-    'bold'
+  const legendWeight = () => previewLegendItem.evaluate(
+    (element) => getComputedStyle(element).fontWeight
   )
+  assert.equal(await legendWeight(), '700', 'The active card type is not bold')
   const previewBox = await previewChart.boundingBox()
   assert.ok(previewBox?.width > 0, 'Preview chart has no width after resize')
   assert.ok(previewBox?.height > 0, 'Preview chart has no height after resize')
@@ -447,14 +449,140 @@ async function assertChartRuntime(target) {
     }
   })
   await waitUntil(
-    () => previewLegendItem.evaluate(
-      (element) => element.style.fontWeight === 'normal'
-    ),
+    async() => (await legendWeight()) === '400',
     'Preview chart click did not clear the active card-type filter'
   )
 
+  // Whole-pixel scrollWidth and clientWidth cannot see a name cut by a fraction of a pixel.
+  const legendName = page.locator('.nodeCard-legend .legend-name').first()
+  const legendText = legendName.locator('.ellipsis-text')
+  const fitLegendName = (cut) => legendName.evaluate((element, cut) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    element.style.flex = 'none'
+    element.style.width = `${range.getBoundingClientRect().width - cut}px`
+  }, cut)
+  await fitLegendName(0)
+  await waitUntil(
+    async() => (await legendText.getAttribute('tabindex')) === null,
+    'A legend name that fits exactly still offers a tooltip'
+  )
+  await fitLegendName(1 / 64)
+  await waitUntil(
+    async() => (await legendText.getAttribute('tabindex')) === '0',
+    'A legend name cut by a fraction of a pixel cannot be read in full'
+  )
+  const fullName = (await legendText.textContent()).trim()
+  await legendText.focus()
+  const legendTooltip = page.locator('[role="tooltip"].vgpu-long-text-tooltip')
+    .filter({ hasText: fullName })
+    .last()
+  await legendTooltip.waitFor({ state: 'visible' })
+  await legendText.press('Escape')
+  await legendTooltip.waitFor({ state: 'hidden' })
+  await legendName.evaluate((element) => element.removeAttribute('style'))
+
   assert.deepEqual(runtimeErrors, [])
   await page.close()
+}
+
+// A refreshing trend keeps its chart, blocks hover and zoom at once, and shows its
+// indicator only once the refresh has lasted past a short delay.
+async function assertTrendRefreshState(page) {
+  const trend = page.locator('.home-bottom-row .metric-chart').first()
+  const canvas = trend.locator('canvas').first()
+  const refreshState = () => trend.evaluate((element) => {
+    const overlay = element.querySelector('.metric-chart__updating')
+    const tooltip = [...element.querySelectorAll('div')]
+      .find((node) => node.style.zIndex === '9999999')
+    const tooltipStyle = tooltip && getComputedStyle(tooltip)
+    return {
+      blocking: Boolean(overlay),
+      visible: Boolean(overlay?.classList.contains('is-visible')),
+      busy: element.getAttribute('aria-busy') === 'true',
+      canvas: Boolean(element.querySelector('canvas')),
+      refreshError: Boolean(element.querySelector('.metric-chart__refresh--error')),
+      bodyHeight: element.querySelector('.metric-chart__body').getBoundingClientRect().height,
+      tooltip: Boolean(tooltipStyle && tooltipStyle.display !== 'none' &&
+        tooltipStyle.visibility !== 'hidden' && Number(tooltipStyle.opacity) > 0.5)
+    }
+  })
+  const waitForIdle = () => waitUntil(
+    async() => !(await refreshState()).busy,
+    'The trend chart did not finish refreshing'
+  )
+  const hoverPlot = async() => {
+    const box = await canvas.boundingBox()
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.4, { steps: 3 })
+  }
+  // Clicking without moving the pointer keeps a tooltip up unless the chart hides it.
+  const selectRange = (index) => page.evaluate((position) => {
+    document.querySelectorAll('.home-bottom-trend-filter .t-radio-button')[position].click()
+  }, index)
+
+  let mode = 'pass'
+  const held = []
+  await page.route('**/v1/monitor/query/range-vector', async(route) => {
+    if (mode === 'pass') return route.continue()
+    await new Promise((release) => held.push(release))
+    if (mode === 'fail') return route.fulfill({ status: 500, body: 'injected failure' })
+    return route.continue()
+  })
+  const releaseHeld = () => held.splice(0).forEach((release) => release())
+
+  try {
+    await trend.scrollIntoViewIfNeeded()
+    await waitForIdle()
+    const idleHeight = (await refreshState()).bodyHeight
+
+    // A refresh that finishes inside the delay never shows the indicator.
+    await selectRange(2)
+    for (let elapsed = 0; elapsed < 400; elapsed += 25) {
+      assert.equal((await refreshState()).visible, false, 'A quick refresh flashed the indicator')
+      await page.waitForTimeout(25)
+    }
+    await waitForIdle()
+
+    // The next refresh starts its own delay, and an open tooltip closes at once.
+    await hoverPlot()
+    await waitUntil(async() => (await refreshState()).tooltip, 'The trend tooltip did not open')
+    mode = 'hold'
+    const started = Date.now()
+    await selectRange(3)
+    await waitUntil(async() => (await refreshState()).blocking, 'A refresh did not block the chart')
+    await waitUntil(async() => !(await refreshState()).tooltip, 'An open tooltip stayed up during a refresh')
+    assert.equal((await refreshState()).visible, false, 'The indicator showed before its delay')
+    await hoverPlot()
+    await waitUntil(async() => (await refreshState()).visible, 'A slow refresh never showed its indicator')
+    assert.ok(Date.now() - started >= 240, 'The indicator did not wait for its own delay')
+    const slow = await refreshState()
+    assert.equal(slow.canvas, true, 'The previous chart disappeared during a refresh')
+    assert.equal(slow.tooltip, false, 'The chart answered hover during a refresh')
+    assert.equal(slow.bodyHeight, idleHeight, 'The refresh indicator changed the chart height')
+    mode = 'pass'
+    releaseHeld()
+    await waitForIdle()
+    assert.equal((await refreshState()).blocking, false)
+    await hoverPlot()
+    await waitUntil(async() => (await refreshState()).tooltip, 'Hover did not return after a refresh')
+
+    // A failed refresh keeps the previous chart and says so.
+    await page.mouse.move(0, 0)
+    mode = 'fail'
+    await selectRange(1)
+    await waitUntil(async() => (await refreshState()).visible, 'A failing refresh never showed its indicator')
+    releaseHeld()
+    await waitUntil(async() => (await refreshState()).refreshError, 'A failed refresh was not reported')
+    const failed = await refreshState()
+    assert.equal(failed.blocking, false)
+    assert.equal(failed.canvas, true, 'A failed refresh removed the previous chart')
+    assert.equal(failed.bodyHeight, idleHeight)
+  } finally {
+    // A failed assertion must not leave requests held for the rest of the journey.
+    mode = 'pass'
+    releaseHeld()
+    await page.unroute('**/v1/monitor/query/range-vector')
+  }
 }
 
 function trackMonitorRequests(page) {
@@ -2056,6 +2184,86 @@ test('workload status labels stay concise while accessible help explains contain
     await page.close()
   }
 }, { timeout: 60_000 })
+
+test('distribution legends keep each name and its count on one line', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 800 } })
+  const legends = {
+    'count by (device_type)': [['NVIDIA-A100-SXM4-80GB', 59], ['Ascend910B3', 42], ['NVIDIA-H100-SXM5-80GB', 24], ['DCU', 12345]],
+    'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['DCU', 1], ['HCU', 1]],
+  }
+  await page.route('**/monitor/query/instant-vector', async(route) => {
+    const query = route.request().postDataJSON()?.query || ''
+    const prefix = Object.keys(legends).find((key) => query.startsWith(key))
+    if (!prefix) return route.fallback()
+    const label = prefix.includes('provider') ? 'provider' : 'device_type'
+    await route.fulfill({
+      json: { code: 0, data: legends[prefix].map(([name, value]) => ({ metric: { [label]: name }, value })) }
+    })
+  })
+  const legendRows = () => page.locator('.nodeCard-legend li').evaluateAll((items) => items.map((item) => {
+    const text = item.querySelector('.ellipsis-text')
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    const name = text.getBoundingClientRect()
+    const row = item.getBoundingClientRect()
+    const count = item.querySelector('.legend-count')
+    const countBox = count.getBoundingClientRect()
+    return {
+      name: text.textContent.trim(),
+      height: row.height,
+      sameLine: Math.abs(name.top + name.bottom - countBox.top - countBox.bottom) < 2,
+      countInside: countBox.left >= row.left - 0.5 && countBox.right <= row.right + 0.5,
+      countInset: row.right - countBox.right,
+      countWhole: count.scrollWidth <= count.clientWidth,
+      cut: range.getBoundingClientRect().width - name.width > 0.001,
+      focusable: text.getAttribute('tabindex') === '0',
+    }
+  }))
+
+  try {
+    for (const path of ['accelerators', 'nodes']) {
+      await page.goto(`${target}${basePath}${path}`, { waitUntil: 'domcontentloaded' })
+      // 1334 puts two English Top5 titles of different lengths on either side of the width that fits a title and its switch.
+      for (const [width, height] of [[1280, 800], [1334, 768], [1512, 982], [1024, 768]]) {
+        await page.setViewportSize({ width, height })
+        await page.locator('.nodeCard-legend li').nth(3).waitFor()
+        // Only a name the browser cuts takes focus; the check follows the resize.
+        await waitUntil(
+          async() => (await legendRows()).every((row) => row.cut === row.focusable),
+          `${path} ${width}: focus does not follow which names are cut`
+        )
+        const rows = await legendRows()
+        for (const row of rows) {
+          assert.ok(row.height <= 18.5 && row.sameLine && row.countInside && row.countWhole, `${path} ${width}: ${JSON.stringify(row)}`)
+        }
+        const insets = rows.map((row) => row.countInset)
+        assert.ok(Math.max(...insets) - Math.min(...insets) < 0.5, `${path} ${width}: counts do not share a right edge`)
+        await page.locator('.preview .tab-top-item').nth(1).waitFor()
+        const cards = await page.locator('.preview > li').evaluateAll((items) => items.map((item) => ({
+          top: Math.round(item.getBoundingClientRect().top),
+          header: item.querySelector('.tab-top-radio')?.closest('.home-block-header').getBoundingClientRect().height,
+          switchTop: item.querySelector('.tab-top-radio')?.getBoundingClientRect().top,
+          firstItemTop: item.querySelector('.tab-top-item')?.getBoundingClientRect().top,
+        })))
+        if (width === 1512) {
+          assert.equal(new Set(cards.map((card) => card.top)).size, 1, `${path} ${width}: the distribution and Top5 cards wrapped`)
+        }
+        const [, firstTop5, secondTop5] = cards
+        if (firstTop5.top === secondTop5.top) {
+          assert.ok(
+            firstTop5.header === secondTop5.header &&
+              Math.abs(firstTop5.switchTop - secondTop5.switchTop) < 0.5 &&
+              Math.abs(firstTop5.firstItemTop - secondTop5.firstItemTop) < 0.5,
+            `${path} ${width}: Top5 headers side by side differ ${JSON.stringify(cards)}`
+          )
+        }
+      }
+    }
+  } finally {
+    await page.close()
+  }
+})
 
 test('resource names navigate while decorative table icons do not', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
