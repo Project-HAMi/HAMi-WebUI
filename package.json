@@ -20,7 +20,7 @@
     "verify:source-language": "node scripts/verify-source-language.mjs"
   },
   "devDependencies": {
-    "axios": "1.18.0",
+    "axios": "1.20.0",
     "eslint": "^8.57.0",
     "playwright": "1.62.1"
   }
