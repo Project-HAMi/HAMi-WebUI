@@ -304,7 +304,7 @@ import {
   resolveRequest,
   startRequest,
 } from '@/hooks/request-state.mjs';
-import { applyUncountedShares } from './overview-state.mjs';
+import { applyUncountedShares, readWorkloadTotal } from './overview-state.mjs';
 import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
@@ -486,14 +486,27 @@ const nodeListState = useFetchList(() =>
 const cardListState = useFetchList(() =>
   cardApi.getCardListReq({ filters: {} }),
 );
-const taskListState = useFetchList(
-  () => taskApi.getTaskListReq({ filters: {} }),
-  'items',
-);
+// Counted by the workload list itself, so this number matches the list's "All" total.
+const workloadTotalState = reactive(createRequestState(undefined));
+const fetchWorkloadTotal = async () => {
+  const requestId = startRequest(workloadTotalState, { hasResolved: false });
+  try {
+    const total = readWorkloadTotal(await taskApi.getWorkloads({ filters: {}, page: 1, pageSize: 1 }));
+    if (total === undefined) {
+      rejectRequest(workloadTotalState, new TypeError('Expected workload items and a nonnegative total'), {
+        requestId,
+        status: REQUEST_STATUS.INVALID,
+      });
+      return;
+    }
+    resolveRequest(workloadTotalState, { data: total, requestId });
+  } catch (error) {
+    rejectRequest(workloadTotalState, error, { requestId });
+  }
+};
 
 const nodeData = nodeListState.data;
 const cardData = cardListState.data;
-const taskData = taskListState.data;
 
 const readyMetricValue = (metric, field, format) => {
   if (metric?.status !== REQUEST_STATUS.READY) return undefined;
@@ -534,8 +547,8 @@ const resourceOverview = computed(() => [
   },
   {
     title: t('dashboard.workloadCount'),
-    count: taskData.value.length,
-    status: taskListState.status.value,
+    count: workloadTotalState.data,
+    status: workloadTotalState.status,
     metric: false,
     icon: 'vgpu-workload',
     unit: '',
@@ -692,6 +705,7 @@ const getStateText = (status, metric = true) =>
   t(stateTextKey(status, { metric }));
 
 onMounted(() => {
+  fetchWorkloadTotal();
   fetchNodeWorkloadTop5();
   fetchNodeWorkloadDistribution();
 });
