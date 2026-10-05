@@ -661,8 +661,10 @@ const detailColumnGroups = computed(() => {
   }
 }
 
+// The cards follow the panel's width, which the sidebar and embedding change apart from the viewport.
 .node-workload-panel {
   min-width: 0;
+  container: node-resources / inline-size;
 }
 
 .node-system-resource-cards {
@@ -688,7 +690,7 @@ const detailColumnGroups = computed(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 15px 20px;
+  padding: 15px 14px;
   background: #f5f7fa;
   border-radius: 8px;
 }
@@ -696,7 +698,7 @@ const detailColumnGroups = computed(() => {
 .resource-card-header {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
 }
 
 .resource-card-icon {
@@ -755,9 +757,10 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-footer-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .resource-card-footer-title {
@@ -779,6 +782,7 @@ const detailColumnGroups = computed(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .resource-card-footer-percent {
@@ -826,16 +830,30 @@ const detailColumnGroups = computed(() => {
   }
 }
 
+@container node-resources (max-width: 511px) {
+  .resource-card-header {
+    gap: 10px;
+  }
+
+  .resource-card-icon {
+    flex-basis: 32px;
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@container node-resources (max-width: 399px) {
+  .node-system-resource-cards {
+    flex-direction: column;
+  }
+}
+
 @media (max-width: 1200px) {
   .node-overview-wrap {
     flex-direction: column;
   }
 
   .node-detail .node-detail-info-summary-cols {
-    flex-direction: column;
-  }
-
-  .node-system-resource-cards {
     flex-direction: column;
   }
 }

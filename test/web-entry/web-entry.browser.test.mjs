@@ -950,7 +950,7 @@ test('workload and detail views keep dense identity content readable', async() =
 
   await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { code: 0, items: workloads, total: workloads.length }))
 
-  const assertIconGeometry = async(selector) => {
+  const assertIconGeometry = async(selector, outerSize = [40, 40]) => {
     const boxes = await page.locator(selector).evaluateAll((elements) =>
       elements.map((element) => {
         const icon = element.querySelector('svg')
@@ -964,7 +964,7 @@ test('workload and detail views keep dense identity content readable', async() =
     )
     assert.ok(boxes.length > 0, `No icons matched ${selector}`)
     for (const box of boxes) {
-      assert.deepEqual(box.outer, [40, 40])
+      assert.deepEqual(box.outer, outerSize)
       assert.deepEqual(box.inner, [20, 20])
     }
   }
@@ -1334,7 +1334,21 @@ test('workload and detail views keep dense identity content readable', async() =
         .map((value) => value.trim()),
       ['Alloc Rate', 'Usage Rate', 'Alloc Rate', 'Usage Rate']
     )
-    await assertIconGeometry('.resource-card-icon')
+    // The resource cards follow their panel's width: compact beside the sidebar at 1280 px, full size with more room.
+    const resourcePanelWidth = () => page.locator('.node-workload-panel').evaluate((element) => element.clientWidth)
+    const compactPanelWidth = await resourcePanelWidth()
+    await assertIconGeometry('.resource-card-icon', [32, 32])
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await waitUntil(
+      async() => (await resourcePanelWidth()) > compactPanelWidth + 100,
+      'The node resource panel did not widen with the viewport'
+    )
+    await assertIconGeometry('.resource-card-icon', [40, 40])
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await waitUntil(
+      async() => (await resourcePanelWidth()) === compactPanelWidth,
+      'The node resource panel did not return to its 1280 px width'
+    )
     const rateTiles = page.locator('.resource-overview-card').first()
       .locator('.resource-card-rate-wrap')
     const rateTileBoxes = await rateTiles.evaluateAll((elements) =>
