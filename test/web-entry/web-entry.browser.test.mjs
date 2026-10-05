@@ -2307,6 +2307,67 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
   }
 })
 
+test('overview workload count matches the workload list total', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
+  const workloadRequests = []
+  let containerRequests = 0
+  let reply = 'empty'
+  // The old source: 62 containers, which the overview used to count.
+  await page.route('**/v1/containers', (route) => {
+    containerRequests += 1
+    const items = Array.from({ length: 62 }, (_, index) => ({ name: `worker-${index}`, podUid: `pod-${index}`, namespace: 'default' }))
+    return route.fulfill({ json: { code: 0, items, total: items.length } })
+  })
+  const row = { name: 'worker', podUid: 'pod-1', namespace: 'default' }
+  await page.route('**/v1/workloads', (route) => {
+    workloadRequests.push(route.request().postDataJSON())
+    if (reply === 'failed') return route.fulfill({ status: 500, json: { code: 500, message: 'injected failure' } })
+    if (reply === 'empty') return route.fulfill({ json: { code: 0, items: [], total: 0, statusCounts: {} } })
+    if (reply === 'no total') return route.fulfill({ json: { code: 0, items: [row] } })
+    // One row on the page, while the list counts 68 across all pages.
+    return route.fulfill({
+      json: { code: 0, items: [row], total: 68, statusCounts: { all: 68, pending: 6, success: 60, abnormal: 2 } },
+    })
+  })
+  const workloadCard = page.locator('.resource-overview-item', { hasText: 'Workloads' })
+  const cardCount = async() => {
+    await workloadCard.locator('.count, .resource-state-text').first().waitFor()
+    const shown = await workloadCard.locator('.count').count()
+    return shown ? (await workloadCard.locator('.count').textContent()).trim() : null
+  }
+
+  try {
+    await page.goto(`${target}${basePath}overview`, { waitUntil: 'domcontentloaded' })
+    assert.equal(await cardCount(), '0', 'An empty list is a real zero')
+
+    reply = 'no total'
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    assert.equal(await cardCount(), null, 'A reply without a total must not read as a number')
+
+    reply = 'counted'
+    workloadRequests.length = 0
+    containerRequests = 0
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    assert.equal(await cardCount(), '68')
+    assert.deepEqual(workloadRequests[0], { filters: {}, page: 1, pageSize: 1 })
+    assert.equal(containerRequests, 0, 'The overview still read the container list')
+
+    await workloadCard.click()
+    await page.waitForURL((url) => url.pathname.endsWith('/workloads'))
+    const listTotal = page.locator('.table-plus-pagination-total')
+    await listTotal.waitFor()
+    assert.match(await listTotal.textContent(), /\b68\b/, 'The list behind the card counts the same total')
+
+    reply = 'failed'
+    await page.goBack({ waitUntil: 'domcontentloaded' })
+    await page.waitForURL((url) => url.pathname.endsWith('/overview'))
+    assert.equal(await cardCount(), null, 'A failed total must not read as a number')
+  } finally {
+    await page.close()
+  }
+})
+
 test('resource names navigate while decorative table icons do not', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
