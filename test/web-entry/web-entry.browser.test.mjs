@@ -2265,6 +2265,48 @@ test('distribution legends keep each name and its count on one line', async() =>
   }
 })
 
+test('unconfigured accelerator allocation rates stay unavailable', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
+  const device = (uuid, fields) => ({
+    uuid, type: 'NVIDIA', nodeName: 'node-1', health: true,
+    coreTotal: 100, coreUsed: 0, coreUsedKnown: true, memoryTotal: 24576, memoryUsed: 0, vgpuTotal: 10, vgpuUsed: 0,
+    ...fields,
+  })
+  const devices = [
+    device('unc-idle', { type: 'Ascend910', unconfigured: true, memoryTotal: 32768 }),
+    device('unc-used', { type: 'Ascend910', unconfigured: true, memoryTotal: 32768, coreUsed: 30, memoryUsed: 8192, vgpuUsed: 1 }),
+    device('cfg-idle', {}),
+    device('share-unk', { coreUsedKnown: false, memoryUsed: 4096, vgpuUsed: 1 }),
+    // The API does not send isExternal today; this guards the existing frontend branch only.
+    device('external', { isExternal: true }),
+  ]
+  await page.route('**/v1/gpus', (route) => route.fulfill({ json: { code: 0, list: devices, total: devices.length } }))
+  const rateCells = (uuid) => page.locator('.accelerator-table').evaluate((table, uuid) => {
+    const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim())
+    const row = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes(uuid))
+    const cell = (title) => row?.querySelectorAll('td')[headers.indexOf(title)]
+    const read = (td) => ({ text: td?.textContent.trim(), ring: Boolean(td?.querySelector('.t-progress')) })
+    return { compute: read(cell('Compute Allocation')), memory: read(cell('Memory Allocation')) }
+  }, uuid)
+
+  try {
+    await page.goto(`${target}${basePath}accelerators`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.accelerator-table tbody tr', { hasText: 'external' }).waitFor()
+    const notCounted = { text: '--', ring: false }
+    // An unconfigured device has no schedulable capacity, so neither rate reads as a real 0%.
+    assert.deepEqual(await rateCells('unc-idle'), { compute: notCounted, memory: notCounted })
+    assert.deepEqual(await rateCells('unc-used'), { compute: notCounted, memory: notCounted })
+    // A configured device with nothing allocated keeps its real zero.
+    assert.deepEqual(await rateCells('cfg-idle'), { compute: { text: '0%', ring: true }, memory: { text: '0%', ring: true } })
+    // An unknown compute share hides only the compute rate.
+    assert.deepEqual(await rateCells('share-unk'), { compute: notCounted, memory: { text: '16.67%', ring: true } })
+    assert.deepEqual(await rateCells('external'), { compute: notCounted, memory: notCounted })
+  } finally {
+    await page.close()
+  }
+})
+
 test('resource names navigate while decorative table icons do not', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
