@@ -246,8 +246,23 @@ watch(
 </script>
 
 <style lang="scss" scoped>
+// In a narrow card the switch moves under the title as a whole instead of splitting either.
 :deep(.home-block-header) {
   padding-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+:deep(.home-block-header .title) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.tab-top-radio) {
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 :deep(.tab-top-radio.t-radio-group__outline .t-radio-button) {

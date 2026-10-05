@@ -181,40 +181,19 @@
     <TrendTimeFilter v-model="times" />
 
     <div class="line-box">
-      <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-              :option="
-              getRangeOptions({
-                allocation: computeTrend[0]?.data,
-                usage: computeTrend[1]?.data,
-                allocationName: computeAllocLegend,
-              }, t)
-            "
-            :autoresize="true"
-          />
-        </div>
-        <p v-if="computeTrend[0]?.refreshError" class="trend-refresh-status" role="status">
-          {{ $t('common.refreshFailedShowingPreviousResult') }}
-        </p>
-      </block-box>
-      <block-box :title="$t('dashboard.gpuMemAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              getRangeOptions({
-                allocation: memoryTrend[0]?.data,
-                usage: memoryTrend[1]?.data,
-                allocationName: t('dashboard.allocRateLegend'),
-                usageName: t('dashboard.usageRateLegend'),
-              }, t)
-            "
-            :autoresize="true"
-          />
-        </div>
-        <p v-if="memoryTrend[0]?.refreshError" class="trend-refresh-status" role="status">
-          {{ $t('common.refreshFailedShowingPreviousResult') }}
-        </p>
+      <block-box
+        v-for="section in trendSections"
+        :key="section.key"
+        :title="section.title"
+      >
+        <MetricChart
+          :status="section.status"
+          :option="section.option"
+          :note="section.note"
+          :state-text="section.stateText"
+          :refreshing="section.refreshing"
+          :refresh-error="Boolean(section.refreshError)"
+        />
       </block-box>
     </div>
     </detail-page-state>
@@ -246,9 +225,11 @@ import {
   readTrendUncounted,
   readUncountedMetric,
 } from '~/vgpu/metrics/uncounted.mjs';
-import VChart from 'vue-echarts';
 import nodeApi from '~/vgpu/api/node';
-import { getRangeOptions } from './getOptions';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
+import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
 import {
@@ -414,6 +395,25 @@ const memoryAllocPercentRaw = computed(() => {
 
 const memoryUsagePercentRaw = computed(() => readGaugeField(3, 'percent'));
 
+const trendSection = (key, title, [allocation, usage], allocationName) => {
+  const series = [
+    { ...allocation, name: allocationName, color: CHART_COLORS.allocation },
+    { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
+  ];
+  const summary = summarizeRangeSeries(series, t);
+  return {
+    key,
+    title,
+    ...summary,
+    stateText: t(stateTextKey(summary.status)),
+    option: buildTimeSeriesOptions({ series }),
+  };
+};
+const trendSections = computed(() => [
+  trendSection('compute', t('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value, computeAllocLegend.value),
+  trendSection('memory', t('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value, t('dashboard.allocRateLegend')),
+]);
+
 const clampPercent = (v) => Math.max(0, Math.min(100, v));
 const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
 const buildPercentViews = (rawComputed, lowerBound, hidden) => {
@@ -548,13 +548,6 @@ const detailColumnGroups = computed(() => {
 </script>
 
 <style scoped lang="scss">
-.trend-refresh-status {
-  margin: 4px 0 0;
-  color: #d54941;
-  font-size: 12px;
-  line-height: 18px;
-}
-
 .resource-card-sr-only {
   position: absolute;
   width: 1px;
@@ -791,13 +784,8 @@ const detailColumnGroups = computed(() => {
   color: #1d2b3a;
 }
 
-.trend-chart {
-  height: 100%;
-  margin-top: 0;
-  min-width: 0;
-}
-
 .line-box {
+  container: metric-trends / inline-size;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   column-gap: 16px;
@@ -805,18 +793,14 @@ const detailColumnGroups = computed(() => {
 
   > .home-block {
     min-width: 0;
-    height: 320px;
-    display: flex;
-    flex-direction: column;
+    margin-bottom: 0;
   }
+}
 
-  > .home-block :deep(.home-block-content) {
-    flex: 1;
-    min-height: 0;
-  }
-
-  > .home-block :deep(.home-block-content) > .trend-chart {
-    height: 100%;
+// Below 700px half a row cannot fit the longest legend on one line, so the trends stack.
+@container metric-trends (max-width: 699px) {
+  .line-box > .home-block {
+    grid-column: 1 / -1;
   }
 }
 

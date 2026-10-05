@@ -106,7 +106,12 @@ export const settleRangeGroupGeneration = (
 
   // An optional series that fails settles as failed instead of holding the group back.
   const failedOutcome = outcomes.find((outcome, index) => outcome.failed && !group.dataSource[index]?.optional);
-  if (group.hasResolved && failedOutcome) {
+  // Only a chart that drew something, a line or a confirmed empty range, is kept through a
+  // failed refresh; one that showed a failure shows the new failure rather than claim an earlier result.
+  const required = group.dataSource.filter((series) => !series.optional);
+  const hasResult = required.some((series) => series.status === REQUEST_STATUS.READY)
+    || (required.length > 0 && required.every((series) => series.status === REQUEST_STATUS.MISSING));
+  if (group.hasResolved && failedOutcome && hasResult) {
     return {
       ...group,
       refreshing: false,

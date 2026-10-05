@@ -43,17 +43,16 @@ export function normalizeRangeVectorResponse(response) {
   };
 }
 
-export function buildRangeLineData(values, { digits } = {}) {
-  return normalizeRangeValues(values).map(({ value }) => {
-    if (value === null) return null;
-    return digits === undefined ? value : Number(value.toFixed(digits));
-  });
+// Values are drawn as read; precision belongs to the tooltip, where rounding cannot
+// flatten a small value onto zero.
+export function buildRangeLineData(values) {
+  return normalizeRangeValues(values).map(({ value }) => value);
 }
 
-export function buildRangeLineSeries(series, presentation) {
+export function buildRangeLineSeries(series) {
   return {
     ...series,
-    data: buildRangeLineData(series?.data, presentation),
+    data: buildRangeLineData(series?.data),
     type: 'line',
     connectNulls: false,
   };
@@ -76,5 +75,11 @@ export function formatRangeTooltipValue(
   { digits = 1, unit = '', separator = '' } = {},
 ) {
   const value = toFiniteRangeValue(rawValue);
-  return value === null ? '-' : `${value.toFixed(digits)}${separator}${unit}`;
+  if (value === null) return '-';
+  const step = 10 ** -digits;
+  // A non-zero value below the shown precision is not a zero.
+  if (value !== 0 && Math.abs(value) < step / 2) {
+    return `${value > 0 ? '<' : '>-'}${step.toFixed(digits)}${separator}${unit}`;
+  }
+  return `${value.toFixed(digits)}${separator}${unit}`;
 }

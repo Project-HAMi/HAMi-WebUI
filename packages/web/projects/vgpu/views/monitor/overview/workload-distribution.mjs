@@ -1,3 +1,5 @@
+import { escapeTooltipHtmlText } from '../../../metrics/tooltip-html.mjs';
+
 const normalizeWorkloadCount = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
@@ -36,7 +38,10 @@ export const createWorkloadDistributionOptions = ({
       formatter: (item) => {
         if (!item) return '';
         const unit = translate('common.unitCount');
-        return `${translate('dashboard.workloadRange')}: ${item.name}<br/>${translate('dashboard.nodeTotal')}: ${Number(item.value || 0)}${unit}`;
+        // Bucket labels are built here, but every tooltip escapes what it prints.
+        return `${translate('dashboard.workloadRange')}: ${escapeTooltipHtmlText(
+          item.name,
+        )}<br/>${translate('dashboard.nodeTotal')}: ${Number(item.value || 0)}${unit}`;
       },
     },
     grid: {
