@@ -299,8 +299,9 @@ const baseColumns = computed(() => [
     key: 'card-compute-allocation',
     dataIndex: 'used',
     width: 180,
-    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
-      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
+    // The API still reports a registered size for an unconfigured device, which HAMi does not schedule.
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const percent = getAllocationPercent(coreUsed, coreTotal);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);
@@ -347,8 +348,8 @@ const baseColumns = computed(() => [
     key: 'card-memory-allocation',
     dataIndex: 'w',
     width: 180,
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
-      if (isExternal || !memoryTotal) return <span>--</span>;
+    render: ({ memoryTotal, memoryUsed, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || !memoryTotal) return <span>--</span>;
       const percent = getAllocationPercent(memoryUsed, memoryTotal);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);
