@@ -2247,6 +2247,513 @@ test('ECharts runtime renders, updates and handles interaction in Chromium', asy
   await assertChartRuntime(target)
 }, { timeout: 60_000 })
 
+test('trend pages request each series once on mount and once when refreshing a preset', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route, expectedCount] of [
+    ['overview', 5],
+    ['nodes/node-1?nodeName=node-1', 5],
+    ['accelerators/gpu-1', 7],
+    ['workloads/pod-1/containers/worker', 2]
+  ]) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US' })
+      await page.clock.install({ time: Date.now() })
+      const requests = []
+      page.on('request', (request) => {
+        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+      })
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        assert.equal(requests.length, expectedCount, 'Mount must preserve the parent range')
+        const initialEnd = requests[0].range.end
+        await page.clock.setSystemTime(Date.now() + 61_000)
+        await page.locator('.trend-time-filter .t-radio-button').filter({ hasText: /^1 Hour$/ }).click()
+        await page.waitForLoadState('networkidle')
+        assert.equal(requests.length, expectedCount * 2, 'Reselecting a preset must publish once')
+        assert.notEqual(requests.at(-1).range.end, initialEnd)
+
+        await page.locator('.trend-time-filter .t-radio-button').filter({ hasText: /^3 Hours$/ }).click()
+        await page.waitForLoadState('networkidle')
+        assert.equal(requests.length, expectedCount * 3, 'Changing presets must publish once')
+
+        const selected = page.locator('.trend-time-filter .t-radio-button').filter({ hasText: /^3 Hours$/ })
+        for (const [index, key] of ['Enter', 'Space'].entries()) {
+          await page.clock.setSystemTime(Date.now() + 120_000 + index * 61_000)
+          await selected.press(key)
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, expectedCount * (4 + index), `${key} must refresh once`)
+        }
+      } finally {
+        await page.close()
+      }
+    })
+  }
+}, { timeout: 60_000 })
+
+test('custom trend dates apply exact input and restore the applied range on cancellation or invalid input', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    assert.equal(await start.getAttribute('aria-label'), 'Start Time')
+    assert.equal(await end.getAttribute('aria-label'), 'End Time')
+    assert.ok(await start.inputValue())
+    assert.ok(await end.inputValue())
+    assert.equal(requests.length, 5)
+
+    const inputBackground = (input) => input.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor)
+    const title = page.locator('.home-page-title')
+    const restingBackgrounds = await Promise.all([inputBackground(start), inputBackground(end)])
+    for (const [index, input] of [start, end].entries()) {
+      await input.hover()
+      await waitUntil(async() => await inputBackground(input) === 'rgb(242, 243, 255)', 'An enabled date input must use a light brand hover background')
+      await title.hover()
+      await waitUntil(async() => await inputBackground(input) === restingBackgrounds[index], 'Leaving an unfocused date input must restore its background')
+    }
+    await start.click()
+    await waitUntil(async() => await inputBackground(start) === 'rgb(242, 243, 255)', 'The focused start input must not look disabled')
+    const originalStart = await start.inputValue()
+    await start.press('ControlOrMeta+A')
+    assert.deepEqual(await start.evaluate((element) => [element.selectionStart, element.selectionEnd]), [0, originalStart.length])
+    await start.press('ArrowRight')
+    await start.press('Backspace')
+    await start.press(originalStart.at(-1))
+    assert.equal(await start.inputValue(), originalStart, 'Keyboard editing must preserve the entered timestamp')
+    await title.hover()
+    await start.press('Tab')
+    assert.ok(await end.evaluate((element) => element === document.activeElement), 'Tab must move from start to end')
+    await waitUntil(async() => await inputBackground(end) === 'rgb(242, 243, 255)', 'The focused end input must not look disabled')
+    await title.click()
+    await waitUntil(async() => JSON.stringify(await Promise.all([inputBackground(start), inputBackground(end)])) === JSON.stringify(restingBackgrounds), 'Blurring the picker must restore both input backgrounds')
+    assert.equal(requests.length, 5, 'Hover, focus, selection, and unchanged typing must not request another range')
+
+    await start.click()
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 5, 'Confirming unchanged visible seconds must not refetch')
+
+    const selected = ['2025-09-01 10:12:34', '2025-09-01 11:23:45']
+    await start.click()
+    await start.fill(selected[0])
+    await end.click()
+    await end.fill(selected[1])
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+    assert.equal(await page.locator('.t-message').count(), 0, 'Valid Enter must not show a warning')
+    assert.deepEqual(
+      [requests.at(-1).range.start, requests.at(-1).range.end],
+      selected
+    )
+
+    await start.click()
+    await start.fill('2025-08-01 01:02:03')
+    await page.locator('.home-page-title').click()
+    await waitUntil(async() => await start.inputValue() === selected[0], 'Cancel did not restore the applied start')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+
+    await start.fill('')
+    await page.locator('.home-page-title').click()
+    assert.equal(await start.inputValue(), selected[0])
+    assert.equal(requests.length, 10)
+
+    await end.fill('2999-01-01 00:00:00')
+    await end.press('Enter')
+    await page.locator('.t-message').filter({ hasText: 'End time cannot be in the future. The previous range has been restored.' }).waitFor()
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+
+    await start.fill('2025-10-01 00:00:00')
+    await end.press('Enter')
+    await page.locator('.t-message').filter({ hasText: 'End time must be after start time. The previous range has been restored.' }).waitFor()
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+
+    await filter.locator('.t-radio-button').filter({ hasText: /^3 Hours$/ }).click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(await page.locator('.t-message').count(), 0, 'Changing presets must clear the range warning')
+    assert.equal(await filter.getByRole('status').textContent(), '')
+    await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+    assert.deepEqual(
+      [await start.inputValue(), await end.inputValue()],
+      [requests.at(-1).range.start, requests.at(-1).range.end]
+    )
+    assert.equal(requests.length, 15)
+
+    for (const locale of ['en', 'zh-CN']) {
+      if (locale === 'zh-CN') {
+        await page.getByRole('button', { name: '中文', exact: true }).click()
+        await page.locator('html[lang="zh-CN"]').waitFor()
+        assert.equal(await filter.getByRole('textbox', { name: '开始时间', exact: true }).getAttribute('aria-label'), '开始时间')
+        assert.equal(await filter.getByRole('textbox', { name: '结束时间', exact: true }).getAttribute('aria-label'), '结束时间')
+      }
+      for (const width of [1280, 1366, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        const dimensions = await filter.evaluate((element) => ({
+          width: element.clientWidth,
+          content: element.scrollWidth,
+          right: element.getBoundingClientRect().right
+        }))
+        assert.ok(dimensions.content <= dimensions.width + 1, `${locale} filter overflows at ${width}`)
+        assert.ok(dimensions.right <= width, `${locale} filter leaves the viewport at ${width}`)
+      }
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('custom trend Enter rejects empty and malformed input with one warning and preserves keyboard cancellation', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const name of ['empty start', 'empty end', 'malformed start']) {
+    await t.test(name, async() => {
+      const page = await browser.newPage({ locale: 'en-US' })
+      await page.clock.install({ time: new Date('2026-10-06T12:00:00.123Z') })
+      const requests = []
+      page.on('request', (request) => {
+        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+        const filter = page.locator('.trend-time-filter')
+        await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+        const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+        const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+        const applied = [await start.inputValue(), await end.inputValue()]
+        assert.equal(requests.length, 5)
+        await page.clock.setSystemTime(new Date('2026-10-06T12:01:01.123Z'))
+
+        const input = name === 'empty end' ? end : start
+        await input.click()
+        const panel = page.locator('.t-date-range-picker__panel-container:visible')
+        await panel.waitFor()
+        await input.fill(name === 'malformed start' ? 'not-a-date' : '')
+        await input.press('Enter')
+        await panel.waitFor({ state: 'hidden' })
+        await page.waitForLoadState('networkidle')
+        assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+        assert.equal(requests.length, 5, 'Invalid Enter must not change the chart range')
+        const warning = page.locator('.t-message')
+        assert.equal(await warning.count(), 1, 'One Enter must show exactly one warning')
+        assert.equal(await warning.textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
+        assert.equal(await filter.getByRole('status').textContent(), await warning.textContent())
+        assert.equal(await filter.getByRole('status').getAttribute('aria-atomic'), 'true')
+        assert.equal(await filter.locator('.t-is-error, [aria-invalid="true"]').count(), 0, 'Restored valid inputs must not have error styling')
+
+        if (name === 'malformed start') {
+          await start.fill('2025-08-01 01:02:03')
+          await start.press('Tab')
+          await end.press('Tab')
+          await waitUntil(async() => await start.inputValue() === applied[0], 'Tabbing away after malformed Enter must discard the next draft')
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+          assert.equal(await panel.count(), 0)
+          assert.equal(requests.length, 5)
+        }
+      } finally {
+        await page.close()
+      }
+    })
+  }
+}, { timeout: 60_000 })
+
+test('custom trend warnings preserve aligned controls and chart position in both languages', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    await t.test(locale, async() => {
+      const page = await browser.newPage({ locale, viewport: { width: 1440, height: 900 } })
+      const requests = []
+      page.on('request', (request) => {
+        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+        const filter = page.locator('.trend-time-filter')
+        const chinese = locale === 'zh-CN'
+        await filter.locator('[data-time-range="custom"]').click()
+        const start = filter.getByRole('textbox', { name: chinese ? '开始时间' : 'Start Time', exact: true })
+        const end = filter.getByRole('textbox', { name: chinese ? '结束时间' : 'End Time', exact: true })
+        const applied = [await start.inputValue(), await end.inputValue()]
+        const geometry = () => filter.evaluate((element) => {
+          const rect = (target) => {
+            const bounds = target.getBoundingClientRect()
+            return { top: bounds.top + window.scrollY, height: bounds.height }
+          }
+          return {
+            filter: rect(element),
+            radio: rect(element.querySelector('.t-radio-group')),
+            picker: rect(element.querySelector('.trend-time-filter-custom')),
+            chart: rect(document.querySelector('.home-bottom-row')),
+            width: element.clientWidth,
+            content: element.scrollWidth,
+            right: element.getBoundingClientRect().right
+          }
+        })
+        for (const width of [1280, 1366, 1440]) {
+          await page.setViewportSize({ width, height: 900 })
+          // ECharts throttles resizing; measure feedback after the surrounding layout settles.
+          let previousGeometry
+          let stableSince = Date.now()
+          const before = await waitUntil(async() => {
+            const current = await geometry()
+            const currentGeometry = JSON.stringify(current)
+            if (currentGeometry !== previousGeometry) {
+              previousGeometry = currentGeometry
+              stableSince = Date.now()
+            }
+            return Date.now() - stableSince >= 200 ? current : false
+          }, `${locale} layout did not settle at ${width}`)
+          assert.ok(Math.abs(before.radio.top - before.picker.top) <= 1, `${locale} control tops differ at ${width}: ${JSON.stringify(before)}`)
+          assert.ok(Math.abs(before.radio.height - before.picker.height) <= 1, `${locale} control heights differ at ${width}`)
+          assert.ok(before.content <= before.width + 1, `${locale} filter overflows at ${width}`)
+          assert.ok(before.right <= width, `${locale} filter leaves the viewport at ${width}`)
+
+          await end.fill('2999-01-01 00:00:00')
+          await end.press('Enter')
+          const warning = page.locator('.t-message')
+          await warning.waitFor()
+          const expected = chinese
+            ? '结束时间不能晚于当前时间，已恢复原范围。'
+            : 'End time cannot be in the future. The previous range has been restored.'
+          assert.equal(await warning.textContent(), expected)
+          assert.equal(await warning.count(), 1)
+          assert.equal(await filter.getByRole('status').textContent(), expected)
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+          assert.equal(requests.length, 5, 'Rejected edits must not fetch another range')
+          assert.equal(await filter.locator('.t-is-error, [aria-invalid="true"], .t-input__tips').count(), 0)
+          const after = await geometry()
+          assert.equal(after.filter.height, before.filter.height, `${locale} rejection changes filter height at ${width}`)
+          assert.equal(after.chart.top, before.chart.top, `${locale} rejection moves charts at ${width}`)
+          assert.deepEqual(after.radio, before.radio, `${locale} rejection moves preset buttons at ${width}`)
+          assert.deepEqual(after.picker, before.picker, `${locale} rejection moves the picker at ${width}`)
+
+          await end.press('Enter')
+          await warning.waitFor({ state: 'detached' })
+          assert.equal(await filter.getByRole('status').textContent(), '', 'Accepting the restored range clears feedback')
+          assert.equal(requests.length, 5, 'Accepting unchanged seconds must not refetch')
+        }
+      } finally {
+        await page.close()
+      }
+    })
+  }
+}, { timeout: 60_000 })
+
+test('custom trend warnings repeat without stacking and ignore composing or repeated Enter', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  await page.clock.install({ time: Date.now() })
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await filter.locator('[data-time-range="custom"]').click()
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const applied = [await start.inputValue(), await end.inputValue()]
+    const warning = page.locator('.t-message')
+
+    await start.fill('2025-08-01 01:02:03')
+    for (const options of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }]) {
+      await start.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', ...options })
+      assert.equal(await warning.count(), 0)
+      assert.equal(requests.length, 5, 'Composition and key repeats must not submit a draft')
+      assert.equal(await start.inputValue(), '2025-08-01 01:02:03')
+    }
+    await page.locator('.home-page-title').click()
+    await waitUntil(async() => await start.inputValue() === applied[0], 'Cancel must restore the IME draft')
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await start.fill('not-a-date')
+      await start.press('Enter')
+      await warning.waitFor()
+      assert.equal(await warning.count(), 1, 'Repeating the same rejected input must replace its own warning')
+      assert.equal(await filter.getByRole('status').textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
+      assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+      assert.equal(requests.length, 5)
+    }
+    await page.clock.fastForward(5500)
+    await warning.waitFor({ state: 'detached' })
+    await start.fill('not-a-date')
+    await start.press('Enter')
+    await warning.waitFor()
+    assert.equal(await warning.count(), 1, 'The same error must be explained again after the earlier warning expires')
+    assert.equal(requests.length, 5)
+
+    await page.getByRole('link', { name: 'Nodes', exact: true }).click()
+    await warning.waitFor({ state: 'detached' })
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('custom trend calendar hover preserves continuous range colors and disabled dates', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackMonitorRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await filter.locator('[data-time-range="custom"]').click()
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    const cells = panel.locator('.t-date-picker__cell:not(.t-date-picker__cell--additional)')
+    const readCells = () => cells.evaluateAll((elements) => elements.map((cell) => {
+      const inner = cell.querySelector('.t-date-picker__cell-inner')
+      const { x, y, width, height } = inner.getBoundingClientRect()
+      const before = getComputedStyle(cell, '::before')
+      const after = getComputedStyle(cell, '::after')
+      return {
+        day: cell.textContent.trim(), classes: cell.className, hovered: cell.matches(':hover'),
+        bounds: { x, y, width, height }, fill: getComputedStyle(inner).backgroundColor,
+        outline: getComputedStyle(inner).boxShadow, color: getComputedStyle(inner).color,
+        before: before.backgroundColor, after: after.backgroundColor, opacity: after.opacity
+      }
+    }))
+    for (const [range, hovers] of [
+      [['2026-10-03 10:00:00', '2026-10-06 11:00:00'], [['start', '2'], ['start', '3'], ['end', '7'], ['end', '8']]],
+      [['2026-10-03 10:00:00', '2026-10-03 11:00:00'], [['start', '2']]],
+      [['2026-09-29 10:00:00', '2026-10-03 11:00:00'], [['end', '2']]]
+    ]) {
+      await start.click()
+      await start.fill(range[0])
+      await end.click()
+      await end.fill(range[1])
+      await end.press('Enter')
+      await page.waitForLoadState('networkidle')
+      assert.deepEqual([await start.inputValue(), await end.inputValue()], range)
+      const appliedRequestCount = requests.length
+      for (const [editing, date] of hovers) {
+        await (editing === 'start' ? start : end).click()
+        await panel.waitFor()
+        await delay(250) // Opening the other input also transitions endpoint colors.
+        const resting = await readCells()
+        const day = cells.filter({ hasText: new RegExp(`^${date}$`) })
+        await day.hover()
+        await delay(250) // Let the range opacity and hover fill settle.
+        const hovered = await readCells()
+        const hoveredDay = hovered.find((cell) => cell.day === date)
+        assert.ok(hoveredDay.hovered, 'The pointer must actually hover the requested day')
+        assert.deepEqual(hovered.map((cell) => cell.bounds), resting.map((cell) => cell.bounds), 'Hover moved calendar cells')
+        const unchanged = (cell) => cell.day !== date || cell.classes.includes('t-date-picker__cell--active') || cell.classes.includes('t-date-picker__cell--disabled')
+        assert.deepEqual(hovered.filter(unchanged).map((cell) => cell.fill), resting.filter(unchanged).map((cell) => cell.fill), 'Hover changed an unhovered, selected, or disabled cell fill')
+        const preview = hovered.filter((cell) => cell.classes.includes('t-date-picker__cell--hover-highlight'))
+        if (date === '8') {
+          assert.ok(hoveredDay.classes.includes('t-date-picker__cell--disabled'))
+          assert.equal(preview.length, 0, 'A disabled future date must not preview a range')
+          await day.click()
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], range)
+        } else {
+          if (!hoveredDay.classes.includes('t-date-picker__cell--active')) {
+            assert.equal(hoveredDay.outline, 'none', 'Pointer hover must not draw a focus-like outline')
+            assert.equal(hoveredDay.fill, 'rgba(0, 0, 0, 0)', 'A range preview must not add another hover block')
+            assert.equal(hoveredDay.color, 'rgb(0, 82, 217)', 'Hover text must use the brand color')
+          }
+          const overlap = preview.filter((cell) => cell.classes.includes('t-date-picker__cell--highlight'))
+          assert.ok(overlap.length > 0, 'The test must overlap a preview and applied range')
+          for (const cell of overlap) {
+            assert.equal(cell.after, cell.before, `Day ${cell.day} changes the range color at the endpoint`)
+            assert.notEqual(cell.after, 'rgba(0, 0, 0, 0)', 'The preview must bridge the endpoint with a solid color')
+            assert.equal(cell.opacity, '1')
+          }
+        }
+        assert.equal(requests.length, appliedRequestCount, 'Hover or a disabled click submitted a range')
+        await panel.locator('.t-date-picker__header').hover()
+        await delay(250)
+        assert.deepEqual((await readCells()).map((cell) => cell.fill), resting.map((cell) => cell.fill), 'Leaving the calendar must restore the resting fills')
+        await page.locator('.home-page-title').click()
+        await panel.waitFor({ state: 'hidden' })
+        assert.deepEqual([await start.inputValue(), await end.inputValue()], range)
+      }
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('calendar confirmation applies one range and canceled calendar edits keep it', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+  const requests = []
+  await page.clock.install({ time: new Date('2026-10-06T12:00:00.123Z') })
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    await start.click()
+    const panel = page.locator('.t-date-range-picker__panel-container:visible')
+    const day = (text) => panel.locator('.t-date-picker__cell:not(.t-date-picker__cell--additional)').filter({ hasText: new RegExp(`^${text}$`) })
+    assert.ok((await day('7').getAttribute('class')).includes('t-date-picker__cell--disabled'))
+    await day('1').click()
+    await end.click()
+    await day('2').click()
+    await panel.locator('.t-time-picker__panel-body-scroll').first().getByText('04', { exact: true }).click()
+    await waitUntil(async() => (await end.inputValue()).includes(' 04:'), 'Time column selection did not update the draft')
+    assert.equal(requests.length, 5, 'Calendar drafts must not fetch before confirmation')
+    const selected = [await start.inputValue(), await end.inputValue()]
+    assert.ok(selected[0].startsWith('2026-10-01 '), JSON.stringify(selected))
+    assert.ok(selected[1].startsWith('2026-10-02 '), JSON.stringify(selected))
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 10)
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], selected)
+    assert.equal(await panel.count(), 0, 'Confirm must finish editing and close the calendar')
+    assert.ok(await end.evaluate((element) => element === document.activeElement), 'Confirm must return keyboard focus to the date input')
+
+    await start.click()
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await waitUntil(async() => await panel.count() === 0, 'Confirming an unchanged range must also close the calendar')
+    assert.equal(requests.length, 10, 'Confirming the applied range must not fetch again')
+
+    await start.fill('2025-08-01 01:02:03')
+    await start.press('Tab')
+    await end.press('Tab')
+    await waitUntil(async() => await start.inputValue() === selected[0], 'Tabbing away after Confirm must discard unconfirmed input')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(await panel.count(), 0)
+    assert.equal(requests.length, 10)
+
+    await start.click()
+    await end.click()
+    await day('3').click()
+    const nextSelected = [await start.inputValue(), await end.inputValue()]
+    assert.ok(nextSelected[1].startsWith('2026-10-03 '), JSON.stringify(nextSelected))
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 15, 'A new calendar range after Confirm must apply once')
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], nextSelected)
+    assert.equal(await panel.count(), 0)
+
+    await start.click()
+    await day('4').click()
+    await page.locator('.home-page-title').click()
+    await waitUntil(async() => await start.inputValue() === nextSelected[0], 'Calendar cancellation did not restore the applied range')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], nextSelected)
+    assert.equal(requests.length, 15)
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
 test('workload status labels stay concise while accessible help explains container evidence', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })

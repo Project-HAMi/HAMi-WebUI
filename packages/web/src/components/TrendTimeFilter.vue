@@ -2,19 +2,45 @@
   <div class="trend-time-filter">
     <div class="left">
       <t-radio-group
-        v-model="currentDateRange"
+        :value="currentDateRange"
         theme="button"
-        :options="dateRangeOptions"
-      />
+        @change="selectRange"
+        @keydown.capture="onPresetKeydown"
+      >
+        <t-radio-button
+          v-for="option in dateRangeOptions"
+          :key="option.value"
+          :value="option.value"
+          :data-time-range="option.value"
+          @click="refreshSelectedRange(option.value)"
+        >
+          {{ option.label }}
+        </t-radio-button>
+      </t-radio-group>
       <t-date-range-picker
         v-if="showCustomDateRangePicker"
-        v-model="customDateRange"
-        :placeholder="[t('common.pleaseSelectDate'), t('common.pleaseSelectDate')]"
+        :key="pickerKey"
+        ref="customRangePicker"
+        v-range-labels="[t('common.startTime'), t('common.endTime')]"
+        :value="customDateRange"
+        value-type="Date"
+        :placeholder="[t('common.startTime'), t('common.endTime')]"
         :separator="t('common.to')"
+        :disable-date="{ after: dayjs().format('YYYY-MM-DD') }"
+        :time-picker-props="timePickerProps"
+        :popup-props="{
+          overlayClassName: 'trend-time-filter-popup',
+          onVisibleChange: onPickerVisibleChange,
+        }"
+        :range-input-props="{ inputProps: { onEnter: onCustomEnter } }"
         enable-time-picker
         allow-input
-        clearable
+        need-confirm
+        :clearable="false"
         class="trend-time-filter-custom"
+        @change="onCustomRangeChange"
+        @blur="onCustomBlur"
+        @keydown.capture="onCustomKeydown"
       >
         <template #prefixIcon>
           <svg
@@ -34,12 +60,16 @@
         </template>
       </t-date-range-picker>
     </div>
+    <span class="trend-time-filter-feedback" role="status" aria-atomic="true">{{ feedback }}</span>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRef } from 'vue';
+import dayjs from 'dayjs';
+import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
+import useTrendTimeRange from './useTrendTimeRange.js';
 
 const props = defineProps({
   modelValue: {
@@ -51,9 +81,24 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue']);
 const { t } = useI18n();
 
-const currentDateRange = ref('1h');
-const customDateRange = ref([]);
+const {
+  applyCustomRange,
+  currentDateRange,
+  customDateRange,
+  resetCustomRange,
+  selectRange: applyPresetRange,
+  validationError,
+} = useTrendTimeRange(toRef(props, 'modelValue'), (range) => emit('update:modelValue', range));
 const showCustomDateRangePicker = computed(() => currentDateRange.value === 'custom');
+// Reuse the panel so deferred scroll events cannot outlive it when switching inputs.
+const timePickerProps = { key: 'trend-range-time' };
+// TDesign forwards inputProps ARIA attributes to wrappers, not native inputs.
+const setRangeLabels = (element, { value }) => {
+  element.querySelectorAll('input').forEach((input, index) => {
+    if (value[index]) input.setAttribute('aria-label', value[index]);
+  });
+};
+const vRangeLabels = { mounted: setRangeLabels, updated: setRangeLabels };
 const dateRangeOptions = computed(() => [
   { label: t('dashboard.timeRange_1h'), value: '1h' },
   { label: t('dashboard.timeRange_3h'), value: '3h' },
@@ -64,44 +109,103 @@ const dateRangeOptions = computed(() => [
   { label: t('dashboard.timeRange_custom'), value: 'custom' },
 ]);
 
-const emitPresetRange = (range) => {
-  if (range === 'custom') return;
-  const hours = Number(String(range).replace('h', ''));
-  if (!hours) return;
-  const rangeEnd = new Date();
-  const rangeStart = new Date(rangeEnd.getTime() - hours * 3600 * 1000);
-  emit('update:modelValue', [rangeStart, rangeEnd]);
+const feedback = ref('');
+let warningMessage;
+let pendingEnter = false;
+const clearFeedback = () => {
+  pendingEnter = false;
+  if (warningMessage) MessagePlugin.close(warningMessage);
+  warningMessage = undefined;
+  feedback.value = '';
+};
+const showRangeWarning = async (error) => {
+  clearFeedback();
+  const message = t(`timeRange.${error}`);
+  const pendingMessage = MessagePlugin.warning({
+    content: message,
+    duration: 5000,
+    onClose: () => {
+      if (warningMessage === pendingMessage) warningMessage = undefined;
+    },
+  });
+  warningMessage = pendingMessage;
+  // Keep a live region mounted, and clear it before repeating the same rejection.
+  await nextTick();
+  if (warningMessage === pendingMessage) feedback.value = message;
+};
+onBeforeUnmount(clearFeedback);
+
+const selectRange = (selection) => {
+  clearFeedback();
+  applyPresetRange(selection);
+};
+const refreshSelectedRange = (selection) => {
+  if (selection === currentDateRange.value) selectRange(selection);
 };
 
-watch(
-  currentDateRange,
-  (range) => {
-    emitPresetRange(range);
-  },
-  { immediate: true },
-);
+const onPresetKeydown = (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const selection = event.target.closest('[data-time-range]')?.dataset.timeRange;
+  if (!selection) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!event.repeat) selectRange(selection);
+};
 
-watch(
-  customDateRange,
-  (val) => {
-    if (!showCustomDateRangePicker.value || !Array.isArray(val) || val.length !== 2) return;
-    const [startTime, endTime] = val;
-    if (!startTime || !endTime) return;
-    emit('update:modelValue', [startTime, endTime]);
-  },
-  { deep: true },
-);
+const pickerKey = ref(0);
+const customRangePicker = ref(null);
+const onCustomRangeChange = async (range, context) => {
+  pendingEnter = false;
+  // TDesign converts empty inputs to now in dayjsValue; validate them first.
+  const incomplete = range.some((date) => date === '' || date == null);
+  // The picker may reorder dates; validate the original input order as well.
+  applyCustomRange(incomplete ? range : context?.dayjsValue?.map((date) => date.toDate()) ?? range);
+  if (validationError.value) {
+    showRangeWarning(validationError.value);
+    return;
+  }
+  clearFeedback();
+  if (context?.trigger === 'confirm') {
+    // TDesign has no controlled picker visibility and may keep editing after Confirm.
+    pickerVisible.value = false;
+    pickerKey.value += 1;
+    await nextTick();
+    customRangePicker.value?.$el.querySelectorAll('input')[1]?.focus();
+  }
+};
 
-watch(
-  () => props.modelValue,
-  (val) => {
-    if (!Array.isArray(val) || val.length !== 2) return;
-    if (showCustomDateRangePicker.value) {
-      customDateRange.value = val;
-    }
-  },
-  { deep: true },
-);
+const pickerVisible = ref(false);
+const onCustomKeydown = (event) => {
+  if (event.key !== 'Enter' || event.target.tagName !== 'INPUT') return;
+  if (event.isComposing || event.keyCode === 229) {
+    event.stopPropagation();
+    return;
+  }
+  if (event.repeat) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  pendingEnter = true;
+};
+const onCustomEnter = () => {
+  pickerVisible.value = false;
+  // TDesign calls inputProps.onEnter after its own handler. Malformed text is
+  // restored without change; only report here when onCustomRangeChange did not run.
+  if (pendingEnter) {
+    pendingEnter = false;
+    resetCustomRange();
+    showRangeWarning('invalid');
+  }
+};
+const onPickerVisibleChange = (visible, context) => {
+  // Switching between inputs keeps TDesign's panel open despite a false toggle.
+  pickerVisible.value = context.trigger === 'trigger-element-click' || visible;
+  if (!pickerVisible.value) resetCustomRange();
+};
+const onCustomBlur = ({ e }) => {
+  if (!pickerVisible.value && !e.relatedTarget?.closest('.trend-time-filter-custom')) resetCustomRange();
+};
 </script>
 
 <style lang="scss" scoped>
@@ -139,5 +243,42 @@ watch(
   flex: 0 1 420px;
   min-width: 0;
   max-width: 100%;
+
+  :deep(.t-range-input:not(.t-is-disabled) .t-input:not(.t-is-disabled):is(:hover, .t-is-focused)) {
+    background-color: var(--td-brand-color-light);
+  }
+}
+
+.trend-time-filter-feedback {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+</style>
+
+<style lang="scss">
+// Scope the body-attached popup's overlapping preview to one solid range color.
+.trend-time-filter-popup {
+  .t-date-picker__cell--highlight.t-date-picker__cell--hover-highlight::after {
+    background-color: var(--td-brand-color-light);
+  }
+
+  .t-date-picker__panel-date
+    .t-date-picker__cell:not(.t-date-picker__cell--active):not(.t-date-picker__cell--disabled):not(.t-date-picker__cell--additional):hover {
+    .t-date-picker__cell-inner {
+      box-shadow: none;
+      background-color: var(--td-brand-color-light-hover);
+      color: var(--td-brand-color);
+    }
+
+    &.t-date-picker__cell--hover-highlight .t-date-picker__cell-inner {
+      background-color: transparent;
+    }
+  }
 }
 </style>
