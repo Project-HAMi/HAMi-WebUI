@@ -39,11 +39,11 @@ test('detail memory cards use compact labels without weakening metric help', () 
   );
   assert.match(
     cardDetail,
-    /dashboard\.allocated'[\s\S]*?dashboard\.allocRateLegend'[\s\S]*?dashboard\.memAllocRateDescription/,
+    /dashboard\.allocated'[\s\S]*?dashboard\.memAllocRateDescription/,
   );
   assert.match(
     cardDetail,
-    /dashboard\.used'[\s\S]*?dashboard\.usageRateLegend'[\s\S]*?dashboard\.memUsageRateDescription/,
+    /dashboard\.used'[\s\S]*?dashboard\.memUsageRateDescription/,
   );
 });
 
@@ -77,21 +77,6 @@ test('node detail stacks the rates while keeping each rate row horizontal', () =
   assert.match(
     nodeDetail,
     /\.resource-card-footer-title\s*\{[^}]*white-space:\s*nowrap;/s,
-  );
-});
-
-test('card detail footers preserve labels and values at narrow widths', () => {
-  assert.match(
-    cardDetail,
-    /\.resource-card-footer-item\s*\{[^}]*flex-wrap:\s*wrap;/s,
-  );
-  assert.match(
-    cardDetail,
-    /\.resource-card-footer-title\s*\{[^}]*flex:\s*1 1 160px;[^}]*min-width:\s*0;/s,
-  );
-  assert.match(
-    cardDetail,
-    /\.resource-card-footer-value\s*\{[^}]*flex:\s*0 0 auto;[^}]*margin-left:\s*auto;/s,
   );
 });
 

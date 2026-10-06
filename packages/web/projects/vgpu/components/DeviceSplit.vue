@@ -1,6 +1,6 @@
 <template>
   <section class="device-split" :aria-busy="status === 'loading'">
-    <header class="device-split__head" :class="{ 'has-device': showDevice }">
+    <header v-if="showDevice || hasSummary" class="device-split__head" :class="{ 'has-device': showDevice }">
       <div v-if="showDevice" class="device-split__device">
         <span class="device-split__icon" aria-hidden="true">
           <svg-icon :icon="deviceIcon" />
@@ -15,7 +15,7 @@
           </RouterLink>
         </div>
       </div>
-      <p v-if="status === 'ready'" class="device-split__summary">
+      <p v-if="hasSummary" class="device-split__summary">
         <span class="device-split__items">
           <span
             v-for="(part, i) in summary"
@@ -67,7 +67,7 @@
         </div>
       </div>
 
-      <div v-else-if="split.kind === 'shared'" class="split-meters">
+      <div v-else-if="split.kind === 'shared' && split.holders.length" class="split-meters">
         <div v-for="row in meters" :key="row.key" class="split-meter">
           <span class="split-meter__name">{{ row.name }}</span>
           <div class="split-meter__track" aria-hidden="true">
@@ -166,6 +166,7 @@ const props = defineProps({
   highlight: { type: Object, default: undefined },
   status: { type: String, default: 'ready' },
   showDevice: { type: Boolean, default: false },
+  showSharedCount: { type: Boolean, default: true },
 });
 const emit = defineEmits(['retry']);
 const { t } = useI18n();
@@ -260,9 +261,11 @@ const summary = computed(() => {
     if (value.overlapping) parts.push({ text: t('card.split.overlapping'), warning: true });
     if (value.beyondRegistered) parts.push({ text: t('card.split.beyondRegistered'), warning: true });
   } else if (value.kind === 'shared') {
-    parts.push({ text: value.limit
-      ? t('card.split.sharedBy', { count: value.holderCount, limit: value.limit })
-      : t('card.split.sharedByCount', { count: value.holderCount }) });
+    if (props.showSharedCount) {
+      parts.push({ text: value.limit
+        ? t('card.split.sharedBy', { count: value.holderCount, limit: value.limit })
+        : t('card.split.sharedByCount', { count: value.holderCount }) });
+    }
     if (value.memory.over) parts.push({ text: t('card.split.memoryOver', { size: memoryText(value.memory.over) }), warning: true });
   } else {
     parts.push({ text: value.total
@@ -272,6 +275,7 @@ const summary = computed(() => {
   }
   return parts;
 });
+const hasSummary = computed(() => props.status === 'ready' && (summary.value.length > 0 || hasStranded.value));
 </script>
 
 <style lang="scss" scoped>
@@ -556,6 +560,7 @@ const summary = computed(() => {
 }
 
 .split-meter__part {
+  border-radius: inherit;
   background: #93b4f2;
   transition: background-color 0.15s ease;
 
