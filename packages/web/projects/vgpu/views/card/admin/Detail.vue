@@ -62,18 +62,19 @@
 
     <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')">
       <ul class="resource-overview-cards">
-        <li class="resource-overview-card">
+        <li v-if="allocationSlots" class="resource-overview-card">
           <div class="progress-wrapper">
-            <workload-semi-progress :percent="workloadCountPercentProgress" />
+            <workload-semi-progress :percent="allocationSlots.percent" />
             <div class="workload-progress-summary">
               <div class="workload-progress-value">
-                <b>{{ workloadCountUsedText }}</b> / {{ workloadCountTotalText }}
+                <b>{{ allocatedSlotsText }}</b> / {{ slotLimitText }}
               </div>
               <div class="workload-progress-subtitle">
-                <span>{{ $t('card.detail.workloadCount') }}</span>
-                <t-tooltip :content="$t('card.detail.workloadCountTip')">
-                  <help-circle-icon class="resource-card-help-icon" />
-                </t-tooltip>
+                <span>{{ $t('card.detail.allocatedSlots') }}</span>
+                <MetricHelp
+                  :description="$t('card.detail.allocatedSlotsTip')"
+                  :help-label="$t('dashboard.metricHelpLabel', { metric: $t('card.detail.allocatedSlots') })"
+                />
               </div>
             </div>
           </div>
@@ -303,7 +304,6 @@ import BlockBox from '@/components/BlockBox.vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { ref, watch, computed } from 'vue';
-import { HelpCircleIcon } from 'tdesign-icons-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
@@ -336,6 +336,7 @@ import {
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
+import { getAllocationSlotDisplay } from './allocation-slot-display.mjs';
 import UnconfiguredTag from './components/UnconfiguredTag.vue';
 import deviceConfigApi from '~/vgpu/api/deviceConfig';
 import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
@@ -659,17 +660,9 @@ const computeAllocPercentText = computed(() => {
 const computeUsagePercentText = computed(() => (computeUsagePercentRaw.value === undefined ? '--' : `${roundToDecimal(computeUsagePercentRaw.value, 2)}%`));
 const memoryAllocPercentText = computed(() => (memoryAllocPercentRaw.value === undefined ? '--' : `${roundToDecimal(memoryAllocPercentRaw.value, 2)}%`));
 const memoryUsagePercentText = computed(() => (memoryUsagePercentRaw.value === undefined ? '--' : `${roundToDecimal(memoryUsagePercentRaw.value, 2)}%`));
-const workloadCountUsed = computed(() => Number(detail.value?.vgpuUsed));
-const workloadCountTotal = computed(() => Number(detail.value?.vgpuTotal));
-const workloadCountUsedText = computed(() => (Number.isFinite(workloadCountUsed.value) ? `${workloadCountUsed.value}` : '--'));
-const workloadCountTotalText = computed(() => (Number.isFinite(workloadCountTotal.value) ? `${workloadCountTotal.value}` : '--'));
-const workloadCountPercentRaw = computed(() => {
-  if (!Number.isFinite(workloadCountUsed.value) || !Number.isFinite(workloadCountTotal.value) || workloadCountTotal.value <= 0) {
-    return 0;
-  }
-  return (workloadCountUsed.value / workloadCountTotal.value) * 100;
-});
-const workloadCountPercentProgress = computed(() => clampPercent(workloadCountPercentRaw.value));
+const allocationSlots = computed(() => getAllocationSlotDisplay(detail.value));
+const allocatedSlotsText = computed(() => `${allocationSlots.value?.used ?? '--'}`);
+const slotLimitText = computed(() => `${allocationSlots.value?.limit ?? '--'}`);
 
 const lineTools = [
   {
@@ -996,12 +989,6 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-
-.resource-card-help-icon {
-  color: #939ea9;
-  font-size: 14px;
-  cursor: pointer;
 }
 
 .resource-card-footer {

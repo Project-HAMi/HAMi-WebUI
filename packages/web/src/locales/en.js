@@ -381,9 +381,9 @@ export default {
       title: 'GPU',
       detailInfo: 'Basic Info',
       resourceOverview: 'Resource Overview',
-      workloadCount: 'Workloads',
-      workloadCountTip:
-        'Each accelerator card supports sharing by multiple workloads at the same time.\nThe chart shows [Allocated Count / Maximum Supported Count].',
+      allocatedSlots: 'Occupied slots',
+      allocatedSlotsTip:
+        'Occupied sharing slots / configured limit. Further allocations also depend on available compute and memory.',
       resourceAllocTrend: 'Alloc Trend (%)',
       resourceUsageTrend: 'Usage Trend (%)',
       noAllocData: 'No allocation data',
