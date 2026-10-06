@@ -1,7 +1,7 @@
 <template>
-  <svg viewBox="-3 0 160 144" class="workload-progress-ring">
+  <svg viewBox="-3 0 160 144" class="workload-progress-ring" aria-hidden="true">
     <path :d="backgroundPath" fill="none" stroke="#E4EBF1" stroke-width="18" />
-    <path :d="progressPath" fill="none" stroke="#007BFF" stroke-width="18" />
+    <path v-if="normalizedPercent > 0" :d="progressPath" fill="none" stroke="#007BFF" stroke-width="18" />
   </svg>
 </template>
 
@@ -11,7 +11,7 @@ import { computed } from 'vue';
 const props = defineProps({
   percent: {
     type: Number,
-    default: 0,
+    default: undefined,
   },
 });
 
@@ -20,14 +20,14 @@ const cx = 78;
 const cy = 112;
 
 const normalizedPercent = computed(() => {
-  const val = Number(props.percent);
-  if (!Number.isFinite(val)) return 0;
-  return Math.max(0, Math.min(100, val));
+  if (!Number.isFinite(props.percent)) return undefined;
+  return Math.max(0, Math.min(100, props.percent));
 });
 
 const backgroundPath = computed(() => `M ${cx - rx},${cy} A ${rx},${rx} 0 0 1 ${cx + rx},${cy}`);
 
 const progressPath = computed(() => {
+  if (normalizedPercent.value === undefined) return '';
   const angle = (normalizedPercent.value / 100) * 180;
   const rad = (angle * Math.PI) / 180;
   const x = cx + rx * Math.cos(Math.PI - rad);
