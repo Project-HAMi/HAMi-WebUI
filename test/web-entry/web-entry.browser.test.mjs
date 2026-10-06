@@ -1531,14 +1531,261 @@ test('workload and detail views keep dense identity content readable', async() =
       (await page.locator('.resource-card-footer-label').allTextContents())
         .map((value) => value.trim()),
       [
-        'Allocated / Alloc Rate',
-        'Used / Usage Rate',
-        'Allocated / Alloc Rate',
-        'Used / Usage Rate'
+        'Allocated',
+        'Used',
+        'Allocated',
+        'Used'
       ]
     )
     await assertIconGeometry('.resource-card-icon')
     await assertNoHorizontalOverflow()
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('GPU resource cards stay compact across panel widths and languages', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  let deviceMode = 'hami-core'
+  let longValues = false
+  await page.route('**/v1/gpu?**', async(route) => {
+    const response = await route.fetch()
+    const device = await response.json()
+    return route.fulfill({ json: { ...device, vendor: 'NVIDIA', mode: deviceMode } })
+  })
+  await page.route('**/v1/monitor/query/instant-vector', (route) => {
+    const { query } = route.request().postDataJSON()
+    let value = 100
+    if (query.includes('hami_container_vcore_allocation_known')) value = 0
+    else if (query.includes('hami_container_vmemory_allocated')) value = longValues ? 2048.75 : 512.25
+    else if (query.includes('hami_vmemory_size')) value = 1024.5
+    else if (query.includes('hami_memory_used')) value = 128.25
+    else if (query.includes('hami_memory_size')) value = 2048.5
+    else if (query.includes('hami_container_vcore_allocated')) value = 85.25
+    else if (query.includes('hami_core_util')) value = 64.25
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: [{ metric: { device_uuid: 'gpu-1' }, value }] })
+    })
+  })
+  const inspectLayout = () => page.locator('.resource-overview-cards').evaluate((element) => {
+    const rect = (node) => {
+      const { x, y, width, height, right, bottom } = node.getBoundingClientRect()
+      return { x, y, width, height, right, bottom }
+    }
+    const overview = element.closest('.resource-overview-layout')
+    const gauge = overview.querySelector('.resource-slot-card')
+    return {
+      ...rect(element),
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      overview: { ...rect(overview), scrollWidth: overview.scrollWidth },
+      gauge: gauge ? rect(gauge) : null,
+      gaugeContent: gauge ? rect(gauge.querySelector('.resource-slot-gauge')) : null,
+      itemCount: element.children.length,
+      cards: [...element.querySelectorAll('.resource-card')].map((card) => ({
+        ...rect(card),
+        rows: [...card.querySelectorAll('.resource-card-footer-item')].map((row) => {
+          const title = row.querySelector('.resource-card-footer-title')
+          const value = row.querySelector('.resource-card-footer-value')
+          return {
+            ...rect(row),
+            title: rect(title),
+            value: rect(value),
+            titleFits: title.scrollWidth <= title.clientWidth + 1,
+            valueFits: value.scrollWidth <= value.clientWidth + 1,
+          }
+        }),
+      })),
+    }
+  })
+  const toggleSidebar = async(name) => {
+    await page.getByRole('button', { name, exact: true }).click()
+    await page.locator('.page-aside').evaluate(async(element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished))
+    })
+  }
+  const assertLayout = async(context) => {
+    const layout = await inspectLayout()
+    assert.equal(layout.itemCount, 2, `${context}: gauge must not replace either resource card`)
+    assert.equal(layout.cards.length, 2)
+    assert.ok(layout.scrollWidth <= layout.width + 1, `${context}: resource cards overflow`)
+    assert.ok(layout.overview.scrollWidth <= layout.overview.width + 1, `${context}: resource overview overflows`)
+    assert.equal(Boolean(layout.gauge), deviceMode === 'hami-core', `${context}: slot gauge does not follow the sharing mode`)
+    if (!layout.gauge) {
+      assert.ok(Math.abs(layout.x - layout.overview.x) < 1 && Math.abs(layout.width - layout.overview.width) < 1,
+        `${context}: hidden slot gauge leaves an empty column`)
+    } else if (layout.overview.width >= 900) {
+      assert.ok(layout.gauge.right <= layout.x, `${context}: gauge overlaps resource cards`)
+      assert.ok(Math.abs(layout.gauge.y - layout.y) < 1 && Math.abs(layout.gauge.height - layout.height) < 1,
+        `${context}: gauge and resource cards do not align in the wide layout`)
+    } else {
+      assert.ok(layout.gauge.bottom <= layout.y, `${context}: narrow layout does not place the gauge above both cards`)
+      assert.ok(layout.gauge.height <= 150, `${context}: narrow gauge leaves excessive vertical space`)
+      assert.ok(Math.abs(layout.gaugeContent.x + layout.gaugeContent.width / 2 -
+        (layout.overview.x + layout.overview.width / 2)) < 1, `${context}: narrow gauge is not centered`)
+    }
+    const rows = layout.cards.flatMap((card) => card.rows)
+    assert.equal(rows.length, 4)
+    const narrow = layout.overview.width < 320
+    if (!narrow) {
+      assert.ok(Math.max(...rows.map((row) => row.height)) - Math.min(...rows.map((row) => row.height)) < 1,
+        `${context}: metric rows have different heights`)
+    }
+    for (const row of rows) {
+      if (narrow) {
+        assert.ok(row.value.y >= row.title.bottom, `${context}: narrow metric row does not separate its label and reading`)
+      } else {
+        assert.ok(row.height <= 25 && row.value.y < row.title.bottom - 1,
+          `${context}: metric row expands into separate label and value lines`)
+        assert.ok(row.title.right <= row.value.x + 1, `${context}: label overlaps values`)
+      }
+      assert.ok(row.titleFits && row.valueFits, `${context}: metric text is clipped`)
+      assert.ok(row.title.x >= row.x - 1 && row.title.right <= row.right + 1 &&
+        row.value.x >= row.x - 1 && row.value.right <= row.right + 1,
+      `${context}: metric content escapes its row`)
+      assert.ok(row.value.bottom <= row.bottom + 1, `${context}: metric reading escapes its row vertically`)
+    }
+    const [compute, memory] = layout.cards
+    if (page.viewportSize().width >= 1024) {
+      assert.ok(Math.abs(compute.y - memory.y) < 1, `${context}: notebook viewport should keep both cards side by side`)
+    } else {
+      assert.ok(memory.y >= compute.bottom, `${context}: narrow viewport should stack complete cards`)
+    }
+    if (Math.abs(compute.y - memory.y) < 1) {
+      assert.ok(Math.abs(compute.width - memory.width) < 1, `${context}: resource card widths differ`)
+      assert.ok(Math.abs(compute.rows[0].y - memory.rows[0].y) < 1,
+        `${context}: resource card rows are vertically misaligned`)
+    }
+  }
+  try {
+    await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+    await page.locator('.resource-card-footer-metric').filter({ hasText: '512.3 GiB' }).waitFor()
+    assert.equal(
+      (await page.locator('.resource-card-footer-reading').nth(2).textContent()).trim().replace(/\s+/g, ' '),
+      '512.3 GiB (50%)'
+    )
+    await page.locator('.resource-overview-layout .workload-progress-ring').waitFor()
+    for (const language of ['en', 'zh-CN']) {
+      if (language === 'zh-CN') await page.getByRole('button', { name: '中文', exact: true }).click()
+      await page.locator(`html[lang="${language}"]`).waitFor()
+      for (const [width, height] of [[1024, 768], [1280, 800], [1366, 768], [1440, 900], [1920, 1080], [768, 900]]) {
+        await page.setViewportSize({ width, height })
+        await assertLayout(`${language}, ${width}px, expanded`)
+        await toggleSidebar(language === 'en' ? 'Collapse sidebar' : '收起侧栏')
+        await assertLayout(`${language}, ${width}px, collapsed`)
+        await toggleSidebar(language === 'en' ? 'Expand sidebar' : '展开侧栏')
+      }
+      for (const mode of ['hami-core', 'mig']) {
+        deviceMode = mode
+        longValues = true
+        await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+        await page.locator('.resource-card-footer-metric').filter({ hasText: '2048.8 GiB' }).waitFor()
+        assert.equal(
+          (await page.locator('.resource-card-footer-reading').nth(2).textContent()).trim().replace(/\s+/g, ' '),
+          '2048.8 GiB (199.98%)',
+          `${language}, ${mode}: overallocated memory must keep its full value and percentage`
+        )
+        for (const width of [1024, 600]) {
+          await page.setViewportSize({ width, height: 900 })
+          await assertLayout(`${language}, ${mode}, ${width}px, expanded, long values`)
+        }
+        await toggleSidebar(language === 'en' ? 'Collapse sidebar' : '收起侧栏')
+        for (const width of [375, 390]) {
+          await page.setViewportSize({ width, height: 900 })
+          await assertLayout(`${language}, ${mode}, ${width}px, collapsed, long values`)
+        }
+        await toggleSidebar(language === 'en' ? 'Expand sidebar' : '展开侧栏')
+      }
+      deviceMode = 'hami-core'
+      longValues = false
+      await page.setViewportSize({ width: 1366, height: 900 })
+      await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+      await page.locator('.resource-card-footer-metric').filter({ hasText: '512.3 GiB' }).waitFor()
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('device holders omit duplicate shared counts while keeping allocation distribution and workload context', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const shared = { mode: 'hami-core', shape: 'soft', allocatedMem: 4096 }
+  const cases = [
+    { name: 'occupied shared device', ...shared },
+    { name: 'idle shared device', ...shared, empty: true },
+    { name: 'overallocated shared memory', ...shared, allocatedMem: 20_480, warning: '4 GiB over the device memory' },
+    { name: 'MIG device', mode: 'mig', shape: 'mig', allocatedMem: 5120, template: '1g.5gb', migStart: 0, migSize: 1 },
+    { name: 'template device', mode: 'template', shape: 'template', allocatedMem: 4096, template: 'vir01' },
+  ]
+  let current = cases[0]
+  const workload = () => ({
+    name: 'worker', appName: 'example-job', podUid: 'pod-split', namespace: 'research',
+    nodeName: 'node-1', nodeUid: 'node-1', status: 'success', type: 'NVIDIA',
+    deviceIds: ['gpu-1'], allocatedDevices: 1, allocatedCores: 25, allocatedMem: current.allocatedMem,
+    devices: [{
+      id: 'gpu-1', allocationShape: current.shape, allocatedCores: 25, allocatedCoresKnown: true,
+      allocatedMem: current.allocatedMem, template: current.template,
+      migStart: current.migStart, migSize: current.migSize,
+    }],
+  })
+  await page.route('**/v1/gpu?**', (route) => route.fulfill({ json: {
+    uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true,
+    mode: current.mode, vgpuUsed: current.empty ? 0 : 1, vgpuTotal: 10, coreTotal: 100, memoryTotal: 16_384,
+    migProfiles: [{ name: '1g.5gb', placements: [{ start: 0, size: 1 }, { start: 1, size: 1 }] }],
+  } }))
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, {
+    items: current.empty ? [] : [workload()],
+  }))
+  await page.route('**/v1/container?**', (route) => route.fulfill({ json: workload() }))
+  try {
+    for (const scenario of cases) {
+      current = scenario
+      await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+      const split = page.locator('.device-split-block .device-split[aria-busy="false"]')
+      await split.waitFor()
+      assert.equal(await split.locator('.split-meter').count(), scenario.mode === 'hami-core' && !scenario.empty ? 2 : 0, `${scenario.name}: shared allocation distribution is missing or idle bars remain`)
+      assert.doesNotMatch(await split.textContent(), /Shared by/, `${scenario.name}: duplicate shared count remains`)
+      assert.equal(await split.locator('.split-row').count(), scenario.empty ? 0 : 1, scenario.name)
+      if (scenario.empty) {
+        assert.equal((await split.locator('.device-split__empty').textContent()).trim(), 'No workload holds this device.')
+        assert.equal(await split.locator('.device-split__head').count(), 0, 'Idle shared device leaves an empty summary header')
+        assert.ok((await split.boundingBox()).height <= 80, 'Idle shared device leaves an oversized empty panel')
+      } else {
+        const holder = split.locator('.split-row')
+        assert.match(await holder.textContent(), /Compute 25%/)
+        assert.match(await holder.locator('.split-row__memory').textContent(), /GiB/)
+        assert.match(await holder.locator('.split-row__link').getAttribute('href'), /workloads\/pod-split\/containers\/worker$/)
+        if (scenario.mode === 'hami-core') {
+          await holder.hover()
+          assert.equal(await split.locator('.split-meter__part.is-active').count(), 2, 'Holder hover no longer identifies its memory and compute shares')
+        }
+      }
+      if (scenario.warning) {
+        assert.equal((await split.locator('.device-split__item.is-warning').textContent()).trim(), scenario.warning)
+      } else if (scenario.mode === 'hami-core') {
+        assert.equal(await split.locator('.device-split__head').count(), 0, `${scenario.name}: empty summary header remains`)
+      }
+      if (scenario.mode === 'mig') {
+        assert.equal(await split.locator('.split-mig').count(), 1, 'MIG placement diagram was removed')
+        assert.match(await split.locator('.device-split__summary').textContent(), /1 instance allocated/)
+        assert.match(await split.locator('.device-split__summary').textContent(), /Room for 1g\.5gb ×1/)
+        assert.equal((await split.locator('.split-row__slot').textContent()).trim(), 'Slice 0')
+      } else if (scenario.mode === 'template') {
+        assert.equal(await split.locator('.split-strip').count(), 1, 'Template partition diagram was removed')
+        assert.match(await split.locator('.device-split__summary').textContent(), /4 GiB of 16 GiB allocated/)
+        assert.match(await split.locator('.split-row__part').textContent(), /vir01/)
+      }
+    }
+    current = cases[0]
+    await page.goto(`${target}${basePath}workloads/pod-split/containers/worker`, { waitUntil: 'networkidle' })
+    const workloadSplit = page.locator('.workload-split .device-split[aria-busy="false"]')
+    await workloadSplit.waitFor()
+    assert.match(await workloadSplit.locator('.device-split__summary').textContent(), /Shared by 1 of 10/)
+    assert.equal(await workloadSplit.locator('.split-meter').count(), 2, 'Workload detail lost its device allocation context')
+    assert.equal(await workloadSplit.locator('.split-row.is-current').count(), 1, 'Current workload is no longer highlighted')
   } finally {
     await page.close()
   }

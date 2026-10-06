@@ -1,7 +1,7 @@
 <template>
-  <svg viewBox="-3 0 160 144" class="workload-progress-ring" aria-hidden="true">
-    <path :d="backgroundPath" fill="none" stroke="#E4EBF1" stroke-width="18" />
-    <path v-if="normalizedPercent > 0" :d="progressPath" fill="none" stroke="#007BFF" stroke-width="18" />
+  <svg viewBox="0 34 156 90" class="workload-progress-ring" aria-hidden="true">
+    <path :d="backgroundPath" fill="none" stroke="#E4EBF1" stroke-width="18" stroke-linecap="round" />
+    <path v-if="normalizedPercent > 0" :d="progressPath" fill="none" stroke="#007BFF" stroke-width="18" stroke-linecap="round" />
   </svg>
 </template>
 
@@ -38,6 +38,7 @@ const progressPath = computed(() => {
 
 <style scoped>
 .workload-progress-ring {
-  width: 168px;
+  display: block;
+  width: 100%;
 }
 </style>

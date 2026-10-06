@@ -61,172 +61,178 @@
     </block-box>
 
     <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')">
-      <ul class="resource-overview-cards">
-        <li v-if="allocationSlots" class="resource-overview-card">
-          <div class="progress-wrapper">
+      <div class="resource-overview-layout" :class="{ 'has-slot-summary': allocationSlots }">
+        <div v-if="allocationSlots" class="resource-slot-card">
+          <div class="resource-slot-gauge">
             <workload-semi-progress :percent="allocationSlots.percent" />
-            <div class="workload-progress-summary">
-              <div class="workload-progress-value">
-                <b>{{ allocatedSlotsText }}</b> / {{ slotLimitText }}
+            <div class="resource-slot-summary">
+              <div class="resource-slot-value">
+                <b>{{ allocatedSlotsText }}</b><span>/ {{ slotLimitText }}</span>
               </div>
-              <div class="workload-progress-subtitle">
+              <div class="resource-slot-label">
                 <span>{{ $t('card.detail.allocatedSlots') }}</span>
-                <MetricHelp
+                <metric-help
                   :description="$t('card.detail.allocatedSlotsTip')"
                   :help-label="$t('dashboard.metricHelpLabel', { metric: $t('card.detail.allocatedSlots') })"
                 />
               </div>
             </div>
           </div>
-        </li>
-        <li class="resource-overview-card">
-          <div class="resource-card">
-            <div class="resource-card-header">
-              <div class="resource-card-icon">
-                <svg-icon icon="vgpu-core" />
-              </div>
-              <div class="resource-card-header-info">
-                <div class="resource-card-value resource-card-value--compute">
-                  {{ computeTotalText }}
+        </div>
+        <ul class="resource-overview-cards">
+          <li class="resource-overview-card">
+            <div class="resource-card">
+              <div class="resource-card-header">
+                <div class="resource-card-icon">
+                  <svg-icon icon="vgpu-core" />
                 </div>
-                <div class="resource-card-sub-title">
-                  {{ $t('dashboard.computePowerTotal') }}
-                </div>
-              </div>
-            </div>
-
-            <div class="resource-card-footer">
-              <div class="resource-card-rate-wrap">
-                <div class="resource-card-footer-item">
-                  <div class="resource-card-footer-title">
-                    <span class="resource-card-footer-label">
-                      {{ $t('dashboard.allocated') }} / {{ $t('dashboard.allocRateLegend') }}
-                    </span>
+                <div class="resource-card-header-info">
+                  <div class="resource-card-value resource-card-value--compute">
+                    {{ computeTotalText }}
                   </div>
-                  <div class="resource-card-footer-value">
-                    <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ computeAllocUsedText }}</span>
-                    <span class="resource-card-footer-sep">/</span>
-                    <t-tooltip v-if="computeAllocNote" :content="computeAllocNote">
-                      <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
-                    </t-tooltip>
-                    <span v-else class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
-                    <span v-if="computeAllocNote" class="resource-card-sr-only">{{ computeAllocNote }}</span>
-                    <t-progress
-                      v-if="computeAllocPercentProgress !== undefined"
-                      theme="circle"
-                      :percentage="computeAllocPercentProgressRounded"
-                      size="24"
-                      :color="getResourceColor(computeAllocPercentProgress)"
-                      :label="false"
-                    />
+                  <div class="resource-card-sub-title">
+                    {{ $t('dashboard.computePowerTotal') }}
                   </div>
                 </div>
               </div>
 
-              <div class="resource-card-rate-wrap">
-                <div class="resource-card-footer-item">
-                  <div class="resource-card-footer-title">
-                    <span class="resource-card-footer-label">
-                      {{ $t('dashboard.used') }} / {{ $t('dashboard.usageRateLegend') }}
-                    </span>
-                  </div>
-                  <div class="resource-card-footer-value">
-                    <span class="resource-card-footer-metric">{{ computeUsageUsedText }}</span>
-                    <span class="resource-card-footer-sep">/</span>
-                    <span class="resource-card-footer-percent">{{ computeUsagePercentText }}</span>
-                    <t-progress
-                      v-if="computeUsagePercentProgress !== undefined"
-                      theme="circle"
-                      :percentage="computeUsagePercentProgressRounded"
-                      size="24"
-                      :color="getResourceColor(computeUsagePercentProgress)"
-                      :label="false"
-                    />
+              <div class="resource-card-footer">
+                <div class="resource-card-rate-wrap">
+                  <div class="resource-card-footer-item">
+                    <div class="resource-card-footer-title">
+                      <span class="resource-card-footer-label">
+                        {{ $t('dashboard.allocated') }}
+                      </span>
+                    </div>
+                    <div class="resource-card-footer-value">
+                      <span class="resource-card-footer-reading">
+                        <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ computeAllocUsedText }}</span>&nbsp;
+                        <t-tooltip v-if="computeAllocNote" :content="computeAllocNote">
+                          <span>(<span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>)</span>
+                        </t-tooltip>
+                        <span v-else>(<span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>)</span>
+                      </span>
+                      <span v-if="computeAllocNote" class="resource-card-sr-only">{{ computeAllocNote }}</span>
+                      <t-progress
+                        v-if="computeAllocPercentProgress !== undefined"
+                        theme="circle"
+                        :percentage="computeAllocPercentProgressRounded"
+                        size="24"
+                        :color="getResourceColor(computeAllocPercentProgress)"
+                        :label="false"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        </li>
-        <li class="resource-overview-card">
-          <div class="resource-card">
-            <div class="resource-card-header">
-              <div class="resource-card-icon">
-                <svg-icon icon="node-memory-total" />
-              </div>
-              <div class="resource-card-header-info">
-                <div class="resource-card-value resource-card-value--compute">{{ memoryTotalText }}</div>
-                <div class="resource-card-sub-title">
-                  {{ dt('dashboard.memoryTotal') }}
-                </div>
-              </div>
-            </div>
 
-            <div class="resource-card-footer">
-              <div class="resource-card-rate-wrap">
-                <div class="resource-card-footer-item">
-                  <div class="resource-card-footer-title">
-                    <span class="resource-card-footer-label">
-                      {{ $t('dashboard.allocated') }} / {{ $t('dashboard.allocRateLegend') }}
-                    </span>
-                    <metric-help
-                      :description="$t('dashboard.memAllocRateDescription')"
-                      :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memAllocRate') })"
-                    />
-                  </div>
-                  <div class="resource-card-footer-value">
-                    <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ memoryAllocUsedText }}</span>
-                    <span class="resource-card-footer-sep">/</span>
-                    <span class="resource-card-footer-percent">{{ memoryAllocPercentText }}</span>
-                    <t-progress
-                      v-if="memoryAllocPercentProgress !== undefined"
-                      theme="circle"
-                      :percentage="memoryAllocPercentProgressRounded"
-                      size="24"
-                      :color="getResourceColor(memoryAllocPercentProgress)"
-                      :label="false"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div class="resource-card-rate-wrap">
-                <div class="resource-card-footer-item">
-                  <div class="resource-card-footer-title">
-                    <span class="resource-card-footer-label">
-                      {{ $t('dashboard.used') }} / {{ $t('dashboard.usageRateLegend') }}
-                    </span>
-                    <metric-help
-                      :description="$t('dashboard.memUsageRateDescription')"
-                      :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
-                    />
-                  </div>
-                  <div class="resource-card-footer-value">
-                    <span class="resource-card-footer-metric">{{ memoryUsageUsedText }}</span>
-                    <span class="resource-card-footer-sep">/</span>
-                    <span class="resource-card-footer-percent">{{ memoryUsagePercentText }}</span>
-                    <t-progress
-                      v-if="memoryUsagePercentProgress !== undefined"
-                      theme="circle"
-                      :percentage="memoryUsagePercentProgressRounded"
-                      size="24"
-                      :color="getResourceColor(memoryUsagePercentProgress)"
-                      :label="false"
-                    />
+                <div class="resource-card-rate-wrap">
+                  <div class="resource-card-footer-item">
+                    <div class="resource-card-footer-title">
+                      <span class="resource-card-footer-label">
+                        {{ $t('dashboard.used') }}
+                      </span>
+                    </div>
+                    <div class="resource-card-footer-value">
+                      <span class="resource-card-footer-reading">
+                        <span class="resource-card-footer-metric">{{ computeUsageUsedText }}</span>
+                        (<span class="resource-card-footer-percent">{{ computeUsagePercentText }}</span>)
+                      </span>
+                      <t-progress
+                        v-if="computeUsagePercentProgress !== undefined"
+                        theme="circle"
+                        :percentage="computeUsagePercentProgressRounded"
+                        size="24"
+                        :color="getResourceColor(computeUsagePercentProgress)"
+                        :label="false"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        </li>
-      </ul>
+          </li>
+          <li class="resource-overview-card">
+            <div class="resource-card">
+              <div class="resource-card-header">
+                <div class="resource-card-icon">
+                  <svg-icon icon="node-memory-total" />
+                </div>
+                <div class="resource-card-header-info">
+                  <div class="resource-card-value resource-card-value--compute">{{ memoryTotalText }}</div>
+                  <div class="resource-card-sub-title">
+                    {{ dt('dashboard.memoryTotal') }}
+                  </div>
+                </div>
+              </div>
+
+              <div class="resource-card-footer">
+                <div class="resource-card-rate-wrap">
+                  <div class="resource-card-footer-item">
+                    <div class="resource-card-footer-title">
+                      <span class="resource-card-footer-label">
+                        {{ $t('dashboard.allocated') }}
+                      </span>
+                      <metric-help
+                        :description="$t('dashboard.memAllocRateDescription')"
+                        :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memAllocRate') })"
+                      />
+                    </div>
+                    <div class="resource-card-footer-value">
+                      <span class="resource-card-footer-reading">
+                        <span class="resource-card-footer-metric resource-card-footer-metric--allocated">{{ memoryAllocUsedText }}</span>
+                        (<span class="resource-card-footer-percent">{{ memoryAllocPercentText }}</span>)
+                      </span>
+                      <t-progress
+                        v-if="memoryAllocPercentProgress !== undefined"
+                        theme="circle"
+                        :percentage="memoryAllocPercentProgressRounded"
+                        size="24"
+                        :color="getResourceColor(memoryAllocPercentProgress)"
+                        :label="false"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="resource-card-rate-wrap">
+                  <div class="resource-card-footer-item">
+                    <div class="resource-card-footer-title">
+                      <span class="resource-card-footer-label">
+                        {{ $t('dashboard.used') }}
+                      </span>
+                      <metric-help
+                        :description="$t('dashboard.memUsageRateDescription')"
+                        :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
+                      />
+                    </div>
+                    <div class="resource-card-footer-value">
+                      <span class="resource-card-footer-reading">
+                        <span class="resource-card-footer-metric">{{ memoryUsageUsedText }}</span>
+                        (<span class="resource-card-footer-percent">{{ memoryUsagePercentText }}</span>)
+                      </span>
+                      <t-progress
+                        v-if="memoryUsagePercentProgress !== undefined"
+                        theme="circle"
+                        :percentage="memoryUsagePercentProgressRounded"
+                        size="24"
+                        :color="getResourceColor(memoryUsagePercentProgress)"
+                        :label="false"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
     </block-box>
 
     <block-box v-if="splitVisible" class="device-split-block" :title="$t('card.split.title')">
       <template v-if="detail.mode === 'mig'" #extra>
         <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
       </template>
-      <DeviceSplit :device="detail" :containers="cardContainers" :status="splitStatus" @retry="loadSplit" />
+      <DeviceSplit :device="detail" :containers="cardContainers" :status="splitStatus" :show-shared-count="false" @retry="loadSplit" />
     </block-box>
 
     <block-box v-if="npuSpecVisible" class="npu-spec-block" :title="$t('card.deviceConfig.title')">
@@ -319,8 +325,8 @@ import useDetailResource from '~/vgpu/hooks/useDetailResource.js';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import cardApi from '~/vgpu/api/card';
-import nodeApi from '~/vgpu/api/node';
 import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
+import nodeApi from '~/vgpu/api/node';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
 import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
@@ -888,25 +894,25 @@ watch(
 }
 }
 
+.resource-overview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
 .resource-overview-cards {
-  margin: 12px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 8px;
 }
 
 .resource-overview-card {
-  flex: 1;
   display: flex;
-}
-
-.progress-wrapper {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
+  min-width: 0;
 }
 
 .resource-card {
@@ -916,7 +922,7 @@ watch(
   height: 100%;
   min-height: 0;
   width: 100%;
-  padding: 15px 20px;
+  padding: 15px 16px;
   background: #f5f7fa;
   border-radius: 8px;
   border: 0;
@@ -966,29 +972,60 @@ watch(
   line-height: 20px;
 }
 
-.workload-progress-summary {
-  margin-top: -76px;
+.resource-slot-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 12px;
+}
+
+.resource-slot-gauge {
+  position: relative;
+  width: 168px;
+  max-width: 100%;
+  color: #939ea9;
+  font-size: 12px;
+  text-align: center;
+}
+
+.resource-slot-summary {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: #939ea9;
+  gap: 2px;
 }
 
-.workload-progress-value {
-  line-height: 28px;
+.resource-slot-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  line-height: 26px;
+  white-space: nowrap;
 
   b {
     font-size: 20px;
+    font-weight: 500;
     color: #324558;
   }
 }
 
-.workload-progress-subtitle {
-  display: inline-flex;
+.resource-slot-label {
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  line-height: 20px;
+}
+
+@container device-resource-overview (min-width: 900px) {
+  .resource-overview-layout.has-slot-summary {
+    grid-template-columns: minmax(176px, 0.7fr) minmax(0, 2fr);
+  }
 }
 
 .resource-card-footer {
@@ -1010,31 +1047,31 @@ watch(
 }
 
 .resource-card-footer-item {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .resource-card-footer-title {
   display: inline-flex;
-  flex: 1 1 160px;
   align-items: center;
   gap: 4px;
   min-width: 0;
   font-size: 12px;
   color: #939ea9;
   line-height: 20px;
+  white-space: nowrap;
 }
 
 .resource-card-footer-value {
   display: flex;
-  flex: 0 0 auto;
+  min-height: 24px;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .resource-card-footer-metric {
@@ -1048,15 +1085,27 @@ watch(
   color: #939ea9;
 }
 
-.resource-card-footer-sep {
-  font-size: 12px;
-  color: #b6c2cd;
+.resource-card-footer-reading {
+  font-size: 14px;
+  color: #324558;
 }
 
 .resource-card-footer-percent {
   font-size: 14px;
   font-weight: 500;
   color: #324558;
+}
+
+// Below the cards' minimum width, keep each label above its complete reading.
+@container device-resource-overview (max-width: 319px) {
+  .resource-card-footer-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .resource-card-footer-value {
+    max-width: 100%;
+    white-space: normal;
+  }
 }
 
 .line-box {
@@ -1090,8 +1139,19 @@ watch(
 }
 
 .resource-overview-block {
+  container: device-resource-overview / inline-size;
   margin-bottom: 16px;
   box-shadow: none;
+
+  :deep(.home-block-header) {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+
+  :deep(.home-block-header > .extra) {
+    margin-left: auto;
+    max-width: 100%;
+  }
 }
 
 .resource-card-sr-only {
