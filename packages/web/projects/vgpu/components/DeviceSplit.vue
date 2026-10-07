@@ -1,21 +1,23 @@
 <template>
   <section class="device-split" :aria-busy="status === 'loading'">
-    <header v-if="showDevice || hasSummary" class="device-split__head" :class="{ 'has-device': showDevice }">
+    <header v-if="showDevice || (showSummary && hasSummary)" class="device-split__head" :class="{ 'has-device': showDevice, 'has-stacked-summary': showDevice && stackSummary }">
       <div v-if="showDevice" class="device-split__device">
         <span class="device-split__icon" aria-hidden="true">
           <svg-icon :icon="deviceIcon" />
         </span>
         <div class="device-split__identity">
           <span class="device-split__model">
-            {{ device.type || '--' }}
-            <t-tag v-if="modeText" size="small" theme="primary" variant="light">{{ modeText }}</t-tag>
+            <span class="device-split__name">
+              <EllipsisText :text="device.type || '--'" mode="end" tooltip="overflow" focusable />
+            </span>
+            <t-tag v-if="modeText" class="device-split__mode" size="small" theme="primary" variant="light" max-width="100%" :title="modeText">{{ modeText }}</t-tag>
           </span>
-          <RouterLink class="device-split__uuid" :to="`/accelerators/${device.uuid}`" :title="device.uuid">
+          <RouterLink class="device-split__uuid" :to="`/accelerators/${encodeURIComponent(device.uuid)}`" :title="device.uuid" :aria-label="$t('card.split.deviceLink', { id: device.uuid })">
             {{ device.uuid }}
           </RouterLink>
         </div>
       </div>
-      <p v-if="hasSummary" class="device-split__summary">
+      <p v-if="showSummary && hasSummary" class="device-split__summary">
         <span class="device-split__items">
           <span
             v-for="(part, i) in summary"
@@ -41,75 +43,81 @@
     </div>
 
     <template v-else>
-      <div v-if="split.kind === 'mig' && split.slots" class="split-mig" aria-hidden="true">
-        <div class="split-mig__grid" :style="{ '--slots': split.slots, '--lanes': split.lanes }">
-          <span
-            v-for="cell in openCells"
-            :key="`cell-${cell.slot}`"
-            class="split-mig__cell"
-            :class="`is-${cell.state}`"
-            :style="{ gridColumn: cell.slot + 1 }"
-          />
+      <slot name="chart">
+        <div v-if="showChart && split.kind === 'mig' && split.slots" class="split-mig" aria-hidden="true">
+          <div class="split-mig__grid" :style="{ '--slots': split.slots, '--lanes': split.lanes }">
+            <span
+              v-for="cell in openCells"
+              :key="`cell-${cell.slot}`"
+              class="split-mig__cell"
+              :class="`is-${cell.state}`"
+              :style="{ gridColumn: cell.slot + 1 }"
+            />
+            <span
+              v-for="block in split.blocks"
+              :key="block.key"
+              class="split-part"
+              :class="partClass(block)"
+              :style="{ gridColumn: `${block.placement.start + 1} / span ${block.placement.size}`, gridRow: block.lane + 1 }"
+              @mouseenter="active = block.key"
+              @mouseleave="active = ''"
+            >
+              <span class="split-part__label">{{ labelOf(block) }}</span>
+            </span>
+          </div>
+          <div class="split-mig__ruler" :style="{ '--slots': split.slots }">
+            <span v-for="slot in split.slots" :key="slot">{{ slot - 1 }}</span>
+          </div>
+        </div>
+
+        <div v-else-if="showChart && split.kind === 'shared' && (split.holders.length || !showHolders)" class="split-meters">
+          <div v-for="row in meters" :key="row.key" class="split-meter">
+            <span class="split-meter__name">{{ row.name }}</span>
+            <div class="split-meter__track" :class="{ 'is-unlimited': row.unlimited }" aria-hidden="true">
+              <span
+                v-for="part in row.unlimited ? [] : row.meter.parts"
+                :key="part.key"
+                class="split-meter__part"
+                :class="{ 'is-current': part.current, 'is-active': active === part.key }"
+                :style="{ width: `${part.share * 100}%` }"
+              />
+            </div>
+            <span class="split-meter__value" :class="{ 'is-warning': row.meter.over }">{{ row.value }}</span>
+          </div>
+        </div>
+
+        <div
+          v-else-if="showChart && split.kind === 'memory'"
+          class="split-strip"
+          aria-hidden="true"
+          :style="{ '--gaps': `${stripGaps}px` }"
+        >
           <span
             v-for="block in split.blocks"
             :key="block.key"
             class="split-part"
             :class="partClass(block)"
-            :style="{ gridColumn: `${block.placement.start + 1} / span ${block.placement.size}`, gridRow: block.lane + 1 }"
+            :style="{ width: stripWidth(block.share) }"
             @mouseenter="active = block.key"
             @mouseleave="active = ''"
           >
             <span class="split-part__label">{{ labelOf(block) }}</span>
           </span>
+          <span
+            v-if="split.free"
+            class="split-strip__rest"
+            :style="{ width: stripWidth(split.free / Math.max(split.total, split.used)) }"
+          >
+            <span class="split-part__label">{{ $t('card.split.unallocated', { size: memoryText(split.free) }) }}</span>
+          </span>
         </div>
-        <div class="split-mig__ruler" :style="{ '--slots': split.slots }">
-          <span v-for="slot in split.slots" :key="slot">{{ slot - 1 }}</span>
-        </div>
-      </div>
 
-      <div v-else-if="split.kind === 'shared' && split.holders.length" class="split-meters">
-        <div v-for="row in meters" :key="row.key" class="split-meter">
-          <span class="split-meter__name">{{ row.name }}</span>
-          <div class="split-meter__track" aria-hidden="true">
-            <span
-              v-for="part in row.meter.parts"
-              :key="part.key"
-              class="split-meter__part"
-              :class="{ 'is-current': part.current, 'is-active': active === part.key }"
-              :style="{ width: `${part.share * 100}%` }"
-            />
-          </div>
-          <span class="split-meter__value" :class="{ 'is-warning': row.meter.over }">{{ row.value }}</span>
-        </div>
-      </div>
+        <ul v-if="showChart && !showHolders && split.kind === 'mig' && split.holders.length" class="device-split__sr-only" :aria-label="$t('card.split.partitions')">
+          <li v-for="holder in split.holders" :key="holder.key">{{ labelOf(holder) }} {{ placementText(holder) }}</li>
+        </ul>
+      </slot>
 
-      <div
-        v-else-if="split.kind === 'memory'"
-        class="split-strip"
-        aria-hidden="true"
-        :style="{ '--gaps': `${stripGaps}px` }"
-      >
-        <span
-          v-for="block in split.blocks"
-          :key="block.key"
-          class="split-part"
-          :class="partClass(block)"
-          :style="{ width: stripWidth(block.share) }"
-          @mouseenter="active = block.key"
-          @mouseleave="active = ''"
-        >
-          <span class="split-part__label">{{ labelOf(block) }}</span>
-        </span>
-        <span
-          v-if="split.free"
-          class="split-strip__rest"
-          :style="{ width: stripWidth(split.free / Math.max(split.total, split.used)) }"
-        >
-          <span class="split-part__label">{{ $t('card.split.unallocated', { size: memoryText(split.free) }) }}</span>
-        </span>
-      </div>
-
-      <ul v-if="split.holders.length" class="split-rows" :class="`is-${split.kind}`">
+      <ul v-if="showHolders && split.holders.length" class="split-rows" :class="`is-${split.kind}`">
         <li
           v-for="holder in split.holders"
           :key="holder.key"
@@ -129,7 +137,9 @@
               :help-label="$t('task.allocation.shapeReasonLabel')"
             />
           </span>
-          <span class="split-row__memory">{{ memoryText(holder.memoryMiB) }}</span>
+          <span class="split-row__memory">
+            {{ strictValues ? `${$t('card.split.memory')} ${holderMemoryText(holder)}` : holderMemoryText(holder) }}
+          </span>
           <span class="split-row__compute">{{ computeLabel(holder) }}</span>
           <span class="split-row__holder">
             <span v-if="holder.current">{{ workloadText(holder.workload) }}</span>
@@ -145,8 +155,9 @@
           </span>
         </li>
       </ul>
-      <p v-else class="device-split__empty">{{ $t('card.split.empty') }}</p>
+      <p v-else-if="showHolders" class="device-split__empty">{{ $t('card.split.empty') }}</p>
     </template>
+    <footer v-if="$slots.footer" class="device-split__footer"><slot name="footer" /></footer>
   </section>
 </template>
 
@@ -154,7 +165,8 @@
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { buildDeviceSplit } from './device-split.mjs';
+import EllipsisText from '@/components/EllipsisText.vue';
+import { buildDeviceSplit, collectHolders, splitKind } from './device-split.mjs';
 import { getSplitIcon, getSplitModeKey } from './split-mode.mjs';
 import MetricHelp from './MetricHelp.vue';
 import { getShapeUnknownReasonKey } from '~/vgpu/views/task/admin/allocation-display.mjs';
@@ -166,17 +178,28 @@ const props = defineProps({
   highlight: { type: Object, default: undefined },
   status: { type: String, default: 'ready' },
   showDevice: { type: Boolean, default: false },
+  stackSummary: { type: Boolean, default: false },
   showSharedCount: { type: Boolean, default: true },
+  showSummary: { type: Boolean, default: true },
+  showChart: { type: Boolean, default: true },
+  showHolders: { type: Boolean, default: true },
+  strictValues: { type: Boolean, default: false },
 });
 const emit = defineEmits(['retry']);
 const { t } = useI18n();
 const active = ref('');
 
-const split = computed(() => buildDeviceSplit({ device: props.device, containers: props.containers, highlight: props.highlight }));
+const split = computed(() => {
+  if (!props.showChart && !props.showSummary) {
+    const holders = collectHolders(props.device, props.containers, props.highlight);
+    return { holders, kind: splitKind(props.device, holders) };
+  }
+  return buildDeviceSplit({ device: props.device, containers: props.containers, highlight: props.highlight });
+});
 const openCells = computed(() => (split.value.cells || []).filter((cell) => cell.state !== 'used'));
 const modeText = computed(() => {
   const key = getSplitModeKey(props.device.mode);
-  return key ? t(key) : '';
+  return key ? t(key) : props.strictValues ? t('task.allocation.shape.unknown') : '';
 });
 const deviceIcon = computed(() => getSplitIcon(props.device.mode) || 'vgpu-card');
 const skeletonRows = [
@@ -186,8 +209,21 @@ const skeletonRows = [
 
 const trimmed = (value) => String(Math.round(value * 10) / 10);
 const memoryText = (mib) => `${trimmed(Number(mib || 0) / 1024)} GiB`;
+const validAllocationNumber = (value) =>
+  (typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))
+    && Number.isFinite(Number(value)) && Number(value) >= 0;
+const allocationValues = computed(() => new Map(props.containers.flatMap((container) =>
+  (container?.devices || []).map((allocation, index) => [
+    `${container.podUid}/${container.name}/${index}`, allocation,
+  ]))));
+const holderMemoryText = (holder) => {
+  if (props.strictValues && !validAllocationNumber(allocationValues.value.get(holder.key)?.allocatedMem)) return '--';
+  return memoryText(holder.memoryMiB);
+};
 const computeText = (holder) => {
-  if (!holder.coresKnown) return t('card.split.computeUnknown');
+  const raw = props.strictValues ? allocationValues.value.get(holder.key) : undefined;
+  if (!holder.coresKnown || (props.strictValues &&
+    (raw?.allocatedCoresKnown !== true || !validAllocationNumber(raw?.allocatedCores)))) return t('card.split.computeUnknown');
   return holder.cores ? `${trimmed(holder.cores)}%` : t('common.notLimited');
 };
 const labelOf = (holder) => {
@@ -244,7 +280,11 @@ const meters = computed(() => {
   if (unlimited) computeValue.push(t('card.split.unlimitedCount', { count: unlimited }));
   return [
     { key: 'memory', name: t('card.split.memory'), meter: memory, value: memoryValue },
-    { key: 'compute', name: t('card.split.compute'), meter: compute, value: joinParts(computeValue) },
+    {
+      key: 'compute', name: t('card.split.compute'), meter: compute,
+      unlimited: props.strictValues && unlimited > 0,
+      value: props.strictValues && unlimited > 0 ? t('common.notLimited') : joinParts(computeValue),
+    },
   ];
 });
 
@@ -294,6 +334,7 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   padding: 16px 20px;
   border-radius: 8px;
   background: #f5f7fa;
+  container: device-split / inline-size;
 }
 
 .device-split__head {
@@ -305,6 +346,11 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   &.has-device {
     justify-content: space-between;
   }
+
+  &.has-stacked-summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .device-split__device {
@@ -312,6 +358,7 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   align-items: center;
   gap: 12px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .device-split__icon {
@@ -336,12 +383,24 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
 
 .device-split__model {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: 8px;
+  min-width: 0;
   color: #1d2b3a;
   font-size: 14px;
   font-weight: 500;
+}
+
+.device-split__name {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.device-split__mode {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 50%;
 }
 
 .device-split__uuid {
@@ -412,7 +471,8 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   width: 12px;
   height: 12px;
   border-radius: 3px;
-  background: repeating-linear-gradient(135deg, #dfe5ec 0 2px, #fff 2px 4px);
+  flex-shrink: 0;
+  background: repeating-linear-gradient(135deg, #eef2f6 0 4px, #fff 4px 8px);
   box-shadow: inset 0 0 0 1px #dfe5ec;
 }
 
@@ -557,6 +617,10 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   overflow: hidden;
   border-radius: 4px;
   background: var(--split-track);
+}
+
+.split-meter__track.is-unlimited {
+  background: repeating-linear-gradient(135deg, var(--split-track) 0 3px, #fff 3px 6px);
 }
 
 .split-meter__part {
@@ -725,6 +789,18 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   font-size: 12px;
 }
 
+.device-split__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: auto;
+  color: #697886;
+  font-size: 12px;
+  line-height: 20px;
+}
+
 .device-split__empty {
   margin: 0;
   color: #939ea9;
@@ -747,7 +823,9 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
   .device-split {
     padding: 12px;
   }
+}
 
+@container device-split (max-width: 720px) {
   .split-rows,
   .split-rows.is-mig,
   .split-rows.is-shared {
@@ -769,6 +847,12 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
     white-space: normal;
   }
 
+  .split-row__holder > :first-child {
+    overflow-wrap: anywhere;
+  }
+}
+
+@container device-split (max-width: 400px) {
   .split-meters {
     grid-template-columns: max-content minmax(0, 1fr);
   }
@@ -777,6 +861,41 @@ const hasSummary = computed(() => props.status === 'ready' && (summary.value.len
     grid-column: 2;
     margin-top: -6px;
     text-align: left;
+  }
+}
+@container device-split (max-width: 240px) {
+  .device-split__device {
+    flex-wrap: wrap;
+  }
+
+  .device-split__identity {
+    max-width: 100%;
+  }
+
+  .split-meters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .split-meter__value {
+    grid-column: auto;
+    margin-top: 0;
+  }
+
+  .split-row__memory,
+  .split-row__compute {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .split-mig__grid,
+  .split-mig__ruler {
+    gap: 2px;
+    padding-inline: 2px;
+  }
+
+  .split-part,
+  .split-strip__rest {
+    padding-inline: 2px;
   }
 }
 </style>

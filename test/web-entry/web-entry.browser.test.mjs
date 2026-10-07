@@ -4111,6 +4111,464 @@ test('node and GPU detail pages do not fetch cluster-wide pending Pods', async()
   }
 }, { timeout: 30_000 })
 
+const allocationNode = { uid: '4fbeb06d-b761-47cb-ba21-6b94cee70023', name: 'allocation-node-001' }
+const allocationDeviceIDs = Array.from({ length: 8 }, (_, index) => `GPU-c4ac69${String(index + 1).padStart(2, '0')}-dad4-5833-a440-68ebcad8e1cf`)
+
+function nodeAllocationFixture(count = 8) {
+  const devices = allocationDeviceIDs.slice(0, count).map((uuid) => ({
+    uuid, nodeUid: allocationNode.uid, nodeName: allocationNode.name,
+    type: 'NVIDIA-A100-SXM4-80GB-with-a-long-inventory-model-name', vendor: 'NVIDIA',
+    mode: 'hami-core', unconfigured: false, health: true,
+    vgpuUsed: 2, vgpuTotal: 10, memoryUsed: 12288, memoryTotal: 81920,
+    coreUsed: 30, coreTotal: 100, coreUsedKnown: true,
+  }))
+  const containers = ['worker-0', 'worker-1'].map((name, index) => ({
+    name, appName: 'eight-device-job', podUid: '57d04cdc-7597-4585-bd2d-63d562b9863b', namespace: 'research',
+    nodeUid: allocationNode.uid, nodeName: allocationNode.name, status: 'success',
+    deviceIds: devices.map(({ uuid }) => uuid),
+    devices: devices.map(({ uuid }) => ({
+      id: uuid, allocatedMem: (index + 1) * 4096, allocatedCores: (index + 1) * 10,
+      allocatedCoresKnown: true, allocationShape: 'soft',
+    })),
+  }))
+  return { devices, containers: count ? containers : [] }
+}
+
+async function installNodeAllocationFixture(page, state) {
+  const requests = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (/\/v1\/(?:gpus?|containers?|workloads)$/.test(path)) {
+      requests.push({ path: path.slice(path.lastIndexOf('/')), body: request.postDataJSON() })
+    }
+  })
+  await page.route('**/v1/node?**', (route) => route.fulfill({ json: {
+    ...allocationNode, ip: '192.0.2.30', isReady: true, isSchedulable: true,
+    type: ['NVIDIA'], cardCnt: state.devices.length,
+    vgpuUsed: state.devices.length * 2, vgpuTotal: state.devices.length * 10,
+    coreUsed: state.devices.length * 30, coreTotal: state.devices.length * 100,
+    memoryUsed: state.devices.length * 12288, memoryTotal: state.devices.length * 81920,
+  } }))
+  await page.route('**/v1/gpus', (route) => route.fulfill({ json: {
+    code: 0, list: state.devices, total: state.devices.length,
+  } }))
+  await page.route('**/v1/containers', (route) => route.fulfill({
+    status: state.containerStatus ?? 200,
+    json: state.containerPayload ?? { code: 0, items: state.containers, total: state.containers.length },
+  }))
+  return requests
+}
+
+function assertNodeAllocationRequests(requests) {
+  assert.deepEqual(requests.map(({ path }) => path).sort(), ['/containers', '/gpus'], 'Node allocation must use two batch requests without per-device detail or workload requests')
+  assert.deepEqual(requests.find(({ path }) => path === '/gpus').body, { filters: { nodeName: allocationNode.name } })
+  assert.deepEqual(requests.find(({ path }) => path === '/containers').body, { filters: { nodeUid: allocationNode.uid } })
+}
+
+test('node device allocation uses two node-scoped batches and shows at most four devices initially', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const state = nodeAllocationFixture()
+  const requests = await installNodeAllocationFixture(page, state)
+  try {
+    for (const count of [0, 1, 4, 5, 8]) {
+      Object.assign(state, nodeAllocationFixture(count))
+      const start = requests.length
+      await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=incorrect-url-name`, { waitUntil: 'networkidle' })
+      const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+      await section.waitFor()
+      const cards = section.locator('article[data-device-id]:visible')
+      assert.equal(await cards.count(), Math.min(count, 4), `Node with ${count} devices has the wrong initial visible count`)
+      if (!count) await section.getByText('No devices on this node', { exact: true }).waitFor()
+      assertNodeAllocationRequests(requests.slice(start))
+      const expand = section.getByRole('button', { name: `Show ${count - 4} more ${count === 5 ? 'device' : 'devices'}`, exact: true })
+      assert.equal(await expand.count(), count > 4 ? 1 : 0)
+      if (count) {
+        const deviceLink = cards.first().getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true })
+        assert.equal(await deviceLink.getAttribute('href'), `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+        assert.match(await cards.first().textContent(), /2 workloads/)
+        assert.doesNotMatch(await cards.first().textContent(), /[·•]/)
+      }
+      if (count > 4) {
+        await expand.click()
+        assert.equal(await cards.count(), count)
+        await section.getByRole('button', { name: 'Show fewer', exact: true }).click()
+        assert.equal(await cards.count(), 4)
+        assertNodeAllocationRequests(requests.slice(start))
+      }
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 45_000 })
+
+test('node device allocation keyboard expansion and occupancy drawer preserve identity and focus', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 800 } })
+  const state = nodeAllocationFixture()
+  const requests = await installNodeAllocationFixture(page, state)
+  try {
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+    const expand = section.getByRole('button', { name: 'Show 4 more devices', exact: true })
+    await expand.focus()
+    await expand.press('Enter')
+    const fifth = section.locator(`article[data-device-id="${allocationDeviceIDs[4]}"]`)
+    const fifthLink = fifth.getByRole('link', { name: `View device ${allocationDeviceIDs[4]}`, exact: true })
+    await waitUntil(() => fifthLink.evaluate((element) => element === document.activeElement), 'Keyboard expansion did not focus the first newly revealed device')
+    assert.equal(await section.locator('article[data-device-id]:visible').count(), 8)
+    const opener = fifth.getByRole('button', { name: `View occupancy for ${allocationDeviceIDs[4]}`, exact: true })
+    const earlyEscape = await opener.evaluate(async(button) => {
+      button.focus()
+      button.click()
+      // Flush Vue's render and nextTick focus while staying ahead of TDesign's
+      // deferred open timer, the same opening window that lost Escape in CI.
+      await Promise.resolve()
+      await Promise.resolve()
+      const dialog = document.querySelector('.node-occupancy-drawer')
+      const focusedBeforeEscape = document.activeElement === dialog
+      const openBeforeEscape = dialog.classList.contains('t-drawer--open')
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+      const dismissedBeforeTimers = dialog.getAttribute('aria-hidden') === 'true' && !dialog.hasAttribute('role')
+      // Drain the already queued visibility updates before checking that an
+      // older open callback cannot leave the dismissed drawer open again.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return {
+        focusedBeforeEscape,
+        openBeforeEscape,
+        dismissedBeforeTimers,
+        openAfterTimers: dialog.classList.contains('t-drawer--open'),
+        contentAfterTimers: Boolean(dialog.querySelector('.node-occupancy')),
+      }
+    })
+    assert.deepEqual(earlyEscape, {
+      focusedBeforeEscape: true,
+      openBeforeEscape: false,
+      dismissedBeforeTimers: true,
+      openAfterTimers: false,
+      contentAfterTimers: false,
+    }, 'Escape during the focused opening phase must dismiss the drawer without a deferred reopen')
+    await waitUntil(() => opener.evaluate((element) => element === document.activeElement), 'Early Escape did not restore the originating device occupancy entry')
+    await opener.click()
+    const drawer = page.getByRole('dialog', { name: 'Device occupancy', exact: true })
+    await drawer.waitFor()
+    assert.match(await drawer.textContent(), new RegExp(allocationDeviceIDs[4]))
+    for (const container of state.containers) {
+      const link = drawer.locator(`a[href="${basePath}workloads/${container.podUid}/containers/${container.name}"]`)
+      assert.equal(await link.count(), 1, 'Every distinct container must retain its real workload destination')
+    }
+    const meters = drawer.locator('.split-meters')
+    await meters.waitFor()
+    assert.deepEqual((await meters.locator('.split-meter__value').allTextContents()).map((value) => value.trim()), ['12 GiB / 80 GiB', '30% / 100%'], 'The drawer must show the same memory and compute allocations as the device card')
+    const readParts = () => meters.locator('.split-meter__track').evaluateAll((tracks) => tracks.map((track) =>
+      Array.from(track.querySelectorAll('.split-meter__part')).map((part) => ({
+        active: part.classList.contains('is-active'),
+        fill: getComputedStyle(part).backgroundColor,
+        visible: part.getBoundingClientRect().width > 0,
+      }))))
+    const restingParts = await readParts()
+    assert.deepEqual(restingParts.map((parts) => parts.length), [2, 2], 'Both quota bars must retain the two distinct workload allocations')
+    assert.ok(restingParts.flat().every((part) => part.visible && !part.active))
+    await captureTrendScreenshot(page, 'node-device-allocation-drawer')
+    for (const [index, container] of state.containers.entries()) {
+      const destination = `a[href="${basePath}workloads/${container.podUid}/containers/${container.name}"]`
+      const link = drawer.locator(destination)
+      const holder = drawer.locator('.split-row').filter({ has: page.locator(destination) })
+      await holder.hover()
+      await waitUntil(async() => (await readParts()).every((parts, trackIndex) => parts.every((part, partIndex) =>
+        part.active === (partIndex === index) && (partIndex === index ? part.fill !== restingParts[trackIndex][partIndex].fill : part.fill === restingParts[trackIndex][partIndex].fill))), 'Hover must highlight only the selected workload in both allocation bars')
+      if (!index) await captureTrendScreenshot(page, 'node-device-allocation-drawer-highlight')
+      await drawer.locator('.device-split__device').hover()
+      await waitUntil(async() => JSON.stringify(await readParts()) === JSON.stringify(restingParts), 'Leaving a workload must restore both allocation bars')
+      await link.focus()
+      await waitUntil(async() => (await readParts()).every((parts) => parts.every((part, partIndex) => part.active === (partIndex === index))), 'Keyboard focus must identify the same workload segments as pointer hover')
+      await drawer.getByRole('button', { name: 'Close device occupancy', exact: true }).focus()
+      await waitUntil(async() => JSON.stringify(await readParts()) === JSON.stringify(restingParts), 'Moving keyboard focus out of a workload must clear the segment highlight')
+    }
+    await drawer.getByRole('button', { name: 'Close device occupancy', exact: true }).focus()
+    await page.keyboard.press('Shift+Tab')
+    assert.equal(await drawer.evaluate((element) => element.contains(document.activeElement)), true, 'Reverse tabbing escaped the modal drawer')
+    await page.keyboard.press('Tab')
+    assert.equal(await drawer.evaluate((element) => element.contains(document.activeElement)), true, 'Tabbing past the last drawer link escaped to the page')
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    await waitUntil(() => opener.evaluate((element) => element === document.activeElement), 'Escape did not restore the originating device occupancy entry')
+    assert.equal(await section.locator('article[data-device-id]:visible').count(), 8)
+    await opener.press('Enter')
+    await drawer.waitFor()
+    await drawer.getByRole('button', { name: 'Close device occupancy', exact: true }).click()
+    await drawer.waitFor({ state: 'hidden' })
+    await waitUntil(() => opener.evaluate((element) => element === document.activeElement), 'Closing the drawer did not restore its entry')
+    const collapse = section.getByRole('button', { name: 'Show fewer', exact: true })
+    await collapse.focus()
+    await collapse.press('Enter')
+    assert.equal(await section.locator('article[data-device-id]:visible').count(), 4)
+    await waitUntil(() => section.getByRole('button', { name: 'Show 4 more devices', exact: true }).evaluate((element) => element === document.activeElement), 'Collapsing lost the surviving expansion control focus')
+    assertNodeAllocationRequests(requests)
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
+test('node device allocation remains readable in Chinese and English across common widths', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const state = nodeAllocationFixture(4)
+  Object.assign(state.devices[1], {
+    mode: 'mig', memoryUsed: 51200, coreUsed: 56,
+    migProfiles: [
+      { name: '3g.40gb', placements: [{ start: 0, size: 4 }] },
+      { name: '1g.10gb', placements: [{ start: 4, size: 1 }, { start: 5, size: 1 }, { start: 6, size: 1 }] },
+    ],
+  })
+  for (const [index, container] of state.containers.entries()) {
+    Object.assign(container.devices[1], {
+      allocationShape: 'mig', allocatedMem: index ? 10240 : 40960,
+      allocatedCores: index ? 14 : 42, template: index ? '1g.10gb' : '3g.40gb',
+      migStart: index ? 4 : 0, migSize: index ? 1 : 4,
+    })
+  }
+  Object.assign(state.devices[3], {
+    type: 'NVIDIA H100', mode: 'mig', vgpuUsed: 1, memoryUsed: 81920, coreUsed: 100,
+    migProfiles: [{ name: '7g.80gb', placements: [{ start: 0, size: 8 }] }],
+  })
+  Object.assign(state.containers[0].devices[3], {
+    allocationShape: 'mig', allocatedMem: 81920, allocatedCores: 100,
+    template: '7g.80gb', migStart: 0, migSize: 8,
+  })
+  state.containers[1].devices = state.containers[1].devices.filter((device) => device.id !== allocationDeviceIDs[3])
+  state.containers[1].deviceIds = state.containers[1].deviceIds.filter((id) => id !== allocationDeviceIDs[3])
+  for (const locale of ['zh-CN', 'en-US']) {
+    const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
+    await installNodeAllocationFixture(page, state)
+    try {
+      await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+      const section = page.getByRole('region', { name: locale === 'zh-CN' ? '设备分配' : 'Device allocation', exact: true })
+      await section.waitFor()
+      assert.equal(await section.locator('article[data-device-id]:visible').count(), 4)
+      assert.match(await section.locator(`article[data-device-id="${allocationDeviceIDs[1]}"]`).textContent(), /3g\.40gb/)
+      const layouts = [1280, 1366, 1440, 1920, 390].map((width) => ({ width, collapsed: false }))
+      layouts.push({ width: 390, collapsed: true })
+      for (const { width, collapsed } of layouts) {
+        await page.setViewportSize({ width, height: 900 })
+        if (collapsed) {
+          await page.getByRole('button', { name: locale === 'zh-CN' ? '收起侧栏' : 'Collapse sidebar', exact: true }).click()
+          await waitUntil(async() => (await section.boundingBox()).width > 250, 'The collapsed sidebar did not release space for narrow node details')
+        }
+        await section.scrollIntoViewIfNeeded()
+        const geometry = await section.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          const cards = Array.from(element.querySelectorAll('article[data-device-id]')).filter((card) => card.getClientRects().length).map((card) => {
+            const box = card.getBoundingClientRect()
+            const name = card.querySelector('.device-split__name')
+            const mode = card.querySelector('.device-split__mode')
+            const nameBox = name.getBoundingClientRect()
+            const modeBox = mode.getBoundingClientRect()
+            return {
+              x: box.x, y: box.y, right: box.right, bottom: box.bottom,
+              nameSingleLine: nameBox.height <= Number.parseFloat(getComputedStyle(name).lineHeight) + 1,
+              nameVisible: nameBox.width > 0,
+              modeOnNameLine: Math.abs(nameBox.top + nameBox.height / 2 - modeBox.top - modeBox.height / 2) < 1,
+              overflow: card.scrollWidth > card.clientWidth + 1,
+              overflowingContent: Array.from(card.querySelectorAll('*')).filter((child) => {
+                const style = getComputedStyle(child)
+                return child.getClientRects().length && child.scrollWidth > child.clientWidth + 1 && style.overflowX === 'visible'
+              }).map((child) => ({
+                selector: child.className, clientWidth: child.clientWidth, scrollWidth: child.scrollWidth,
+                text: child.textContent.trim().slice(0, 80),
+              })),
+              escapedActions: Array.from(card.querySelectorAll('a, button')).some((action) => {
+                const actionBox = action.getBoundingClientRect()
+                return actionBox.left < box.left - 1 || actionBox.right > box.right + 1
+              }),
+            }
+          })
+          return { left: rect.left, right: rect.right, overflow: element.scrollWidth > element.clientWidth + 1, cards }
+        })
+        await captureTrendScreenshot(page, `node-device-allocation-${locale}-${width}${collapsed ? '-collapsed-sidebar' : ''}`)
+        for (const index of [1, 3]) {
+          const migCard = section.locator(`article[data-device-id="${allocationDeviceIDs[index]}"]`)
+          const identity = await migCard.locator('.device-split__device').boundingBox()
+          const summary = await migCard.locator('.device-split__summary').boundingBox()
+          assert.ok(summary && summary.y >= identity.y + identity.height - 1, `${locale} ${index === 1 ? 'long' : 'short'} MIG summary must stay below the device identity at ${width}`)
+          assert.ok(Math.abs(summary.x - identity.x) < 1, `${locale} MIG summary must align with the device identity at ${width}`)
+        }
+        assert.equal(geometry.overflow, false, `${locale} allocation section overflows at ${width}: ${JSON.stringify(geometry)}`)
+        for (const card of geometry.cards) {
+          assert.equal(card.overflow, false, `${locale} allocation card overflows at ${width}: ${JSON.stringify(card)}`)
+          assert.equal(card.nameSingleLine && card.nameVisible && card.modeOnNameLine, true, `${locale} long names must stay on one line beside the mode at ${width}`)
+          assert.equal(card.escapedActions, false, `${locale} device or occupancy link escapes its card at ${width}`)
+          assert.ok(card.x >= geometry.left - 1 && card.right <= geometry.right + 1)
+        }
+        if (width >= 1280) {
+          assert.ok(Math.abs(geometry.cards[0].y - geometry.cards[1].y) < 1, `Expected two device cards per row at ${width}`)
+          assert.ok(geometry.cards[2].y >= geometry.cards[0].bottom)
+        } else {
+          assert.ok(geometry.cards[1].y >= geometry.cards[0].bottom, 'A narrow allocation section must use a single column')
+          const mode = section.locator('.device-split__mode').first().locator('[title]')
+          assert.equal(await mode.getAttribute('title'), locale === 'zh-CN' ? 'HAMi-core 模式' : 'HAMi-core mode', 'A truncated mode tag must retain its complete name')
+        }
+        assert.equal(await section.locator('article[data-device-id]:visible').count(), 4, 'Narrow layouts must retain the default four devices')
+        if (width === 1280) {
+          const name = section.locator('.device-split__name .ellipsis-text').first()
+          assert.equal(await name.evaluate((element) => element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis'), true, 'A long model must use an end ellipsis rather than displacing its mode')
+          const tooltip = page.getByRole('tooltip').filter({ hasText: state.devices[0].type })
+          await name.hover()
+          await tooltip.waitFor()
+          assert.equal((await tooltip.textContent()).trim(), state.devices[0].type, 'Hover must expose the full model name')
+          await section.getByRole('heading').hover()
+          await tooltip.waitFor({ state: 'hidden' })
+          await name.focus()
+          await tooltip.waitFor()
+          assert.equal((await tooltip.textContent()).trim(), state.devices[0].type, 'Keyboard focus must expose the same full model name')
+          await name.press('Escape')
+          await tooltip.waitFor({ state: 'hidden' })
+          await section.getByRole('button', { name: locale === 'zh-CN' ? '刷新设备分配' : 'Refresh device allocation', exact: true }).focus()
+        }
+      }
+    } finally {
+      await page.close()
+    }
+  }
+}, { timeout: 45_000 })
+
+test('node device allocation never turns failed or incomplete holder data into free capacity', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 } })
+  const state = nodeAllocationFixture(4)
+  await installNodeAllocationFixture(page, state)
+  try {
+    for (const scenario of [
+      { label: 'failed request', status: 503, payload: { code: 503, message: 'holder snapshot temporarily unavailable' }, text: 'Allocation data unavailable' },
+      { label: 'missing items field', status: 200, payload: { code: 0 }, text: 'Allocation data unavailable' },
+      { label: 'empty list despite inventory allocations', status: 200, payload: { code: 0, items: [], total: 0 }, text: 'Allocation details are incomplete' },
+    ]) {
+      state.containerStatus = scenario.status
+      state.containerPayload = scenario.payload
+      await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+      const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+      const cards = section.locator('article[data-device-id]:visible')
+      assert.equal(await cards.count(), 4, `${scenario.label}: device inventory disappeared with its holders`)
+      assert.equal(await cards.getByText(scenario.text, { exact: true }).count(), 4, scenario.label)
+      assert.equal(await cards.getByText('No allocations', { exact: true }).count(), 0, `${scenario.label}: missing holders appeared idle`)
+      assert.equal(await cards.getByText('0 workloads', { exact: true }).count(), 0, `${scenario.label}: an unverified zero looked complete`)
+      assert.equal(await cards.locator('.split-meter__track').count(), 0, `${scenario.label}: incomplete snapshots must not draw apparent free capacity`)
+      assert.equal(await cards.getByText('12 GiB', { exact: true }).count(), 4, `${scenario.label}: known inventory allocation must remain visible`)
+      assert.equal(await cards.getByRole('button', { name: /View occupancy for/ }).count(), 0, `${scenario.label}: no confirmed holders should produce an empty drawer`)
+    }
+    state.containerStatus = 200
+    state.containerPayload = undefined
+    const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+    await section.getByRole('button', { name: 'Refresh device allocation', exact: true }).click()
+    await waitUntil(async() => await section.locator('.split-meters').count() === 4, 'A refreshed complete snapshot did not recover allocation meters')
+    assert.equal(await section.getByText('2 workloads', { exact: true }).count(), 4)
+
+    Object.assign(state, nodeAllocationFixture(1))
+    Object.assign(state.devices[0], { mode: 'mig', vgpuUsed: 1, memoryUsed: 10240, coreUsed: 0 })
+    state.containers = [state.containers[0]]
+    state.containers[0].devices = [{ id: allocationDeviceIDs[0], allocationShape: 'mig', template: '1g.10gb', allocatedCoresKnown: false }]
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    const card = section.locator('article[data-device-id]')
+    await card.getByText('Allocation details are incomplete', { exact: true }).waitFor()
+    assert.equal(await card.getByText('10 GiB', { exact: true }).count(), 1, 'Known inventory memory was discarded with missing allocation fields')
+    assert.equal(await card.getByText('1g.10gb', { exact: true }).count(), 1, 'A known MIG profile must survive missing placement metadata')
+    assert.equal(await card.locator('.split-mig').count(), 0, 'Missing MIG placement metadata must not produce an invented partition map')
+    assert.equal(await card.getByText('0%', { exact: true }).count(), 0, 'An occupied device with unknown compute reservations appeared unallocated')
+    await card.getByRole('button', { name: `View occupancy for ${allocationDeviceIDs[0]}`, exact: true }).click()
+    const drawer = page.getByRole('dialog', { name: 'Device occupancy', exact: true })
+    await drawer.waitFor()
+    assert.equal((await drawer.locator('.split-row__memory').textContent()).trim(), 'Memory --')
+    assert.equal((await drawer.locator('.split-row__compute').textContent()).trim(), 'Compute unknown', 'Missing compute allocation must remain unknown in the holder drawer')
+    assert.match(await drawer.locator('.split-row__part').textContent(), /1g\.10gb/)
+    assert.equal(await drawer.locator('.split-meters, .split-mig, .split-strip').count(), 0, 'Incomplete holder metadata must not become invented capacity in the drawer')
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    state.devices[0].mode = 'hami-core'
+    state.containers[0].devices[0].allocationShape = 'soft'
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    await card.getByText('Allocation details are incomplete', { exact: true }).waitFor()
+    await card.getByRole('button', { name: `View occupancy for ${allocationDeviceIDs[0]}`, exact: true }).click()
+    await drawer.waitFor()
+    assert.equal(await drawer.locator('.split-meters').count(), 0, 'Shared workloads with missing quotas must not display fabricated zero allocation bars')
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    Object.assign(state, nodeAllocationFixture(1))
+    Object.assign(state.devices[0], { vgpuUsed: 0, memoryUsed: 0, coreUsed: 0 })
+    state.containers = []
+    await section.getByRole('button', { name: 'Refresh device allocation', exact: true }).click()
+    await card.getByText('No allocations', { exact: true }).waitFor()
+    assert.equal(await card.locator('.split-meter__track').count(), 2, 'A complete, genuinely idle device must retain valid zero allocation meters')
+  } finally {
+    await page.close()
+  }
+}, { timeout: 45_000 })
+
+test('node device allocation retains the same allocation display when opening device and workload details', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const state = nodeAllocationFixture()
+  const requests = await installNodeAllocationFixture(page, state)
+  await page.route('**/v1/gpu?**', (route) => {
+    const uid = new URL(route.request().url()).searchParams.get('uid')
+    return route.fulfill({ json: state.devices.find((device) => device.uuid === uid) || {} })
+  })
+  await page.route('**/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: state.containers }))
+  await page.route('**/v1/container?**', (route) => {
+    const name = new URL(route.request().url()).searchParams.get('name')
+    const container = state.containers.find((item) => item.name === name)
+    return route.fulfill({ json: container ? {
+      ...container, type: state.devices[0].type,
+      allocatedDevices: container.devices.length,
+      allocatedMem: container.devices.reduce((sum, allocation) => sum + allocation.allocatedMem, 0),
+      allocatedCores: container.devices.reduce((sum, allocation) => sum + allocation.allocatedCores, 0),
+    } : {} })
+  })
+  const allocationDisplay = async(split) => {
+    await split.locator('.split-meters').waitFor()
+    const values = (await split.locator('.split-meter__value').allTextContents()).map((value) => value.trim())
+    const parts = await split.locator('.split-meter__track').evaluateAll((tracks) => tracks.map((track) =>
+      Array.from(track.querySelectorAll('.split-meter__part')).filter((part) => part.getBoundingClientRect().width > 0).length))
+    return { values, parts }
+  }
+  try {
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    const firstCard = page.getByRole('region', { name: 'Device allocation', exact: true })
+      .locator(`article[data-device-id="${allocationDeviceIDs[0]}"]`)
+    const nodeSplit = firstCard.locator('.device-split')
+    const nodeDisplay = await allocationDisplay(nodeSplit)
+    assert.deepEqual(nodeDisplay, { values: ['12 GiB / 80 GiB', '30% / 100%'], parts: [2, 2] })
+    assert.equal(await nodeSplit.locator('.split-row').count(), 0, 'The node summary must leave detailed holders in its occupancy drawer')
+    assert.ok((await nodeSplit.locator('.device-split__model').textContent()).includes(state.devices[0].type))
+    assertNodeAllocationRequests(requests)
+    await nodeSplit.scrollIntoViewIfNeeded()
+    await captureTrendScreenshot(page, 'node-shared-device-split')
+
+    await firstCard.getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true }).click()
+    await page.waitForURL((url) => url.pathname === `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+    const deviceSplit = page.locator('.device-split-block .device-split[aria-busy="false"]')
+    assert.deepEqual(await allocationDisplay(deviceSplit), nodeDisplay, 'The device detail changed the allocation values or collapsed the per-holder segments')
+    assert.equal(await deviceSplit.locator('.split-row').count(), 2)
+    await deviceSplit.scrollIntoViewIfNeeded()
+    await captureTrendScreenshot(page, 'device-shared-device-split')
+
+    const container = state.containers[0]
+    await deviceSplit.locator(`a[href="${basePath}workloads/${container.podUid}/containers/${container.name}"]`).click()
+    await page.waitForURL((url) => url.pathname === `${basePath}workloads/${container.podUid}/containers/${container.name}`)
+    const workloadSplits = page.locator('.workload-split .device-split[aria-busy="false"]')
+    await waitUntil(async() => await workloadSplits.count() === 8, 'The eight-device workload lost one of its allocation displays')
+    const workloadSplit = workloadSplits.filter({ has: page.locator(`a[href="${basePath}accelerators/${allocationDeviceIDs[0]}"]`) })
+    assert.deepEqual(await allocationDisplay(workloadSplit), nodeDisplay, 'The workload detail changed the same device allocation values or segments')
+    assert.equal(await workloadSplit.locator('.split-row.is-current').count(), 1, 'The selected container must remain highlighted in its device allocation')
+    assert.equal(await workloadSplit.locator('.split-row').count(), 2)
+    assert.ok((await workloadSplit.locator('.device-split__model').textContent()).includes(state.devices[0].type))
+    await workloadSplit.scrollIntoViewIfNeeded()
+    await captureTrendScreenshot(page, 'workload-shared-device-split')
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
 test('closing a scheduling diagnosis prevents its delayed response from replacing another Pod', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
