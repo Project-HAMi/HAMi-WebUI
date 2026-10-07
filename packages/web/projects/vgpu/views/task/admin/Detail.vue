@@ -243,6 +243,7 @@ import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import { timeParse, calculatePrometheusStep, roundToDecimal } from '@/utils';
+import { formatQueryTimestamp } from '@/utils/query-time.mjs';
 import taskApi from '~/vgpu/api/task';
 import BlockBox from '@/components/BlockBox.vue';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
@@ -548,8 +549,8 @@ const taskMonitoringRange = computed(() => {
   const [rangeStart, rangeEnd] = times.value || [];
   if (!rangeStart || !rangeEnd) return null;
   return {
-    start: timeParse(rangeStart),
-    end: timeParse(rangeEnd),
+    start: formatQueryTimestamp(rangeStart),
+    end: formatQueryTimestamp(rangeEnd),
     step: calculatePrometheusStep(rangeStart, rangeEnd),
   };
 });

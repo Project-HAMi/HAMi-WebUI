@@ -606,6 +606,14 @@ function trackTrendRequests(page) {
   return requests
 }
 
+// Read local picker values in the browser's zone, independently of the query formatter.
+async function localRangeAsUTC(page, values) {
+  return page.evaluate((timestamps) => timestamps.map((value) => {
+    const [year, month, day, hour, minute, second] = value.split(/[- :]/).map(Number)
+    return new Date(year, month - 1, day, hour, minute, second).toISOString().replace('.000Z', 'Z')
+  }), values)
+}
+
 const trendPages = [
   ['overview', 5],
   ['nodes/node-1?nodeName=node-1', 5],
@@ -2452,6 +2460,94 @@ test('trend pages request each series once on mount and once when refreshing a p
   }
 }, { timeout: 60_000 })
 
+test('all trend pages send the same UTC seconds across browser time zones', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const timezoneId of ['UTC', 'Asia/Shanghai', 'America/New_York']) {
+    for (const [route, seriesCount] of trendPages) {
+      await t.test(`${timezoneId}: ${route}`, async() => {
+        const page = await browser.newPage({ locale: 'en-US', timezoneId })
+        await page.clock.setFixedTime(new Date('2026-10-07T12:00:00.987Z'))
+        const requests = trackTrendRequests(page)
+        try {
+          await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+          assert.equal(requests.length, seriesCount)
+          for (const request of requests) {
+            assert.deepEqual(request.range, { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' })
+          }
+          await page.clock.setFixedTime(new Date('2026-10-07T12:01:01.999Z'))
+          await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, seriesCount * 2)
+          for (const request of requests.slice(seriesCount)) {
+            assert.deepEqual(request.range, { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' })
+          }
+        } finally {
+          await page.close()
+        }
+      })
+    }
+  }
+})
+
+test('local custom ranges preserve UTC instants through refresh and cancellation in standard and daylight time', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const cases = [
+    { timezoneId: 'UTC', now: '2026-10-07T12:00:00Z', local: ['2026-10-06 10:12:34', '2026-10-06 11:23:45'], utc: ['2026-10-06T10:12:34Z', '2026-10-06T11:23:45Z'] },
+    { timezoneId: 'Asia/Shanghai', now: '2026-10-07T12:00:00Z', local: ['2026-10-06 18:12:34', '2026-10-06 19:23:45'], utc: ['2026-10-06T10:12:34Z', '2026-10-06T11:23:45Z'] },
+    { timezoneId: 'America/New_York', now: '2026-10-07T12:00:00Z', local: ['2026-10-06 06:12:34', '2026-10-06 07:23:45'], utc: ['2026-10-06T10:12:34Z', '2026-10-06T11:23:45Z'] },
+    { timezoneId: 'America/New_York', now: '2026-01-07T12:00:00Z', local: ['2026-01-06 05:12:34', '2026-01-06 06:23:45'], utc: ['2026-01-06T10:12:34Z', '2026-01-06T11:23:45Z'] },
+    { timezoneId: 'America/New_York', now: '2026-03-09T12:00:00Z', local: ['2026-03-08 01:30:00', '2026-03-08 03:30:00'], utc: ['2026-03-08T06:30:00Z', '2026-03-08T07:30:00Z'] }
+  ]
+  // Overview and workload exercise both active range builders. Other trend pages
+  // share the overview hook and are covered by the time-zone matrix above.
+  for (const fixture of cases) {
+    for (const [route, seriesCount] of [trendPages[0], trendPages[3]]) {
+      await t.test(`${fixture.timezoneId} ${fixture.now}: ${route}`, async() => {
+        const page = await browser.newPage({ locale: 'en-US', timezoneId: fixture.timezoneId })
+        await page.clock.install({ time: new Date(fixture.now) })
+        const requests = trackTrendRequests(page)
+        try {
+          await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+          await selectTrendRange(page, 'custom')
+          const filter = page.locator('.trend-time-filter')
+          const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+          const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+          await start.click()
+          await page.locator('.trend-time-filter-popup:visible').getByText(`Local time · ${fixture.timezoneId}`, { exact: true }).waitFor()
+          await start.fill(fixture.local[0])
+          await end.click()
+          await end.fill(fixture.local[1])
+          await end.press('Enter')
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, seriesCount * 2)
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], fixture.local)
+          for (const request of requests.slice(seriesCount)) {
+            assert.deepEqual([request.range.start, request.range.end], fixture.utc)
+          }
+          await start.click()
+          await start.fill('2025-01-01 01:02:03')
+          await page.locator(route === 'overview' ? '.home-page-title' : '.layout-title').first().click()
+          await waitUntil(async() => await start.inputValue() === fixture.local[0], 'Leaving a local draft must restore the applied range')
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], fixture.local)
+          assert.equal(requests.length, seriesCount * 2, 'Canceling a local draft must not query')
+          await page.clock.setSystemTime(new Date(new Date(fixture.now).getTime() + 61_999))
+          await start.click()
+          await start.fill('2025-01-01 01:02:03')
+          await filter.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+          await page.waitForLoadState('networkidle')
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], fixture.local)
+          assert.equal(requests.length, seriesCount * 3, 'Custom refresh must discard the draft and query once')
+          for (const request of requests.slice(seriesCount * 2)) {
+            assert.deepEqual([request.range.start, request.range.end], fixture.utc)
+          }
+        } finally {
+          await page.close()
+        }
+      })
+    }
+  }
+})
+
 test('explicit trend refresh advances relative ranges once and blocks repeat requests on every trend page', { timeout: 60_000 }, async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
   for (const [route, seriesCount] of trendPages) {
@@ -2479,7 +2575,7 @@ test('explicit trend refresh advances relative ranges once and blocks repeat req
         assert.equal(await refresh.getAttribute('aria-busy'), 'true')
         if (route === 'overview') await assertRefreshAnimation(page, refresh, refreshIcon)
         for (const request of requests.slice(seriesCount)) {
-          assert.deepEqual([request.range.start, request.range.end], ['2026-10-07 11:01:01', '2026-10-07 12:01:01'])
+          assert.deepEqual([request.range.start, request.range.end], ['2026-10-07T11:01:01Z', '2026-10-07T12:01:01Z'])
         }
         const bounds = await refresh.boundingBox()
         await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
@@ -2507,7 +2603,7 @@ test('explicit trend refresh advances relative ranges once and blocks repeat req
           }
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * (3 + index), `${key} must refresh exactly once, including a held key after the response`)
-          assert.equal(requests.at(-1).range.end, `2026-10-07 12:0${index + 2}:02`)
+          assert.equal(requests.at(-1).range.end, `2026-10-07T12:0${index + 2}:02Z`)
           assert.equal(await trendRangeButton(page, '1h').getAttribute('aria-pressed'), 'true')
         }
       } finally {
@@ -2559,7 +2655,7 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
     assert.equal(await trendRangeButton(page, 'custom').getAttribute('aria-pressed'), 'true')
     assert.equal(await page.locator('.t-message').count(), 0)
-    for (const request of requests.slice(10)) assert.deepEqual([request.range.start, request.range.end], applied)
+    for (const request of requests.slice(10)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
 
     let fail = true
     await page.route('**/v1/monitor/query/range-vector', (route) => fail
@@ -2577,7 +2673,7 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     assert.equal(await page.locator('.metric-chart__refresh--error').count(), 0)
     await waitUntil(() => refresh.isEnabled(), 'A completed retry must enable refresh again')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-    for (const request of requests.slice(15)) assert.deepEqual([request.range.start, request.range.end], applied)
+    for (const request of requests.slice(15)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
     await captureTrendScreenshot(page, 'p7-custom-refresh-applied')
   } finally {
     await page.close()
@@ -2743,7 +2839,7 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await refresh.click()
     await page.waitForLoadState('networkidle')
     assert.equal(requests.length, 20, 'Compact refresh must publish exactly once')
-    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-06 12:02:02', '2026-10-07 12:02:02'])
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-06T12:02:02Z', '2026-10-07T12:02:02Z'])
   } finally {
     await page.close()
   }
@@ -2817,7 +2913,7 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
     await confirm.click()
     await panel.waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
-    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], selected)
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
     assert.equal(requests.length, 10, 'Narrow confirmation must apply exactly once')
     assert.ok(await end.evaluate((element) => element === document.activeElement))
     await waitUntil(async() => await end.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor) === 'rgb(242, 243, 255)', 'Narrow focused input must retain the accepted light-blue fill')
@@ -2835,7 +2931,7 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
     assert.equal(requests.length, 10, 'Wheel editing must not submit before confirmation')
     await confirm.click()
     await waitUntil(() => requests.length === 15, 'Confirming a wheel edit must fetch exactly once')
-    assert.equal(requests.at(-1).range.end, afterWheel)
+    assert.equal(requests.at(-1).range.end, (await localRangeAsUTC(page, [afterWheel]))[0])
   } finally {
     await page.close()
   }
@@ -2955,7 +3051,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.equal(await page.locator('.t-message').count(), 0, 'Valid Enter must not show a warning')
     assert.deepEqual(
       [requests.at(-1).range.start, requests.at(-1).range.end],
-      selected
+      ['2025-09-01T13:12:34Z', '2025-09-01T14:23:45Z']
     )
 
     await start.click()
@@ -2988,7 +3084,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.equal(await filter.getByRole('status').textContent(), '')
     await selectTrendRange(page, 'custom')
     assert.deepEqual(
-      [await start.inputValue(), await end.inputValue()],
+      await localRangeAsUTC(page, [await start.inputValue(), await end.inputValue()]),
       [requests.at(-1).range.start, requests.at(-1).range.end]
     )
     assert.equal(requests.length, 15)
@@ -3321,7 +3417,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await page.waitForLoadState('networkidle')
     assert.equal(requests.length, 10)
-    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], selected)
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
     assert.equal(await panel.count(), 0, 'Confirm must finish editing and close the calendar')
     assert.ok(await end.evaluate((element) => element === document.activeElement), 'Confirm must return keyboard focus to the date input')
 
@@ -3346,7 +3442,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await page.waitForLoadState('networkidle')
     assert.equal(requests.length, 15, 'A new calendar range after Confirm must apply once')
-    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], nextSelected)
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, nextSelected))
     assert.equal(await panel.count(), 0)
 
     await start.click()

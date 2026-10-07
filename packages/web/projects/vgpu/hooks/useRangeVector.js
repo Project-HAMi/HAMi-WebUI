@@ -1,6 +1,7 @@
 import cardApi from '~/vgpu/api/card';
 import { computed, ref, watch } from 'vue';
-import { timeParse, calculatePrometheusStep } from '@/utils';
+import { calculatePrometheusStep } from '@/utils';
+import { formatQueryTimestamp } from '@/utils/query-time.mjs';
 import {
   REQUEST_STATUS,
 } from '@/hooks/request-state.mjs';
@@ -132,8 +133,8 @@ const useRangeVector = (
     if (!start || !end) return;
 
     const range = {
-      start: timeParse(start),
-      end: timeParse(end),
+      start: formatQueryTimestamp(start),
+      end: formatQueryTimestamp(end),
       step: calculatePrometheusStep(start, end),
     };
     await Promise.all(
