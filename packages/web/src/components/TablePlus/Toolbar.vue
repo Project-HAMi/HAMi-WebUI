@@ -26,27 +26,18 @@
           </div>
         </template>
       </t-popup>
-      <t-button
-        size="medium"
-        variant="outline"
-        theme="default"
-        :aria-busy="refreshing ? 'true' : 'false'"
+      <refresh-button
+        :label="$t('common.refresh')"
+        :refreshing="refreshing"
         @click="$emit('refresh')"
-      >
-        <template #icon>
-          <refresh-icon
-            class="table-toolbar-refresh-icon"
-            :class="{ 'is-refreshing': refreshing }"
-          />
-        </template>
-      </t-button>
+      />
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue';
-import { RefreshIcon } from 'tdesign-icons-vue-next';
+import RefreshButton from '@/components/RefreshButton.vue';
 
 const props = defineProps({
   modelValue: {
@@ -100,23 +91,6 @@ const innerValue = computed({
   max-height: 320px;
   overflow: auto;
   padding: 12px 14px;
-}
-
-.table-toolbar-refresh-icon.is-refreshing {
-  color: var(--td-brand-color);
-  animation: table-toolbar-refresh 900ms linear infinite;
-}
-
-@keyframes table-toolbar-refresh {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .table-toolbar-refresh-icon.is-refreshing {
-    animation: none;
-  }
 }
 
 :deep(.table-toolbar-left .t-input) {

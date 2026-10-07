@@ -178,7 +178,7 @@
       </div>
     </section>
 
-    <TrendTimeFilter v-model="times" />
+    <TrendTimeFilter v-model="times" :loading="trendLoading" />
 
     <div class="line-box">
       <block-box
@@ -357,6 +357,8 @@ const { data: memoryTrend } = useRangeVector(
   renderNodeQuery,
   times,
 );
+const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value]
+  .some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 const computeAllocLegend = computed(() => t(isLowerBound(readTrendUncounted(computeTrend.value[2]))
   ? 'dashboard.allocRateLowerBoundLegend'
   : 'dashboard.allocRateLegend'));

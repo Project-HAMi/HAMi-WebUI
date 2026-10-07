@@ -267,7 +267,7 @@
       </template>
     </block-box>
 
-    <TrendTimeFilter v-model="times" class="card-trend-filter" />
+    <TrendTimeFilter v-model="times" :loading="trendLoading" class="card-trend-filter" />
     <div class="line-box">
       <block-box
         v-for="section in trendSections"
@@ -690,6 +690,8 @@ const { data: telemetryTrend } = useRangeVector(
   renderCardQuery,
   times,
 );
+const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value, ...telemetryTrend.value]
+  .some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 // The current readings do not depend on the chart range.
 const telemetryNow = useInstantVector(lineTools.map(({ query }) => ({ query })), renderCardQuery);
 
