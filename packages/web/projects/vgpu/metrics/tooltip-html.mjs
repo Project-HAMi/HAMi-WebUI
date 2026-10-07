@@ -1,4 +1,5 @@
 import { formatRangeTooltipValue } from './range-vector-state.mjs';
+import { formatTimeAxisTooltip } from './time-axis.mjs';
 
 export const escapeTooltipHtmlText = (value) =>
   String(value)
@@ -35,7 +36,9 @@ export const buildTimeSeriesTooltipFormatter = ({
 } = {}) => (params) => {
   if (!Array.isArray(params) || params.length === 0) return '';
 
-  const title = params[0]?.axisValueLabel ?? params[0]?.name ?? '';
+  const title = params[0]?.axisValue !== undefined
+    ? formatTimeAxisTooltip(params[0].axisValue) ?? '-'
+    : params[0]?.axisValueLabel ?? params[0]?.name ?? '';
   let result = `<div style="margin-bottom:5px;">${escapeTooltipHtmlText(
     title,
   )}</div>`;

@@ -43,9 +43,8 @@ test('UTC query serialization leaves input, axis, and tooltip formatting in loca
       });
       assert.equal(formatQueryTimestamp(value), '2026-10-07T12:00:00Z');
       assert.equal(timeParse(value), label);
-      assert.deepEqual(options.xAxis.data, [label]);
-      assert.equal(options.xAxis.axisLabel.formatter(label), localTime);
-      assert.ok(options.tooltip.formatter([{ axisValueLabel: label, seriesName: 'Usage', value: 42 }]).includes(label));
+      assert.deepEqual(options.series[0].data.map((point) => point.value ?? point), [[value.getTime(), 42]]);
+      assert.ok(options.tooltip.formatter([{ axisValue: String(value.getTime()), seriesName: 'Usage', value: 42 }]).includes(label));
     }
   } finally {
     if (originalTZ === undefined) delete process.env.TZ;
