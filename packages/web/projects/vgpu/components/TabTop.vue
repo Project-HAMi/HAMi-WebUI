@@ -1,15 +1,13 @@
 <template>
   <block-box :title="title">
     <template #extra>
-      <t-radio-group
+      <SegmentedControl
         v-model="tabActive"
-        theme="button"
-        variant="outline"
         size="small"
-        class="tab-top-radio"
-        :options="radioOptions"
-      >
-      </t-radio-group>
+        class="tab-top-switch"
+        :options="tabOptions"
+        :aria-label="title"
+      />
     </template>
 
     <div class="tab-top-list" :aria-busy="activeStatus === 'loading'">
@@ -80,6 +78,7 @@
 
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
+import SegmentedControl from '@/components/SegmentedControl/index.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import cardApi from '~/vgpu/api/card';
@@ -113,7 +112,7 @@ const createStatefulConfigs = (configs = []) =>
 const currentConfig = ref(createStatefulConfigs(props.config));
 const tabActive = ref('');
 
-const radioOptions = computed(() =>
+const tabOptions = computed(() =>
   (currentConfig.value || []).map(({ tab, key }) => ({
     label: tab,
     value: key,
@@ -258,30 +257,6 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-:deep(.tab-top-radio) {
-  flex-wrap: nowrap;
-  white-space: nowrap;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button) {
-  padding: 12px;
-  height: 32px;
-  font-size: 12px;
-  box-sizing: border-box;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button:first-child) {
-  border-radius: 6px 0 0 6px;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button:last-child) {
-  border-radius: 0 6px 6px 0;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button:only-child) {
-  border-radius: 6px;
 }
 
 .tab-top-list {

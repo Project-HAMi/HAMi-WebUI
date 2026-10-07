@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { mkdir } from 'node:fs/promises'
 import http from 'node:http'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
+import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -348,7 +351,7 @@ async function assertChartRuntime(target) {
   await page.mouse.move(0, 0)
 
   const initialRangeRequests = rangeRequests
-  await page.locator('.home-bottom-trend-filter .t-radio-button').nth(1).click()
+  await selectTrendRange(page, '3h')
   await waitUntil(
     () => rangeRequests > initialRangeRequests,
     'Changing the time range did not update the chart data'
@@ -517,7 +520,7 @@ async function assertTrendRefreshState(page) {
   }
   // Clicking without moving the pointer keeps a tooltip up unless the chart hides it.
   const selectRange = (index) => page.evaluate((position) => {
-    document.querySelectorAll('.home-bottom-trend-filter .t-radio-button')[position].click()
+    document.querySelectorAll('.home-bottom-trend-filter .segmented-control__option')[position].click()
   }, index)
 
   let mode = 'pass'
@@ -593,6 +596,82 @@ function trackMonitorRequests(page) {
     }
   })
   return requests
+}
+
+function trackTrendRequests(page) {
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  return requests
+}
+
+const trendPages = [
+  ['overview', 5],
+  ['nodes/node-1?nodeName=node-1', 5],
+  ['accelerators/gpu-1', 7],
+  ['workloads/pod-1/containers/worker', 2]
+]
+
+function trendRangeButton(page, value) {
+  const index = ['1h', '3h', '6h', '24h', '168h', '720h', 'custom'].indexOf(value)
+  assert.ok(index >= 0, `Unknown trend preset: ${value}`)
+  return page.locator('.trend-time-filter-presets .segmented-control__option').nth(index)
+}
+
+async function selectTrendRange(page, value) {
+  const filter = page.locator('.trend-time-filter')
+  const button = trendRangeButton(page, value)
+  if (await button.isVisible()) return button.click()
+  const label = (await button.textContent()).trim()
+  await filter.locator('.trend-time-filter-select').click()
+  await page.locator('.t-select-option:visible').getByText(label, { exact: true }).click()
+}
+
+async function captureTrendScreenshot(page, name) {
+  const directory = process.env.WEB_ENTRY_SCREENSHOT_DIR
+  if (!directory) return
+  await mkdir(directory, { recursive: true })
+  await page.screenshot({ path: join(directory, `${name}.png`) })
+}
+
+async function stablePopupBounds(popup) {
+  let previous
+  return waitUntil(async() => {
+    const bounds = await popup.boundingBox()
+    const snapshot = JSON.stringify(bounds)
+    const animating = await popup.evaluate((element) => element.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'))
+    const settled = bounds && !animating && snapshot === previous
+    previous = snapshot
+    return settled ? bounds : false
+  }, 'Popup placement did not settle')
+}
+
+async function customTimestampFieldsFit(filter) {
+  return filter.locator('.trend-time-filter-custom input').evaluateAll((elements) => elements.length === 2 && elements.every((element) => {
+    const width = element.getBoundingClientRect().width
+    const context = document.createElement('canvas').getContext('2d')
+    const style = getComputedStyle(element)
+    context.font = style.font
+    return context.measureText(element.value).width <= width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+  }))
+}
+
+async function assertRefreshAnimation(page, button, originalIcon) {
+  assert.ok(await originalIcon.evaluate((element) => element.isConnected), 'Refreshing must retain the same refresh SVG')
+  const icon = button.locator('.refresh-button__icon')
+  const animation = () => icon.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return [style.animationName, style.animationDuration, style.animationTimingFunction, style.animationIterationCount]
+  })
+  const [name, ...timing] = await animation()
+  assert.match(name, /^refresh-button-spin/)
+  assert.deepEqual(timing, ['0.9s', 'linear', 'infinite'])
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await waitUntil(async() => (await animation())[0] === 'none', 'Reduced motion must stop the refresh rotation')
+  assert.equal(await button.getAttribute('aria-busy'), 'true', 'Reduced motion must retain the busy indication')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await waitUntil(async() => (await animation())[0] === name, 'Normal motion must restore the shared rotation')
 }
 
 async function assertMissingDetail(target, route) {
@@ -1003,9 +1082,7 @@ test('browser language selects English without leaking active Chinese UI text', 
     await requestsCard.locator('.title')
       .filter({ hasText: 'Workload Allocation Top5' })
       .waitFor()
-    await requestsCard.locator('.t-radio-button')
-      .filter({ hasText: 'vGPU' })
-      .click()
+    await requestsCard.getByRole('button', { name: 'vGPU', exact: true }).click()
     const value = requestsCard.locator('.tab-top-value').first()
     await value.waitFor()
     assert.equal((await value.textContent()).trim(), '0.4 slots')
@@ -1840,6 +1917,97 @@ test('runtime language updates the document and Element Plus services', async() 
   }
 }, { timeout: 60_000 })
 
+test('compact Top5 switches retain sorted data, keyboard operation and readable bilingual headers', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+  const fixtures = new Map()
+  const fixtureQueries = (nameKey, queries) => Object.values(queries).map((query, index) => {
+    const values = [[7, 31, 18], [42, 9, 26], [14, 6, 21], [1, 33, 12]][index]
+    const data = values.map((value, position) => ({
+      metric: { [nameKey]: `${nameKey === 'container_pod_uuid' ? 'worker:ranking-fixture' : nameKey}-${position}` }, value
+    }))
+    fixtures.set(query, { nameKey, data })
+    return query
+  })
+  const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
+  const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
+  const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
+  const workloadQueries = fixtureQueries('container_pod_uuid', buildTaskAllocationTopQueries())
+  const requests = trackMonitorRequests(page)
+  await page.route('**/v1/monitor/query/instant-vector', (route) => {
+    const fixture = fixtures.get(route.request().postDataJSON()?.query)
+    return fixture ? route.fulfill({ json: { code: 0, data: fixture.data } }) : route.continue()
+  })
+  try {
+    for (const [path, queries] of [
+      ['overview', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
+      ['nodes', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
+      ['accelerators', [deviceQueries.slice(0, 2), deviceQueries.slice(2)]],
+      ['workloads', [countQueries, workloadQueries]]
+    ]) {
+      await page.goto(`${target}${basePath}${path}`, { waitUntil: 'networkidle' })
+      const cards = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') })
+      assert.equal(await cards.count(), 2)
+      const beforeSwitch = requests.length
+      for (const [cardIndex, options] of queries.entries()) {
+        const card = cards.nth(cardIndex)
+        const buttons = card.locator('.tab-top-switch button')
+        assert.equal(await buttons.count(), options.length)
+        for (const [index, query] of options.entries()) {
+          await buttons.nth(index).press(index % 2 ? 'Space' : 'Enter')
+          assert.equal(await buttons.nth(index).getAttribute('aria-pressed'), 'true')
+          const fixture = fixtures.get(query)
+          const expected = fixture.data.slice().sort((left, right) => right.value - left.value)
+          const rows = card.locator('.tab-top-item')
+          await waitUntil(async() => await rows.count() === expected.length, 'Top5 switch did not show its data')
+          assert.deepEqual(await rows.locator('.tab-top-value').evaluateAll((elements) => elements.map((element) => Number(element.textContent.match(/[\d.]+/)[0]))), expected.map((item) => item.value))
+          for (const [position, item] of expected.entries()) {
+            const name = await rows.nth(position).evaluate((element) => element.querySelector('.ranking-workload-link')?.getAttribute('aria-label') || element.querySelector('.tab-top-name')?.getAttribute('title'))
+            assert.ok(name.includes(item.metric[fixture.nameKey].split(':').at(-1)), `${path}: switching metrics changed value-to-name ordering: ${JSON.stringify({ cardIndex, index, position, name, expected: item.metric[fixture.nameKey] })}`)
+          }
+        }
+      }
+      assert.equal(requests.length, beforeSwitch, 'Switching between loaded Top5 views must not issue monitoring requests')
+      const originalLanguage = await page.locator('html').getAttribute('lang')
+      for (const language of [originalLanguage, originalLanguage === 'en' ? 'zh-CN' : 'en']) {
+        if (await page.locator('html').getAttribute('lang') !== language) {
+          await page.getByRole('button', { name: language === 'en' ? 'English' : '中文', exact: true }).click()
+          await page.waitForLoadState('networkidle')
+        }
+        for (const width of [1280, 1366]) {
+          await page.setViewportSize({ width, height: 900 })
+          const headers = await cards.locator('.home-block-header').evaluateAll((elements) => elements.map((header) => {
+            const title = header.querySelector('.title')
+            const group = header.querySelector('.tab-top-switch')
+            const titleBox = title.getBoundingClientRect()
+            const groupBox = group.getBoundingClientRect()
+            const box = header.getBoundingClientRect()
+            return {
+              title: title.textContent.trim(), label: group.getAttribute('aria-label'), height: groupBox.height,
+              titleFits: title.scrollWidth <= title.clientWidth + 1,
+              groupFits: groupBox.left >= box.left && groupBox.right <= box.right + 1,
+              separated: groupBox.top >= titleBox.bottom || titleBox.top >= groupBox.bottom || groupBox.left >= titleBox.right,
+              fontSizes: [...group.querySelectorAll('button')].map((button) => getComputedStyle(button).fontSize)
+            }
+          }))
+          for (const header of headers) {
+            assert.ok(header.titleFits && header.groupFits && header.separated, `${path} ${language} ${width}: clipped Top5 header ${JSON.stringify(header)}`)
+            assert.equal(header.label, header.title)
+            assert.equal(header.height, 30)
+            assert.ok(header.fontSizes.every((size) => size === '13px'))
+          }
+          if (path === 'overview' || path === 'workloads') {
+            await cards.first().scrollIntoViewIfNeeded()
+            await captureTrendScreenshot(page, `p7-${path}-${language}-${width}-compact-top5`)
+          }
+        }
+      }
+    }
+  } finally {
+    await page.close()
+  }
+})
+
 test('workload rankings show Pod and container names independently of list filters', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
@@ -2012,7 +2180,8 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
       0
     )
 
-    const refreshButton = page.locator('.table-toolbar-right .t-button').nth(1)
+    const refreshButton = page.locator('.table-toolbar-right').getByRole('button', { name: 'Refresh', exact: true })
+    const refreshIcon = await refreshButton.locator('.refresh-button__icon').elementHandle()
     enqueue((route) => fulfill(route, [workload('stable-worker')]))
     await refreshButton.click()
     await page.locator('.workload-table .ellipsis-text')
@@ -2041,6 +2210,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
     await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'attached' })
     assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'true')
     assert.equal(await refreshButton.isEnabled(), true)
+    await assertRefreshAnimation(page, refreshButton, refreshIcon)
     await assertTablePosition()
     await page.locator('.workload-table .ellipsis-text')
       .filter({ hasText: 'stable-worker' })
@@ -2249,34 +2419,26 @@ test('ECharts runtime renders, updates and handles interaction in Chromium', asy
 
 test('trend pages request each series once on mount and once when refreshing a preset', async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
-  for (const [route, expectedCount] of [
-    ['overview', 5],
-    ['nodes/node-1?nodeName=node-1', 5],
-    ['accelerators/gpu-1', 7],
-    ['workloads/pod-1/containers/worker', 2]
-  ]) {
+  for (const [route, expectedCount] of trendPages) {
     await t.test(route, async() => {
       const page = await browser.newPage({ locale: 'en-US' })
       await page.clock.install({ time: Date.now() })
-      const requests = []
-      page.on('request', (request) => {
-        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
-      })
+      const requests = trackTrendRequests(page)
       try {
         await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
         assert.equal(requests.length, expectedCount, 'Mount must preserve the parent range')
         const initialEnd = requests[0].range.end
         await page.clock.setSystemTime(Date.now() + 61_000)
-        await page.locator('.trend-time-filter .t-radio-button').filter({ hasText: /^1 Hour$/ }).click()
+        await selectTrendRange(page, '1h')
         await page.waitForLoadState('networkidle')
         assert.equal(requests.length, expectedCount * 2, 'Reselecting a preset must publish once')
         assert.notEqual(requests.at(-1).range.end, initialEnd)
 
-        await page.locator('.trend-time-filter .t-radio-button').filter({ hasText: /^3 Hours$/ }).click()
+        await selectTrendRange(page, '3h')
         await page.waitForLoadState('networkidle')
         assert.equal(requests.length, expectedCount * 3, 'Changing presets must publish once')
 
-        const selected = page.locator('.trend-time-filter .t-radio-button').filter({ hasText: /^3 Hours$/ })
+        const selected = trendRangeButton(page, '3h')
         for (const [index, key] of ['Enter', 'Space'].entries()) {
           await page.clock.setSystemTime(Date.now() + 120_000 + index * 61_000)
           await selected.press(key)
@@ -2290,9 +2452,429 @@ test('trend pages request each series once on mount and once when refreshing a p
   }
 }, { timeout: 60_000 })
 
+test('explicit trend refresh advances relative ranges once and blocks repeat requests on every trend page', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route, seriesCount] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+      await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+      const requests = trackTrendRequests(page)
+      const held = []
+      let hold = true
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const refresh = page.getByRole('button', { name: 'Refresh trends', exact: true })
+        const refreshIcon = await refresh.locator('.refresh-button__icon').elementHandle()
+        assert.equal(requests.length, seriesCount)
+        assert.equal(await refresh.isEnabled(), true)
+        await page.route('**/v1/monitor/query/range-vector', async(route) => {
+          if (hold) await new Promise((release) => held.push(release))
+          await route.continue()
+        })
+        await page.clock.setSystemTime(new Date('2026-10-07T12:01:01Z'))
+        await refresh.click()
+        await waitUntil(() => held.length === seriesCount, 'Refresh did not start exactly one batch of trend requests')
+        assert.equal(requests.length, seriesCount * 2)
+        assert.equal(await refresh.isDisabled(), true, 'Refresh must be disabled while trend requests are pending')
+        assert.equal(await refresh.getAttribute('aria-busy'), 'true')
+        if (route === 'overview') await assertRefreshAnimation(page, refresh, refreshIcon)
+        for (const request of requests.slice(seriesCount)) {
+          assert.deepEqual([request.range.start, request.range.end], ['2026-10-07 11:01:01', '2026-10-07 12:01:01'])
+        }
+        const bounds = await refresh.boundingBox()
+        await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        await page.keyboard.press('Enter')
+        await page.keyboard.press('Space')
+        assert.equal(requests.length, seriesCount * 2, 'Mouse and keyboard activation while busy must not start another batch')
+        hold = false
+        held.splice(0).forEach((release) => release())
+        await waitUntil(() => refresh.isEnabled(), 'Refresh did not become available after every trend request completed')
+        await page.waitForLoadState('networkidle')
+        assert.equal(await refresh.isEnabled(), true)
+        for (const [index, key] of ['Enter', 'Space'].entries()) {
+          await page.clock.setSystemTime(new Date(`2026-10-07T12:0${index + 2}:02Z`))
+          if (key === 'Enter') {
+            await refresh.focus()
+            await page.keyboard.down(key)
+            await waitUntil(() => requests.length === seriesCount * (3 + index), 'Keyboard refresh did not request one batch')
+            await waitUntil(() => refresh.isEnabled(), 'The first Enter refresh must finish before testing key repeat')
+            await page.waitForLoadState('networkidle')
+            await refresh.focus()
+            await page.keyboard.down(key)
+            await page.keyboard.up(key)
+          } else {
+            await refresh.press(key)
+          }
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, seriesCount * (3 + index), `${key} must refresh exactly once, including a held key after the response`)
+          assert.equal(requests.at(-1).range.end, `2026-10-07 12:0${index + 2}:02`)
+          assert.equal(await trendRangeButton(page, '1h').getAttribute('aria-pressed'), 'true')
+        }
+      } finally {
+        hold = false
+        held.splice(0).forEach((release) => release())
+        await page.close()
+      }
+    })
+  }
+})
+
+test('explicit custom refresh cancels drafts, preserves applied dates and can retry after failure', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    const refresh = filter.getByRole('button', { name: 'Refresh trends', exact: true })
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const applied = ['2026-10-03 10:12:34', '2026-10-06 11:23:45']
+    await start.click()
+    await start.fill(applied[0])
+    await end.click()
+    await end.fill(applied[1])
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 10)
+    for (const width of [960, 1000, 1024]) {
+      await filter.evaluate(async(element, width) => {
+        element.style.width = `${width}px`
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }, width)
+      assert.ok(await customTimestampFieldsFit(filter), `Full timestamps must remain readable at the ${width}px container boundary`)
+      assert.equal(requests.length, 10, 'Resizing custom controls must not query')
+    }
+    await filter.evaluate((element) => { element.style.width = '' })
+
+    await page.clock.setSystemTime(new Date('2026-10-07T12:05:00Z'))
+    await start.click()
+    await start.fill('2026-10-02 01:02:03')
+    await refresh.click()
+    await page.locator('.trend-time-filter-popup:visible').waitFor({ state: 'hidden' })
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 15, 'Refreshing a custom range must request once without applying the draft')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+    assert.equal(await trendRangeButton(page, 'custom').getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.locator('.t-message').count(), 0)
+    for (const request of requests.slice(10)) assert.deepEqual([request.range.start, request.range.end], applied)
+
+    let fail = true
+    await page.route('**/v1/monitor/query/range-vector', (route) => fail
+      ? route.fulfill({ status: 500, body: 'injected refresh failure' })
+      : route.continue())
+    await refresh.press('Enter')
+    await page.locator('.metric-chart__refresh--error').first().waitFor()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 20)
+    assert.equal(await refresh.isEnabled(), true, 'A failed refresh must allow another attempt')
+    fail = false
+    await refresh.press('Space')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 25, 'Retry must request exactly one batch')
+    assert.equal(await page.locator('.metric-chart__refresh--error').count(), 0)
+    await waitUntil(() => refresh.isEnabled(), 'A completed retry must enable refresh again')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+    for (const request of requests.slice(15)) assert.deepEqual([request.range.start, request.range.end], applied)
+    await captureTrendScreenshot(page, 'p7-custom-refresh-applied')
+  } finally {
+    await page.close()
+  }
+})
+
+test('responsive trend controls fit all trend pages without fetching on resize, language or sidebar changes', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route, expectedCount] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+      const requests = trackTrendRequests(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const filter = page.locator('.trend-time-filter')
+        for (const language of ['en', 'zh-CN']) {
+          if (language === 'zh-CN') await page.getByRole('button', { name: '中文', exact: true }).click()
+          await page.locator(`html[lang="${language}"]`).waitFor()
+          for (const width of [1280, 1366, 1440, 1920]) {
+            await page.setViewportSize({ width, height: 900 })
+            for (const collapsed of [false, true]) {
+              if (collapsed) await page.getByRole('button', { name: language === 'en' ? 'Collapse sidebar' : '收起侧栏', exact: true }).click()
+              await page.locator('.page-aside').evaluate(async(element) => {
+                await Promise.all(element.getAnimations().map((animation) => animation.finished))
+              })
+              const context = `${route}, ${language}, ${width}px, ${collapsed ? 'collapsed' : 'expanded'}`
+              const layout = await filter.evaluate((element) => {
+                const rect = (node) => {
+                  const { x, y, width, height, right, bottom } = node.getBoundingClientRect()
+                  return { x, y, width, height, right, bottom }
+                }
+                const group = element.querySelector('.trend-time-filter-presets')
+                const select = element.querySelector('.trend-time-filter-select')
+                const visible = (node) => node && node.getBoundingClientRect().width > 0
+                const buttons = [...group.querySelectorAll('.segmented-control__option')]
+                const selected = group.querySelector('[aria-pressed="true"]')
+                const indicator = group.querySelector('.segmented-control__indicator')
+                const refresh = element.querySelector('.trend-time-filter-refresh')
+                return {
+                  ...rect(element), clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+                  group: { ...rect(group), visible: visible(group), background: getComputedStyle(group).backgroundColor },
+                  selectVisible: visible(select),
+                  refresh: { ...rect(refresh), label: refresh.getAttribute('aria-label') },
+                  buttons: buttons.map((button) => ({ ...rect(button), fontSize: getComputedStyle(button).fontSize, labelFits: button.scrollWidth <= button.clientWidth + 1 })),
+                  selectedBackground: getComputedStyle(indicator).backgroundColor,
+                  selected: buttons.indexOf(selected)
+                }
+              })
+              assert.ok(layout.scrollWidth <= layout.clientWidth + 1 && layout.right <= width + 1, `${context}: selector overflows`)
+              assert.notEqual(layout.group.visible, layout.selectVisible, `${context}: exactly one preset entry must be visible`)
+              assert.equal(layout.selected, 0)
+              assert.ok(layout.refresh.width >= 28 && Math.abs(layout.refresh.right - layout.right) <= 1, `${context}: refresh must remain at the right edge`)
+              assert.equal(layout.refresh.label, language === 'en' ? 'Refresh trends' : '刷新趋势')
+              if (layout.group.visible) {
+                assert.equal(layout.buttons.length, 7)
+                assert.notEqual(layout.group.background, 'rgba(0, 0, 0, 0)', `${context}: presets need a filled background`)
+                assert.notEqual(layout.group.background, layout.selectedBackground, `${context}: selected range needs a distinct fill`)
+                assert.equal(layout.selectedBackground, 'rgb(255, 255, 255)')
+                for (const button of layout.buttons) {
+                  assert.ok(button.x >= layout.x - 1 && button.right <= layout.right + 1 && button.labelFits, `${context}: a preset is clipped or requires horizontal scrolling`)
+                  assert.ok(button.height >= 24 && button.height <= 32, `${context}: presets must retain the shared segmented-control height`)
+                  assert.equal(button.fontSize, '14px', `${context}: labels must not shrink to fit`)
+                }
+              }
+              assert.equal(requests.length, expectedCount, `${context}: presentation changes must not fetch trends`)
+              if (route === 'overview' && ((language === 'en' && width === 1280 && !collapsed) || (language === 'zh-CN' && width === 1920 && collapsed))) {
+                await captureTrendScreenshot(page, `p7-${language}-${width}-${collapsed ? 'collapsed' : 'expanded'}`)
+              }
+              if (collapsed) await page.getByRole('button', { name: language === 'en' ? 'Expand sidebar' : '展开侧栏', exact: true }).click()
+            }
+          }
+        }
+        await page.waitForLoadState('networkidle')
+        assert.equal(requests.length, expectedCount, 'The complete layout matrix must retain the applied range')
+      } finally {
+        await page.close()
+      }
+    })
+  }
+})
+
+test('narrow trend presets preserve selection, keyboard focus and exactly one refresh per activation', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    const selected = trendRangeButton(page, '1h')
+    await selected.focus()
+    await filter.evaluate((element) => { element.style.width = '600px' })
+    const narrow = filter.locator('.trend-time-filter-select')
+    const input = narrow.getByRole('textbox', { name: 'Time range', exact: true })
+    await narrow.waitFor()
+    await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Narrow mode must retain focus on the visible preset entry')
+    assert.equal(requests.length, 5)
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await selected.waitFor()
+    await waitUntil(async() => await selected.evaluate((element) => element === document.activeElement || element.contains(document.activeElement)), 'Wide mode must return focus to the selected preset')
+    assert.equal(requests.length, 5)
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    await input.press('Enter')
+    const options = page.locator('.t-select-option:visible')
+    await options.first().waitFor()
+    await stablePopupBounds(page.locator('.t-popup:visible').filter({ has: page.locator('.t-select-option') }))
+    await captureTrendScreenshot(page, 'p7-en-360-preset-menu')
+    assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), (await filter.locator('.segmented-control__option').allTextContents()).map((label) => label.trim()))
+    assert.equal(requests.length, 5, 'Opening presets must not refresh')
+    await input.press('Escape')
+    await options.first().waitFor({ state: 'hidden' })
+    assert.equal(requests.length, 5, 'Escape must not refresh')
+    assert.ok(await narrow.evaluate((element) => element.contains(document.activeElement)))
+
+    await input.press('Space')
+    await options.first().waitFor()
+    for (let index = 0; index < 4; index += 1) await input.press('ArrowDown')
+    await input.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 10, 'A keyboard selection must publish once')
+    assert.equal(new Date(requests.at(-1).range.end) - new Date(requests.at(-1).range.start), 24 * 60 * 60 * 1000)
+
+    const initialEnd = requests.at(-1).range.end
+    await page.clock.setSystemTime(new Date('2026-10-07T12:01:01Z'))
+    await selectTrendRange(page, '24h')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 15, 'Reselecting the current dropdown item must refresh once')
+    assert.notEqual(requests.at(-1).range.end, initialEnd)
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await trendRangeButton(page, '24h').waitFor()
+    await waitUntil(async() => await trendRangeButton(page, '24h').evaluate((element) => element === document.activeElement), 'Returning to wide mode must focus the current non-default preset')
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Returning to narrow mode must preserve selector focus')
+    await narrow.click()
+    await options.first().waitFor()
+    await input.press('Tab')
+    await page.keyboard.press('Tab')
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await options.first().waitFor({ state: 'hidden' })
+    assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Closing a hidden dropdown after Tab must not pull focus back')
+    assert.equal(requests.length, 15, 'Hiding an open dropdown must not select an option')
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    await narrow.click()
+    await options.first().waitFor()
+    await page.locator('.home-page-title').click()
+    await options.first().waitFor({ state: 'hidden' })
+    assert.equal(requests.length, 15, 'Outside dismissal must not refresh')
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await trendRangeButton(page, '24h').waitFor()
+    assert.equal(await trendRangeButton(page, '24h').getAttribute('aria-pressed'), 'true')
+    assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Resizing after clicking the page title must not steal focus back')
+    assert.equal(requests.length, 15, 'Returning to wide mode must preserve the selected range')
+    await captureTrendScreenshot(page, 'p7-preset-keyboard-wide')
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    const refresh = filter.getByRole('button', { name: 'Refresh trends', exact: true })
+    const [filterBounds, refreshBounds] = await Promise.all([filter.boundingBox(), refresh.boundingBox()])
+    assert.ok(Math.abs(refreshBounds.x + refreshBounds.width - filterBounds.x - filterBounds.width) <= 1, 'Compact refresh must stay at the right edge')
+    await page.clock.setSystemTime(new Date('2026-10-07T12:02:02Z'))
+    await refresh.click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 20, 'Compact refresh must publish exactly once')
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-06 12:02:02', '2026-10-07 12:02:02'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('custom trend drafts survive resizing and narrow calendars keep confirmation reachable', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    let start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    let end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const applied = [await start.inputValue(), await end.inputValue()]
+    await start.click()
+    const startElement = await start.elementHandle()
+    const rawDraft = '2026-10-03 10:12:'
+    await start.fill(rawDraft)
+    for (const width of [600, 360, 900, 360]) {
+      await filter.evaluate(async(element, width) => {
+        element.style.width = `${width}px`
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }, width)
+      assert.ok(await startElement.evaluate((element) => element.isConnected && element === document.activeElement), 'Resizing must keep the same focused date input')
+      assert.equal(await start.inputValue(), rawDraft, 'Resizing must retain incomplete text exactly')
+      assert.equal(await end.inputValue(), applied[1])
+      assert.equal(requests.length, 5)
+    }
+    await page.getByRole('button', { name: 'Switch to 中文', exact: true }).click()
+    await page.locator('html[lang="zh-CN"]').waitFor()
+    start = filter.getByRole('textbox', { name: '开始时间', exact: true })
+    end = filter.getByRole('textbox', { name: '结束时间', exact: true })
+    await waitUntil(async() => await start.inputValue() === applied[0], 'Clicking the language button must cancel an unconfirmed draft')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+    assert.equal(requests.length, 5, 'Changing language must not apply the canceled draft')
+
+    await start.click()
+    await start.fill(rawDraft)
+    await filter.evaluate((element) => { element.style.width = '100%' })
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    for (const width of [390, 1440, 375]) {
+      await page.setViewportSize({ width, height: 844 })
+      await stablePopupBounds(panel)
+      assert.equal(await start.inputValue(), rawDraft, 'Changing calendar height must not turn scroll anchoring into a time edit')
+      assert.ok(await start.evaluate((element) => element === document.activeElement), 'Viewport changes must not steal date-input focus')
+    }
+    const selected = ['2026-10-03 10:12:34', '2026-10-06 11:23:45']
+    await start.fill(selected[0])
+    await end.click()
+    await end.fill(selected[1])
+    await panel.waitFor()
+    await panel.getByText('本地时间 · UTC', { exact: true }).waitFor()
+    const confirm = panel.getByRole('button', { name: '确定', exact: true })
+    for (const [width, height] of [[390, 844], [375, 667]]) {
+      await page.setViewportSize({ width, height })
+      const bounds = await stablePopupBounds(panel)
+      await captureTrendScreenshot(page, `p7-zh-${width}-calendar-bounds`)
+      assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= height + 1, `Calendar leaves ${width}x${height} viewport: ${JSON.stringify(bounds)}`)
+      await confirm.scrollIntoViewIfNeeded()
+      assert.ok(await confirm.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight &&
+          element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+      }), `Calendar confirmation must be visible and unobstructed at ${width}x${height}`)
+    }
+    assert.equal(requests.length, 5, 'Narrow calendar drafts must not submit early')
+    await confirm.click()
+    await panel.waitFor({ state: 'hidden' })
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], selected)
+    assert.equal(requests.length, 10, 'Narrow confirmation must apply exactly once')
+    assert.ok(await end.evaluate((element) => element === document.activeElement))
+    await waitUntil(async() => await end.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor) === 'rgb(242, 243, 255)', 'Narrow focused input must retain the accepted light-blue fill')
+    assert.ok(await customTimestampFieldsFit(filter), 'Narrow fields must show complete timestamps without horizontal scrolling')
+    await captureTrendScreenshot(page, 'p7-zh-375-custom-applied')
+
+    await end.click()
+    await panel.waitFor()
+    const beforeWheel = await end.inputValue()
+    await panel.locator('.t-time-picker__panel-body-scroll').nth(1).hover()
+    await page.mouse.wheel(0, 60)
+    await waitUntil(async() => await end.inputValue() !== beforeWheel, 'Real mouse wheel must still edit the time')
+    const afterWheel = await end.inputValue()
+    assert.ok(Number.isFinite(new Date(afterWheel).getTime()))
+    assert.equal(requests.length, 10, 'Wheel editing must not submit before confirmation')
+    await confirm.click()
+    await waitUntil(() => requests.length === 15, 'Confirming a wheel edit must fetch exactly once')
+    assert.equal(requests.at(-1).range.end, afterWheel)
+  } finally {
+    await page.close()
+  }
+})
+
+test('workload status segments keep same-selection no-op behavior when shared controls emit activation', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const requests = []
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/v1/workloads')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'networkidle' })
+    const segments = page.locator('.workload-status-filter')
+    const selected = segments.locator('[aria-pressed="true"]')
+    const initialCount = requests.length
+    assert.ok(initialCount > 0)
+    await selected.click()
+    await selected.press('Enter')
+    await selected.press('Space')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, initialCount, 'Activating the current workload status must remain a no-op')
+    const next = segments.locator('[aria-pressed="false"]').first()
+    await next.click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, initialCount + 1, 'Changing the workload status must request once')
+    assert.ok(requests.at(-1).filters.status)
+    await segments.locator('[aria-pressed="true"]').click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, initialCount + 1)
+  } finally {
+    await page.close()
+  }
+})
+
 test('custom trend dates apply exact input and restore the applied range on cancellation or invalid input', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
-  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 }, timezoneId: 'America/Argentina/Buenos_Aires' })
   const requests = []
   page.on('request', (request) => {
     if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
@@ -2300,7 +2882,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
-    await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+    await selectTrendRange(page, 'custom')
     const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
     const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
     assert.equal(await start.getAttribute('aria-label'), 'Start Time')
@@ -2319,6 +2901,25 @@ test('custom trend dates apply exact input and restore the applied range on canc
       await waitUntil(async() => await inputBackground(input) === restingBackgrounds[index], 'Leaving an unfocused date input must restore its background')
     }
     await start.click()
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    const timezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
+    const timezoneNote = panel.getByText(`Local time · ${timezone}`, { exact: true })
+    await timezoneNote.waitFor()
+    await page.setViewportSize({ width: 375, height: 667 })
+    await stablePopupBounds(panel)
+    const [noteBounds, confirmBounds] = await Promise.all([
+      timezoneNote.boundingBox(),
+      panel.getByRole('button', { name: 'Confirm', exact: true }).boundingBox()
+    ])
+    assert.ok(noteBounds.x >= 0 && noteBounds.y >= 0 && noteBounds.x + noteBounds.width <= 375 && noteBounds.y + noteBounds.height <= 667, 'The complete long timezone note must remain inside the narrow viewport')
+    assert.ok(noteBounds.x + noteBounds.width <= confirmBounds.x || noteBounds.y + noteBounds.height <= confirmBounds.y, 'The timezone note must not overlap calendar confirmation')
+    assert.ok(await panel.getByRole('button', { name: 'Confirm', exact: true }).evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight &&
+        element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+    }), 'Long timezone text must leave confirmation visible and unobstructed')
+    await page.setViewportSize({ width: 1366, height: 900 })
+    await stablePopupBounds(panel)
     await waitUntil(async() => await inputBackground(start) === 'rgb(242, 243, 255)', 'The focused start input must not look disabled')
     const originalStart = await start.inputValue()
     await start.press('ControlOrMeta+A')
@@ -2331,6 +2932,8 @@ test('custom trend dates apply exact input and restore the applied range on canc
     await start.press('Tab')
     assert.ok(await end.evaluate((element) => element === document.activeElement), 'Tab must move from start to end')
     await waitUntil(async() => await inputBackground(end) === 'rgb(242, 243, 255)', 'The focused end input must not look disabled')
+    await end.press('Tab')
+    assert.ok(await filter.getByRole('button', { name: 'Refresh trends', exact: true }).evaluate((element) => element === document.activeElement), 'Tab from the end input must go directly to refresh')
     await title.click()
     await waitUntil(async() => JSON.stringify(await Promise.all([inputBackground(start), inputBackground(end)])) === JSON.stringify(restingBackgrounds), 'Blurring the picker must restore both input backgrounds')
     assert.equal(requests.length, 5, 'Hover, focus, selection, and unchanged typing must not request another range')
@@ -2379,11 +2982,11 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
     assert.equal(requests.length, 10)
 
-    await filter.locator('.t-radio-button').filter({ hasText: /^3 Hours$/ }).click()
+    await selectTrendRange(page, '3h')
     await page.waitForLoadState('networkidle')
     assert.equal(await page.locator('.t-message').count(), 0, 'Changing presets must clear the range warning')
     assert.equal(await filter.getByRole('status').textContent(), '')
-    await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+    await selectTrendRange(page, 'custom')
     assert.deepEqual(
       [await start.inputValue(), await end.inputValue()],
       [requests.at(-1).range.start, requests.at(-1).range.end]
@@ -2426,7 +3029,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
       try {
         await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
         const filter = page.locator('.trend-time-filter')
-        await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+        await selectTrendRange(page, 'custom')
         const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
         const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
         const applied = [await start.inputValue(), await end.inputValue()]
@@ -2479,7 +3082,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
         await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
         const filter = page.locator('.trend-time-filter')
         const chinese = locale === 'zh-CN'
-        await filter.locator('[data-time-range="custom"]').click()
+        await selectTrendRange(page, 'custom')
         const start = filter.getByRole('textbox', { name: chinese ? '开始时间' : 'Start Time', exact: true })
         const end = filter.getByRole('textbox', { name: chinese ? '结束时间' : 'End Time', exact: true })
         const applied = [await start.inputValue(), await end.inputValue()]
@@ -2490,7 +3093,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
           }
           return {
             filter: rect(element),
-            radio: rect(element.querySelector('.t-radio-group')),
+            radio: rect(element.querySelector('.trend-time-filter-presets')),
             picker: rect(element.querySelector('.trend-time-filter-custom')),
             chart: rect(document.querySelector('.home-bottom-row')),
             width: element.clientWidth,
@@ -2512,8 +3115,11 @@ test('custom trend warnings preserve aligned controls and chart position in both
             }
             return Date.now() - stableSince >= 200 ? current : false
           }, `${locale} layout did not settle at ${width}`)
-          assert.ok(Math.abs(before.radio.top - before.picker.top) <= 1, `${locale} control tops differ at ${width}: ${JSON.stringify(before)}`)
-          assert.ok(Math.abs(before.radio.height - before.picker.height) <= 1, `${locale} control heights differ at ${width}`)
+          if (Math.abs(before.radio.top - before.picker.top) <= 1) {
+            assert.ok(Math.abs(before.radio.height - before.picker.height) <= 1, `${locale} control heights differ at ${width}`)
+          } else {
+            assert.ok(before.picker.top >= before.radio.top + before.radio.height, `${locale} wrapped picker overlaps presets at ${width}`)
+          }
           assert.ok(before.content <= before.width + 1, `${locale} filter overflows at ${width}`)
           assert.ok(before.right <= width, `${locale} filter leaves the viewport at ${width}`)
 
@@ -2559,7 +3165,7 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
-    await filter.locator('[data-time-range="custom"]').click()
+    await selectTrendRange(page, 'custom')
     const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
     const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
     const applied = [await start.inputValue(), await end.inputValue()]
@@ -2607,7 +3213,7 @@ test('custom trend calendar hover preserves continuous range colors and disabled
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
-    await filter.locator('[data-time-range="custom"]').click()
+    await selectTrendRange(page, 'custom')
     const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
     const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
     const panel = page.locator('.trend-time-filter-popup:visible')
@@ -2696,7 +3302,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
-    await filter.locator('.t-radio-button').filter({ hasText: /^Custom$/ }).click()
+    await selectTrendRange(page, 'custom')
     const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
     const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
     await start.click()
@@ -2996,8 +3602,8 @@ test('distribution legends keep each name and its count on one line', async() =>
         await page.locator('.preview .tab-top-item').nth(1).waitFor()
         const cards = await page.locator('.preview > li').evaluateAll((items) => items.map((item) => ({
           top: Math.round(item.getBoundingClientRect().top),
-          header: item.querySelector('.tab-top-radio')?.closest('.home-block-header').getBoundingClientRect().height,
-          switchTop: item.querySelector('.tab-top-radio')?.getBoundingClientRect().top,
+          header: item.querySelector('.tab-top-switch')?.closest('.home-block-header').getBoundingClientRect().height,
+          switchTop: item.querySelector('.tab-top-switch')?.getBoundingClientRect().top,
           firstItemTop: item.querySelector('.tab-top-item')?.getBoundingClientRect().top,
         })))
         if (width === 1512) {

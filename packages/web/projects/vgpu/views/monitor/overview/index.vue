@@ -179,7 +179,7 @@
 
     <div class="home-bottom">
       <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
-        <TrendTimeFilter v-model="times" />
+        <TrendTimeFilter v-model="times" :loading="trendLoading" />
       </div>
       <div class="home-bottom-row home-bottom-trend-row" v-if="rangeConfig[0] || rangeConfig[1]">
         <div
@@ -668,6 +668,7 @@ const { data: rangeSeries } = useRangeVector(
   (query) => query,
   times,
 );
+const trendLoading = computed(() => rangeSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 
 const rangeConfig = computed(() => {
   const translated = getRangeConfigInit(t);

@@ -39,7 +39,7 @@ const props = defineProps({
   size: { type: String, default: 'medium', validator: (value) => ['small', 'medium'].includes(value) },
   equal: { type: Boolean, default: false },
 });
-const emit = defineEmits(['update:modelValue', 'change']);
+const emit = defineEmits(['update:modelValue', 'change', 'select']);
 
 const root = ref(null);
 const box = reactive({ x: 0, width: 0 });
@@ -89,6 +89,7 @@ onMounted(() => {
 onBeforeUnmount(() => observer?.disconnect());
 
 const select = (value) => {
+  emit('select', value);
   if (value === props.modelValue) return;
   emit('update:modelValue', value);
   emit('change', value);

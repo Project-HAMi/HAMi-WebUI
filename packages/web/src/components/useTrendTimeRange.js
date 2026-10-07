@@ -75,6 +75,12 @@ export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now) 
     if (!sameRange(range, appliedRange.value, 1000)) publishRange(range);
   };
 
+  const refreshRange = () => {
+    validationError.value = '';
+    if (currentDateRange.value === 'custom') publishRange(appliedRange.value);
+    else selectRange(currentDateRange.value);
+  };
+
   watch(modelValue, (range) => {
     if (rangeError(range, now()) || sameRange(range, appliedRange.value)) return;
     appliedRange.value = copyRange(range);
@@ -90,6 +96,7 @@ export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now) 
     currentDateRange,
     customDateRange,
     resetCustomRange,
+    refreshRange,
     selectRange,
     validationError,
   };

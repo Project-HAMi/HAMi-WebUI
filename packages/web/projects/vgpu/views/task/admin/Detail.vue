@@ -204,7 +204,7 @@
     </div>
   </block-box>
 
-  <TrendTimeFilter v-model="times" class="workload-trend-filter" />
+  <TrendTimeFilter v-model="times" :loading="trendLoading" class="workload-trend-filter" />
 
   <div class="task-trend-row">
     <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
@@ -561,6 +561,7 @@ const {
   range: taskMonitoringRange,
   request: (payload) => cardApi.getRangeVector(payload),
 });
+const trendLoading = computed(() => taskMonitoringSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 const lineConfigView = computed(() =>
   taskMonitoringSeries.value.map((item) => ({
     ...item,

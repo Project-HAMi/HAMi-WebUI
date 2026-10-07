@@ -1,24 +1,29 @@
 <template>
-  <div class="trend-time-filter">
+  <div ref="filterElement" class="trend-time-filter" @focusin="rememberSelectorFocus" @focusout="onFilterFocusout">
     <div class="left">
-      <t-radio-group
-        :value="currentDateRange"
-        theme="button"
-        @change="selectRange"
+      <span v-if="!showCustomDateRangePicker" class="trend-time-filter-caption">{{ t('timeRange.recent') }}</span>
+      <segmented-control
+        :model-value="currentDateRange"
+        :options="dateRangeOptions"
+        class="trend-time-filter-presets"
+        :aria-label="t('timeRange.label')"
+        @select="selectRange"
         @keydown.capture="onPresetKeydown"
-      >
-        <t-radio-button
-          v-for="option in dateRangeOptions"
-          :key="option.value"
-          :value="option.value"
-          :data-time-range="option.value"
-          @click="refreshSelectedRange(option.value)"
-        >
-          {{ option.label }}
-        </t-radio-button>
-      </t-radio-group>
+      />
+      <t-select
+        v-range-labels="[t('timeRange.label')]"
+        :value="currentDateRange"
+        :options="dateRangeOptions"
+        :clearable="false"
+        :popup-visible="compactPopupVisible"
+        class="trend-time-filter-select"
+        @change="onCompactRangeChange"
+        @popup-visible-change="onCompactPopupChange"
+        @keydown.capture="onCompactKeydown"
+      />
+    </div>
+    <div v-if="showCustomDateRangePicker" class="trend-time-filter-custom-group">
       <t-date-range-picker
-        v-if="showCustomDateRangePicker"
         :key="pickerKey"
         ref="customRangePicker"
         v-range-labels="[t('common.startTime'), t('common.endTime')]"
@@ -28,9 +33,11 @@
         :separator="t('common.to')"
         :disable-date="{ after: dayjs().format('YYYY-MM-DD') }"
         :time-picker-props="timePickerProps"
+        :presets="renderTimezone"
         :popup-props="{
           overlayClassName: 'trend-time-filter-popup',
           onVisibleChange: onPickerVisibleChange,
+          popperOptions: pickerPopperOptions,
         }"
         :range-input-props="{ inputProps: { onEnter: onCustomEnter } }"
         enable-time-picker
@@ -60,15 +67,27 @@
         </template>
       </t-date-range-picker>
     </div>
+    <refresh-button
+      class="trend-time-filter-refresh"
+      compact
+      :refreshing="loading"
+      :disabled="loading"
+      :label="t('timeRange.refresh')"
+      :title="t(showCustomDateRangePicker ? 'timeRange.refreshCustom' : 'timeRange.refreshPreset')"
+      @click="refreshCurrentRange"
+      @keydown.capture="onPresetKeydown"
+    />
     <span class="trend-time-filter-feedback" role="status" aria-atomic="true">{{ feedback }}</span>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, toRef } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef } from 'vue';
 import dayjs from 'dayjs';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
+import SegmentedControl from './SegmentedControl/index.vue';
+import RefreshButton from './RefreshButton.vue';
 import useTrendTimeRange from './useTrendTimeRange.js';
 
 const props = defineProps({
@@ -76,6 +95,7 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  loading: Boolean,
 });
 
 const emit = defineEmits(['update:modelValue']);
@@ -86,12 +106,42 @@ const {
   currentDateRange,
   customDateRange,
   resetCustomRange,
+  refreshRange,
   selectRange: applyPresetRange,
   validationError,
 } = useTrendTimeRange(toRef(props, 'modelValue'), (range) => emit('update:modelValue', range));
 const showCustomDateRangePicker = computed(() => currentDateRange.value === 'custom');
+const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const renderTimezone = (h) => h('span', { class: 'trend-time-filter-timezone' }, t('timeRange.timezone', { timezone }));
+const filterElement = ref(null);
+const selectorElements = '.trend-time-filter-presets, .trend-time-filter-select';
+let focusedSelector;
+let selectorObserver;
+const rememberSelectorFocus = ({ target }) => {
+  focusedSelector = target.closest(selectorElements) ? target : undefined;
+};
+const onFilterFocusout = ({ target, relatedTarget }) => {
+  if ((relatedTarget && !filterElement.value?.contains(relatedTarget))
+    || (!relatedTarget && target.getClientRects().length)) focusedSelector = undefined;
+};
+onMounted(() => {
+  selectorObserver = new ResizeObserver(() => {
+    const compactSelector = filterElement.value.querySelector('.trend-time-filter-select');
+    if (!compactSelector.getClientRects().length) compactPopupVisible.value = false;
+    if (!focusedSelector || focusedSelector.getClientRects().length) return;
+    if (document.activeElement !== document.body && document.activeElement !== focusedSelector) return;
+    const selector = [...filterElement.value.querySelectorAll(selectorElements)]
+      .find((element) => element.getClientRects().length);
+    (selector?.querySelector('.segmented-control__option.is-active') ?? selector?.querySelector('input'))?.focus();
+  });
+  selectorObserver.observe(filterElement.value);
+});
+onBeforeUnmount(() => selectorObserver?.disconnect());
 // Reuse the panel so deferred scroll events cannot outlive it when switching inputs.
 const timePickerProps = { key: 'trend-range-time' };
+const pickerPopperOptions = {
+  modifiers: [{ name: 'preventOverflow', options: { altAxis: true, tether: false, padding: 12 } }],
+};
 // TDesign forwards inputProps ARIA attributes to wrappers, not native inputs.
 const setRangeLabels = (element, { value }) => {
   element.querySelectorAll('input').forEach((input, index) => {
@@ -139,17 +189,42 @@ const selectRange = (selection) => {
   clearFeedback();
   applyPresetRange(selection);
 };
-const refreshSelectedRange = (selection) => {
-  if (selection === currentDateRange.value) selectRange(selection);
+const refreshCurrentRange = () => {
+  if (props.loading) return;
+  clearFeedback();
+  refreshRange();
 };
-
 const onPresetKeydown = (event) => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  const selection = event.target.closest('[data-time-range]')?.dataset.timeRange;
-  if (!selection) return;
+  if (event.repeat && ['Enter', ' '].includes(event.key)) event.preventDefault();
+};
+const compactPopupVisible = ref(false);
+let compactSelectionEvent;
+const onCompactKeydown = (event) => {
+  if (compactPopupVisible.value || !['Enter', ' '].includes(event.key)) return;
   event.preventDefault();
   event.stopPropagation();
-  if (!event.repeat) selectRange(selection);
+  if (!event.repeat) compactPopupVisible.value = true;
+};
+const onCompactRangeChange = (selection, context) => {
+  compactSelectionEvent = context.e;
+  selectRange(selection);
+};
+const onCompactPopupChange = async (visible, context) => {
+  compactPopupVisible.value = visible;
+  if (visible) {
+    compactSelectionEvent = undefined;
+    return;
+  }
+  const { e } = context;
+  // Select suppresses change for the active option, but still closes on selection.
+  const selected = e?.type === 'click'
+    ? Boolean(e.target.closest('.t-select-option'))
+    : e?.key === 'Enter';
+  if (!selected) return;
+  if (e !== compactSelectionEvent) selectRange(currentDateRange.value);
+  await nextTick();
+  const input = filterElement.value?.querySelector('.trend-time-filter-select input');
+  if (input?.getClientRects().length) input.focus();
 };
 
 const pickerKey = ref(0);
@@ -210,39 +285,62 @@ const onCustomBlur = ({ e }) => {
 
 <style lang="scss" scoped>
 .trend-time-filter {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 8px 12px;
   min-width: 0;
   margin-bottom: 16px;
 
   .left {
+    grid-column: 1;
+    grid-row: 1;
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    flex-wrap: wrap;
     gap: 8px 12px;
-    flex: 1;
     min-width: 0;
-  }
-
-  :deep(.t-radio-group) {
-    flex: 0 1 auto;
-    flex-wrap: nowrap;
-    min-width: 0;
-    overflow-x: auto;
-    white-space: nowrap;
-  }
-
-  :deep(.t-radio-button) {
-    white-space: nowrap;
   }
 }
 
-.trend-time-filter-custom {
-  flex: 0 1 420px;
+.trend-time-filter-refresh {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.trend-time-filter-presets {
+  height: 32px;
+
+  :deep(.segmented-control__option) {
+    font-size: 14px;
+  }
+}
+
+.trend-time-filter-caption {
+  flex: none;
+  color: var(--td-text-color-secondary);
+}
+
+.trend-time-filter-select {
+  display: none;
+  flex: 0 0 144px;
+  max-width: 100%;
+}
+
+.trend-time-filter-custom-group {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  width: 420px;
   min-width: 0;
   max-width: 100%;
+}
+
+.trend-time-filter-custom {
+  flex: 1;
+  min-width: 0;
 
   :deep(.t-range-input:not(.t-is-disabled) .t-input:not(.t-is-disabled):is(:hover, .t-is-focused)) {
     background-color: var(--td-brand-color-light);
@@ -259,11 +357,70 @@ const onCustomBlur = ({ e }) => {
   white-space: nowrap;
   border: 0;
 }
+
+@container (max-width: 1023px) {
+  .trend-time-filter-custom-group {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@container (max-width: 639px) {
+  .trend-time-filter-presets {
+    display: none;
+  }
+
+  .trend-time-filter-select {
+    display: block;
+  }
+}
+
+@container (max-width: 419px) {
+  .trend-time-filter-custom {
+    :deep(.t-range-input) {
+      height: auto;
+    }
+
+    :deep(.t-range-input__inner) {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      grid-template-rows: 28px 28px;
+      gap: 4px;
+    }
+
+    :deep(.t-range-input__inner-separator) {
+      text-align: center;
+    }
+  }
+}
 </style>
 
 <style lang="scss">
 // Scope the body-attached popup's overlapping preview to one solid range color.
 .trend-time-filter-popup {
+  .t-date-picker__footer {
+    align-items: center;
+  }
+
+  .trend-time-filter-timezone {
+    color: var(--td-text-color-secondary);
+    font-size: 12px;
+    line-height: 20px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  // Resizing the panel must not turn scroll anchoring into a time selection.
+  .t-time-picker__panel-body-scroll {
+    overflow-anchor: none;
+  }
+
+  > .t-popup__content {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+  }
+
   .t-date-picker__cell--highlight.t-date-picker__cell--hover-highlight::after {
     background-color: var(--td-brand-color-light);
   }
@@ -278,6 +435,27 @@ const onCustomBlur = ({ e }) => {
 
     &.t-date-picker__cell--hover-highlight .t-date-picker__cell-inner {
       background-color: transparent;
+    }
+  }
+}
+
+@media (max-width: 559px) {
+  .trend-time-filter-popup {
+    .t-date-picker__panel-content {
+      flex-direction: column;
+    }
+
+    .t-date-picker__panel-time {
+      border-left: 0;
+      border-top: 1px solid var(--td-component-stroke);
+    }
+
+    .t-time-picker__panel {
+      width: 100%;
+    }
+
+    .t-time-picker__panel-body {
+      height: 160px;
     }
   }
 }
