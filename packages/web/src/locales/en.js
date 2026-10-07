@@ -532,6 +532,9 @@ export default {
     }
   },
   timeRange: {
+    invalid: 'The time range is incomplete or invalid. The previous range has been restored.',
+    order: 'End time must be after start time. The previous range has been restored.',
+    future: 'End time cannot be in the future. The previous range has been restored.',
     last7d: 'Last 7 days',
     last5d: 'Last 5 days',
     last3d: 'Last 3 days',

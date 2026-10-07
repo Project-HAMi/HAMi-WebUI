@@ -528,6 +528,9 @@ export default {
     }
   },
   timeRange: {
+    invalid: '时间范围不完整或无效，已恢复原范围。',
+    order: '结束时间须晚于开始时间，已恢复原范围。',
+    future: '结束时间不能晚于当前时间，已恢复原范围。',
     last7d: '近7天',
     last5d: '近5天',
     last3d: '近3天',
