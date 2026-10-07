@@ -12,21 +12,15 @@
       <span class="stateful-table__sr-only" role="status">
         {{ $t('common.loading') }}
       </span>
-      <div
-        v-for="row in skeletonRows"
-        :key="row"
-        class="stateful-table__skeleton-row"
-        :class="{ 'stateful-table__skeleton-row--header': row === 1 }"
-        :style="skeletonGridStyle"
+      <t-table
+        class="stateful-table__skeleton-table vgpu-table-skin"
+        row-key="skeletonKey"
+        :data="skeletonRows"
+        :columns="skeletonColumns"
+        :table-layout="tableLayout"
         aria-hidden="true"
-      >
-        <t-skeleton
-          v-for="column in normalizedColumnCount"
-          :key="column"
-          animation="gradient"
-          :row-col="[{ width: column === 1 ? '72%' : '58%', height: row === 1 ? '14px' : '18px' }]"
-        />
-      </div>
+        inert
+      />
     </div>
 
     <div
@@ -90,6 +84,7 @@
 <script setup>
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { Skeleton } from 'tdesign-vue-next';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 
 const props = defineProps({
@@ -100,6 +95,14 @@ const props = defineProps({
   filtered: {
     type: Boolean,
     default: false,
+  },
+  columns: {
+    type: Array,
+    default: () => [],
+  },
+  tableLayout: {
+    type: String,
+    default: 'auto',
   },
   hasRows: {
     type: Boolean,
@@ -122,11 +125,30 @@ const props = defineProps({
 defineEmits(['retry', 'clearFilters']);
 
 const { t } = useI18n();
-const skeletonRows = 6;
-const normalizedColumnCount = computed(() => Math.max(1, props.columnCount));
-const skeletonGridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(${normalizedColumnCount.value}, minmax(0, 1fr))`,
-}));
+// Sample rows reserve the usual row rhythm without claiming a result count.
+const skeletonRows = Array.from({ length: 5 }, (_, skeletonKey) => ({ skeletonKey }));
+const skeletonColumns = computed(() => {
+  const columns = props.columns.length ? props.columns : Array.from(
+    { length: Math.max(1, props.columnCount) },
+    (_, index) => ({ colKey: `skeleton-${index}` }),
+  );
+  return columns.map((column, index) => ({
+    colKey: column.colKey,
+    width: column.width,
+    minWidth: column.minWidth,
+    // Headers and column geometry are known before any records arrive.
+    title: column.title ?? ((h) => h(Skeleton, {
+      animation: 'gradient',
+      rowCol: [{ width: '58%', height: '14px' }],
+    })),
+    cell: (h) => h('div', { class: 'stateful-table__skeleton-cell' }, [
+      h(Skeleton, {
+        animation: 'gradient',
+        rowCol: [{ width: index === 0 ? '72%' : '58%', height: '18px' }],
+      }),
+    ]),
+  }));
+});
 const isBusy = computed(() => (
   props.status === REQUEST_STATUS.LOADING || props.refreshing
 ));
@@ -146,27 +168,22 @@ const blockingMessage = computed(() => (
 }
 
 .stateful-table__skeleton {
-  min-height: 360px;
-  overflow: hidden;
-  border-radius: 8px;
+  min-width: 0;
+  margin-top: 8px;
 }
 
-.stateful-table__skeleton-row {
-  display: grid;
-  min-width: 720px;
+.stateful-table__skeleton-table {
+  min-width: 0;
+}
+
+:deep(.stateful-table__skeleton-cell) {
+  display: flex;
+  min-height: 40px;
   align-items: center;
-  gap: 24px;
-  min-height: 64px;
-  padding: 0 16px;
-}
 
-.stateful-table__skeleton-row:nth-child(odd) {
-  background: #fafbfc;
-}
-
-.stateful-table__skeleton-row--header {
-  min-height: 48px;
-  background: #f5f7fa;
+  > .t-skeleton {
+    width: 100%;
+  }
 }
 
 .stateful-table__feedback {

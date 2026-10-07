@@ -65,6 +65,8 @@
         :has-rows="tableData.length > 0"
         :filtered="displayedFiltered"
         :column-count="visibleColumns.length"
+        :columns="visibleColumns"
+        table-layout="fixed"
         @retry="refreshTable"
         @clear-filters="clearFilters"
       >

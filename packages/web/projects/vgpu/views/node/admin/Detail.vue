@@ -16,6 +16,56 @@
     </page-header>
 
     <detail-page-state :status="detailStatus" @retry="retryDetail">
+      <template #loading>
+        <section class="node-overview-wrap">
+          <block-box class="node-overview-panel" :title="$t('node.detail.nodeOverview')" variant="detail">
+            <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
+              <div class="node-detail-left">
+                <div class="node-detail-info-summary node-detail-info-summary-cols">
+                  <div v-for="(group, index) in detailColumnGroups" :key="index" class="summary-col">
+                    <div v-for="{ label, value } in group" :key="label" class="summary-item">
+                      <div class="summary-item-label">{{ label }}</div>
+                      <div class="summary-item-value">
+                        <span v-if="value === 'uid'" class="ellipsis-text is-singleline" style="width: 78%"><LoadingValue /></span>
+                        <LoadingValue v-else width="78%" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </block-box>
+          <block-box class="node-overview-panel node-workload-panel" :title="$t('node.detail.resourceOverview')" variant="detail">
+            <ul class="node-system-resource-cards">
+              <li v-for="(title, index) in [$t('dashboard.computePowerTotal'), $t('dashboard.memoryTotal')]" :key="title" class="resource-overview-card">
+                <div class="resource-card">
+                  <div class="resource-card-header">
+                    <div class="resource-card-icon"><LoadingValue :height="24" width="24px" /></div>
+                    <div class="resource-card-header-info">
+                      <div class="resource-card-value" :class="{ 'resource-card-value--compute': index === 0 }"><LoadingValue :height="index === 0 ? 22 : 28" width="80px" /></div>
+                      <div class="resource-card-sub-title">{{ title }}</div>
+                    </div>
+                  </div>
+                  <div class="resource-card-footer">
+                    <div v-for="label in [$t('dashboard.allocRateLegend'), $t('dashboard.usageRateLegend')]" :key="label" class="resource-card-rate-wrap">
+                      <div class="resource-card-footer-item">
+                        <div class="resource-card-footer-title">{{ label }}</div>
+                        <div class="resource-card-footer-value"><LoadingValue :height="24" width="64px" /></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </block-box>
+        </section>
+        <TrendTimeFilter :model-value="times" class="node-trend-filter" loading />
+        <div class="line-box">
+          <block-box v-for="section in trendSections" :key="section.key" :title="section.title">
+            <MetricChart :option="section.option" />
+          </block-box>
+        </div>
+      </template>
     <section class="node-overview-wrap">
       <block-box class="node-overview-panel" :title="$t('node.detail.nodeOverview')" variant="detail">
         <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
@@ -209,6 +259,7 @@ import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import { computed, ref } from 'vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import {
   classifyDetailPayload,

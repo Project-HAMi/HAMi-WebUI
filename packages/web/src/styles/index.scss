@@ -258,3 +258,14 @@ aside {
 .t-range-input {
   border-radius: 6px;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-skeleton .t-skeleton--animation-gradient::after {
+    animation: none;
+    display: none;
+  }
+
+  .t-skeleton .t-skeleton--animation-flashed {
+    animation: none;
+  }
+}

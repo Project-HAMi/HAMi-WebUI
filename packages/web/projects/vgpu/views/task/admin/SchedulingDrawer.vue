@@ -159,7 +159,7 @@
           </details>
         </section>
 
-        <p v-if="loading" class="sd-status-line" role="status">{{ t('scheduling.loading') }}</p>
+        <p v-if="loading" :class="response ? 'sd-sr-only' : 'sd-status-line'" role="status">{{ t('scheduling.loading') }}</p>
         <p v-if="response && eventStatus !== 'available'" class="sd-status-line" role="status">{{ t(`scheduling.eventStatus.${eventStatus}`) }}</p>
 
         <details class="scheduling-records sd-records">

@@ -642,9 +642,34 @@ async function selectTrendRange(page, value) {
   await page.locator('.t-select-option:visible').getByText(label, { exact: true }).click()
 }
 
+async function waitForChartPaint(page) {
+  let previous
+  await waitUntil(async() => {
+    const frame = await page.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
+      const bounds = canvas.getBoundingClientRect()
+      const body = canvas.closest('.metric-chart__body, .card-type-chart')?.getBoundingClientRect()
+      return {
+        fits: !body || (Math.abs(bounds.width - body.width) < 1 && Math.abs(bounds.height - body.height) < 1),
+        image: canvas.toDataURL(),
+      }
+    }))
+    const snapshot = JSON.stringify(frame)
+    const settled = frame.every(({ fits }) => fits) && snapshot === previous
+    previous = snapshot
+    return settled
+  }, 'Chart paint did not settle to the current container size')
+}
+
 async function captureTrendScreenshot(page, name) {
   const directory = process.env.WEB_ENTRY_SCREENSHOT_DIR
   if (!directory) return
+  await page.evaluate(async() => {
+    await document.fonts.ready
+    await Promise.all(document.getAnimations()
+      .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
+      .map((animation) => animation.finished.catch(() => {})))
+  })
+  await waitForChartPaint(page)
   await mkdir(directory, { recursive: true })
   await page.screenshot({ path: join(directory, `${name}.png`) })
 }
@@ -2287,6 +2312,148 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
     await page.close()
   }
 }, { timeout: 60_000 })
+
+test('detail loading shells follow each page layout and container breakpoints', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const fixtures = [
+    { name: 'node', route: 'nodes/node-1?nodeName=node-1', api: /\/v1\/node\?/, charts: 2, legendCounts: [2, 2], shells: '.node-overview-panel',
+      groups: { '.node-overview-panel': 2, '.node-system-resource-cards > li': 2 } },
+    { name: 'card', route: 'accelerators/gpu-1', api: /\/v1\/gpu\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
+      groups: { '.basic-info-row > .basic-info-card': 5, '.resource-overview-cards > li': 2 } },
+    { name: 'workload', route: 'workloads/pod-1/containers/worker', api: /\/v1\/container\?/,
+      charts: 2, legendCounts: [0, 0], shells: '.basic-info-block, .workload-overview', groups: { '.basic-info-cards > .basic-info-card': 4, '.workload-overview .row-card': 5 } },
+  ]
+  const viewports = [
+    { width: 1920 }, { width: 1440 }, { width: 1366 }, { width: 1280 },
+    { width: 1024 }, { width: 600 }, { width: 1440, collapsed: true }, { width: 375, collapsed: true },
+  ]
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const fixture of fixtures) {
+      await t.test(`${fixture.name} ${locale}`, async() => {
+        const page = await browser.newPage({ locale, viewport: { width: 1440, height: 1000 } })
+        let release
+        const gate = new Promise((resolve) => { release = resolve })
+        const errors = []
+        page.on('pageerror', (error) => errors.push(error.message))
+        await page.route(fixture.api, async(route) => {
+          const response = await route.fetch()
+          await gate
+          await route.fulfill({ response })
+        })
+        const configure = async({ width, collapsed = false }) => {
+          await page.setViewportSize({ width, height: 1000 })
+          const buttonName = locale === 'zh-CN'
+            ? (collapsed ? '收起侧栏' : '展开侧栏')
+            : (collapsed ? 'Collapse sidebar' : 'Expand sidebar')
+          const toggle = page.getByRole('button', { name: buttonName, exact: true })
+          if (await toggle.count()) await toggle.click()
+          await page.locator('.page-aside').evaluate(async(element) => {
+            await Promise.all(element.getAnimations().map((animation) => animation.finished))
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+          })
+          await waitForChartPaint(page)
+        }
+        const geometry = async() => {
+          const groups = {}
+          for (const [selector, count] of Object.entries(fixture.groups)) {
+            const elements = page.locator(`.detail-page-state ${selector}`)
+            assert.equal(await elements.count(), count, `${fixture.name}: ${selector} count`)
+            groups[selector] = await elements.evaluateAll((items) => {
+              const firstTop = items[0].getBoundingClientRect().top
+              return items.map((item) => {
+                const { x, top, width } = item.getBoundingClientRect()
+                return { x, y: top - firstTop, width }
+              })
+            })
+          }
+          const charts = page.locator('.detail-page-state .metric-chart__body')
+          assert.equal(await charts.count(), fixture.charts)
+          if (await page.locator('[data-testid="detail-page-skeleton"]').count()) {
+            const rows = await charts.evaluateAll((items) => items.map((item) => ({
+              count: item.querySelectorAll('.t-skeleton__row').length,
+              width: item.getBoundingClientRect().width,
+            })))
+            assert.deepEqual(rows.map(({ count }) => count), rows.map(({ width }, index) =>
+              1 + (fixture.legendCounts[index] ? (width < 360 ? fixture.legendCounts[index] : 1) : 0)),
+            'Loading charts must reserve the same horizontal or stacked legends as ready charts')
+          }
+          const chartSizes = await charts.evaluateAll((items) => items.map((item) => {
+            const { x, width, height } = item.getBoundingClientRect()
+            return { x, width, height }
+          }))
+          assert.ok(chartSizes.every(({ height }) => height === 250), 'Each loading and ready chart reserves 250px')
+          const shells = await page.locator('.detail-page-state').locator(fixture.shells).evaluateAll((items) => items.map((item) => {
+            const style = getComputedStyle(item)
+            const title = item.querySelector(':scope > .home-block-header > .title')
+            const content = item.querySelector(':scope > .home-block-content')
+            const first = content?.firstElementChild
+            return {
+              title: title?.textContent.trim(),
+              padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+              border: style.borderTopWidth,
+              radius: style.borderTopLeftRadius,
+              titleHeight: title?.getBoundingClientRect().height,
+              titleGap: first && title ? first.getBoundingClientRect().top - title.getBoundingClientRect().bottom : null,
+            }
+          }))
+          assert.equal(shells.length, 2, 'Basic information and resource overview must retain their own panels')
+          for (const shell of shells) {
+            assert.ok(shell.title, `${fixture.name}: a loading panel lost its known section title`)
+            assert.deepEqual(shell.padding, ['12px', '16px', '16px', '16px'], `${fixture.name}: detail panel spacing drifted`)
+            assert.equal(shell.border, '1px')
+            assert.equal(shell.radius, '12px')
+            assert.equal(shell.titleHeight, 28, `${fixture.name}: section title height differs from the detail convention`)
+            assert.equal(shell.titleGap, 8, `${fixture.name}: section title and content must share the existing 8px gap`)
+          }
+          const filterSpacing = await page.locator('.detail-page-state .trend-time-filter').evaluate((element) => {
+            const style = getComputedStyle(element)
+            return [style.marginTop, style.marginBottom]
+          })
+          return { groups, chartSizes, shells, filterSpacing }
+        }
+        try {
+          await page.goto(`${target}${basePath}${fixture.route}`, { waitUntil: 'domcontentloaded' })
+          await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
+          assert.equal(await page.locator('[data-testid="detail-page-skeleton"] [inert]').count(), 1)
+          const pending = []
+          for (const viewport of viewports) {
+            await configure(viewport)
+            pending.push(await geometry())
+            if (viewport.width === 1280) await captureTrendScreenshot(page, `skeleton-${fixture.name}-${locale}-1280`)
+          }
+          release()
+          await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+          for (const [index, viewport] of viewports.entries()) {
+            await configure(viewport)
+            const resolved = await geometry()
+            assert.deepEqual(resolved.shells, pending[index].shells, `${fixture.name} ${locale} ${viewport.width}: known panel geometry changes after loading`)
+            assert.deepEqual(resolved.filterSpacing, pending[index].filterSpacing, `${fixture.name}: time controls change spacing after loading`)
+            for (const [selector, boxes] of Object.entries(resolved.groups)) {
+              for (const [card, box] of boxes.entries()) {
+                // Content can wrap after it arrives; compare row membership rather than guessing its height.
+                assert.equal(box.y === 0, pending[index].groups[selector][card].y === 0,
+                  `${fixture.name} ${viewport.width}: ${selector} ${card} changes row after loading`)
+                for (const field of ['x', 'width']) {
+                  assert.ok(Math.abs(box[field] - pending[index].groups[selector][card][field]) <= 1,
+                    `${fixture.name} ${locale} ${viewport.width}: ${selector} ${card} ${field} differs between loading ${pending[index].groups[selector][card][field]} and ready ${box[field]}`)
+                }
+              }
+            }
+            for (const [chart, box] of resolved.chartSizes.entries()) {
+              assert.ok(Math.abs(box.width - pending[index].chartSizes[chart].width) <= 1,
+                `${fixture.name} ${viewport.width}: chart column width changes after loading`)
+            }
+            if (viewport.width === 1280) await captureTrendScreenshot(page, `ready-${fixture.name}-${locale}-1280`)
+          }
+          assert.deepEqual(errors, [])
+        } finally {
+          release()
+          await page.close()
+        }
+      })
+    }
+  }
+})
 
 test('detail pages expose truthful asynchronous resource states', async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
@@ -5167,6 +5334,478 @@ test('typing over a calendar preview preserves invalid drafts without selecting 
     await panel.waitFor({ state: 'hidden' })
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied)
   })
+})
+
+test('list loading tables reuse visible column geometry and retain rows during refresh', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const fixtures = [
+    { name: 'node', route: 'nodes', api: /\/api\/vgpu\/v1\/nodes$/, table: '.node-table',
+      layout: 'auto', widths: ['', '', '', '', ''], minWidths: ['200px', '200px', '100px', '280px', '280px'] },
+    { name: 'card', route: 'accelerators', api: /\/api\/vgpu\/v1\/gpus$/, table: '.accelerator-table',
+      layout: 'fixed', widths: ['250px', '150px', '170px', '200px', '220px', '180px', '220px', '180px'],
+      minWidths: ['', '', '', '', '', '', '', ''] },
+    { name: 'workload', route: 'workloads', api: workloadListPattern, table: '.workload-table',
+      layout: 'auto', widths: ['', '', '', '180px', ''], minWidths: ['', '', '', '', ''] },
+  ]
+  const viewports = [1440, 600]
+  const createGate = () => {
+    let release
+    const promise = new Promise((resolve) => { release = resolve })
+    return { promise, release }
+  }
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const fixture of fixtures) {
+      await t.test(`${fixture.name} ${locale}`, async() => {
+        const context = await browser.newContext({ locale, viewport: { width: 1440, height: 1000 } })
+        const page = await context.newPage()
+        const errors = []
+        page.on('pageerror', (error) => errors.push(error.message))
+        const initialGate = createGate()
+        let gate = initialGate
+        let fetched = 0
+        await page.route(fixture.api, async(route) => {
+          const heldGate = gate
+          const response = await route.fetch()
+          const payload = await response.json()
+          if (fixture.name === 'workload') {
+            payload.items = payload.items.map((item) => ({ ...item, createTime: '2026-09-12T00:00:00Z' }))
+          }
+          fetched += 1
+          await heldGate.promise
+          await route.fulfill({ response, json: payload })
+        })
+        const geometry = (selector) => page.locator(selector).evaluate((root) => {
+          const table = root.querySelector('table')
+          const content = root.querySelector('.t-table__content')
+          const shell = root.closest('.stateful-table')
+          const toolbar = shell.parentElement.querySelector('.table-toolbar')
+          const cols = [...table.querySelectorAll('colgroup col')]
+          const headers = [...table.querySelectorAll('thead th')]
+          return {
+            labels: headers.map((header) => header.textContent.trim()),
+            layout: getComputedStyle(table).tableLayout,
+            widths: cols.map((col) => col.style.width),
+            minWidths: cols.map((col) => col.style.minWidth),
+            headerWidths: headers.map((header) => header.getBoundingClientRect().width),
+            rowHeight: table.querySelector('tbody tr').getBoundingClientRect().height,
+            topOffset: table.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom,
+            shellWidth: shell.getBoundingClientRect().width,
+            contentWidth: content.getBoundingClientRect().width,
+            overflowX: getComputedStyle(content).overflowX,
+            forces720: [root, ...root.querySelectorAll('*')].some((element) => getComputedStyle(element).minWidth === '720px'),
+          }
+        })
+        const configure = async(width) => {
+          await page.setViewportSize({ width, height: 1000 })
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+        }
+        const assertColumnContract = (measured, stage) => {
+          const label = `${fixture.name} ${locale} ${stage}`
+          assert.equal(measured.labels.length, fixture.widths.length, `${label}: visible column count`)
+          assert.equal(measured.layout, fixture.layout, `${label}: table layout`)
+          assert.deepEqual(measured.widths, fixture.widths, `${label}: declared column widths`)
+          assert.deepEqual(measured.minWidths, fixture.minWidths, `${label}: declared minimum column widths`)
+          assert.equal(measured.forces720, false, `${label}: a table descendant forces the old 720px skeleton width`)
+          assert.equal(measured.overflowX, 'auto', `${label}: the table owns horizontal scrolling`)
+          assert.ok(measured.contentWidth <= measured.shellWidth + 1, `${label}: scroll content escapes its table shell`)
+        }
+        try {
+          await page.goto(`${target}${basePath}${fixture.route}`, { waitUntil: 'domcontentloaded' })
+          const skeleton = page.locator('[data-testid="stateful-table-skeleton"]')
+          await skeleton.waitFor()
+          const placeholderTable = skeleton.locator('.stateful-table__skeleton-table')
+          assert.equal(await placeholderTable.getAttribute('inert'), '')
+          assert.equal(await placeholderTable.getAttribute('tabindex'), '0')
+          await placeholderTable.evaluate((table) => table.focus())
+          assert.equal(await skeleton.evaluate((element) => element.contains(document.activeElement)), false,
+            'Programmatic focus must not enter an aria-hidden placeholder table')
+          const lastToolbarButton = page.locator('.table-toolbar button').last()
+          await lastToolbarButton.focus()
+          await page.keyboard.press('Tab')
+          assert.equal(await skeleton.evaluate((element) => element.contains(document.activeElement)), false,
+            'Keyboard navigation must skip the inert placeholder table')
+          await waitUntil(() => fetched > 0, `${fixture.name}: the initial backend response was not fetched`)
+          const pending = []
+          for (const width of viewports) {
+            await configure(width)
+            const measured = await geometry('.stateful-table__skeleton-table')
+            assertColumnContract(measured, `loading ${width}`)
+            assert.equal(await skeleton.locator('tbody tr').count(), 5, 'Loading rows are a fixed sample, not the result count')
+            assert.ok(measured.rowHeight >= 40, `${fixture.name}: the loading row is smaller than its reserved icon container`)
+            pending.push(measured)
+            await page.locator('.stateful-table').scrollIntoViewIfNeeded()
+            await captureTrendScreenshot(page, `skeleton-list-${fixture.name}-${locale}-${width}`)
+          }
+          initialGate.release()
+          await page.locator(`${fixture.table} tbody tr`).first().waitFor()
+          await skeleton.waitFor({ state: 'hidden' })
+          await lastToolbarButton.focus()
+          await page.keyboard.press('Tab')
+          assert.equal(await page.locator(fixture.table).evaluate((element) => element.contains(document.activeElement)), true,
+            'Keyboard navigation must still enter the ready table from the last toolbar button')
+          for (const [index, width] of viewports.entries()) {
+            await configure(width)
+            const resolved = await geometry(fixture.table)
+            assertColumnContract(resolved, `ready ${width}`)
+            assert.deepEqual(resolved.labels, pending[index].labels, `${fixture.name}: known column labels change after loading`)
+            assert.ok(Math.abs(resolved.topOffset - pending[index].topOffset) < 1, `${fixture.name}: the table moves relative to its toolbar after loading`)
+            if (fixture.name !== 'workload' || width === 1440) {
+              assert.ok(Math.abs(resolved.rowHeight - pending[index].rowHeight) < 1, `${fixture.name} ${locale} ${width}: default row height changes from loading ${pending[index].rowHeight}px to ready ${resolved.rowHeight}px`)
+            } else {
+              // The narrow auto-layout workload row can wrap unknown text; report it without promising equal height.
+              t.diagnostic(`workload ${locale} ${width}: loading row ${pending[index].rowHeight}px, ready row ${resolved.rowHeight}px`)
+            }
+            await page.locator('.stateful-table').scrollIntoViewIfNeeded()
+            await captureTrendScreenshot(page, `ready-list-${fixture.name}-${locale}-${width}`)
+            // Auto-layout columns may grow for real text. Only the fixed-layout card table promises equal widths.
+            if (fixture.layout === 'fixed') {
+              for (const [column, columnWidth] of resolved.headerWidths.entries()) {
+                assert.ok(Math.abs(columnWidth - pending[index].headerWidths[column]) < 1,
+                  `card ${locale} ${width}: column ${column} changes width from ${pending[index].headerWidths[column]} to ${columnWidth}`)
+              }
+            }
+          }
+          await configure(1440)
+          const table = page.locator(fixture.table)
+          const existingRow = await table.locator('tbody tr').first().elementHandle()
+          const existingText = await table.innerText()
+          const settled = await geometry(fixture.table)
+          gate = createGate()
+          const beforeRefresh = fetched
+          const refreshName = locale === 'zh-CN' ? '刷新' : 'Refresh'
+          await page.locator('.table-toolbar-right').getByRole('button', { name: refreshName, exact: true }).click()
+          await waitUntil(() => fetched > beforeRefresh, `${fixture.name}: refresh did not fetch a response`)
+          await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'attached' })
+          assert.equal(await skeleton.count(), 0, `${fixture.name}: refresh replaced usable rows with loading placeholders`)
+          assert.equal(await existingRow.evaluate((row) => row.isConnected), true, `${fixture.name}: refresh removed the previous row`)
+          assert.equal(await table.innerText(), existingText, `${fixture.name}: refresh changed the previous content before a response`)
+          assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'true')
+          assert.ok(Math.abs((await geometry(fixture.table)).topOffset - settled.topOffset) < 1, `${fixture.name}: refresh moved the existing table`)
+          await captureTrendScreenshot(page, `refresh-list-${fixture.name}-${locale}-1440`)
+          gate.release()
+          await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'detached' })
+          assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'false')
+          assert.deepEqual(errors, [])
+        } finally {
+          initialGate.release()
+          gate.release()
+          await context.close()
+        }
+      })
+    }
+  }
+})
+
+test('overview loading regions keep page containers while data arrives', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    await t.test(locale, async() => {
+      const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
+      let release
+      const gate = new Promise((resolve) => { release = resolve })
+      await page.route(/\/v1\/(?:nodes|gpus|monitor\/query\/instant-vector)$/, async(route) => {
+        const response = await route.fetch()
+        const query = route.request().method() === 'POST' ? route.request().postDataJSON()?.query : ''
+        const ranking = query?.includes('topk(')
+        await gate
+        await route.fulfill(ranking ? { json: { data: Array.from({ length: 5 }, (_, index) => ({
+          metric: { node: `node-${index + 1}`, device_uuid: `gpu-${index + 1}` }, value: 5 - index,
+        })) } } : { response })
+      })
+      const measure = () => page.evaluate(() => {
+        const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height
+        return {
+          node: height('.node-overview-skeleton') ?? height('.node-all'),
+          nodeBlock: height('.home-top-right-card'),
+          type: height('.card-type-skeleton') ?? height('.card-type-chart'),
+          top5: [...document.querySelectorAll('.tab-top-list')].map((element) => element.getBoundingClientRect().height),
+          workload: height('.workload-table-skeleton') ?? height('.top5-item-list-table'),
+          chart: [...document.querySelectorAll('.metric-chart__body')].map((element) => element.getBoundingClientRect().height),
+        }
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
+        await page.locator('.node-overview-skeleton').waitFor()
+        const countFonts = await page.locator('.node-overview-skeleton .count').evaluateAll((counts) => counts.map((count) => {
+          const font = (element) => {
+            const style = getComputedStyle(element)
+            return { size: style.fontSize, family: style.fontFamily, weight: style.fontWeight }
+          }
+          return { count: font(count), placeholder: font(count.querySelector('.loading-value')) }
+        }))
+        for (const fonts of countFonts) {
+          assert.deepEqual(fonts.placeholder, fonts.count, 'Character-width placeholders must use the count font, not the skeleton library font')
+        }
+        const pending = []
+        for (const width of [1280, 1366, 1440, 1920, 600]) {
+          await page.setViewportSize({ width, height: 1000 })
+          await waitForChartPaint(page)
+          await delay(50)
+          pending.push({ width, ...await measure() })
+          if (width === 1280) await captureTrendScreenshot(page, `skeleton-overview-${locale}-1280`)
+        }
+        release()
+        await page.locator('.node-all').waitFor()
+        await page.locator('.tab-top-skeleton').first().waitFor({ state: 'detached' })
+        const ready = []
+        for (const width of [1280, 1366, 1440, 1920, 600]) {
+          await page.setViewportSize({ width, height: 1000 })
+          await waitForChartPaint(page)
+          await delay(50)
+          ready.push({ width, ...await measure() })
+          if (width === 1280) await captureTrendScreenshot(page, `ready-overview-${locale}-1280`)
+        }
+        t.diagnostic(JSON.stringify({ locale, pending, ready }))
+        assert.ok(ready.every((state) => state.chart.every((height) => height === 250)))
+        for (const [index, state] of ready.entries()) {
+          assert.equal(state.node, pending[index].node, 'Known node status labels must reserve their wrapped height')
+          assert.equal(state.workload, pending[index].workload, 'Five loading rows must match five result rows in the count table')
+          assert.ok(state.top5.every((height, rank) => Math.abs(height - pending[index].top5[rank]) < 4),
+            'Five ranking placeholders must retain the five-item row rhythm')
+        }
+      } finally {
+        release()
+        await page.close()
+      }
+    })
+  }
+})
+
+test('scheduling loading preserves its snapshot and refresh record position', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    await t.test(locale, async() => {
+      const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
+      const pod = { name: 'loading-snapshot', namespace: 'research', uid: 'loading-snapshot-uid', stage: 'waiting',
+        schedulerName: 'hami-scheduler', reasonCodes: ['CardInsufficientMemory'], reasonSource: 'hami',
+        requests: [{ container: 'main', containerKind: 'regular', resources: [{ name: 'nvidia.com/gpu', value: '1', kind: 'count' }] }] }
+      let release
+      let gate = new Promise((resolve) => { release = resolve })
+      let requested = 0
+      await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [pendingWorkloadFixture(pod)] }))
+      await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+        requested += 1
+        await gate
+        await route.fulfill({ json: { pod, events: [], eventStatus: 'empty' } })
+      })
+      try {
+        await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('button', { name: 'loading-snapshot / main', exact: true }).click()
+        const dialog = page.getByRole('dialog')
+        const records = dialog.locator('.scheduling-records')
+        await waitUntil(() => requested === 1, 'Opening the drawer did not request its evidence')
+        await dialog.locator('.sd-status-line').waitFor()
+        const before = await dialog.locator('.scheduling-summary').innerText()
+        assert.ok(before.includes('hami-scheduler'), 'The initial drawer must retain its real list snapshot')
+        await captureTrendScreenshot(page, `skeleton-drawer-${locale}-1280`)
+        release()
+        const refresh = dialog.locator('.sd-header button[aria-busy]')
+        await waitUntil(async() => (await refresh.getAttribute('aria-busy')) === 'false', 'Initial evidence did not finish')
+        const stable = await records.boundingBox()
+        const summary = await dialog.locator('.scheduling-summary').innerText()
+        gate = new Promise((resolve) => { release = resolve })
+        await refresh.click()
+        await waitUntil(() => requested === 2, 'The drawer did not refresh')
+        const during = await records.boundingBox()
+        assert.equal(await dialog.locator('.scheduling-summary').innerText(), summary)
+        t.diagnostic(JSON.stringify({ locale, stableRecordY: stable.y, refreshingRecordY: during.y }))
+        assert.ok(Math.abs(stable.y - during.y) < 1, 'Refreshing must not move the existing evidence records')
+        await captureTrendScreenshot(page, `refresh-drawer-${locale}-1280`)
+        release()
+      } finally {
+        release()
+        await page.close()
+      }
+    })
+  }
+})
+
+test('node allocation loading follows identity and both allocation snapshots without inventing results', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const { width, first } of [{ width: 1440, first: 'devices' }, { width: 375, first: 'containers' }]) {
+    await t.test(`${width}px ${first} first`, async() => {
+      const page = await browser.newPage({ locale: 'en-US', viewport: { width, height: 1000 } })
+      const requests = await installNodeAllocationFixture(page, nodeAllocationFixture())
+      const gates = Object.fromEntries(['node', 'devices', 'containers'].map((key) => {
+        let release
+        const promise = new Promise((resolve) => { release = resolve })
+        return [key, { promise, release, delivered: false }]
+      }))
+      for (const [key, pattern] of [['node', '**/v1/node?**'], ['devices', '**/v1/gpus'], ['containers', '**/v1/containers']]) {
+        await page.route(pattern, async(route) => {
+          await gates[key].promise
+          await route.fallback()
+          gates[key].delivered = true
+        })
+      }
+      try {
+        await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'domcontentloaded' })
+        await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
+        if (width === 375) await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+        assert.equal(await page.locator('.node-allocation').count(), 0, 'Unknown node identity must not imply four real devices or a split mode')
+        assert.equal(requests.length, 0, 'Allocation requests need the resolved node identity')
+        await captureTrendScreenshot(page, `skeleton-node-identity-${width}`)
+
+        gates.node.release()
+        const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+        await section.locator('.node-device--loading').first().waitFor()
+        await waitUntil(() => requests.length === 2, 'Resolved node identity did not start the two scoped snapshots')
+        assert.equal(await page.locator('.detail-page-state').getAttribute('data-detail-state'), 'ready')
+        assert.equal(await section.getAttribute('aria-busy'), 'true')
+        assert.equal(await section.locator('.node-device--loading[aria-hidden="true"]').count(), 4)
+        assert.equal(await section.locator('article[data-device-id]').count(), 0)
+        assert.equal(await section.locator('button[aria-haspopup="dialog"]').count(), 0, 'Sample placeholders cannot expose occupancy actions')
+        const placeholderBoxes = await section.locator('.node-device--loading').evaluateAll((items) => items.map((item) => {
+          const { x, width } = item.getBoundingClientRect()
+          return { x, width }
+        }))
+        await section.scrollIntoViewIfNeeded()
+        await captureTrendScreenshot(page, `skeleton-node-allocation-${width}`)
+
+        gates[first].release()
+        await waitUntil(() => gates[first].delivered, 'The first allocation snapshot did not finish')
+        assert.equal(await section.getAttribute('aria-busy'), 'true', 'One snapshot cannot establish complete occupancy')
+        assert.equal(await section.locator('.node-device--loading').count(), 4)
+        assert.equal(await section.locator('.split-meter__part, .split-mig__segment').count(), 0, 'An unfinished holder snapshot must not suggest free capacity')
+        gates[first === 'devices' ? 'containers' : 'devices'].release()
+        await section.locator('article[data-device-id]').first().waitFor()
+        assert.equal(await section.getAttribute('aria-busy'), 'false')
+        assert.equal(await section.locator('.node-device--loading').count(), 0)
+        assert.equal(await section.locator('article[data-device-id]').count(), 4)
+        assert.equal(await section.getByRole('button', { name: 'Show 4 more devices', exact: true }).count(), 1)
+        const readyBoxes = await section.locator('article[data-device-id]').evaluateAll((items) => items.map((item) => {
+          const { x, width } = item.getBoundingClientRect()
+          return { x, width }
+        }))
+        for (const [index, box] of readyBoxes.entries()) {
+          assert.ok(Math.abs(box.x - placeholderBoxes[index].x) < 1 && Math.abs(box.width - placeholderBoxes[index].width) < 1,
+            'Known two-column or one-column allocation geometry must not change when snapshots complete')
+        }
+        assertNodeAllocationRequests(requests)
+        await captureTrendScreenshot(page, `ready-node-allocation-${width}`)
+      } finally {
+        Object.values(gates).forEach((gate) => gate.release())
+        await page.unrouteAll({ behavior: 'wait' })
+        await page.close()
+      }
+    })
+  }
+})
+
+test('chart loading reserves the painted plot and legend rows on narrow hourly and cross-day charts', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const { name, now, width } of [
+    { name: 'hour-wide', now: '2026-10-07T12:00:00Z', width: 1440 },
+    { name: 'hour-narrow', now: '2026-10-07T12:00:00Z', width: 375 },
+    { name: 'cross-day-narrow', now: '2026-10-07T00:30:00Z', width: 375 },
+  ]) {
+    await t.test(name, async() => {
+      const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC', viewport: { width, height: 1000 } })
+      await page.clock.install({ time: new Date(now) })
+      await installTimeAxisFixture(page)
+      await page.addInitScript(() => {
+        const prototype = CanvasRenderingContext2D.prototype
+        const clearRect = prototype.clearRect
+        prototype.clearRect = function(...args) {
+          this.canvas.loadingProbeLines = []
+          return clearRect.apply(this, args)
+        }
+        const beginPath = prototype.beginPath
+        prototype.beginPath = function(...args) {
+          this.loadingProbePath = []
+          return beginPath.apply(this, args)
+        }
+        for (const method of ['moveTo', 'lineTo']) {
+          const original = prototype[method]
+          prototype[method] = function(x, y, ...args) {
+            const point = new DOMPoint(x, y).matrixTransform(this.getTransform())
+            this.loadingProbePath ??= []
+            this.loadingProbePath.push({ method, x: point.x, y: point.y })
+            return original.call(this, x, y, ...args)
+          }
+        }
+        const stroke = prototype.stroke
+        prototype.stroke = function(...args) {
+          const path = this.loadingProbePath ?? []
+          for (let index = 1; index < path.length; index += 1) {
+            const previous = path[index - 1]
+            const point = path[index]
+            if (point.method === 'lineTo' && Math.abs(point.y - previous.y) < 1 && Math.abs(point.x - previous.x) > this.canvas.width / 2) {
+              this.canvas.loadingProbeLines ??= []
+              this.canvas.loadingProbeLines.push(point.y)
+            }
+          }
+          return stroke.apply(this, args)
+        }
+      })
+      let release
+      const gate = new Promise((resolve) => { release = resolve })
+      await page.route('**/v1/monitor/query/range-vector', async(route) => {
+        await gate
+        await route.fallback()
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+        const chart = page.locator('.metric-chart').first()
+        const plot = chart.locator('.metric-chart__skeleton-plot')
+        await plot.waitFor()
+        await page.locator('.page-aside').evaluate(async(element) => {
+          await Promise.all(element.getAnimations().map((animation) => animation.finished))
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        })
+        const pending = await chart.evaluate((element) => {
+          const body = element.querySelector('.metric-chart__body').getBoundingClientRect()
+          const plot = element.querySelector('.metric-chart__skeleton-plot').getBoundingClientRect()
+          const legends = [...element.querySelectorAll('.metric-chart__skeleton-legend .t-skeleton__col')].map((item) => {
+            const rect = item.getBoundingClientRect()
+            return { top: rect.top - body.top, bottom: rect.bottom - body.top }
+          })
+          return { width: body.width, height: body.height, plot: { top: plot.top - body.top, bottom: plot.bottom - body.top }, legends }
+        })
+        assert.equal(pending.height, 250)
+        assert.equal(pending.legends.length, pending.width < 360 ? 2 : 1)
+        assert.ok(pending.plot.bottom < pending.legends[0].top, 'Loading plot and legend must not overlap')
+        assert.ok(pending.legends.at(-1).bottom <= 250, 'Loading legend escapes the chart body')
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+        const animations = await chart.locator('.t-skeleton__col').evaluateAll((items) => items.map((item) => ({
+          self: getComputedStyle(item).animationName,
+          gradient: getComputedStyle(item, '::after').animationName,
+        })))
+        assert.ok(animations.every(({ self, gradient }) => self === 'none' && gradient === 'none'), 'Reduced-motion users must not receive shimmer animations')
+        await chart.scrollIntoViewIfNeeded()
+        await captureTrendScreenshot(page, `skeleton-chart-${name}`)
+        release()
+        await chart.locator('canvas').waitFor()
+        await assertTimeAxisLayout(page, `loading-parity-${name}`)
+        const painted = await chart.locator('canvas').first().evaluate((canvas) => {
+          const scale = canvas.getBoundingClientRect().width / canvas.width
+          const lines = (canvas.loadingProbeLines ?? []).map((y) => y * scale)
+          const texts = (canvas.drawnTexts ?? []).filter(({ text }) => /[A-Za-z]/.test(text) && !text.startsWith('UTC'))
+          return {
+            plot: { top: Math.min(...lines), bottom: Math.max(...lines) },
+            legends: texts.map(({ text, y, bottom }) => ({ text, top: y * scale, bottom: bottom * scale })),
+          }
+        })
+        t.diagnostic(JSON.stringify({ name, pending, painted }))
+        assert.ok(Number.isFinite(painted.plot.top), 'The actual chart grid was not painted')
+        assert.ok(Math.abs(pending.plot.top - painted.plot.top) <= 1.5 && Math.abs(pending.plot.bottom - painted.plot.bottom) <= 1.5,
+          `${name}: loading plot ${JSON.stringify(pending.plot)} differs from painted plot ${JSON.stringify(painted.plot)}`)
+        assert.equal(painted.legends.length, 2)
+        const paintedRows = pending.width < 360 ? painted.legends : [painted.legends[0]]
+        for (const [index, row] of pending.legends.entries()) {
+          const actual = paintedRows[index]
+          assert.ok(Math.abs((row.top + row.bottom) / 2 - (actual.top + actual.bottom) / 2) <= 4.5,
+            `${name}: placeholder legend row ${index} is displaced from its painted label: ${JSON.stringify({ row, actual })}`)
+        }
+        await captureTrendScreenshot(page, `ready-chart-${name}`)
+      } finally {
+        release()
+        await page.unrouteAll({ behavior: 'wait' })
+        await page.close()
+      }
+    })
+  }
 })
 
 const listSearchCases = [
