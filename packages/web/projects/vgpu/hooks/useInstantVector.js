@@ -1,6 +1,7 @@
 import cardApi from '~/vgpu/api/card';
 import { computed, ref, watch } from 'vue';
-import { timeParse, calculatePrometheusStep } from '@/utils';
+import { calculatePrometheusStep } from '@/utils';
+import { formatQueryTimestamp } from '@/utils/query-time.mjs';
 import {
   calculateMetricPercent,
   classifyParsedQuery,
@@ -166,8 +167,8 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             const percentData = await cardApi.getRangeVector({
               query: parsedPercentQuery,
               range: {
-                start: timeParse(times.value[0]),
-                end: timeParse(times.value[1]),
+                start: formatQueryTimestamp(times.value[0]),
+                end: formatQueryTimestamp(times.value[1]),
                 step: calculatePrometheusStep(times.value[0], times.value[1]),
               },
             });

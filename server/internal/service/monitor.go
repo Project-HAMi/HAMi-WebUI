@@ -34,11 +34,11 @@ func NewMonitorService(
 }
 
 func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeRequest) (*pb.RangeResponse, error) {
-	startTime, err := time.ParseInLocation(time.DateTime, req.Range.GetStart(), time.Local)
+	startTime, err := parseRangeTime(req.Range.GetStart())
 	if err != nil {
 		return nil, pb.ErrorTransformError("%s", err)
 	}
-	endTime, err := time.ParseInLocation(time.DateTime, req.Range.GetEnd(), time.Local)
+	endTime, err := parseRangeTime(req.Range.GetEnd())
 	if err != nil {
 		return nil, pb.ErrorTransformError("%s", err)
 	}
@@ -61,6 +61,14 @@ func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeReque
 		sample.Values = fillLessSamplePoint(startTime, endTime, step, sample.Values)
 	}
 	return res, nil
+}
+
+func parseRangeTime(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	// Preserve the server-local interpretation used by older clients.
+	return time.ParseInLocation(time.DateTime, value, time.Local)
 }
 
 func fillLessSamplePoint(startTime, endTime time.Time, step time.Duration, values []*pb.SamplePair) []*pb.SamplePair {

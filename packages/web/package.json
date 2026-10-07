@@ -7,7 +7,7 @@
     "build": "vite build",
     "dev": "vite",
     "test": "pnpm run test:dev-proxy && pnpm run test:svg-icons && pnpm run test:echarts-runtime && pnpm run test:i18n && pnpm run test:time-range && pnpm run test:metrics && pnpm run test:workload && pnpm run test:ui-contracts",
-    "test:time-range": "node --test src/components/useTrendTimeRange.test.mjs",
+    "test:time-range": "node --test src/components/useTrendTimeRange.test.mjs src/utils/query-time.test.mjs",
     "test:dev-proxy": "node --test test/vite-dev-proxy.contract.test.mjs",
     "test:svg-icons": "node --test test/svg-icons-plugin.test.mjs",
     "test:echarts-runtime": "node --test test/echarts-runtime.test.mjs",
