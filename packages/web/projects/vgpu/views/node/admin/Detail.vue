@@ -178,6 +178,8 @@
       </div>
     </section>
 
+    <NodeDeviceAllocation :node="allocationNode" />
+
     <TrendTimeFilter v-model="times" :loading="trendLoading" />
 
     <div class="line-box">
@@ -241,6 +243,7 @@ import {
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
 import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
+import NodeDeviceAllocation from './NodeDeviceAllocation.vue';
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -263,6 +266,9 @@ const {
       expectedIdentity: { uid },
     }),
 });
+const allocationNode = computed(() => detailStatus.value === REQUEST_STATUS.READY
+  ? { uid: detail.value.uid, name: detail.value.name }
+  : null);
 const headerName = computed(() =>
   detailStatus.value === REQUEST_STATUS.READY
     ? detail.value.name
