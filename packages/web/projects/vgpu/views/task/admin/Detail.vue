@@ -12,7 +12,7 @@
   <detail-page-state :status="detailStatus" @retry="retryDetail">
 
   <div class="task-top">
-    <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block">
+    <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
       <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
         <div class="left">
           <div class="basic-info-cards">
@@ -129,7 +129,7 @@
     </block-box>
   </div>
 
-  <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview">
+  <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview" variant="detail">
     <div class="row">
       <div class="row-card">
         <div class="row-card-content">
@@ -186,7 +186,7 @@
     </div>
   </block-box>
 
-  <block-box v-if="deviceSplits.length" :title="$t('card.split.title')" class="workload-split">
+  <block-box v-if="deviceSplits.length" :title="$t('card.split.title')" class="workload-split" variant="detail">
     <template v-if="deviceSplits.some((split) => split.device.mode === 'mig')" #extra>
       <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
     </template>
@@ -649,7 +649,7 @@ watch(
     gap: 8px;
     align-items: center;
     margin-top: 0;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
   }
 
   .basic-info-card {
@@ -867,25 +867,12 @@ watch(
   }
 }
 
-.basic-info-block :deep(.home-block-content),
-.workload-overview :deep(.home-block-content) {
-  padding-top: 20px;
-}
-
-.basic-info-block,
 .workload-overview {
-  box-shadow: none;
-}
-
-.workload-overview {
-  margin-top: 16px;
-  padding: 20px;
-
   .row {
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-top: 0;
+    margin: 0;
   }
 
   .row-card {
@@ -950,16 +937,6 @@ watch(
     color: #939ea9;
     font-size: 12px;
     line-height: 20px;
-  }
-}
-
-.workload-split {
-  margin-top: 16px;
-  padding: 20px;
-  box-shadow: none;
-
-  :deep(.home-block-content) {
-    padding-top: 20px;
   }
 }
 

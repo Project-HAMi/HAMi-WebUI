@@ -1,5 +1,5 @@
 <template>
-  <div class="home-block">
+  <div class="home-block" :class="{ 'home-block--detail': variant === 'detail' }">
     <div class="home-block-header" v-if="title">
       <div class="title">{{ title }}</div>
       <div class="extra">
@@ -11,7 +11,13 @@
 </template>
 
 <script setup>
-defineProps(['title']);
+defineProps({
+  title: String,
+  variant: {
+    type: String,
+    default: 'default',
+  },
+});
 </script>
 
 <style lang="scss">
@@ -36,6 +42,19 @@ defineProps(['title']);
       line-height: 20px; /* 142.857% */
       margin-bottom: 0;
     }
+  }
+}
+
+.home-block--detail {
+  padding: 12px 16px 16px;
+  box-shadow: none;
+
+  > .home-block-header > .title {
+    line-height: 28px;
+  }
+
+  > .home-block-header + .home-block-content {
+    padding-top: 8px;
   }
 }
 </style>

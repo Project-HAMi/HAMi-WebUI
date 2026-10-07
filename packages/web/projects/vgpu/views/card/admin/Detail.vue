@@ -7,10 +7,9 @@
       :status-icon="headerStatusDisplay.icon"
     />
     <detail-page-state :status="detailStatus" @retry="retryDetail">
-    <block-box class="node-block">
+    <block-box class="node-block" :title="$t('card.detail.detailInfo')" variant="detail">
       <div class="card-detail">
         <div class="card-detail-left">
-          <div class="title">{{ $t('card.detail.detailInfo') }}</div>
           <div class="basic-info-row">
             <div class="basic-info-card">
               <RouterLink
@@ -60,7 +59,7 @@
       </div>
     </block-box>
 
-    <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')">
+    <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')" variant="detail">
       <div class="resource-overview-layout" :class="{ 'has-slot-summary': allocationSlots }">
         <div v-if="allocationSlots" class="resource-slot-card">
           <div class="resource-slot-gauge">
@@ -228,14 +227,14 @@
       </div>
     </block-box>
 
-    <block-box v-if="splitVisible" class="device-split-block" :title="$t('card.split.title')">
+    <block-box v-if="splitVisible" class="device-split-block" :title="$t('card.split.title')" variant="detail">
       <template v-if="detail.mode === 'mig'" #extra>
         <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
       </template>
       <DeviceSplit :device="detail" :containers="cardContainers" :status="splitStatus" :show-shared-count="false" @retry="loadSplit" />
     </block-box>
 
-    <block-box v-if="npuSpecVisible" class="npu-spec-block" :title="$t('card.deviceConfig.title')">
+    <block-box v-if="npuSpecVisible" class="npu-spec-block" :title="$t('card.deviceConfig.title')" variant="detail">
       <p v-if="deviceConfigStateText" class="npu-spec-note">{{ deviceConfigStateText }}</p>
       <template v-else>
         <div class="npu-spec-facts">
@@ -789,14 +788,6 @@ watch(
     list-style: none;
   }
 
-  .title {
-    color: #1d2b3a;
-    font-family: 'PingFang SC';
-    font-size: 16px;
-    font-style: normal;
-    font-weight: 500;
-    margin-bottom: 20px;
-  }
   .card-detail-left {
     width: 100%;
   }
@@ -804,7 +795,6 @@ watch(
   .basic-info-row {
     display: flex;
     gap: 8px;
-    margin-top: 12px;
   }
 
   .basic-info-card {
@@ -900,7 +890,6 @@ watch(
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  margin-top: 12px;
 }
 
 .resource-overview-cards {
@@ -1134,7 +1123,6 @@ watch(
 .node-block {
   display: flex;
   flex-direction: column;
-  box-shadow: none;
   .home-block-content {
     flex: 1;
   }
@@ -1142,8 +1130,6 @@ watch(
 
 .resource-overview-block {
   container: device-resource-overview / inline-size;
-  margin-bottom: 16px;
-  box-shadow: none;
 
   :deep(.home-block-header) {
     flex-wrap: wrap;
@@ -1168,20 +1154,6 @@ watch(
   border: 0;
 }
 
-.device-split-block {
-  margin-bottom: 16px;
-  box-shadow: none;
-
-  :deep(.home-block-content) {
-    padding-top: 12px;
-  }
-}
-
-.npu-spec-block {
-  margin-bottom: 16px;
-  box-shadow: none;
-}
-
 .card-trend-filter {
   margin-top: 24px;
 }
@@ -1190,7 +1162,7 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 12px 0 16px;
+  margin: 0 0 16px;
 
   &:last-child {
     margin-bottom: 0;
