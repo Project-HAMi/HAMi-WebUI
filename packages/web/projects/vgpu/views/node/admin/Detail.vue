@@ -17,10 +17,9 @@
 
     <detail-page-state :status="detailStatus" @retry="retryDetail">
     <section class="node-overview-wrap">
-      <div class="node-overview-panel">
+      <block-box class="node-overview-panel" :title="$t('node.detail.nodeOverview')" variant="detail">
         <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
           <div class="node-detail-left">
-            <div class="title">{{ $t('node.detail.nodeOverview') }}</div>
             <div class="node-detail-info-summary node-detail-info-summary-cols">
               <div
                 v-for="(group, groupIndex) in detailColumnGroups"
@@ -42,10 +41,9 @@
             </div>
           </div>
         </div>
-      </div>
+      </block-box>
 
-      <div class="node-overview-panel node-workload-panel">
-        <div class="title">{{ $t('node.detail.resourceOverview') }}</div>
+      <block-box class="node-overview-panel node-workload-panel" :title="$t('node.detail.resourceOverview')" variant="detail">
         <ul class="node-system-resource-cards">
           <li class="resource-overview-card">
             <div class="resource-card">
@@ -175,12 +173,12 @@
             </div>
           </li>
         </ul>
-      </div>
+      </block-box>
     </section>
 
     <NodeDeviceAllocation :node="allocationNode" />
 
-    <TrendTimeFilter v-model="times" :loading="trendLoading" />
+    <TrendTimeFilter v-model="times" class="node-trend-filter" :loading="trendLoading" />
 
     <div class="line-box">
       <block-box
@@ -571,25 +569,18 @@ const detailColumnGroups = computed(() => {
 .node-overview-wrap {
   display: flex;
   margin-top: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   gap: 16px;
+}
+
+.node-trend-filter {
+  margin-top: 24px;
 }
 
 .node-overview-panel {
   flex: 1 1 48%;
   min-width: 0;
-  padding: 12px 16px 16px;
-  border: 1px solid #e4ebf1;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.title {
-  color: #1d2b3a;
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 28px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .node-detail {
@@ -603,7 +594,6 @@ const detailColumnGroups = computed(() => {
 
   .node-detail-info-summary {
     width: 100%;
-    margin-top: 8px;
 
     &-cols {
       display: flex;
@@ -669,7 +659,7 @@ const detailColumnGroups = computed(() => {
 }
 
 .node-system-resource-cards {
-  margin: 10px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
