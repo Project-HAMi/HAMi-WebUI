@@ -108,6 +108,21 @@ const innerValue = computed({
   box-shadow: none !important;
 }
 
+:deep(.table-search-button) {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 2px;
+  }
+}
+
 :deep(.table-toolbar .t-button) {
   height: 36px;
   border-radius: 6px;

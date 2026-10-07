@@ -39,12 +39,21 @@
           <t-input
             v-model="filters.uid"
             clearable
-            :placeholder="$t('card.searchByName')"
+            :placeholder="$t('card.searchById')"
+            @clear="applyFilters"
             @enter="applyFilters"
             @blur="applyFilters"
           >
             <template #prefix-icon>
-              <search-icon :style="{ cursor: 'pointer' }" />
+              <button
+                type="button"
+                class="table-search-button"
+                :aria-label="$t('common.search')"
+                @mousedown.prevent
+                @click="applyFilters"
+              >
+                <search-icon aria-hidden="true" />
+              </button>
             </template>
           </t-input>
         </t-space>
@@ -54,8 +63,10 @@
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
         :has-rows="tableData.length > 0"
+        :filtered="displayedFiltered"
         :column-count="visibleColumns.length"
         @retry="refreshTable"
+        @clear-filters="clearFilters"
       >
         <t-table
           :key="`${locale}-card-table`"
@@ -120,7 +131,7 @@ const parseTypeFromQuery = (value) => {
 const currentType = computed(() => filters.type || '');
 const hasManualNodeScope = ref(false);
 const filters = reactive({
-  uid: '',
+  uid: props.filters?.uid || '',
   nodeName: props.filters?.nodeName,
   type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
 });
@@ -442,11 +453,32 @@ const tableState = useFetchList(() => {
 }, { immediate: false });
 const {
   data: tableData,
-  refresh: fetchTableData,
+  refresh: fetchList,
   refreshError: tableRefreshError,
   refreshing: tableRefreshing,
   status: tableStatus,
 } = tableState;
+const displayedFiltered = ref(false);
+const fetchTableData = async () => {
+  const filtered = Boolean(
+    getTrimValue(filters.uid) !== getTrimValue(props.filters?.uid || '')
+    || (filters.type || '') !== (props.filters?.type || '')
+    || (filters.nodeName || '') !== (props.filters?.nodeName || '')
+  );
+  if (await fetchList()) displayedFiltered.value = filtered;
+};
+const clearFilters = () => {
+  filters.uid = props.filters?.uid || '';
+  filters.type = props.filters?.type;
+  filters.nodeName = props.filters?.nodeName;
+  hasManualNodeScope.value = false;
+  if (!props.hideTitle && route.query.type) {
+    const query = { ...route.query };
+    delete query.type;
+    router.replace({ query });
+  }
+  applyFilters();
+};
 const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
 watch(tableData, syncTotalAndClamp, { immediate: true, flush: 'sync' });
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({

@@ -32,11 +32,20 @@
             v-model="filters.ip"
             clearable
             :placeholder="$t('node.searchIP')"
+            @clear="applyFilters"
             @enter="applyFilters"
             @blur="applyFilters"
           >
             <template #prefix-icon>
-              <search-icon :style="{ cursor: 'pointer' }" />
+              <button
+                type="button"
+                class="table-search-button"
+                :aria-label="$t('common.search')"
+                @mousedown.prevent
+                @click="applyFilters"
+              >
+                <search-icon aria-hidden="true" />
+              </button>
             </template>
           </t-input>
         </t-space>
@@ -46,8 +55,10 @@
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
         :has-rows="tableData.length > 0"
+        :filtered="displayedFiltered"
         :column-count="visibleColumns.length"
         @retry="refreshTable"
+        @clear-filters="clearFilters"
       >
         <t-table
           :key="locale"
@@ -259,11 +270,27 @@ const tableState = useFetchList(() => {
 });
 const {
   data: tableData,
-  refresh: fetchTableData,
+  refresh: fetchList,
   refreshError: tableRefreshError,
   refreshing: tableRefreshing,
   status: tableStatus,
 } = tableState;
+const displayedFiltered = ref(false);
+const fetchTableData = async () => {
+  const filtered = Boolean(filters.type || getTrimValue(filters.ip) || filters.schedulingEligibility);
+  if (await fetchList()) displayedFiltered.value = filtered;
+};
+const clearFilters = () => {
+  filters.ip = '';
+  filters.type = undefined;
+  filters.schedulingEligibility = undefined;
+  if (route.query.schedulingEligibility) {
+    const query = { ...route.query };
+    delete query.schedulingEligibility;
+    router.replace({ query });
+  }
+  applyFilters();
+};
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({ fetchTableData });
 
 const parseSchedulingEligibilityFromQuery = (value) => {

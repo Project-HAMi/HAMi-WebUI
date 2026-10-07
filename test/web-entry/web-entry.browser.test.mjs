@@ -5168,3 +5168,168 @@ test('typing over a calendar preview preserves invalid drafts without selecting 
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied)
   })
 })
+
+const listSearchCases = [
+  { route: 'nodes', endpoint: 'nodes', field: 'ip', placeholder: 'Enter full IP address', value: '192.0.2.10', partial: '192.0.2', row: { name: 'node-1', uid: 'node-1', ip: '192.0.2.10', type: ['NVIDIA'], isSchedulable: true }, selector: '.node-table' },
+  { route: 'accelerators', endpoint: 'gpus', field: 'uid', placeholder: 'Enter full device ID', value: 'gpu-1', partial: 'gpu', row: { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', health: true }, selector: '.accelerator-table' },
+  { route: 'workloads', endpoint: 'workloads', field: 'name', placeholder: 'Search Pod or container name', value: 'worker', partial: 'work', row: { name: 'worker', appName: 'training-job', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }, selector: '.workload-table' },
+]
+
+test('list searches distinguish empty, unmatched and failed results and recover through clear actions', { timeout: 90_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const config of listSearchCases) {
+    const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+    const queries = []
+    let inventoryEmpty = true
+    await page.route(`**/api/vgpu/v1/${config.endpoint}`, async(route) => {
+      const query = route.request().postDataJSON()
+      queries.push(query)
+      const value = query?.filters?.[config.field]
+      if (value === 'fail') return route.fulfill({ status: 503, json: { code: 503, message: 'unavailable' } })
+      const matches = !value || (config.field === 'name'
+        ? config.row.name.includes(value) || config.row.appName.includes(value)
+        : value === config.value)
+      const rows = !inventoryEmpty && matches ? [config.row] : []
+      return route.fulfill({ json: config.field === 'name' ? { items: rows, total: rows.length } : { list: rows } })
+    })
+    try {
+      await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
+      const empty = page.getByTestId('stateful-table-empty')
+      const search = page.getByPlaceholder(config.placeholder, { exact: true })
+      await empty.getByText('No Data', { exact: true }).waitFor()
+      await search.fill('unmatched')
+      assert.equal((await empty.textContent()).trim(), 'No Data', 'Draft text must not change the resolved empty state')
+      await search.press('Enter')
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      assert.equal(queries.at(-1).filters[config.field], 'unmatched')
+
+      // A failed new search keeps the last result and its empty-state explanation.
+      await search.fill('fail')
+      await search.press('Enter')
+      await page.getByTestId('stateful-table-refresh-error').waitFor()
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('stateful-table-error').count(), 0)
+
+      inventoryEmpty = false
+      await empty.getByRole('button', { name: 'Clear filters', exact: true }).click()
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(await search.inputValue(), '')
+      assert.equal(queries.at(-1).filters[config.field], undefined)
+      assert.equal(await page.getByTestId('stateful-table-refresh-error').count(), 0)
+      if (config.field === 'name') assert.equal(new URL(page.url()).searchParams.has('name'), false)
+
+      await search.fill('unmatched')
+      await page.getByRole('button', { name: 'Search', exact: true }).click()
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      await search.hover()
+      await search.locator('..').locator('.t-input__suffix-clear').click()
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(queries.at(-1).filters[config.field], undefined, 'Clearing the input must fetch immediately')
+
+      await search.fill(config.partial)
+      await search.press('Enter')
+      if (config.field === 'name') {
+        await waitUntil(() => queries.at(-1).filters.name === config.partial, 'Workload partial name was not submitted')
+        await page.locator(`${config.selector} tbody tr`).first().waitFor()
+        assert.equal(await empty.count(), 0)
+      } else {
+        await empty.getByText('No matching results', { exact: true }).waitFor()
+      }
+      await search.fill(` ${config.value} `)
+      const searchButton = page.getByRole('button', { name: 'Search', exact: true })
+      await searchButton.focus()
+      await searchButton.press('Enter')
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(queries.at(-1).filters[config.field], config.value)
+
+      await search.fill('fail')
+      await search.press('Enter')
+      await page.getByTestId('stateful-table-refresh-error').waitFor()
+      assert.equal(await page.locator(`${config.selector} tbody tr`).count(), 1, 'Failure must preserve the previous result')
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      if (config.field === 'name') {
+        await page.getByTestId('stateful-table-error').waitFor()
+        assert.equal(await empty.count(), 0, 'An initial failed filtered request is an error, not no results')
+      }
+    } finally {
+      await page.close()
+    }
+  }
+})
+
+test('list no-match recovery fits common screen widths in both languages', { timeout: 90_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const config of listSearchCases) {
+      const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
+      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.field === 'name' ? { items: [], total: 0 } : { list: [] } }))
+      try {
+        await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
+        await page.getByTestId('stateful-table-empty').waitFor()
+        const search = page.locator('.table-toolbar input:not([readonly])').last()
+        await search.fill('no-match')
+        await search.press('Enter')
+        const clearLabel = locale === 'en-US' ? 'Clear filters' : '清除筛选'
+        const action = page.getByRole('button', { name: clearLabel, exact: true })
+        await action.waitFor()
+        for (const width of [1280, 1366, 1440, 1920]) {
+          await page.setViewportSize({ width, height: 900 })
+          for (const collapsed of [false, true]) {
+            if (collapsed) await page.getByRole('button', { name: locale === 'en-US' ? 'Collapse sidebar' : '收起侧栏', exact: true }).click()
+            await action.scrollIntoViewIfNeeded()
+            const dimensions = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }))
+            assert.ok(dimensions.document <= dimensions.viewport, `${config.route} ${locale} ${width}: ${JSON.stringify(dimensions)}`)
+            const bounds = await action.boundingBox()
+            assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, 'Recovery button is clipped')
+            if (!collapsed && (width === 1366 || width === 1920)) await captureTrendScreenshot(page, `p5-${config.route}-${locale}-${width}`)
+            if (collapsed) await page.getByRole('button', { name: locale === 'en-US' ? 'Expand sidebar' : '展开侧栏', exact: true }).click()
+          }
+        }
+      } finally {
+        await page.close()
+      }
+    }
+  }
+})
+
+test('clearing list filters removes route filters while the input clear preserves other filters', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const config of [
+    { ...listSearchCases[0], query: 'schedulingEligibility=temporarilyUnschedulable' },
+    { ...listSearchCases[1], query: 'type=NVIDIA' },
+    { ...listSearchCases[2], query: 'status=pending&nodeName=node-1&deviceId=gpu-1&page=2' },
+  ]) {
+    const page = await browser.newPage({ locale: 'en-US' })
+    const queries = []
+    await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
+      queries.push(route.request().postDataJSON())
+      return route.fulfill({ json: config.field === 'name' ? { items: [], total: 0 } : { list: [] } })
+    })
+    try {
+      await page.goto(`${target}${basePath}${config.route}?${config.query}`, { waitUntil: 'domcontentloaded' })
+      const empty = page.getByTestId('stateful-table-empty')
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      const search = page.getByPlaceholder(config.placeholder, { exact: true })
+      await search.fill('unmatched')
+      await search.press('Enter')
+      await waitUntil(() => queries.at(-1).filters[config.field] === 'unmatched', 'Search was not applied')
+      await search.hover()
+      await search.locator('..').locator('.t-input__suffix-clear').click()
+      await waitUntil(() => !queries.at(-1).filters[config.field], 'Input was not cleared')
+      if (config.field === 'uid') assert.equal(queries.at(-1).filters.type, 'NVIDIA')
+      if (config.field === 'name') {
+        assert.deepEqual(queries.at(-1).filters, { status: 'pending', nodeName: 'node-1', deviceId: 'gpu-1' })
+        assert.equal(queries.at(-1).page, 1)
+      }
+      await empty.getByRole('button', { name: 'Clear filters', exact: true }).click()
+      await empty.getByText('No Data', { exact: true }).waitFor()
+      await waitUntil(() => new URL(page.url()).search === '', 'Cleared route filters must not return on reload')
+      assert.deepEqual(queries.at(-1).filters, {})
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await empty.getByText('No Data', { exact: true }).waitFor()
+      assert.equal(await empty.getByRole('button').count(), 0)
+    } finally {
+      await page.close()
+    }
+  }
+})

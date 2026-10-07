@@ -42,11 +42,20 @@
             class="workload-search"
             clearable
             :placeholder="$t('task.searchWorkloadName')"
+            @clear="applyFilters"
             @enter="applyFilters"
             @blur="applyFilters"
           >
             <template #prefix-icon>
-              <search-icon :style="{ cursor: 'pointer' }" />
+              <button
+                type="button"
+                class="table-search-button"
+                :aria-label="$t('common.search')"
+                @mousedown.prevent
+                @click="applyFilters"
+              >
+                <search-icon aria-hidden="true" />
+              </button>
             </template>
           </t-input>
         </div>
@@ -56,8 +65,10 @@
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
         :has-rows="tableData.length > 0"
+        :filtered="displayedFiltered"
         :column-count="visibleColumns.length"
         @retry="refreshTable"
+        @clear-filters="clearFilters"
       >
         <t-table
           :key="locale"
@@ -362,6 +373,15 @@ const syncRouteQuery = () => {
   lastRouteQuery = query;
   if (!sameQuery(query, route.query)) router.replace({ query }).catch(() => {});
 };
+const displayedFiltered = ref(false);
+const clearFilters = () => {
+  filters.name = props.filters?.name || '';
+  filters.nodeName = props.filters?.nodeName;
+  filters.deviceId = props.filters?.deviceId;
+  filters.status = props.filters?.status || '';
+  hasManualNodeScope.value = false;
+  applyFilters();
+};
 let tableController;
 const fetchTableData = async () => {
   syncRouteQuery();
@@ -377,6 +397,12 @@ const fetchTableData = async () => {
   delete baseFilters.deviceId;
   const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
   const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
+  const filtered = Boolean(
+    getTrimValue(filters.name) !== getTrimValue(props.filters?.name || '')
+    || (filters.nodeName || '') !== (props.filters?.nodeName || '')
+    || (filters.deviceId || '') !== (props.filters?.deviceId || '')
+    || (filters.status || '') !== (props.filters?.status || '')
+  );
   const payload = {
     filters: {
       ...baseFilters,
@@ -409,6 +435,7 @@ const fetchTableData = async () => {
       await fetchTableData();
       return;
     }
+    displayedFiltered.value = filtered;
     resolveRequest(tableState, {
       requestId,
       data: result.items.map((item) => ({
