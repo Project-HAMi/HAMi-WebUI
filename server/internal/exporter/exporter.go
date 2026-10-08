@@ -618,6 +618,8 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 		query = fmt.Sprintf("avg(hcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
+	case biz.AMDGPUDevice:
+		query = fmt.Sprintf("avg(hami_host_gpu_memory_used_bytes{device_uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -643,6 +645,8 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(hcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
+	case biz.AMDGPUDevice:
+		query = fmt.Sprintf("avg(hami_host_gpu_memory_total_bytes{device_uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -655,7 +659,7 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 
 func deviceMemoryToMiB(provider string, value float32) float32 {
 	switch provider {
-	case biz.CambriconGPUDevice, biz.HygonGPUDevice, biz.HygonHCUDevice:
+	case biz.CambriconGPUDevice, biz.HygonGPUDevice, biz.HygonHCUDevice, biz.AMDGPUDevice:
 		return value / bytesPerMiB
 	case biz.MetaxGPUDevice:
 		return value / bytesPerKiB
@@ -679,6 +683,8 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(hcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
+	case biz.AMDGPUDevice:
+		query = fmt.Sprintf("avg(hami_host_gpu_utilization_ratio{device_uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -692,7 +698,8 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 		query = nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vcore\"})", namespace, pod, container)
-	case biz.AscendGPUDevice:
+	case biz.AscendGPUDevice, biz.AMDGPUDevice:
+		// The kernel does not account compute time per process on AMD GPUs.
 		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(vdcu_percent{pod_uuid=\"%s\", container_name=\"%s\"})", podUUID, container)
@@ -792,7 +799,7 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
 	query := ""
 	switch provider {
-	case biz.NvidiaGPUDevice:
+	case biz.NvidiaGPUDevice, biz.AMDGPUDevice:
 		query = fmt.Sprintf("avg(hami_vgpu_memory_used_bytes{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"})", deviceUUID, namespace, pod, container)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vmemory\"})", namespace, pod, container)
@@ -828,6 +835,8 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 		query = fmt.Sprintf("avg(hcu_temp{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_chip_hotspot_temp{uuid=\"%s\"})", deviceUUID)
+	case biz.AMDGPUDevice:
+		query = fmt.Sprintf("avg(hami_host_gpu_temperature_celsius{device_uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -868,6 +877,8 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 		query = fmt.Sprintf("avg(hcu_power_usage{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_board_power{uuid=\"%s\"})", deviceUUID) // mW
+	case biz.AMDGPUDevice:
+		query = fmt.Sprintf("avg(hami_host_gpu_power_usage_watts{device_uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -930,6 +941,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		query = fmt.Sprintf("hcu_power_usage{device_id=\"%s\"}", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("mx_board_power{uuid=\"%s\"}", deviceUUID)
+	case biz.AMDGPUDevice:
+		query = fmt.Sprintf("hami_host_gpu_power_usage_watts{device_uuid=\"%s\"}", deviceUUID)
 	default:
 		return nil, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -957,6 +970,8 @@ func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, 
 		case biz.MetaxGPUDevice:
 			info.DriverVersion = metric["driver_version"]
 			info.DeviceNo = metric["deviceId"]
+		case biz.AMDGPUDevice:
+			info.DeviceNo = "amd-" + metric["device_index"]
 		}
 		return info, nil
 	}
