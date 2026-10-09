@@ -15,6 +15,7 @@ import (
 	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider"
+	"vgpu/internal/provider/amd"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/hygon"
 	"vgpu/internal/provider/metax"
@@ -46,6 +47,7 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger,
 			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice], catalog),
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
 			hygon.NewHCU(log.NewHelper(logger), nodeSelectors[biz.HygonHCUDevice]),
+			amd.NewAMD(log.NewHelper(logger), nodeSelectors[biz.AMDGPUDevice]),
 			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
 		},
 	}

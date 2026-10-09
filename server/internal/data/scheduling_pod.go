@@ -24,6 +24,7 @@ const schedulingGPUIndex = "scheduling-gpu-candidate"
 
 var defaultSchedulingResources = []string{
 	"nvidia.com/gpu", "nvidia.com/gpucores", "nvidia.com/gpumem", "nvidia.com/gpumem-percentage",
+	"amd.com/gpu", "amd.com/gpucores", "amd.com/gpumem", "amd.com/gpumem-percentage",
 }
 
 func schedulingResources(config *conf.Scheduling) (map[corev1.ResourceName]struct{}, error) {
@@ -290,6 +291,14 @@ func schedulingResource(snapshot *devicecatalog.Snapshot, name corev1.ResourceNa
 		result.Kind, result.Unit, result.Vendor = "memory", "MiB", biz.NvidiaGPUDevice
 	case "nvidia.com/gpumem-percentage":
 		result.Kind, result.Unit, result.Vendor = "memory_percentage", "%", biz.NvidiaGPUDevice
+	case "amd.com/gpu":
+		result.Kind, result.Vendor = "count", biz.AMDGPUDevice
+	case "amd.com/gpucores":
+		result.Kind, result.Unit, result.Vendor = "core", "%", biz.AMDGPUDevice
+	case "amd.com/gpumem":
+		result.Kind, result.Unit, result.Vendor = "memory", "MiB", biz.AMDGPUDevice
+	case "amd.com/gpumem-percentage":
+		result.Kind, result.Unit, result.Vendor = "memory_percentage", "%", biz.AMDGPUDevice
 	default:
 		// HAMi's Ascend memory is in MiB and its core request a percentage, as for NVIDIA.
 		if _, role, ok := snapshot.AscendResource(string(name)); ok {
