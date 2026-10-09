@@ -12,8 +12,16 @@
       <template v-if="isLoading">
         <t-skeleton
           animation="gradient"
-          :row-col="skeletonRows"
-          class="metric-chart__skeleton"
+          :row-col="[{ width: '100%', height: '100%' }]"
+          class="metric-chart__skeleton-plot"
+          :style="plotInsets"
+          aria-hidden="true"
+        />
+        <t-skeleton
+          v-if="skeletonLegendRows.length"
+          animation="gradient"
+          :row-col="skeletonLegendRows"
+          class="metric-chart__skeleton-legend"
           aria-hidden="true"
         />
         <span class="metric-chart__sr-only" role="status">{{ $t('common.loading') }}</span>
@@ -122,10 +130,16 @@ watch(blocking, (active) => {
   }, UPDATING_DELAY_MS);
 }, { immediate: true });
 onBeforeUnmount(clearUpdatingTimer);
-const skeletonRows = computed(() => [
-  { width: '100%', height: `${Math.max(props.height - 50, 80)}px` },
-  { width: '42%', height: '16px', margin: '16px auto 0' },
-]);
+const skeletonLegendRows = computed(() => {
+  const option = displayOption.value;
+  const legends = Array.isArray(option.legend) ? option.legend : [option.legend];
+  return legends.filter((legend) => legend && legend.show !== false).flatMap((legend) => {
+    const count = legend.orient === 'vertical' ? (legend.data?.length ?? option.series?.length ?? 1) : 1;
+    return Array.from({ length: count }, (_, index) => ({
+      width: '100%', height: '16px', margin: index ? '4px 0 0' : '0',
+    }));
+  });
+});
 </script>
 
 <style lang="scss" scoped>
@@ -184,8 +198,26 @@ const skeletonRows = computed(() => [
     height: 100%;
   }
 
-  &__skeleton {
-    padding-top: 12px;
+  &__skeleton-plot {
+    position: absolute;
+    inset: 12px 10px 30px 7%;
+
+    :deep(.t-skeleton__row),
+    :deep(.t-skeleton__col) {
+      height: 100%;
+      margin: 0;
+    }
+  }
+
+  &__skeleton-legend {
+    position: absolute;
+    bottom: 0;
+    left: 29%;
+    width: 42%;
+
+    :deep(.t-skeleton__row) {
+      margin: 0;
+    }
   }
 
   &__state {

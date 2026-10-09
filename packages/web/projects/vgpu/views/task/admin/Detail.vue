@@ -10,6 +10,47 @@
   </page-header>
 
   <detail-page-state :status="detailStatus" @retry="retryDetail">
+    <template #loading>
+      <div class="task-top">
+        <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
+          <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
+            <div class="left">
+              <div class="basic-info-cards">
+                <div v-for="label in [$t('task.namespace'), $t('task.node'), dt('task.gpuModel'), dt('task.relatedGpu')]" :key="label" class="basic-info-card">
+                  <div class="basic-info-card-title"><LoadingValue :height="28" width="100px" /></div>
+                  <div class="basic-info-card-sub-title">{{ label }}</div>
+                </div>
+              </div>
+              <div class="basic-info-summary">
+                <div v-for="label in [$t('task.detail.podName'), $t('task.detail.containerName'), $t('task.image'), $t('task.createTime')]" :key="label" class="summary-item">
+                  <span class="summary-item-label">{{ label }}</span>
+                  <span class="summary-item-value"><LoadingValue :height="24" width="80%" /></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </block-box>
+      </div>
+      <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview" variant="detail">
+        <div class="row">
+          <div v-for="label in [dt('task.gpuCardCount'), $t('task.computePowerLimit'), $t('task.singleCardMemory'), $t('task.cpuLimit'), $t('task.memoryLimit')]" :key="label" class="row-card">
+            <div class="row-card-content">
+              <div class="row-card-content-icon"><LoadingValue :height="20" width="20px" /></div>
+              <div class="row-card-content-info">
+                <div class="row-card-title"><LoadingValue :height="28" width="80px" /></div>
+                <div class="row-card-sub-title">{{ label }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </block-box>
+      <TrendTimeFilter :model-value="times" loading class="workload-trend-filter" />
+      <div class="task-trend-row">
+        <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
+          <MetricChart :option="item.option" />
+        </block-box>
+      </div>
+    </template>
 
   <div class="task-top">
     <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
@@ -261,6 +302,7 @@ import {
   readReadyMetricField,
 } from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { deviceWording } from '~/vgpu/components/device-copy.mjs';
 import { getAllocationShapeCopy, getCoresOnlyReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';

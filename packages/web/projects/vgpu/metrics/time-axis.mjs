@@ -123,8 +123,23 @@ const layoutPointSymbols = (series, min, max, plotWidth) => {
 export const layoutTimeSeriesOptions = (option, width = 600, visibleExtent) => {
   const axis = option?.xAxis;
   if (axis?.type !== 'time') return option;
+  const showLegend = option.legend?.show !== false;
+  const verticalLegend = width < 360;
+  const legendRows = showLegend ? (verticalLegend ? option.series.length : 1) : 0;
+  // The series labels and card width are already known while samples load.
+  // Reserve the same legend geometry without inventing a time extent or ticks.
+  const frame = {
+    ...option,
+    legend: {
+      ...option.legend,
+      orient: verticalLegend ? 'vertical' : 'horizontal',
+      textStyle: { ...option.legend?.textStyle, width: verticalLegend ? Math.max(40, width - 40) : null, overflow: 'truncate' },
+      tooltip: { show: true },
+    },
+    grid: { ...option.grid, bottom: 30 + legendRows * 20 },
+  };
   const [min, max] = visibleExtent ?? [axis.min, axis.max];
-  if (!asDate(min) || !asDate(max) || max <= min) return option;
+  if (!asDate(min) || !asDate(max) || max <= min) return frame;
   const plotWidth = Math.max(1, width * 0.93 - 10);
   const target = (max - min) / Math.max(2, Math.min(10, Math.floor(plotWidth / 90)));
   const interval = INTERVALS.reduce((best, item) =>
@@ -142,19 +157,10 @@ export const layoutTimeSeriesOptions = (option, width = 600, visibleExtent) => {
   // A one-second query may have only boundary ticks. Let ECharts' outer-bounds
   // layout make room for those labels instead of leaving the axis blank.
   const ticks = interiorTicks.length ? interiorTicks : candidates;
-  const showLegend = option.legend?.show !== false;
-  const verticalLegend = width < 360;
-  const legendRows = showLegend ? (verticalLegend ? option.series.length : 1) : 0;
   return {
-    ...option,
+    ...frame,
     series: option.series.map((series) => layoutPointSymbols(series, min, max, plotWidth)),
-    legend: {
-      ...option.legend,
-      orient: verticalLegend ? 'vertical' : 'horizontal',
-      textStyle: { ...option.legend?.textStyle, width: verticalLegend ? Math.max(40, width - 40) : null, overflow: 'truncate' },
-      tooltip: { show: true },
-    },
-    grid: { ...option.grid, bottom: 30 + legendRows * 20 + (labels.multiline ? 16 : 0) },
+    grid: { ...frame.grid, bottom: frame.grid.bottom + (labels.multiline ? 16 : 0) },
     xAxis: {
       ...axis,
       axisTick: { ...axis.axisTick, customValues: ticks },

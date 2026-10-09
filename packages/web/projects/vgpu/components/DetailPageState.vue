@@ -12,38 +12,9 @@
       <span class="detail-page-state__sr-only" role="status">
         {{ $t('common.loading') }}
       </span>
-      <div class="detail-page-skeleton__summary" aria-hidden="true">
-        <t-skeleton
-          animation="gradient"
-          :row-col="[
-            { width: '32%', height: '20px' },
-            { width: '100%', height: '20px' },
-            { width: '88%', height: '20px' },
-            { width: '72%', height: '20px' },
-          ]"
-        />
-      </div>
-      <div class="detail-page-skeleton__cards" aria-hidden="true">
-        <div v-for="index in 4" :key="index" class="detail-page-skeleton__card">
-          <t-skeleton
-            animation="gradient"
-            :row-col="[
-              { width: '54%', height: '24px' },
-              { width: '82%', height: '16px' },
-            ]"
-          />
-        </div>
-      </div>
-      <div class="detail-page-skeleton__charts" aria-hidden="true">
-        <div v-for="index in 2" :key="index" class="detail-page-skeleton__chart">
-          <t-skeleton
-            animation="gradient"
-            :row-col="[
-              { width: '44%', height: '20px' },
-              { width: '100%', height: '180px' },
-            ]"
-          />
-        </div>
+      <!-- Each page owns its loading geometry through the same layout classes as its content. -->
+      <div aria-hidden="true" inert>
+        <slot name="loading" />
       </div>
     </div>
 
@@ -91,47 +62,6 @@ defineEmits(['retry']);
   min-height: 320px;
 }
 
-.detail-page-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.detail-page-skeleton__summary,
-.detail-page-skeleton__card,
-.detail-page-skeleton__chart {
-  padding: 20px;
-  border: 1px solid #e4ebf1;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.detail-page-skeleton__summary {
-  min-height: 150px;
-}
-
-.detail-page-skeleton__cards,
-.detail-page-skeleton__charts {
-  display: grid;
-  gap: 16px;
-}
-
-.detail-page-skeleton__cards {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.detail-page-skeleton__card {
-  min-height: 112px;
-}
-
-.detail-page-skeleton__charts {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.detail-page-skeleton__chart {
-  min-height: 260px;
-}
-
 .detail-page-feedback {
   display: flex;
   min-height: 420px;
@@ -155,10 +85,4 @@ defineEmits(['retry']);
   border: 0;
 }
 
-@media (max-width: 1200px) {
-  .detail-page-skeleton__cards,
-  .detail-page-skeleton__charts {
-    grid-template-columns: 1fr;
-  }
-}
 </style>

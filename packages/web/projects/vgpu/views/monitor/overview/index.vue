@@ -81,18 +81,25 @@
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
             </RouterLink>
           </template>
-          <div
-            v-if="nodeListState.status.value === 'loading'"
-            class="node-overview-skeleton"
-            aria-busy="true"
-          >
-            <t-skeleton
-              v-for="index in 2"
-              :key="index"
-              animation="gradient"
-              :row-col="[{ width: '100%', height: '56px' }]"
-              aria-hidden="true"
-            />
+          <div v-if="nodeListState.status.value === 'loading'" aria-busy="true">
+            <ul class="node-all node-overview-skeleton" aria-hidden="true" inert>
+              <li v-for="{ title, status, description } in nodes" :key="status" class="node-overview-card">
+                <div class="node-overview-title-wrap">
+                  <span class="node-overview-title-link">{{ title }}</span>
+                  <MetricHelp
+                    v-if="status === 'temporarilyUnschedulable'"
+                    :description="description"
+                    :help-label="$t('node.schedulingStatusHelpLabel')"
+                  />
+                </div>
+                <div class="node-overview-value-link">
+                  <div class="node-overview-value">
+                    <div class="count"><LoadingValue :height="24" width="1ch" /></div>
+                    <svg-icon icon="jump" class="node-overview-nav-icon" />
+                  </div>
+                </div>
+              </li>
+            </ul>
             <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
           </div>
           <div
@@ -220,10 +227,15 @@
               class="workload-table-skeleton"
               aria-busy="true"
             >
-              <t-skeleton
-                animation="gradient"
-                :row-col="workloadTableSkeletonRows"
+              <t-table
+                :columns="nodeWorkloadSkeletonColumns"
+                :data="nodeWorkloadSkeletonData"
+                row-key="name"
+                row-class-name="top5-item-list-table-row"
+                class="top5-item-list-table"
+                :bordered="false"
                 aria-hidden="true"
+                inert
               />
               <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
             </div>
@@ -287,6 +299,7 @@ import useFetchList from '@/hooks/useFetchList';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { LONG_TEXT_TOOLTIP_STYLE } from '~/vgpu/components/tooltip-policy.mjs';
 import { getRangeConfigInit } from './config';
@@ -316,10 +329,7 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const workloadTableSkeletonRows = Array.from({ length: 6 }, () => ({
-  width: '100%',
-  height: '32px',
-}));
+const nodeWorkloadSkeletonData = Array.from({ length: 5 }, (_, index) => ({ name: `loading-${index}` }));
 
 const handlePieClick = (params) => {
   router.push({
@@ -368,6 +378,12 @@ const nodeWorkloadColumns = computed(() => [
     title: t('dashboard.workloadCount'),
   },
 ]);
+const nodeWorkloadSkeletonColumns = computed(() => nodeWorkloadColumns.value.map(({ colKey, title, width }) => ({
+  colKey,
+  title,
+  width,
+  cell: () => h(LoadingValue, { height: 24, width: colKey === 'index' ? '24px' : '70%' }),
+})));
 const nodeWorkloadTop5TableData = computed(() =>
   nodeWorkloadTop5State.data.map((item, idx) => ({
     ...item,

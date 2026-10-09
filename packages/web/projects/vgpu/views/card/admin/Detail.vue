@@ -7,6 +7,54 @@
       :status-icon="headerStatusDisplay.icon"
     />
     <detail-page-state :status="detailStatus" @retry="retryDetail">
+      <template #loading>
+        <block-box class="node-block" :title="$t('card.detail.detailInfo')" variant="detail">
+          <div class="card-detail">
+            <div class="card-detail-left">
+              <div class="basic-info-row">
+                <div v-for="label in [$t('card.node'), dt('card.model'), $t('card.splitMode.label'), $t('card.detail.gpuTemperature'), $t('card.detail.gpuPower')]" :key="label" class="basic-info-card">
+                  <div class="basic-info-title"><LoadingValue :height="28" width="100px" /></div>
+                  <div class="basic-info-subtitle">{{ label }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </block-box>
+        <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')" variant="detail">
+          <div class="resource-overview-layout">
+            <ul class="resource-overview-cards">
+              <li v-for="title in [$t('dashboard.computePowerTotal'), dt('dashboard.memoryTotal')]" :key="title" class="resource-overview-card">
+                <div class="resource-card">
+                  <div class="resource-card-header">
+                    <div class="resource-card-icon"><LoadingValue :height="24" width="24px" /></div>
+                    <div class="resource-card-header-info">
+                      <div class="resource-card-value resource-card-value--compute"><LoadingValue :height="22" width="100px" /></div>
+                      <div class="resource-card-sub-title">{{ title }}</div>
+                    </div>
+                  </div>
+                  <div class="resource-card-footer">
+                    <div v-for="label in [$t('dashboard.allocated'), $t('dashboard.used')]" :key="label" class="resource-card-rate-wrap">
+                      <div class="resource-card-footer-item">
+                        <div class="resource-card-footer-title">{{ label }}</div>
+                        <div class="resource-card-footer-value"><LoadingValue :height="24" width="120px" /></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </block-box>
+        <TrendTimeFilter :model-value="times" loading class="card-trend-filter" />
+        <div class="line-box">
+          <block-box v-for="section in trendSections" :key="section.key" :title="section.title">
+            <MetricChart :option="section.option" />
+          </block-box>
+          <block-box v-for="item in lineToolsView" :key="item.titleKey" :title="item.title">
+            <MetricChart :option="item.option" />
+          </block-box>
+        </div>
+      </template>
     <block-box class="node-block" :title="$t('card.detail.detailInfo')" variant="detail">
       <div class="card-detail">
         <div class="card-detail-left">
@@ -307,6 +355,7 @@ import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { RouterLink, useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { ref, watch, computed } from 'vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';

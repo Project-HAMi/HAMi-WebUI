@@ -4,7 +4,7 @@ import test from 'node:test';
 import { REQUEST_STATUS } from '../../../src/hooks/request-state.mjs';
 import { buildDonutOptions, buildTimeSeriesOptions } from './chart-presets.mjs';
 import { CHART_COLORS, categoricalColor } from './chart-colors.mjs';
-import { formatTimeAxisTooltip } from './time-axis.mjs';
+import { formatTimeAxisTooltip, layoutTimeSeriesOptions } from './time-axis.mjs';
 
 const plottedValues = (series) => series.data.map((point) => point.value ?? point);
 
@@ -94,6 +94,24 @@ test('a time series shows a legend only for more than one line and keeps gaps', 
   });
   assert.notEqual(pair.legend.show, false);
   assert.ok(pair.grid.bottom > single.grid.bottom);
+});
+
+test('loading charts reserve responsive legends without inventing timestamps or samples', () => {
+  const empty = buildTimeSeriesOptions({ series: [{ name: 'Allocation' }, { name: 'Usage' }] });
+  const narrow = layoutTimeSeriesOptions(empty, 320);
+  assert.equal(narrow.legend.orient, 'vertical');
+  assert.equal(narrow.grid.bottom, 70);
+  assert.deepEqual(narrow.series.map((series) => series.data), [[], []]);
+  assert.equal(narrow.xAxis.min, undefined);
+  assert.equal(narrow.xAxis.max, undefined);
+  assert.equal(narrow.xAxis.axisLabel.customValues, undefined);
+
+  const wide = layoutTimeSeriesOptions(narrow, 600);
+  assert.equal(wide.legend.orient, 'horizontal');
+  assert.equal(wide.grid.bottom, 50);
+  const single = layoutTimeSeriesOptions(buildTimeSeriesOptions({ series: [{ name: 'Usage' }] }), 320);
+  assert.equal(single.legend.show, false);
+  assert.equal(single.grid.bottom, 30);
 });
 
 test('a failed line does not remove the ready line timestamp coordinates', () => {
