@@ -30,6 +30,7 @@ jobs:
             frontend:
               - 'brand/svg/**'
               - 'packages/**'
+              - 'patches/**'
               - 'package.json'
               - '.eslintignore'
               - '.eslintrc.js'

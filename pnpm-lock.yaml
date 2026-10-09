@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  tdesign-vue-next@1.18.5:
+    hash: 035a5329f06cdafef524957c32bde638bc18165685ce369d23b90284f4c47516
+    path: patches/tdesign-vue-next@1.18.5.patch
+
 importers:
 
   .:
@@ -70,7 +75,7 @@ importers:
         version: 0.4.2(vue@3.5.25(typescript@5.9.3))
       tdesign-vue-next:
         specifier: ^1.18.5
-        version: 1.18.5(vue@3.5.25(typescript@5.9.3))
+        version: 1.18.5(patch_hash=035a5329f06cdafef524957c32bde638bc18165685ce369d23b90284f4c47516)(vue@3.5.25(typescript@5.9.3))
       tom-select:
         specifier: 2.2.2
         version: 2.2.2
@@ -3593,7 +3598,7 @@ snapshots:
       '@babel/runtime': 7.28.4
       vue: 3.5.25(typescript@5.9.3)
 
-  tdesign-vue-next@1.18.5(vue@3.5.25(typescript@5.9.3)):
+  tdesign-vue-next@1.18.5(patch_hash=035a5329f06cdafef524957c32bde638bc18165685ce369d23b90284f4c47516)(vue@3.5.25(typescript@5.9.3)):
     dependencies:
       '@babel/runtime': 7.28.4
       '@popperjs/core': 2.11.8
