@@ -73,7 +73,11 @@
         data-testid="stateful-table-empty"
         role="status"
       >
-        <el-empty :description="$t('common.noData')" />
+        <el-empty :description="$t(filtered ? 'common.noMatchingResults' : 'common.noData')">
+          <t-button v-if="filtered" variant="outline" @mousedown.prevent @click="$emit('clearFilters')">
+            {{ $t('common.clearFilters') }}
+          </t-button>
+        </el-empty>
       </div>
       <template v-else>
         <slot />
@@ -93,6 +97,10 @@ const props = defineProps({
     type: Number,
     default: 4,
   },
+  filtered: {
+    type: Boolean,
+    default: false,
+  },
   hasRows: {
     type: Boolean,
     default: false,
@@ -111,7 +119,7 @@ const props = defineProps({
   },
 });
 
-defineEmits(['retry']);
+defineEmits(['retry', 'clearFilters']);
 
 const { t } = useI18n();
 const skeletonRows = 6;
