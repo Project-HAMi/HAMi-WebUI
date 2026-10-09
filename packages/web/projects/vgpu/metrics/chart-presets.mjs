@@ -1,10 +1,9 @@
-import { timeParse } from '../../../src/utils/index.js';
+import { layoutTimeSeriesOptions } from './time-axis.mjs';
 import {
   buildRangeDataZoom,
   buildRangeLineSeries,
   normalizeRangeValues,
 } from './range-vector-state.mjs';
-import { selectRangeAxisData } from './metric-state.mjs';
 import {
   buildPieTooltipFormatter,
   buildTimeSeriesTooltipFormatter,
@@ -33,12 +32,22 @@ export const buildTimeSeriesOptions = ({
 } = {}) => {
   const normalized = series.map((item) => ({
     ...item,
-    data: normalizeRangeValues(item?.data),
+    data: normalizeRangeValues(item?.data).map((point) =>
+      point.timestamp !== null && Number.isFinite(new Date(point.timestamp).getTime())
+        ? point
+        : { ...point, timestamp: null, value: null },
+    ),
   }));
-  const axisData = selectRangeAxisData(normalized);
+  const timestamps = normalized.flatMap((item) => item.data.map((point) => point.timestamp)).filter((timestamp) => timestamp !== null);
+  const extent = timestamps.reduce((range, timestamp) => [Math.min(range[0], timestamp), Math.max(range[1], timestamp)], [Infinity, -Infinity]);
   const showLegend = normalized.length > 1;
+  // A lone report has no duration; keep a small window around that instant.
+  if (timestamps.length && extent[0] === extent[1]) {
+    extent[0] -= 30_000;
+    extent[1] += 30_000;
+  }
 
-  return {
+  return layoutTimeSeriesOptions({
     animation,
     // The legend sits at the bottom edge, right under the axis labels.
     legend: showLegend ? { bottom: 0, left: 'center' } : { show: false },
@@ -53,17 +62,21 @@ export const buildTimeSeriesOptions = ({
       }),
     },
     grid: {
-      top: 20,
+      top: 12,
       bottom: showLegend ? 50 : 30,
       left: '7%',
       right: 10,
     },
-    dataZoom: buildRangeDataZoom(),
+    dataZoom: buildRangeDataZoom().map((zoom) => ({
+      ...zoom,
+      minValueSpan: timestamps.length ? Math.min(10_000, extent[1] - extent[0]) : 10_000,
+    })),
     xAxis: {
-      type: 'category',
-      data: axisData.map((item) => timeParse(item.timestamp)),
+      type: 'time',
+      ...(timestamps.length ? { min: extent[0], max: extent[1] } : {}),
       axisLabel: {
-        formatter: (value) => timeParse(value, 'HH:mm'),
+        hideOverlap: true,
+        lineHeight: 16,
       },
     },
     yAxis: {
@@ -72,8 +85,8 @@ export const buildTimeSeriesOptions = ({
         formatter: (value) => (unit ? `${value} ${unit}` : `${value}`),
       },
     },
-    series: normalized.map((item) =>
-      buildRangeLineSeries({
+    series: normalized.map((item) => ({
+      ...buildRangeLineSeries({
         name: item.name,
         data: item.data,
         itemStyle: {
@@ -85,8 +98,10 @@ export const buildTimeSeriesOptions = ({
           color: item.color || CHART_COLORS.single,
         },
       }),
-    ),
-  };
+      // Each series keeps its own timestamps, including missing-value gaps.
+      data: item.data.map(({ timestamp, value }) => [timestamp, value]),
+    })),
+  });
 };
 
 /** The shared shape of the donut charts: only their labels differ. */

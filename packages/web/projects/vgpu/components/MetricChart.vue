@@ -8,7 +8,7 @@
       </span>
     </div>
 
-    <div class="metric-chart__body" :style="{ height: `${height}px` }">
+    <div ref="bodyRef" class="metric-chart__body" :style="{ height: `${height}px` }">
       <template v-if="isLoading">
         <t-skeleton
           animation="gradient"
@@ -21,9 +21,10 @@
       <VChart
         v-else-if="isReady"
         ref="chartRef"
-        :option="option"
+        :option="displayOption"
         :autoresize="true"
         class="metric-chart__canvas"
+        @datazoom="updateZoom"
       />
       <div v-else class="metric-chart__state">
         <span>{{ stateText }}</span>
@@ -48,6 +49,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import VChart from 'vue-echarts';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
+import { layoutTimeSeriesOptions } from '../metrics/time-axis.mjs';
 
 const props = defineProps({
   status: { type: String, default: REQUEST_STATUS.LOADING },
@@ -64,9 +66,34 @@ const props = defineProps({
 const isLoading = computed(() => props.status === REQUEST_STATUS.LOADING);
 const isReady = computed(() => props.status === REQUEST_STATUS.READY);
 
+const bodyRef = ref(null);
+const chartWidth = ref(600);
+const zoomRange = ref([0, 100]);
+const displayOption = computed(() => {
+  const axis = props.option?.xAxis;
+  if (axis?.type !== 'time') return props.option;
+  const span = axis.max - axis.min;
+  const extent = zoomRange.value.map((percent) => axis.min + span * percent / 100);
+  return layoutTimeSeriesOptions(props.option, chartWidth.value, extent);
+});
+const updateZoom = () => {
+  const zoom = chartRef.value?.getOption()?.dataZoom?.[0];
+  if (zoom) zoomRange.value = [zoom.start, zoom.end];
+};
+// Card width changes with both the viewport and the sidebar. Updating only the
+// ticks keeps the current zoom while adapting their density to available space.
+watch(bodyRef, (element, _, onCleanup) => {
+  if (!element) return;
+  const observer = new ResizeObserver(([entry]) => {
+    chartWidth.value = entry.contentRect.width;
+  });
+  observer.observe(element);
+  onCleanup(() => observer.disconnect());
+});
+
 // The indicator centres on the plotting area, not on the axis labels and legend around it.
 const plotInsets = computed(() => {
-  const grid = props.option?.grid;
+  const grid = displayOption.value?.grid;
   if (!grid || Array.isArray(grid)) return undefined;
   const inset = (value) => (typeof value === 'number' ? `${value}px` : value ?? 0);
   return { top: inset(grid.top), right: inset(grid.right), bottom: inset(grid.bottom), left: inset(grid.left) };
@@ -75,6 +102,9 @@ const plotInsets = computed(() => {
 // Quick refreshes finish before this, so they never flash the indicator.
 const UPDATING_DELAY_MS = 250;
 const chartRef = ref(null);
+watch(chartRef, (chart) => {
+  if (!chart) zoomRange.value = [0, 100];
+});
 const blocking = computed(() => props.refreshing && !isLoading.value);
 const updatingVisible = ref(false);
 let updatingTimer;

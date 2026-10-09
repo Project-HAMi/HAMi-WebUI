@@ -299,6 +299,7 @@ async function assertChartRuntime(target) {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1000 }
   })
+  await page.clock.install()
   const runtimeErrors = []
   let rangeRequests = 0
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
@@ -522,6 +523,7 @@ async function assertTrendRefreshState(page) {
   const selectRange = (index) => page.evaluate((position) => {
     document.querySelectorAll('.home-bottom-trend-filter .segmented-control__option')[position].click()
   }, index)
+  const pauseClock = async() => page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
 
   let mode = 'pass'
   const held = []
@@ -539,25 +541,27 @@ async function assertTrendRefreshState(page) {
     const idleHeight = (await refreshState()).bodyHeight
 
     // A refresh that finishes inside the delay never shows the indicator.
+    await pauseClock()
     await selectRange(2)
-    for (let elapsed = 0; elapsed < 400; elapsed += 25) {
-      assert.equal((await refreshState()).visible, false, 'A quick refresh flashed the indicator')
-      await page.waitForTimeout(25)
-    }
     await waitForIdle()
+    await page.clock.runFor(400)
+    assert.equal((await refreshState()).visible, false, 'A quick refresh flashed the indicator')
+    await page.clock.resume()
 
     // The next refresh starts its own delay, and an open tooltip closes at once.
     await hoverPlot()
     await waitUntil(async() => (await refreshState()).tooltip, 'The trend tooltip did not open')
+    await pauseClock()
     mode = 'hold'
-    const started = Date.now()
     await selectRange(3)
     await waitUntil(async() => (await refreshState()).blocking, 'A refresh did not block the chart')
+    // Browser-command latency must not consume the interval we are asserting.
+    await page.clock.runFor(249)
     await waitUntil(async() => !(await refreshState()).tooltip, 'An open tooltip stayed up during a refresh')
     assert.equal((await refreshState()).visible, false, 'The indicator showed before its delay')
     await hoverPlot()
+    await page.clock.runFor(1)
     await waitUntil(async() => (await refreshState()).visible, 'A slow refresh never showed its indicator')
-    assert.ok(Date.now() - started >= 240, 'The indicator did not wait for its own delay')
     const slow = await refreshState()
     assert.equal(slow.canvas, true, 'The previous chart disappeared during a refresh')
     assert.equal(slow.tooltip, false, 'The chart answered hover during a refresh')
@@ -566,6 +570,7 @@ async function assertTrendRefreshState(page) {
     releaseHeld()
     await waitForIdle()
     assert.equal((await refreshState()).blocking, false)
+    await page.clock.resume()
     await hoverPlot()
     await waitUntil(async() => (await refreshState()).tooltip, 'Hover did not return after a refresh')
 
@@ -584,7 +589,8 @@ async function assertTrendRefreshState(page) {
     // A failed assertion must not leave requests held for the rest of the journey.
     mode = 'pass'
     releaseHeld()
-    await page.unroute('**/v1/monitor/query/range-vector')
+    await page.unrouteAll({ behavior: 'wait' })
+    await page.clock.resume()
   }
 }
 
@@ -4621,3 +4627,391 @@ test('closing a scheduling diagnosis prevents its delayed response from replacin
     await page.close()
   }
 }, { timeout: 30_000 })
+
+// Capture the current canvas frame, including actual rendered text bounds.
+// Accumulating text across frames would let obsolete labels hide a regression
+// after changing the range or resizing the chart.
+async function installTimeAxisFixture(page, valueForIndex = (index) => index === 20 ? null : 20 + index % 35, sampleCount = 61) {
+  await page.addInitScript(() => {
+    const clearRect = CanvasRenderingContext2D.prototype.clearRect
+    CanvasRenderingContext2D.prototype.clearRect = function(...args) {
+      this.canvas.drawnTexts = []
+      return clearRect.call(this, ...args)
+    }
+    const fillText = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function(text, x, y, ...args) {
+      const metrics = this.measureText(text)
+      const transform = this.getTransform()
+      const left = x - metrics.actualBoundingBoxLeft
+      const right = x + metrics.actualBoundingBoxRight
+      const top = y - metrics.actualBoundingBoxAscent
+      const bottom = y + metrics.actualBoundingBoxDescent
+      const start = new DOMPoint(left, top).matrixTransform(transform)
+      const end = new DOMPoint(right, bottom).matrixTransform(transform)
+      this.canvas.drawnTexts ??= []
+      this.canvas.drawnTexts.push({ text: String(text), x: start.x, y: start.y, right: end.x, bottom: end.y })
+      return fillText.call(this, text, x, y, ...args)
+    }
+  })
+  await page.route('**/v1/monitor/query/range-vector', async(route) => {
+    const { range } = route.request().postDataJSON()
+    const start = Date.parse(range.start)
+    const end = Date.parse(range.end)
+    const values = Array.from({ length: sampleCount }, (_, index) => ({
+      timestamp: start + (end - start) * index / (sampleCount - 1),
+      value: valueForIndex(index)
+    }))
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, data: [{ metric: { node: 'node-1' }, values }] }) })
+  })
+}
+
+// Observe actual canvas painting so a valid option object cannot mask a hover
+// rendering regression. Legend symbols are excluded when reading the plot.
+async function installTrendSymbolRecorder(page) {
+  await page.addInitScript(() => {
+    const prototype = CanvasRenderingContext2D.prototype
+    const clearRect = prototype.clearRect
+    prototype.clearRect = function(...args) {
+      this.canvas.drawnCircles = []
+      return clearRect.apply(this, args)
+    }
+    const beginPath = prototype.beginPath
+    prototype.beginPath = function(...args) {
+      this.currentCircles = []
+      return beginPath.apply(this, args)
+    }
+    const arc = prototype.arc
+    prototype.arc = function(x, y, radius, ...args) {
+      const transform = this.getTransform()
+      const point = new DOMPoint(x, y).matrixTransform(transform)
+      this.currentCircles ??= []
+      this.currentCircles.push({ x: point.x, y: point.y, radius: radius * Math.hypot(transform.a, transform.b) })
+      return arc.call(this, x, y, radius, ...args)
+    }
+    for (const method of ['stroke', 'fill']) {
+      const paint = prototype[method]
+      prototype[method] = function(...args) {
+        if (this.globalAlpha > 0.99) {
+          this.canvas.drawnCircles ??= []
+          this.canvas.drawnCircles.push(...(this.currentCircles ?? []))
+        }
+        return paint.apply(this, args)
+      }
+    }
+  })
+}
+
+async function readTrendSymbols(chart) {
+  return chart.locator('canvas').evaluateAll((canvases) => canvases.flatMap((canvas) => {
+    const box = canvas.getBoundingClientRect()
+    const scale = box.width / canvas.width
+    return (canvas.drawnCircles ?? [])
+      .map((circle) => ({ x: circle.x * scale, y: circle.y * scale, radius: circle.radius * scale }))
+      .filter(({ x, y, radius }) => radius >= 2 && radius <= 8 && x >= box.width * 0.07 && y >= 12 && y <= box.height - 25)
+  }))
+}
+
+test('trend lines reveal hover markers without hiding isolated zero reports on every trend page', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1440, height: 900 } })
+      await page.clock.install({ time: new Date('2026-10-09T04:00:00Z') })
+      await installTimeAxisFixture(page, (index) => [30, 32].includes(index) ? null : index === 31 ? 0 : 40)
+      await installTrendSymbolRecorder(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const chart = page.locator('.metric-chart').first()
+        await chart.scrollIntoViewIfNeeded()
+        await page.mouse.move(0, 0)
+        const canvas = chart.locator('canvas').first()
+        const box = await canvas.boundingBox()
+        const plotLeft = box.width * 0.07
+        const plotWidth = box.width * 0.93 - 10
+        const isolatedX = plotLeft + plotWidth * 31 / 60
+        const hoverX = plotLeft + plotWidth * 10 / 60
+        await waitUntil(async() => {
+          const symbols = await readTrendSymbols(chart)
+          return symbols.length > 0 && symbols.every(({ x }) => Math.abs(x - isolatedX) < 2)
+        }, `${route}: normal rendering hides the isolated report or adds markers to a continuous line`)
+        await captureTrendScreenshot(page, `p8-symbols-${route.split('/')[0]}-normal`)
+
+        await page.mouse.move(box.x + hoverX, box.y + 80)
+        await chart.getByText('2026-10-09 11:10:00 UTC+08:00', { exact: true }).waitFor()
+        await waitUntil(async() => (await readTrendSymbols(chart)).some(({ x }) => Math.abs(x - hoverX) < 2), `${route}: axis hover did not reveal the corresponding marker`)
+        await captureTrendScreenshot(page, `p8-symbols-${route.split('/')[0]}-hover`)
+
+        await page.mouse.move(0, 0)
+        await waitUntil(async() => {
+          const symbols = await readTrendSymbols(chart)
+          return symbols.length > 0 && symbols.every(({ x }) => Math.abs(x - isolatedX) < 2)
+        }, `${route}: leaving the chart did not remove hover markers`)
+      } finally {
+        await page.close()
+      }
+    })
+  }
+})
+
+test('sparse month reports remain visible at rest and become plain lines after zooming', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1440, height: 900 } })
+  await page.clock.setFixedTime(new Date('2026-10-09T14:00:00Z'))
+  await installTimeAxisFixture(page, (index) => index === 650 ? 0 : (index >= 660 && index <= 672) || index >= 719 ? 40 : null, 721)
+  await installTrendSymbolRecorder(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await selectTrendRange(page, '720h')
+    await page.waitForLoadState('networkidle')
+    const chart = page.locator('.metric-chart').first()
+    const canvas = chart.locator('canvas').first()
+    for (const width of [1440, 1280]) {
+      await page.setViewportSize({ width, height: 900 })
+      await chart.scrollIntoViewIfNeeded()
+      await page.mouse.move(0, 0)
+      await assertTimeAxisLayout(page, `Sparse month ${width}px`)
+      const box = await canvas.boundingBox()
+      const isolatedX = box.width * 0.07 + (box.width * 0.93 - 10) * 650 / 720
+      const latestX = box.width - 10
+      await waitUntil(async() => {
+        const symbols = await readTrendSymbols(chart)
+        return symbols.some(({ x }) => Math.abs(x - isolatedX) < 2)
+          && symbols.some(({ x }) => Math.abs(x - latestX) < 2)
+          && symbols.every(({ x, radius }) => radius <= 2.1 && (Math.abs(x - isolatedX) < 2 || Math.abs(x - latestX) < 2))
+      }, `${width}px: a sparse report disappeared or the short line regained a string of markers`)
+      await captureTrendScreenshot(page, `p8-sparse-month-${width}-normal`)
+    }
+    const box = await canvas.boundingBox()
+    await page.mouse.move(box.x + box.width - 10, box.y + 80)
+    await chart.getByText('2026-10-09 22:00:00 UTC+08:00', { exact: true }).waitFor()
+    await waitUntil(async() => (await readTrendSymbols(chart)).some(({ x, radius }) => x > box.width - 12 && radius > 2.1), 'Hover did not emphasize the latest sparse report')
+    await captureTrendScreenshot(page, 'p8-sparse-month-latest-hover')
+
+    let zoomedToLine = false
+    const zoomFrames = []
+    for (let gesture = 0; gesture < 30; gesture += 1) {
+      await page.mouse.move(box.x + box.width - 10, box.y + 80)
+      await page.mouse.wheel(0, -300)
+      await assertTimeAxisLayout(page, `Sparse month zoom ${gesture + 1}`)
+      await page.mouse.move(0, 0)
+      await delay(100)
+      const symbols = await readTrendSymbols(chart)
+      zoomFrames.push({ labels: await readTimeAxisTexts(page), symbols })
+      // The isolated zero at the bottom may still be in view. Only the latest
+      // continuous fragment at the top should lose its permanent marker.
+      if (symbols.every(({ y }) => y > box.height / 2)) {
+        zoomedToLine = true
+        break
+      }
+    }
+    assert.ok(zoomedToLine, `Zooming did not restore the short continuous report to a plain line: ${JSON.stringify(zoomFrames.slice(-3))}`)
+    await chart.getByText('2026-10-09 22:00:00 UTC+08:00', { exact: true }).waitFor({ state: 'hidden' })
+    await captureTrendScreenshot(page, 'p8-sparse-month-zoomed-line')
+    await page.mouse.move(box.x + box.width - 10, box.y + 80)
+    await chart.getByText('2026-10-09 22:00:00 UTC+08:00', { exact: true }).waitFor()
+    await chart.getByText('40.00 %', { exact: true }).first().waitFor()
+    await waitUntil(async() => (await readTrendSymbols(chart)).some(({ y }) => y < box.height / 2), 'The zoomed fragment has no real report to highlight')
+    await captureTrendScreenshot(page, 'p8-sparse-month-zoomed-hover')
+  } finally {
+    await page.close()
+  }
+})
+
+async function readChartTexts(page) {
+  return page.locator('.metric-chart canvas').first().evaluate((canvas) => {
+    const scale = canvas.getBoundingClientRect().width / canvas.width
+    return (canvas.drawnTexts ?? [])
+      .map((label) => ({ ...label, x: label.x * scale, right: label.right * scale, y: label.y * scale, bottom: label.bottom * scale }))
+  })
+}
+
+async function readTimeAxisLabels(page) {
+  return (await readChartTexts(page)).filter(({ text }) => /^(?:\d{2}:\d{2}|(?:\d{4}-)?\d{2}-\d{2}|UTC[+-]|\d{4}$)/.test(text))
+}
+
+async function readTimeAxisTexts(page) {
+  return (await readTimeAxisLabels(page)).map(({ text }) => text)
+}
+
+async function assertTimeAxisLayout(page, context) {
+  const canvas = page.locator('.metric-chart canvas').first()
+  let previousFrame
+  const labels = await waitUntil(async() => {
+    const current = await readTimeAxisLabels(page)
+    const frame = JSON.stringify(current)
+    const settled = current.length > 0 && frame === previousFrame
+    previousFrame = frame
+    return settled ? current : false
+  }, `${context}: time labels did not settle after resizing`).catch(async(error) => {
+    await captureTrendScreenshot(page, `p8-failure-${context.replaceAll('/', '-')}`)
+    const state = await canvas.evaluate((element) => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, drawnTexts: element.drawnTexts }))
+    throw new Error(`${error.message}: ${JSON.stringify(state)}`)
+  })
+  const box = await canvas.boundingBox()
+  assert.ok(labels.length > 0, `${context}: no time labels rendered`)
+  for (const label of labels) {
+    assert.ok(label.x >= -0.5 && label.right <= box.width + 0.5, `${context}: ${label.text} clipped`)
+    assert.ok(label.y >= 0 && label.bottom <= box.height + 0.5, `${context}: ${label.text} clipped vertically`)
+  }
+  for (let index = 0; index < labels.length; index += 1) {
+    for (const previous of labels.slice(0, index)) {
+      const label = labels[index]
+      const overlaps = label.x < previous.right && label.right > previous.x && label.y < previous.bottom && label.bottom > previous.y
+      assert.equal(overlaps, false, `${context}: ${label.text} overlaps ${previous.text}`)
+    }
+  }
+  const legends = (await readChartTexts(page)).filter(({ text }) => /[A-Za-z\u4e00-\u9fff]/.test(text) && !text.startsWith('UTC'))
+  for (const label of labels) {
+    for (const legend of legends) {
+      const overlaps = label.x < legend.right && label.right > legend.x && label.y < legend.bottom && label.bottom > legend.y
+      assert.equal(overlaps, false, `${context}: ${label.text} overlaps legend ${legend.text}`)
+    }
+  }
+  return labels.map(({ text }) => text)
+}
+
+test('trend dates stay readable across all trend pages, languages and ordinary widths', { timeout: 240_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1280, height: 900 } })
+      const errors = []
+      page.on('pageerror', (error) => errors.push(error.message))
+      // Off-grid request boundaries must not turn into off-grid tick labels.
+      await page.clock.install({ time: new Date('2027-01-01T04:00:37Z') })
+      await installTimeAxisFixture(page)
+      const requests = trackTrendRequests(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const chart = page.locator('.metric-chart').first()
+        await chart.scrollIntoViewIfNeeded()
+        const setSidebarCollapsed = async(collapsed, language) => {
+          const name = language === 'en' ? (collapsed ? 'Collapse sidebar' : 'Expand sidebar') : (collapsed ? '收起侧栏' : '展开侧栏')
+          const control = page.getByRole('button', { name, exact: true })
+          if (await control.count()) await control.click()
+          await page.locator('.page-aside').evaluate(async(element) => { await Promise.all(element.getAnimations().map((animation) => animation.finished)) })
+        }
+        for (const language of ['en', 'zh-CN']) {
+          await page.setViewportSize({ width: 1280, height: 900 })
+          await setSidebarCollapsed(false, 'en')
+          if (language === 'zh-CN') await page.getByRole('button', { name: '中文', exact: true }).click()
+          for (const range of ['1h', '168h', '720h']) {
+            await page.setViewportSize({ width: 1280, height: 900 })
+            await setSidebarCollapsed(false, language)
+            await selectTrendRange(page, range)
+            await page.waitForLoadState('networkidle')
+            await chart.scrollIntoViewIfNeeded()
+            await waitUntil(async() => {
+              const labels = await readTimeAxisTexts(page)
+              return range === '1h' ? labels.some((text) => /^11:\d{2}$/.test(text)) : labels.some((text) => /(?:2026-)?12-\d{2}/.test(text)) && !labels.some((text) => /^\d{2}:\d{2}/.test(text))
+            }, `${route}/${range}: labels did not match the visible time granularity`)
+            const count = requests.length
+            for (const width of [1280, 1366, 1440, 1920, 390, 320]) {
+              await page.setViewportSize({ width, height: 900 })
+              // The app keeps its desktop sidebar at phone widths; close it
+              // explicitly so this test checks chart layout in usable space.
+              await setSidebarCollapsed(width < 600, language)
+              await chart.scrollIntoViewIfNeeded()
+              await waitUntil(async() => chart.locator('canvas').evaluate((canvas) => Math.abs(canvas.getBoundingClientRect().width - canvas.closest('.metric-chart__body').getBoundingClientRect().width) < 2), 'Canvas did not resize')
+              const texts = await assertTimeAxisLayout(page, `${route}/${language}/${range}/${width}`)
+              assert.ok(texts.length <= 14, 'Time labels became an unreadable wall of text')
+              const layout = await chart.evaluate((element) => {
+                const body = element.querySelector('.metric-chart__body').getBoundingClientRect()
+                return { height: body.height, right: body.right }
+              })
+              assert.equal(layout.height, 250, `${route}/${width}: labels changed the card height`)
+              assert.ok(layout.right <= width + 1, `${route}/${width}: chart overflows`)
+              if ([1280, 320].includes(width)) await captureTrendScreenshot(page, `p8-${route.split('/')[0]}-${language}-${range}-${width}`)
+            }
+            assert.equal(requests.length, count, 'Resizing must not refetch or reset the selected range')
+          }
+        }
+        await page.setViewportSize({ width: 1280, height: 900 })
+        await chart.scrollIntoViewIfNeeded()
+        await setSidebarCollapsed(true, 'zh-CN')
+        await assertTimeAxisLayout(page, `${route}/collapsed sidebar`)
+        const box = await chart.locator('canvas').boundingBox()
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+        await chart.getByText(/2026-12-\d{2} \d{2}:\d{2}:\d{2} UTC\+08:00/).waitFor()
+        assert.deepEqual(errors, [])
+      } finally {
+        await page.close()
+      }
+    })
+  }
+})
+
+test('short-window labels show seconds and repeated-hour tooltips show the point offset', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'America/New_York', viewport: { width: 1280, height: 900 } })
+  await page.clock.install({ time: new Date('2026-11-01T07:00:37Z') })
+  await installTimeAxisFixture(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await selectTrendRange(page, '3h')
+    await page.waitForLoadState('networkidle')
+    const chart = page.locator('.metric-chart').first()
+    await chart.scrollIntoViewIfNeeded()
+    await waitUntil(async() => (await readTimeAxisTexts(page)).includes('UTC-04:00') && (await readTimeAxisTexts(page)).includes('UTC-05:00'), 'Repeated-hour labels lost their UTC offsets')
+    await assertTimeAxisLayout(page, 'DST repeated hour')
+    await captureTrendScreenshot(page, 'p8-dst-repeated-hour')
+    const box = await chart.locator('canvas').boundingBox()
+    await page.mouse.move(box.x + box.width * 0.85, box.y + box.height / 2)
+    await chart.getByText(/2026-11-01 01:\d{2}:\d{2} UTC-05:00/).waitFor()
+    await selectTrendRange(page, 'custom')
+    const filter = page.locator('.trend-time-filter')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    await start.click()
+    await start.fill('2026-10-31 12:00:00')
+    await start.press('Tab')
+    await end.click()
+    await end.fill('2026-10-31 12:00:30')
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    await chart.scrollIntoViewIfNeeded()
+    await waitUntil(async() => (await readTimeAxisTexts(page)).some((text) => /^12:00:\d{2}$/.test(text)), 'Sub-minute axis did not show seconds')
+    await assertTimeAxisLayout(page, 'Sub-minute range')
+    await captureTrendScreenshot(page, 'p8-short-window-seconds')
+  } finally {
+    await page.close()
+  }
+})
+
+test('trend zoom survives responsive resizing without refetching or restoring the full range', { timeout: 45_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1440, height: 900 } })
+  await page.clock.install({ time: new Date('2026-10-09T04:00:37Z') })
+  await installTimeAxisFixture(page)
+  const requests = trackTrendRequests(page)
+  const visibleMinutes = async() => (await readTimeAxisTexts(page))
+    .filter((text) => /^\d{2}:\d{2}(?::\d{2})?$/.test(text))
+    .map((text) => { const [hour, minute, second = 0] = text.split(':').map(Number); return hour * 60 + minute + second / 60 })
+  const span = (values) => Math.max(...values) - Math.min(...values)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const chart = page.locator('.metric-chart').first()
+    await chart.scrollIntoViewIfNeeded()
+    await waitUntil(async() => (await visibleMinutes()).length >= 3, 'Full-range time ticks did not render')
+    const before = span(await visibleMinutes())
+    const count = requests.length
+    const box = await chart.locator('canvas').boundingBox()
+    await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.4)
+    for (let gesture = 0; gesture < 6; gesture += 1) {
+      await page.mouse.wheel(0, -300)
+      await assertTimeAxisLayout(page, `Wheel zoom ${gesture + 1}`)
+    }
+    await waitUntil(async() => {
+      const values = await visibleMinutes()
+      return values.length >= 2 && span(values) < before
+    }, 'Wheel zoom did not reduce the visible interval')
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await chart.scrollIntoViewIfNeeded()
+    await assertTimeAxisLayout(page, 'Zoomed chart after resize')
+    const after = await visibleMinutes()
+    assert.ok(after.length >= 2 && span(after) < before, 'Responsive resizing reset the user zoom')
+    assert.equal(requests.length, count, 'Client-side zoom and resizing refetched the range')
+  } finally {
+    await page.close()
+  }
+})
