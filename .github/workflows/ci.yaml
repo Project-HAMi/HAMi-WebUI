@@ -35,6 +35,7 @@ jobs:
               - 'Makefile'
               - 'package.json'
               - 'packages/web/**'
+              - 'patches/**'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'scripts/precompress-web-assets.mjs'

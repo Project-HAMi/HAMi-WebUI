@@ -5015,3 +5015,156 @@ test('trend zoom survives responsive resizing without refetching or restoring th
     await page.close()
   }
 })
+
+async function withCalendarDraftProbe(run) {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({
+    locale: 'en-US', timezoneId: 'UTC', viewport: { width: 1440, height: 900 }
+  })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+    await selectTrendRange(page, 'custom')
+    const filter = page.locator('.trend-time-filter')
+    const inputs = [
+      filter.getByRole('textbox', { name: 'Start Time', exact: true }),
+      filter.getByRole('textbox', { name: 'End Time', exact: true })
+    ]
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    const applied = await Promise.all(inputs.map((input) => input.inputValue()))
+    assert.equal(requests.length, 5, 'Opening custom controls must not issue another range batch')
+    await run({ page, filter, inputs, panel, applied, requests })
+  } finally {
+    await page.close()
+  }
+}
+
+async function openCalendarDraftProbe({ page, inputs, panel }, index, draft, timing) {
+  if (timing === 'early') {
+    // Control the observed input-before-popup ordering, without altering product code.
+    // Advancing the virtual clock is not a wall-clock sleep.
+    await page.clock.pauseAt(new Date('2026-10-07T12:05:00Z'))
+  }
+  await inputs[index].click()
+  if (timing === 'ready') await stablePopupBounds(panel)
+  await inputs[index].fill(draft)
+  assert.equal(await inputs[index].inputValue(), draft)
+  if (timing === 'early') {
+    assert.equal(await panel.count(), 0, 'The early case must type before the popup is visible')
+    await page.clock.resume()
+  }
+  await stablePopupBounds(panel)
+  assert.equal(await inputs[index].inputValue(), draft, 'Opening alone must preserve the typed draft')
+}
+
+async function hoverCalendarDraftProbe({ inputs, panel }, index) {
+  const day = index === 0 ? '3' : '6'
+  const cell = panel
+    .locator('.t-date-picker__cell:not(.t-date-picker__cell--additional):not(.t-date-picker__cell--disabled)')
+    .filter({ hasText: new RegExp(`^${day}$`) }).first()
+  // Real mouse movement exercises the user-visible calendar preview and its exit.
+  await cell.hover()
+  await inputs[index].hover()
+}
+
+test('calendar hover preserves exact incomplete drafts before and after popup initialization', { timeout: 60_000 }, async(t) => {
+  for (const index of [0, 1]) {
+    for (const timing of ['early', 'ready']) {
+      await t.test(`${index === 0 ? 'start' : 'end'} / ${timing}`, async() => {
+        await withCalendarDraftProbe(async(context) => {
+          const { inputs, applied, requests } = context
+          const draft = index === 0 ? '2026-10-03 10:12:' : '2026-10-06 11:23:'
+          await openCalendarDraftProbe(context, index, draft, timing)
+          await hoverCalendarDraftProbe(context, index)
+          assert.equal(await inputs[index].inputValue(), draft, 'Leaving a calendar preview must restore the exact unconfirmed draft')
+          assert.equal(await inputs[1 - index].inputValue(), applied[1 - index], 'A draft must not alter the other endpoint')
+          assert.ok(await inputs[index].evaluate((element) => element === document.activeElement), 'Calendar hover must retain input focus')
+          assert.equal(requests.length, 5, 'Opening, typing and hover must not submit a draft')
+        })
+      })
+    }
+  }
+})
+
+test('canceling an invalid early calendar draft restores applied dates and cannot revive it on reopen', { timeout: 30_000 }, async() => {
+  await withCalendarDraftProbe(async(context) => {
+    const { page, inputs, panel, applied, requests } = context
+    const draft = 'not-a-date'
+    await openCalendarDraftProbe(context, 1, draft, 'early')
+    await hoverCalendarDraftProbe(context, 1)
+    assert.equal(await inputs[1].inputValue(), draft, 'Unparseable text must survive hover while it is still being edited')
+    assert.equal(requests.length, 5)
+
+    await page.locator('.home-page-title').click()
+    await page.locator('.trend-time-filter-popup').waitFor({ state: 'hidden' })
+    await waitUntil(async() => JSON.stringify(await Promise.all(inputs.map((input) => input.inputValue()))) === JSON.stringify(applied), 'Canceling must restore the applied range')
+    assert.equal(requests.length, 5, 'Canceling an invalid draft must not submit')
+
+    await inputs[1].click()
+    await stablePopupBounds(panel)
+    await hoverCalendarDraftProbe(context, 1)
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied, 'A reopened picker must not restore a previously canceled draft')
+    assert.equal(requests.length, 5)
+  })
+})
+
+test('a complete early calendar draft submits its own values exactly once after hover', { timeout: 30_000 }, async() => {
+  await withCalendarDraftProbe(async(context) => {
+    const { page, inputs, panel, requests } = context
+    const selected = ['2026-10-03 10:12:34', '2026-10-06 11:23:45']
+    await openCalendarDraftProbe(context, 0, selected[0], 'early')
+    await hoverCalendarDraftProbe(context, 0)
+    assert.equal(await inputs[0].inputValue(), selected[0])
+    await inputs[1].click()
+    await inputs[1].fill(selected[1])
+    await hoverCalendarDraftProbe(context, 1)
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
+    assert.equal(requests.length, 5, 'Hover must not apply the complete draft early')
+
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await panel.waitFor({ state: 'hidden' })
+    await page.waitForLoadState('networkidle')
+    const expected = await localRangeAsUTC(page, selected)
+    assert.equal(requests.length, 10, 'Confirmation must publish exactly one range-query batch')
+    for (const request of requests.slice(5)) {
+      assert.deepEqual([request.range.start, request.range.end], expected, 'Confirmed requests must use the typed range, not stale applied dates')
+    }
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
+  })
+})
+
+test('typing over a calendar preview preserves invalid drafts without selecting a fallback date', { timeout: 30_000 }, async() => {
+  await withCalendarDraftProbe(async(context) => {
+    const { page, inputs, panel, applied, requests } = context
+    const errors = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+    await openCalendarDraftProbe(context, 0, '2026-10-03 10:12:34', 'ready')
+    const cell = (day) => panel
+      .locator('.t-date-picker__cell:not(.t-date-picker__cell--additional):not(.t-date-picker__cell--disabled)')
+      .filter({ hasText: new RegExp(`^${day}$`) }).first()
+    await cell('3').click()
+    await inputs[0].hover()
+    assert.equal(await inputs[0].inputValue(), '2026-10-03 10:12:34', 'Leaving a clicked date must retain the selection')
+    await inputs[0].focus()
+    await cell('4').hover()
+    await cell('5').hover()
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.insertText('not-a-date')
+    await inputs[0].hover()
+    assert.equal(await inputs[0].inputValue(), 'not-a-date', 'Typing while the pointer stays over the calendar must replace the preview')
+    assert.equal(await inputs[1].inputValue(), applied[1])
+    await inputs[1].click()
+    await cell('6').hover()
+    await inputs[1].hover()
+    assert.equal(await inputs[0].inputValue(), 'not-a-date', 'Hovering the other endpoint must preserve the invalid draft without parsing it')
+    assert.equal(await inputs[1].inputValue(), applied[1])
+    assert.equal(requests.length, 5, 'Neither a date pick nor invalid text may apply before confirmation')
+    assert.deepEqual(errors, [], 'Invalid text must not reach the calendar date parser')
+    await page.locator('.home-page-title').click()
+    await panel.waitFor({ state: 'hidden' })
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied)
+  })
+})

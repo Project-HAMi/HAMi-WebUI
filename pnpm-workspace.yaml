@@ -8,3 +8,6 @@ ignoredBuiltDependencies:
   - "vue-demi"
   - "vue-echarts"
   - "yorkie"
+
+patchedDependencies:
+  tdesign-vue-next@1.18.5: patches/tdesign-vue-next@1.18.5.patch
