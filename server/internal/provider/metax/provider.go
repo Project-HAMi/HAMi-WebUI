@@ -97,7 +97,6 @@ func (m *Metax) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 			Count:   1,                                                  // if sgpu is disabled, vgpu is gpu
 			Devmem:  m.getDeviceMemoryFromPrometheus(node, uuid) / 1024, // KB -> MB
 			Devcore: 100,
-			Mode:    "hami-core",
 			Type:    deviceLabels.modelName,
 			Health:  deviceLabels.status == DeviceAvaliable,
 			Driver:  deviceLabels.driver,
@@ -118,7 +117,6 @@ func (m *Metax) convertSDevice2Device(sDeviceList []*sDeviceInfo, lablesMap map[
 			Devmem:  sDevice.TotalVRam, // MB
 			Devcore: sDevice.TotalCompute,
 			Numa:    sDevice.Numa,
-			Mode:    "hami-core",
 			Health:  sDevice.Healthy,
 		}
 

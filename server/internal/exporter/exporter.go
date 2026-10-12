@@ -333,11 +333,12 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			return s.recordFatalError(err)
 		}
 		provider := device.Provider
-
 		// Inventory series are provider-agnostic and must be emitted for
 		// every device every cycle (the cycle commit only keeps cells that
 		// were written), so they are recorded before any provider-specific
-		// dispatch below.
+		// dispatch below. Moore Threads telemetry is sourced from the vendor
+		// mt-dcgm-exporter instead of the shared UUID-based lookups, so those
+		// extra queries are skipped for it.
 		var driver, deviceNo = "", ""
 		if provider != biz.MthreadsGPUDevice {
 			deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
@@ -346,11 +347,15 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 				deviceNo = deviceAdditional.DeviceNo
 			}
 		}
-		s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-		s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+
+		// HAMi does not schedule unconfigured devices, so they add no schedulable capacity.
+		if !device.Unconfigured {
+			s.set(HamiVgpuCount, float64(device.Count), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiVmemorySize, float64(device.Devmem), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiVcoreSize, float64(device.Devcore), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		}
 
 		if provider == biz.MthreadsGPUDevice {
 			// Vendor telemetry only; the inventory series above already
@@ -367,7 +372,9 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		deviceMemSize, memorySizeErr := s.deviceMemTotal(ctx, provider, device.Id)
 		if memorySizeErr == nil && deviceMemSize > 0 {
 			s.set(HamiMemorySize, float64(deviceMemSize), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-			s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			if !device.Unconfigured {
+				s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			}
 			if memoryUsedErr == nil {
 				s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			}
@@ -419,19 +426,20 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, conta
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
 		}
-		if len(c.ContainerDevices) == 0 {
-			continue
-		}
-		if c.ContainerDevices[0].Type != metax.MetaxGPUDevice {
-			continue
-		}
 		// MetaX allocation UUIDs cannot currently be correlated with telemetry UUIDs,
 		// so this path pairs the two lists by index and emits telemetry identities.
+		// A mixed container also lists other vendors' devices, which must not take a MetaX index.
 		var core []int32
 		var memory []int32
 		for _, cd := range c.ContainerDevices {
+			if cd.Type != metax.MetaxGPUDevice {
+				continue
+			}
 			core = append(core, cd.Usedcores)
 			memory = append(memory, cd.Usedmem)
+		}
+		if len(core) == 0 {
+			continue
 		}
 
 		query := fmt.Sprintf("mx_memory_used{exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"}",
@@ -444,7 +452,7 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, conta
 			}
 			continue
 		}
-		reportLen := min(len(res.Data), len(c.ContainerDevices))
+		reportLen := min(len(res.Data), len(core))
 		for i := range reportLen {
 			if err := ctx.Err(); err != nil {
 				return s.recordFatalError(err)
@@ -529,8 +537,11 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 				vGPU = vGPU + 1
 				core = core + cd.Usedcores
 				memory = memory + cd.Usedmem
-				provider = providerutil.VendorOf(cd.Type)
-				if provider == biz.AscendGPUDevice && !cd.CoreAllocationKnown {
+				provider = cd.Vendor
+				if provider == "" {
+					provider = providerutil.VendorOf(cd.Type)
+				}
+				if cd.CoreAllocationUnknown {
 					coreAllocationKnown = false
 				}
 			}
@@ -1016,13 +1027,9 @@ func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, de
 		}
 	}
 	node, prov, typ := device.NodeName, device.Provider, device.Type
-	// Capacity gauges: the card-detail charts derive totals and schedulable
-	// memory from these series (hami_core_size / hami_vmemory_size / ...).
-	s.set(HamiVgpuCount, float64(device.Count), node, prov, typ, device.Id, "", "")
-	s.set(HamiVmemorySize, float64(device.Devmem), node, prov, typ, device.Id, "", "")
-	s.set(HamiVcoreSize, float64(device.Devcore), node, prov, typ, device.Id, "", "")
-	s.set(HamiVCoreScaling, float64(device.Devcore)/100, node, prov, typ, device.Id, "", "")
-	s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), node, prov, typ, device.Id, "", "")
+	// Capacity gauges (hami_vgpu_count / hami_vmemory_size / ...) are emitted
+	// for every device by the caller before provider dispatch, so only the
+	// vendor telemetry series belong here.
 
 	record("GPU_TEMP", func(v float32) {
 		s.set(HamiDeviceTemperature, float64(v), node, prov, typ, device.Id, "", "")

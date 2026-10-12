@@ -2,17 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildPieTooltipFormatter,
+  buildTimeSeriesTooltipFormatter,
   escapeTooltipHtmlText,
-  formatCardTypeTooltip,
 } from './tooltip-html.mjs';
 
 test('card type tooltip treats device metadata as text', () => {
   const deviceType =
     'Ascend910B<img src=x onerror="globalThis.compromised=true">';
-  const tooltip = formatCardTypeTooltip(
-    { name: deviceType, value: 2 },
-    'cards',
-  );
+  const tooltip = buildPieTooltipFormatter({ unit: 'cards' })({
+    name: deviceType,
+    value: 2,
+  });
 
   assert.equal(
     tooltip,
@@ -30,11 +31,29 @@ test('tooltip text escapes every HTML-significant character', () => {
 
 test('normal card type tooltips keep their existing presentation', () => {
   assert.equal(
-    formatCardTypeTooltip({ name: 'Ascend910B', value: 2 }, '张'),
+    buildPieTooltipFormatter({ unit: '张' })({ name: 'Ascend910B', value: 2 }),
     'Ascend910B: 2 张',
   );
   assert.equal(
-    formatCardTypeTooltip({ name: 'NVIDIA A100', value: 1 }, ''),
+    buildPieTooltipFormatter()({ name: 'NVIDIA A100', value: 1 }),
     'NVIDIA A100: 1',
   );
+});
+
+test('every series tooltip escapes the names a cluster supplies', () => {
+  const formatter = buildTimeSeriesTooltipFormatter({ digits: 1, unit: '%' });
+  const tooltip = formatter([
+    {
+      axisValueLabel: '12:00<script>',
+      seriesName: 'node-a"<img src=x onerror="globalThis.compromised=true">',
+      color: '#5B8FF9',
+      value: 42.125,
+    },
+  ]);
+
+  assert.doesNotMatch(tooltip, /<\s*(?:img|script)\b/i);
+  assert.match(tooltip, /12:00&lt;script&gt;/);
+  assert.match(tooltip, /node-a&quot;&lt;img/);
+  assert.match(tooltip, /42\.1 %/);
+  assert.equal(formatter([]), '');
 });

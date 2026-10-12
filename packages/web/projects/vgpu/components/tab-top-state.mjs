@@ -41,3 +41,10 @@ export const readRankingRows = (response, nameKey) => {
       : REQUEST_STATUS.MISSING,
   };
 };
+
+// Per-row counts of allocations a rate left out; null when the reply is unreadable.
+export const readUncountedRows = (response, nameKey) => {
+  const { data, status } = readRankingRows(response, nameKey);
+  if (status === REQUEST_STATUS.INVALID) return null;
+  return Object.fromEntries(data.map((row) => [row.name, row.value]));
+};

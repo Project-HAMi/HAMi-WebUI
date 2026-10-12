@@ -1,15 +1,13 @@
 <template>
   <block-box :title="title">
     <template #extra>
-      <t-radio-group
+      <SegmentedControl
         v-model="tabActive"
-        theme="button"
-        variant="outline"
         size="small"
-        class="tab-top-radio"
-        :options="radioOptions"
-      >
-      </t-radio-group>
+        class="tab-top-switch"
+        :options="tabOptions"
+        :aria-label="title"
+      />
     </template>
 
     <div class="tab-top-list" :aria-busy="activeStatus === 'loading'">
@@ -50,10 +48,14 @@
                   {{ item.name }}
                 </span>
               </slot>
-              <span class="tab-top-value">
+              <t-tooltip v-if="item.note" :content="item.note">
+                <span class="tab-top-value">{{ item.valueDisplay }}</span>
+              </t-tooltip>
+              <span v-else class="tab-top-value">
                 {{ item.valueDisplay }}
               </span>
             </div>
+            <span v-if="item.note" class="tab-top-sr-only">{{ item.note }}</span>
             <t-progress
               theme="line"
               :percentage="item.percentage"
@@ -76,6 +78,7 @@
 
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
+import SegmentedControl from '@/components/SegmentedControl/index.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import cardApi from '~/vgpu/api/card';
@@ -90,7 +93,9 @@ import {
 import {
   formatRankingValue,
   readRankingRows,
+  readUncountedRows,
 } from './tab-top-state.mjs';
+import { isLowerBound, isNothingCounted, lowerBoundMessage, nothingCountedMessage } from '../metrics/uncounted.mjs';
 
 const props = defineProps({
   title: String,
@@ -107,7 +112,7 @@ const createStatefulConfigs = (configs = []) =>
 const currentConfig = ref(createStatefulConfigs(props.config));
 const tabActive = ref('');
 
-const radioOptions = computed(() =>
+const tabOptions = computed(() =>
   (currentConfig.value || []).map(({ tab, key }) => ({
     label: tab,
     value: key,
@@ -143,12 +148,18 @@ const displayItems = computed(() => {
   return data
     .slice()
     .sort((a, b) => Number(b.value) - Number(a.value))
-    .map((item, index) => ({
-      ...item,
-      index: index + 1,
-      percentage: getPercentage(item.value),
-      valueDisplay: formatRankingValue(item.value, unit),
-    }));
+    .map((item, index) => {
+      const uncounted = config?.uncounted === null ? null : config?.uncounted?.[item.name] || 0;
+      const nothingCounted = isNothingCounted(item.value, uncounted);
+      const lowerBound = isLowerBound(uncounted);
+      return {
+        ...item,
+        index: index + 1,
+        percentage: getPercentage(item.value),
+        valueDisplay: nothingCounted ? '--' : `${lowerBound ? '≥' : ''}${formatRankingValue(item.value, unit)}`,
+        note: nothingCounted ? nothingCountedMessage(t, uncounted) : lowerBound ? lowerBoundMessage(t, uncounted) : '',
+      };
+    });
 });
 
 const activeConfig = computed(() =>
@@ -180,9 +191,19 @@ const fetchData = (configList) => {
     const state = configList[i];
     const hasResolved = state.hasResolved;
     const requestId = startRequest(state, { hasResolved });
+    // Rows whose rate leaves allocations out read as lower bounds, and every row
+    // does when that count cannot be read; the list waits for it either way.
+    const uncounted = v.uncountedQuery
+      ? cardApi.getInstantVector({ query: v.uncountedQuery }).then(
+        (res) => readUncountedRows(res, v.nameKey),
+        () => null,
+      )
+      : Promise.resolve({});
     cardApi.getInstantVector({ query: v.query }).then(
-      (res) => {
+      async (res) => {
         const result = readRankingRows(res, v.nameKey);
+        const counts = await uncounted;
+        if (requestId === state.requestId) state.uncounted = counts;
         resolveRequest(state, {
           ...result,
           requestId,
@@ -209,6 +230,7 @@ watch(
       return {
         ...item,
         data: old.data,
+        uncounted: old.uncounted,
         status: old.status,
         hasResolved: old.hasResolved,
         refreshing: old.refreshing,
@@ -223,27 +245,18 @@ watch(
 </script>
 
 <style lang="scss" scoped>
+// In a narrow card the switch moves under the title as a whole instead of splitting either.
 :deep(.home-block-header) {
   padding-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button) {
-  padding: 12px;
-  height: 32px;
-  font-size: 12px;
-  box-sizing: border-box;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button:first-child) {
-  border-radius: 6px 0 0 6px;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button:last-child) {
-  border-radius: 0 6px 6px 0;
-}
-
-:deep(.tab-top-radio.t-radio-group__outline .t-radio-button:only-child) {
-  border-radius: 6px;
+:deep(.home-block-header .title) {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-top-list {

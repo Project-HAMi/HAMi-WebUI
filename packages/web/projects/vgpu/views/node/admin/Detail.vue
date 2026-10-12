@@ -16,11 +16,60 @@
     </page-header>
 
     <detail-page-state :status="detailStatus" @retry="retryDetail">
+      <template #loading>
+        <section class="node-overview-wrap">
+          <block-box class="node-overview-panel" :title="$t('node.detail.nodeOverview')" variant="detail">
+            <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
+              <div class="node-detail-left">
+                <div class="node-detail-info-summary node-detail-info-summary-cols">
+                  <div v-for="(group, index) in detailColumnGroups" :key="index" class="summary-col">
+                    <div v-for="{ label, value } in group" :key="label" class="summary-item">
+                      <div class="summary-item-label">{{ label }}</div>
+                      <div class="summary-item-value">
+                        <span v-if="value === 'uid'" class="ellipsis-text is-singleline" style="width: 78%"><LoadingValue /></span>
+                        <LoadingValue v-else width="78%" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </block-box>
+          <block-box class="node-overview-panel node-workload-panel" :title="$t('node.detail.resourceOverview')" variant="detail">
+            <ul class="node-system-resource-cards">
+              <li v-for="(title, index) in [$t('dashboard.computePowerTotal'), $t('dashboard.memoryTotal')]" :key="title" class="resource-overview-card">
+                <div class="resource-card">
+                  <div class="resource-card-header">
+                    <div class="resource-card-icon"><LoadingValue :height="24" width="24px" /></div>
+                    <div class="resource-card-header-info">
+                      <div class="resource-card-value" :class="{ 'resource-card-value--compute': index === 0 }"><LoadingValue :height="index === 0 ? 22 : 28" width="80px" /></div>
+                      <div class="resource-card-sub-title">{{ title }}</div>
+                    </div>
+                  </div>
+                  <div class="resource-card-footer">
+                    <div v-for="label in [$t('dashboard.allocRateLegend'), $t('dashboard.usageRateLegend')]" :key="label" class="resource-card-rate-wrap">
+                      <div class="resource-card-footer-item">
+                        <div class="resource-card-footer-title">{{ label }}</div>
+                        <div class="resource-card-footer-value"><LoadingValue :height="24" width="64px" /></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </block-box>
+        </section>
+        <TrendTimeFilter :model-value="times" class="node-trend-filter" loading />
+        <div class="line-box">
+          <block-box v-for="section in trendSections" :key="section.key" :title="section.title">
+            <MetricChart :option="section.option" />
+          </block-box>
+        </div>
+      </template>
     <section class="node-overview-wrap">
-      <div class="node-overview-panel">
+      <block-box class="node-overview-panel" :title="$t('node.detail.nodeOverview')" variant="detail">
         <div class="node-detail" :class="{ 'is-en': locale.startsWith('en') }">
           <div class="node-detail-left">
-            <div class="title">{{ $t('node.detail.nodeOverview') }}</div>
             <div class="node-detail-info-summary node-detail-info-summary-cols">
               <div
                 v-for="(group, groupIndex) in detailColumnGroups"
@@ -42,10 +91,9 @@
             </div>
           </div>
         </div>
-      </div>
+      </block-box>
 
-      <div class="node-overview-panel node-workload-panel">
-        <div class="title">{{ $t('node.detail.resourceOverview') }}</div>
+      <block-box class="node-overview-panel node-workload-panel" :title="$t('node.detail.resourceOverview')" variant="detail">
         <ul class="node-system-resource-cards">
           <li class="resource-overview-card">
             <div class="resource-card">
@@ -70,7 +118,11 @@
                       <span class="resource-card-footer-label">{{ $t('dashboard.allocRateLegend') }}</span>
                     </div>
                     <div class="resource-card-footer-value">
-                      <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
+                      <t-tooltip v-if="computeAllocNote" :content="computeAllocNote">
+                        <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
+                      </t-tooltip>
+                      <span v-else class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
+                      <span v-if="computeAllocNote" class="resource-card-sr-only">{{ computeAllocNote }}</span>
                       <t-progress
                         v-if="computeAllocPercentProgress !== undefined"
                         theme="circle"
@@ -171,39 +223,27 @@
             </div>
           </li>
         </ul>
-      </div>
+      </block-box>
     </section>
 
-    <TrendTimeFilter v-model="times" />
+    <NodeDeviceAllocation :node="allocationNode" />
+
+    <TrendTimeFilter v-model="times" class="node-trend-filter" :loading="trendLoading" />
 
     <div class="line-box">
-      <block-box :title="$t('dashboard.gpuComputeAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-              :option="
-              getRangeOptions({
-                allocation: gaugeConfig[0].data,
-                usage: gaugeConfig[2].data,
-              }, t)
-            "
-            :autoresize="true"
-          />
-        </div>
-      </block-box>
-      <block-box :title="$t('dashboard.gpuMemAllocUsageTrend')">
-        <div class="trend-chart">
-          <VChart
-            :option="
-              getRangeOptions({
-                allocation: gaugeConfig[1].data,
-                usage: gaugeConfig[3].data,
-                allocationName: t('dashboard.allocRateLegend'),
-                usageName: t('dashboard.usageRateLegend'),
-              }, t)
-            "
-            :autoresize="true"
-          />
-        </div>
+      <block-box
+        v-for="section in trendSections"
+        :key="section.key"
+        :title="section.title"
+      >
+        <MetricChart
+          :status="section.status"
+          :option="section.option"
+          :note="section.note"
+          :state-text="section.stateText"
+          :refreshing="section.refreshing"
+          :refresh-error="Boolean(section.refreshError)"
+        />
       </block-box>
     </div>
     </detail-page-state>
@@ -219,26 +259,40 @@ import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import { computed, ref } from 'vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import {
   classifyDetailPayload,
 } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
+import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
-import VChart from 'vue-echarts';
+import {
+  isLowerBound,
+  isNothingCounted,
+  lowerBoundMessage,
+  nothingCountedMessage,
+  readTrendUncounted,
+  readUncountedMetric,
+} from '~/vgpu/metrics/uncounted.mjs';
 import nodeApi from '~/vgpu/api/node';
-import { getRangeOptions } from './getOptions';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
+import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
 import {
   buildComputeAllocationQueries,
   buildMemoryAllocationQueries,
   buildMemoryUsageQueries,
+  buildUnknownComputeShareQuery,
 } from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
 import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
+import NodeDeviceAllocation from './NodeDeviceAllocation.vue';
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -261,6 +315,9 @@ const {
       expectedIdentity: { uid },
     }),
 });
+const allocationNode = computed(() => detailStatus.value === REQUEST_STATUS.READY
+  ? { uid: detail.value.uid, name: detail.value.name }
+  : null);
 const headerName = computed(() =>
   detailStatus.value === REQUEST_STATUS.READY
     ? detail.value.name
@@ -274,6 +331,9 @@ start.setTime(start.getTime() - 3600 * 1000);
 const times = ref([start, end]);
 const nodeMetricSelector = 'node=$node';
 const computeAllocationQueries = buildComputeAllocationQueries({
+  selector: nodeMetricSelector,
+});
+const uncountedComputeShareQuery = buildUnknownComputeShareQuery({
   selector: nodeMetricSelector,
 });
 const memoryAllocationQueries = buildMemoryAllocationQueries({
@@ -317,16 +377,46 @@ const _gaugeConfigBase = [
   },
 ];
 
+const renderNodeQuery = (query) =>
+  renderPromQLTemplate(query, {
+    node: detailStatus.value === REQUEST_STATUS.READY
+      ? detail.value.name
+      : 'undefined',
+  });
+
+// Current values only: each trend chart reads its lines from one range group below.
 const gaugeData = useInstantVector(
-  _gaugeConfigBase.map(item => ({ ...item, title: t(item.titleKey) })),
-  (query) =>
-    renderPromQLTemplate(query, {
-      node: detailStatus.value === REQUEST_STATUS.READY
-        ? detail.value.name
-        : 'undefined',
-    }),
+  _gaugeConfigBase.map(({ percentQuery, ...item }) => ({ ...item, title: t(item.titleKey) })),
+  renderNodeQuery,
   times,
 );
+
+// The node's allocation rate leaves out allocations whose share HAMi does not
+// state, so it reads as a lower bound unless none are confirmed.
+const uncountedMetric = useInstantVector(
+  [{ query: uncountedComputeShareQuery }],
+  renderNodeQuery,
+  times,
+);
+const computeAllocUncounted = computed(() => readUncountedMetric(uncountedMetric.value[0]));
+// A chart's lines, and the count that qualifies one, share a group: they settle
+// for one range together, or the chart keeps its last range and says so.
+const trendQuery = (index) => _gaugeConfigBase[index].percentQuery;
+const { data: computeTrend } = useRangeVector(
+  [{ query: trendQuery(0) }, { query: trendQuery(2) }, { query: uncountedComputeShareQuery, optional: true }],
+  renderNodeQuery,
+  times,
+);
+const { data: memoryTrend } = useRangeVector(
+  [{ query: trendQuery(1) }, { query: trendQuery(3) }],
+  renderNodeQuery,
+  times,
+);
+const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value]
+  .some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
+const computeAllocLegend = computed(() => t(isLowerBound(readTrendUncounted(computeTrend.value[2]))
+  ? 'dashboard.allocRateLowerBoundLegend'
+  : 'dashboard.allocRateLegend'));
 
 const gaugeConfig = computed(() =>
   gaugeData.value.map((item) => ({
@@ -362,26 +452,52 @@ const memoryAllocPercentRaw = computed(() => {
 
 const memoryUsagePercentRaw = computed(() => readGaugeField(3, 'percent'));
 
+const trendSection = (key, title, [allocation, usage], allocationName) => {
+  const series = [
+    { ...allocation, name: allocationName, color: CHART_COLORS.allocation },
+    { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
+  ];
+  const summary = summarizeRangeSeries(series, t);
+  return {
+    key,
+    title,
+    ...summary,
+    stateText: t(stateTextKey(summary.status)),
+    option: buildTimeSeriesOptions({ series }),
+  };
+};
+const trendSections = computed(() => [
+  trendSection('compute', t('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value, computeAllocLegend.value),
+  trendSection('memory', t('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value, t('dashboard.allocRateLegend')),
+]);
+
 const clampPercent = (v) => Math.max(0, Math.min(100, v));
 const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
-const buildPercentViews = (rawComputed) => {
+const buildPercentViews = (rawComputed, lowerBound, hidden) => {
   const progress = computed(() => {
     const p = rawComputed.value;
-    return p === undefined ? undefined : clampPercent(p);
+    return p === undefined || hidden?.value ? undefined : clampPercent(p);
   });
   const progressRounded = computed(() => roundPercentForProgress(progress.value));
   const text = computed(() => {
     const p = rawComputed.value;
-    return p === undefined ? '--' : `${Number(p).toFixed(2)}%`;
+    if (p === undefined || hidden?.value || (lowerBound && lowerBound.value === undefined)) return '--';
+    return `${lowerBound && isLowerBound(lowerBound.value) ? '≥' : ''}${Number(p).toFixed(2)}%`;
   });
   return { progress, progressRounded, text };
 };
+
+const computeAllocNothingCounted = computed(() => isNothingCounted(readGaugeField(0, 'used'), computeAllocUncounted.value));
+const computeAllocNote = computed(() => {
+  if (computeAllocNothingCounted.value) return nothingCountedMessage(t, computeAllocUncounted.value);
+  return isLowerBound(computeAllocUncounted.value) ? lowerBoundMessage(t, computeAllocUncounted.value) : '';
+});
 
 const {
   progress: computeAllocPercentProgress,
   progressRounded: computeAllocPercentProgressRounded,
   text: computeAllocPercentText,
-} = buildPercentViews(computeAllocPercentRaw);
+} = buildPercentViews(computeAllocPercentRaw, computeAllocUncounted, computeAllocNothingCounted);
 const {
   progress: computeUsagePercentProgress,
   progressRounded: computeUsagePercentProgressRounded,
@@ -489,28 +605,33 @@ const detailColumnGroups = computed(() => {
 </script>
 
 <style scoped lang="scss">
+.resource-card-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .node-overview-wrap {
   display: flex;
   margin-top: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   gap: 16px;
+}
+
+.node-trend-filter {
+  margin-top: 24px;
 }
 
 .node-overview-panel {
   flex: 1 1 48%;
   min-width: 0;
-  padding: 12px 16px 16px;
-  border: 1px solid #e4ebf1;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.title {
-  color: #1d2b3a;
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 28px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
 }
 
 .node-detail {
@@ -524,7 +645,6 @@ const detailColumnGroups = computed(() => {
 
   .node-detail-info-summary {
     width: 100%;
-    margin-top: 8px;
 
     &-cols {
       display: flex;
@@ -583,12 +703,14 @@ const detailColumnGroups = computed(() => {
   }
 }
 
+// The cards follow the panel's width, which the sidebar and embedding change apart from the viewport.
 .node-workload-panel {
   min-width: 0;
+  container: node-resources / inline-size;
 }
 
 .node-system-resource-cards {
-  margin: 10px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
@@ -610,7 +732,7 @@ const detailColumnGroups = computed(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 15px 20px;
+  padding: 15px 14px;
   background: #f5f7fa;
   border-radius: 8px;
 }
@@ -618,7 +740,7 @@ const detailColumnGroups = computed(() => {
 .resource-card-header {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
 }
 
 .resource-card-icon {
@@ -677,9 +799,10 @@ const detailColumnGroups = computed(() => {
 
 .resource-card-footer-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
 }
 
 .resource-card-footer-title {
@@ -701,6 +824,7 @@ const detailColumnGroups = computed(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .resource-card-footer-percent {
@@ -709,13 +833,8 @@ const detailColumnGroups = computed(() => {
   color: #1d2b3a;
 }
 
-.trend-chart {
-  height: 100%;
-  margin-top: 0;
-  min-width: 0;
-}
-
 .line-box {
+  container: metric-trends / inline-size;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   column-gap: 16px;
@@ -723,18 +842,14 @@ const detailColumnGroups = computed(() => {
 
   > .home-block {
     min-width: 0;
-    height: 320px;
-    display: flex;
-    flex-direction: column;
+    margin-bottom: 0;
   }
+}
 
-  > .home-block :deep(.home-block-content) {
-    flex: 1;
-    min-height: 0;
-  }
-
-  > .home-block :deep(.home-block-content) > .trend-chart {
-    height: 100%;
+// Below 700px half a row cannot fit the longest legend on one line, so the trends stack.
+@container metric-trends (max-width: 699px) {
+  .line-box > .home-block {
+    grid-column: 1 / -1;
   }
 }
 
@@ -748,16 +863,30 @@ const detailColumnGroups = computed(() => {
   }
 }
 
+@container node-resources (max-width: 511px) {
+  .resource-card-header {
+    gap: 10px;
+  }
+
+  .resource-card-icon {
+    flex-basis: 32px;
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@container node-resources (max-width: 399px) {
+  .node-system-resource-cards {
+    flex-direction: column;
+  }
+}
+
 @media (max-width: 1200px) {
   .node-overview-wrap {
     flex-direction: column;
   }
 
   .node-detail .node-detail-info-summary-cols {
-    flex-direction: column;
-  }
-
-  .node-system-resource-cards {
     flex-direction: column;
   }
 }

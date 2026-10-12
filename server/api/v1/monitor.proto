@@ -40,7 +40,9 @@ service Monitor {
 }
 
 message Range {
+  // Prefer RFC3339 with an explicit timezone; legacy YYYY-MM-DD HH:mm:ss uses the server's local timezone.
   string start = 1;
+  // Prefer RFC3339 with an explicit timezone; legacy YYYY-MM-DD HH:mm:ss uses the server's local timezone.
   string end = 2;
   string step = 3;
 }

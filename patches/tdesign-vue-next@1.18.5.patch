@@ -1,0 +1,99 @@
+diff --git a/es/date-picker/DateRangePicker.mjs b/es/date-picker/DateRangePicker.mjs
+index 470e9b20c2f101f12449c99d9150756422b30b74..dcf1e2cdb40d8c9ee3ad2df9bdbc77abea8723ed 100644
+--- a/es/date-picker/DateRangePicker.mjs
++++ b/es/date-picker/DateRangePicker.mjs
+@@ -192,12 +192,13 @@ var _DateRangePicker = defineComponent({
+       if (visible) {
+         if (isArray(props2.disabled)) activeIndex.value = props2.disabled[0] ? 1 : 0;
+         isSelected.value = false;
+-        cacheValue.value = formatDate(value.value || [], {
+-          format: formatRef.value.valueType,
+-          targetFormat: formatRef.value.format
+-        });
+-        time.value = formatTime(value.value || [dayjs().format(formatRef.value.timeFormat), dayjs().format(formatRef.value.timeFormat)], formatRef.value.format, formatRef.value.timeFormat, props2.defaultTime);
+-        if (!value.value.length) {
++        // Opening is deferred; retain text entered before the popup became visible.
++        cacheValue.value = inputValue.value.slice();
++        var panelValue = isValidDate(inputValue.value, formatRef.value.format) ? inputValue.value.map(function (v) {
++          return v ? parseToDayjs(v, formatRef.value.format).toDate() : v;
++        }) : value.value;
++        time.value = formatTime(panelValue || [dayjs().format(formatRef.value.timeFormat), dayjs().format(formatRef.value.timeFormat)], formatRef.value.format, formatRef.value.timeFormat, props2.defaultTime);
++        if (!panelValue.length) {
+           if (props2.range && isArray(props2.range) || props2.panelActiveDate) {
+             var _startRangeBounds$min, _startRangeBounds$min2, _startRangeBounds$max, _startRangeBounds$min3, _startRangeBounds$min4, _startRangeBounds$max2, _endRangeBounds$min$g, _endRangeBounds$min, _endRangeBounds$max, _endRangeBounds$min$g2, _endRangeBounds$min2, _endRangeBounds$max2, _startPanelActiveDate, _startPanelActiveDate2, _startPanelActiveDate3, _startPanelActiveDate4, _endPanelActiveDate$y, _endPanelActiveDate, _endPanelActiveDate2, _endPanelActiveDate3;
+             var startRange = props2.range;
+@@ -229,7 +230,7 @@ var _DateRangePicker = defineComponent({
+             var rightYear = (_endPanelActiveDate$y = (_endPanelActiveDate = endPanelActiveDate) === null || _endPanelActiveDate === void 0 ? void 0 : _endPanelActiveDate.year) !== null && _endPanelActiveDate$y !== void 0 ? _endPanelActiveDate$y : endYearFromRange;
+             var rightMonth = (_endPanelActiveDate2 = endPanelActiveDate) !== null && _endPanelActiveDate2 !== void 0 && _endPanelActiveDate2.month ? Number((_endPanelActiveDate3 = endPanelActiveDate) === null || _endPanelActiveDate3 === void 0 ? void 0 : _endPanelActiveDate3.month) - 1 : endMonthFromRange;
+             var _initYearMonthTime = initYearMonthTime({
+-                value: value.value,
++                value: panelValue,
+                 mode: props2.mode,
+                 format: formatRef.value.format,
+                 enableTimePicker: props2.enableTimePicker
+@@ -245,7 +246,7 @@ var _DateRangePicker = defineComponent({
+             }
+           } else {
+             var _initYearMonthTime2 = initYearMonthTime({
+-                value: value.value,
++                value: panelValue,
+                 mode: props2.mode,
+                 format: formatRef.value.format,
+                 enableTimePicker: props2.enableTimePicker
+@@ -255,11 +256,11 @@ var _DateRangePicker = defineComponent({
+             year.value = _defaultYear;
+             month.value = _defaultMonth;
+           }
+-        } else if (value.value.length === 2 && !props2.enableTimePicker) {
+-          var nextMonth = value.value.map(function (v) {
++        } else if (panelValue.length === 2 && !props2.enableTimePicker) {
++          var nextMonth = panelValue.map(function (v) {
+             return parseToDayjs(v, formatRef.value.format).month();
+           });
+-          year.value = value.value.map(function (v) {
++          year.value = panelValue.map(function (v) {
+             return parseToDayjs(v, formatRef.value.valueType).year();
+           });
+           if (year.value[0] === year.value[1] && nextMonth[0] === nextMonth[1]) {
+@@ -270,11 +271,11 @@ var _DateRangePicker = defineComponent({
+             year.value = [year.value[0], year.value[0] + 1];
+           }
+         } else {
+-          year.value = value.value.map(function (v) {
++          year.value = panelValue.map(function (v) {
+             return parseToDayjs(v, formatRef.value.format).year();
+           });
+           if (year.value.length === 1) year.value = [year.value[0], year.value[0]];
+-          month.value = value.value.map(function (v) {
++          month.value = panelValue.map(function (v) {
+             return parseToDayjs(v, formatRef.value.format).month();
+           });
+           if (month.value.length === 1) month.value = [month.value[0], Math.min(month.value[0] + 1, 11)];
+@@ -585,8 +586,8 @@ var _DateRangePicker = defineComponent({
+     }
+     var panelProps = computed(function () {
+       return {
+-        hoverValue: isHoverCell.value ? inputValue.value : [],
+-        value: isSelected.value ? cacheValue.value : value.value,
++        hoverValue: isHoverCell.value && isValidDate(inputValue.value, formatRef.value.format) ? inputValue.value : [],
++        value: isSelected.value && isValidDate(cacheValue.value, formatRef.value.format) ? cacheValue.value : value.value,
+         isFirstValueSelected: isFirstValueSelected.value,
+         activeIndex: activeIndex.value,
+         year: year.value,
+diff --git a/es/date-picker/hooks/useRange.mjs b/es/date-picker/hooks/useRange.mjs
+index 40703cbcfada9c82a3b35fbc8e6c3bd24dbffa2f..27609d549e3a35684a1a075dc58d3692979d7182 100644
+--- a/es/date-picker/hooks/useRange.mjs
++++ b/es/date-picker/hooks/useRange.mjs
+@@ -122,9 +122,11 @@ function useRange(props) {
+       onChange: function onChange(newVal, _ref4) {
+         var e = _ref4.e,
+           position = _ref4.position;
++        isHoverCell.value = false;
+         inputValue.value = newVal;
+-        if (!isValidDate(newVal, formatRef.value.format)) return;
++        // Hover previews must restore raw drafts, including incomplete input.
+         cacheValue.value = newVal;
++        if (!isValidDate(newVal, formatRef.value.format)) return;
+         var newYear = [];
+         var newMonth = [];
+         var newTime = [];

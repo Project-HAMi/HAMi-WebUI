@@ -36,6 +36,10 @@ func TestHCURegistrationPreservesPhysicalSerialAndAllocationIdentity(t *testing.
 	if device.Count != 4 || device.Devmem != 65536 || device.Devcore != 100 || device.Type != "HCU-K100_AI" || !device.Health {
 		t.Fatalf("HCU registered capacity/model/health changed: %+v", device)
 	}
+	// The registered mode is a format default, not a HAMi split mode.
+	if device.Mode != "" {
+		t.Fatalf("HCU mode = %q, want none", device.Mode)
+	}
 	if provider.GetProvider() != "HCU" {
 		t.Fatalf("provider = %q, want HCU", provider.GetProvider())
 	}
@@ -49,7 +53,7 @@ func TestHCURegistrationPreservesPhysicalSerialAndAllocationIdentity(t *testing.
 			Containers:     []corev1.Container{{Name: "worker"}},
 		},
 	}
-	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), util.AscendAllocationModeUnknown)
+	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,13 +130,13 @@ func TestLegacyDCUInventoryAndAllocationStillUseMinorNumberAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "legacy-dcu-node", Annotations: map[string]string{
-		RegisterAnnos: "DCU-3,4,65536,100,DCU-K100,0,true:",
+		RegisterAnnos: "DCU-3,4,65536,100,DCU-K100,0,true,3,hami-core:",
 	}}}
 	devices, err := NewHygon(client, log.NewHelper(log.DefaultLogger), "dcu=on").FetchDevices(node)
 	if err != nil || len(devices) != 1 {
 		t.Fatalf("legacy DCU inventory = %v, %v", devices, err)
 	}
-	if devices[0].ID != "legacy-serial" || devices[0].AliasId != "legacy-dcu-node-dcu-3" {
+	if devices[0].ID != "legacy-serial" || devices[0].AliasId != "legacy-dcu-node-dcu-3" || devices[0].Mode != "" {
 		t.Fatalf("legacy DCU identity = %+v", devices[0])
 	}
 	pod := &corev1.Pod{
@@ -142,7 +146,7 @@ func TestLegacyDCUInventoryAndAllocationStillUseMinorNumberAlias(t *testing.T) {
 		}},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}},
 	}
-	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger), util.AscendAllocationModeUnknown)
+	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
 	if err != nil || len(allocations[HygonDCUDevice]) != 1 || len(allocations[HygonDCUDevice][0]) != 1 {
 		t.Fatalf("legacy DCU allocations = %v, %v", allocations, err)
 	}

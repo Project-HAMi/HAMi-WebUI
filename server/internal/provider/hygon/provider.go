@@ -89,6 +89,9 @@ func (h *Hygon) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 	h.log.Infow("event", "nodes device information", "node", node.Name, "nodedevices", devDecoded)
 	devDetail := h.GetDevicesFromPrometheus(node)
 	for _, nodedevice := range nodedevices {
+		// The registration format carries hami-core, but vDCU is Hygon's own
+		// sharing and HAMi's scheduler never reads the mode.
+		nodedevice.Mode = ""
 		idParts := strings.Split(nodedevice.ID, "-")
 		if len(idParts) < 2 {
 			h.log.Warnf("Invalid nodedevice.ID format: %s", nodedevice.ID)

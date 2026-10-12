@@ -169,6 +169,14 @@ test('GPU requests compose fixed tiles and mark unset values', () => {
   assert.deepEqual(getSchedulingRequestTiles({ resources: [r('example.com/vgpu', '3', 'raw')] }), [
     { kind: 'raw', name: 'example.com/vgpu', value: '3' },
   ]);
+  const ascend = { resources: [
+    { ...r('huawei.com/Ascend910B3', '1', 'count'), vendor: 'Ascend' },
+    { ...r('huawei.com/Ascend910B3-memory', '16384', 'memory', 'MiB'), vendor: 'Ascend' },
+  ] };
+  assert.deepEqual(getSchedulingRequestTiles(ascend), [
+    { kind: 'count', value: '1', vendor: 'Ascend' }, { kind: 'core', value: null }, { kind: 'memory', value: '16 GiB', vendor: 'Ascend' },
+  ]);
+  assert.deepEqual(getWorkloadRequestTotals(ascend), { count: 1, cores: null, memoryMiB: 16384 });
 });
 
 test('scheduling constraints become readable groups and keep unparsed values', () => {

@@ -57,7 +57,7 @@ func schedulingPodReply(pod *biz.SchedulingPod) *pb.SchedulingPod {
 	for _, request := range pod.Requests {
 		item := &pb.SchedulingContainerRequest{Container: request.Container, ContainerKind: request.ContainerKind}
 		for _, resource := range request.Resources {
-			item.Resources = append(item.Resources, &pb.SchedulingResource{Name: resource.Name, Value: resource.Value, Unit: resource.Unit, Kind: resource.Kind})
+			item.Resources = append(item.Resources, &pb.SchedulingResource{Name: resource.Name, Value: resource.Value, Unit: resource.Unit, Kind: resource.Kind, Vendor: resource.Vendor})
 		}
 		result.Requests = append(result.Requests, item)
 	}

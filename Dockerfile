@@ -9,6 +9,7 @@ RUN corepack enable
 # can reuse the dependency layer.
 COPY .browserslistrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/web/package.json packages/web/
+COPY patches/ patches/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile --filter hami-webui-web...

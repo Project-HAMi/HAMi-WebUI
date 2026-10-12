@@ -2,6 +2,8 @@
   <div class="card-admin-page vgpu-admin-page" :class="{ 'is-embedded': hideTitle }">
     <div v-if="!hideTitle" class="vgpu-admin-page-title">{{ $t('card.title') }}</div>
 
+    <DeviceConfigAlert />
+
     <div class="card-admin-top-wrap" v-if="!hideTitle">
       <preview-bar
         :title="$t('dashboard.card')"
@@ -37,12 +39,21 @@
           <t-input
             v-model="filters.uid"
             clearable
-            :placeholder="$t('card.searchByName')"
+            :placeholder="$t('card.searchById')"
+            @clear="applyFilters"
             @enter="applyFilters"
             @blur="applyFilters"
           >
             <template #prefix-icon>
-              <search-icon :style="{ cursor: 'pointer' }" />
+              <button
+                type="button"
+                class="table-search-button"
+                :aria-label="$t('common.search')"
+                @mousedown.prevent
+                @click="applyFilters"
+              >
+                <search-icon aria-hidden="true" />
+              </button>
             </template>
           </t-input>
         </t-space>
@@ -52,8 +63,12 @@
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
         :has-rows="tableData.length > 0"
+        :filtered="displayedFiltered"
         :column-count="visibleColumns.length"
+        :columns="visibleColumns"
+        table-layout="fixed"
         @retry="refreshTable"
+        @clear-filters="clearFilters"
       >
         <t-table
           :key="`${locale}-card-table`"
@@ -98,6 +113,10 @@ import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useTableFilters from '~/vgpu/hooks/useTableFilters';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 import { getAllocationPercent } from './allocation-percent.mjs';
+import UnconfiguredTag from './components/UnconfiguredTag.vue';
+import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
+import { deviceWording } from '~/vgpu/components/device-copy.mjs';
+import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import useFetchList from '@/hooks/useFetchList';
 
 const props = defineProps(['hideTitle', 'filters']);
@@ -114,7 +133,7 @@ const parseTypeFromQuery = (value) => {
 const currentType = computed(() => filters.type || '');
 const hasManualNodeScope = ref(false);
 const filters = reactive({
-  uid: '',
+  uid: props.filters?.uid || '',
   nodeName: props.filters?.nodeName,
   type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
 });
@@ -208,7 +227,7 @@ const baseColumns = computed(() => [
     dataIndex: 'uuid',
     width: 250,
     hideTooltip: true,
-    render: ({ uuid, type }) => {
+    render: ({ uuid, type, vendor }) => {
       const to = `/accelerators/${uuid}`;
       const gpuModel = type || '';
       return (
@@ -224,7 +243,7 @@ const baseColumns = computed(() => [
                 tooltipClass="vgpu-long-text-tooltip vgpu-single-line-tooltip"
               />
             </span>
-            {gpuModel && <p class="card-id-cell-model">{t('card.typeLabel')}{gpuModel}</p>}
+            {gpuModel && <p class="card-id-cell-model">{deviceWording(t('card.typeLabel'), vendor)}{gpuModel}</p>}
           </div>
         </div>
       );
@@ -234,12 +253,28 @@ const baseColumns = computed(() => [
     title: t('task.status'),
     dataIndex: 'health',
     width: 150,
-    render: ({ health, isExternal }) => {
+    render: ({ health, isExternal, unconfigured }) => {
       const { icon, text } = getCardStatusDisplay({ health, isExternal });
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
           <svg-icon icon={icon} style={{ fontSize: '16px' }} />
           <span>{text}</span>
+          {unconfigured ? <UnconfiguredTag /> : null}
+        </span>
+      );
+    },
+  },
+  {
+    title: t('card.splitMode.label'),
+    dataIndex: 'mode',
+    width: 170,
+    render: ({ mode }) => {
+      const key = getSplitModeKey(mode);
+      if (!key) return <span>--</span>;
+      return (
+        <span class="card-split-mode">
+          <svg-icon icon={getSplitIcon(mode)} aria-hidden="true" />
+          <span>{t(key)}</span>
         </span>
       );
     },
@@ -258,8 +293,8 @@ const baseColumns = computed(() => [
     key: 'card-compute-remaining-total',
     dataIndex: 'used',
     width: 220,
-    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
-      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const stats = getRemainingTotalText({ total: coreTotal, used: coreUsed, divisor: 100 });
       if (!stats) return <span>--</span>;
       return (
@@ -277,8 +312,9 @@ const baseColumns = computed(() => [
     key: 'card-compute-allocation',
     dataIndex: 'used',
     width: 180,
-    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
-      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
+    // The API still reports a registered size for an unconfigured device, which HAMi does not schedule.
+    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || coreUsedKnown === false || !coreTotal) return <span>--</span>;
       const percent = getAllocationPercent(coreUsed, coreTotal);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);
@@ -302,8 +338,8 @@ const baseColumns = computed(() => [
     key: 'card-memory-remaining-total',
     dataIndex: 'used',
     width: 220,
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
-      if (isExternal || !memoryTotal) return <span>--</span>;
+    render: ({ memoryTotal, memoryUsed, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || !memoryTotal) return <span>--</span>;
       const stats = getRemainingTotalText({
         total: Number(memoryTotal) / 1024,
         used: Number(memoryUsed) / 1024,
@@ -325,8 +361,8 @@ const baseColumns = computed(() => [
     key: 'card-memory-allocation',
     dataIndex: 'w',
     width: 180,
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
-      if (isExternal || !memoryTotal) return <span>--</span>;
+    render: ({ memoryTotal, memoryUsed, isExternal, unconfigured }) => {
+      if (isExternal || unconfigured || !memoryTotal) return <span>--</span>;
       const percent = getAllocationPercent(memoryUsed, memoryTotal);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);
@@ -419,11 +455,32 @@ const tableState = useFetchList(() => {
 }, { immediate: false });
 const {
   data: tableData,
-  refresh: fetchTableData,
+  refresh: fetchList,
   refreshError: tableRefreshError,
   refreshing: tableRefreshing,
   status: tableStatus,
 } = tableState;
+const displayedFiltered = ref(false);
+const fetchTableData = async () => {
+  const filtered = Boolean(
+    getTrimValue(filters.uid) !== getTrimValue(props.filters?.uid || '')
+    || (filters.type || '') !== (props.filters?.type || '')
+    || (filters.nodeName || '') !== (props.filters?.nodeName || '')
+  );
+  if (await fetchList()) displayedFiltered.value = filtered;
+};
+const clearFilters = () => {
+  filters.uid = props.filters?.uid || '';
+  filters.type = props.filters?.type;
+  filters.nodeName = props.filters?.nodeName;
+  hasManualNodeScope.value = false;
+  if (!props.hideTitle && route.query.type) {
+    const query = { ...route.query };
+    delete query.type;
+    router.replace({ query });
+  }
+  applyFilters();
+};
 const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
 watch(tableData, syncTotalAndClamp, { immediate: true, flush: 'sync' });
 const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
@@ -538,6 +595,19 @@ onMounted(() => {
 :deep(.card-id-cell-name) {
   display: flex;
   line-height: 20px;
+}
+
+:deep(.card-split-mode) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+
+  svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
 }
 
 :deep(.card-id-cell-model) {

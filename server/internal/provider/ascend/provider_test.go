@@ -6,6 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/util"
 )
 
@@ -18,7 +19,7 @@ func TestDecodeRegisteredDevicesCollectsAscendVariants(t *testing.T) {
 		},
 	}}
 
-	devices, err := decodeRegisteredDevices(node)
+	devices, err := decodeRegisteredDevices(node, nil)
 	if err != nil {
 		t.Fatalf("decodeRegisteredDevices() error = %v", err)
 	}
@@ -84,7 +85,7 @@ func TestDecodeRegisteredDevicesNormalizesWebUICoreCapacity(t *testing.T) {
 					),
 				},
 			}}
-			devices, err := decodeRegisteredDevices(node)
+			devices, err := decodeRegisteredDevices(node, nil)
 			if err != nil || len(devices) != 1 {
 				t.Fatalf("decodeRegisteredDevices() = (%#v, %v)", devices, err)
 			}
@@ -106,7 +107,7 @@ func TestDecodeRegisteredDevicesDeduplicatesStaleCommonWordByHandshake(t *testin
 		},
 	}}
 
-	devices, err := decodeRegisteredDevices(node)
+	devices, err := decodeRegisteredDevices(node, nil)
 	if err != nil {
 		t.Fatalf("decodeRegisteredDevices() error = %v", err)
 	}
@@ -123,7 +124,7 @@ func TestDecodeRegisteredDevicesDiscoversFutureAscendCommonWord(t *testing.T) {
 		},
 	}}
 
-	devices, err := decodeRegisteredDevices(node)
+	devices, err := decodeRegisteredDevices(node, nil)
 	if err != nil || len(devices) != 1 {
 		t.Fatalf("decodeRegisteredDevices() = (%#v, %v)", devices, err)
 	}
@@ -140,7 +141,63 @@ func TestDecodeRegisteredDevicesRejectsNullRecord(t *testing.T) {
 		},
 	}}
 
-	if _, err := decodeRegisteredDevices(node); err == nil {
+	if _, err := decodeRegisteredDevices(node, nil); err == nil {
 		t.Fatal("decodeRegisteredDevices() error = nil, want invalid device record error")
+	}
+}
+
+func TestDecodeRegisteredDevicesFollowsTheDeviceConfiguration(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "npu-node",
+		Annotations: map[string]string{
+			"hami.io/node-register-Custom910":   `[{"id":"X-0","count":2,"devmem":1000,"devcore":10,"type":"Custom910","health":true}]`,
+			"hami.io/node-register-Ascend910B3": `[{"id":"B3-0","index":1,"count":4,"devmem":65536,"devcore":20,"type":"Ascend910B3","health":true}]`,
+			"hami.io/node-register-mlu":         `[{"id":"MLU-0","type":"MLU"}]`,
+		},
+	}}
+	configured := &devicecatalog.Snapshot{State: devicecatalog.StateLoaded, Ascend: map[string]devicecatalog.AscendModel{"Custom910": {CommonWord: "Custom910"}}}
+	devices, err := decodeRegisteredDevices(node, configured)
+	if err != nil || len(devices) != 2 {
+		t.Fatalf("devices = %v, %v", devices, err)
+	}
+	if devices[0].ID != "X-0" || devices[0].Unconfigured || devices[1].ID != "B3-0" || !devices[1].Unconfigured {
+		t.Fatalf("configured flags = %+v %+v", *devices[0], *devices[1])
+	}
+
+	unread := &devicecatalog.Snapshot{State: devicecatalog.StateForbidden}
+	devices, err = decodeRegisteredDevices(node, unread)
+	if err != nil || len(devices) != 1 || devices[0].ID != "B3-0" || devices[0].Unconfigured {
+		t.Fatalf("without a readable configuration = %v, %v", devices, err)
+	}
+}
+
+func TestRegisteredDevicesReportTheNodeSplitMode(t *testing.T) {
+	registration := `[{"id":"B3-0","index":0,"count":1,"devmem":65536,"devcore":20,"type":"Ascend910B3","health":true}]`
+	loaded := func(hamiVnpuCore bool) *devicecatalog.Snapshot {
+		return &devicecatalog.Snapshot{State: devicecatalog.StateLoaded, HamiVnpuCore: hamiVnpuCore}
+	}
+	for _, tt := range []struct {
+		name       string
+		annotation string
+		snapshot   *devicecatalog.Snapshot
+		want       string
+	}{
+		{"node in HAMi-core mode", "true", loaded(false), VNPUModeHamiCore},
+		{"node in template mode", "false", loaded(true), ModeTemplate},
+		{"node without the annotation follows the configuration", "", loaded(true), VNPUModeHamiCore},
+		{"and its default", "", loaded(false), ModeTemplate},
+		{"nothing states it", "", nil, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := map[string]string{"hami.io/node-register-Ascend910B3": registration}
+			if tt.annotation != "" {
+				annotations[NodeHamiCoreAnnotation] = tt.annotation
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "npu-node", Annotations: annotations}}
+			devices, err := decodeRegisteredDevices(node, tt.snapshot)
+			if err != nil || len(devices) != 1 || devices[0].Mode != tt.want {
+				t.Fatalf("devices = %+v, err = %v, want mode %q", devices, err, tt.want)
+			}
+		})
 	}
 }

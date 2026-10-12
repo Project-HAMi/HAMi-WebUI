@@ -24,6 +24,10 @@ class cardApi {
     return request(this.getCardList(data));
   }
 
+  getCardTypeReq(data = { filters: {} }) {
+    return request({ ...this.getCardType(data), errorFeedback: 'inline' });
+  }
+
   getCardDetail(params) {
     return request({
       url: apiPrefix + '/v1/gpu',

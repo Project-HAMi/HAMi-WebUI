@@ -10,9 +10,50 @@
   </page-header>
 
   <detail-page-state :status="detailStatus" @retry="retryDetail">
+    <template #loading>
+      <div class="task-top">
+        <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
+          <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
+            <div class="left">
+              <div class="basic-info-cards">
+                <div v-for="label in [$t('task.namespace'), $t('task.node'), dt('task.gpuModel'), dt('task.relatedGpu')]" :key="label" class="basic-info-card">
+                  <div class="basic-info-card-title"><LoadingValue :height="28" width="100px" /></div>
+                  <div class="basic-info-card-sub-title">{{ label }}</div>
+                </div>
+              </div>
+              <div class="basic-info-summary">
+                <div v-for="label in [$t('task.detail.podName'), $t('task.detail.containerName'), $t('task.image'), $t('task.createTime')]" :key="label" class="summary-item">
+                  <span class="summary-item-label">{{ label }}</span>
+                  <span class="summary-item-value"><LoadingValue :height="24" width="80%" /></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </block-box>
+      </div>
+      <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview" variant="detail">
+        <div class="row">
+          <div v-for="label in [dt('task.gpuCardCount'), $t('task.computePowerLimit'), $t('task.singleCardMemory'), $t('task.cpuLimit'), $t('task.memoryLimit')]" :key="label" class="row-card">
+            <div class="row-card-content">
+              <div class="row-card-content-icon"><LoadingValue :height="20" width="20px" /></div>
+              <div class="row-card-content-info">
+                <div class="row-card-title"><LoadingValue :height="28" width="80px" /></div>
+                <div class="row-card-sub-title">{{ label }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </block-box>
+      <TrendTimeFilter :model-value="times" loading class="workload-trend-filter" />
+      <div class="task-trend-row">
+        <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
+          <MetricChart :option="item.option" />
+        </block-box>
+      </div>
+    </template>
 
   <div class="task-top">
-    <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block">
+    <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
       <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
         <div class="left">
           <div class="basic-info-cards">
@@ -47,7 +88,7 @@
                   </template>
                 </div>
               </div>
-              <div class="basic-info-card-sub-title">{{ $t('task.gpuModel') }}</div>
+              <div class="basic-info-card-sub-title">{{ dt('task.gpuModel') }}</div>
             </div>
             <div class="basic-info-card">
               <div class="basic-info-card-title">
@@ -66,13 +107,13 @@
                   </template>
                   <template #content>
                     <div class="relative-gpu-tooltip-content">
-                      <div class="popup-title">{{ $t('task.relatedGpu') }}：</div>
+                      <div class="popup-title">{{ dt('task.relatedGpu') }}：</div>
                       <t-table row-key="uuid" :data="relatedGpuTableData" :columns="relatedGpuTableColumns" />
                     </div>
                   </template>
                 </t-popup>
               </div>
-              <div class="basic-info-card-sub-title">{{ $t('task.relatedGpu') }}</div>
+              <div class="basic-info-card-sub-title">{{ dt('task.relatedGpu') }}</div>
             </div>
           </div>
           <div class="basic-info-summary">
@@ -110,20 +151,33 @@
               <span class="summary-item-label">{{ $t('task.createTime') }}</span>
               <span class="summary-item-value">{{ basicCreateTime }}</span>
             </div>
+            <div v-if="allocationShapeText" class="summary-item">
+              <span class="summary-item-label">{{ $t('task.allocation.label') }}</span>
+              <span class="summary-item-value summary-item-allocation">
+                <svg-icon v-if="allocationIcon" :icon="allocationIcon" aria-hidden="true" />
+                {{ allocationShapeText }}
+                <MetricHelp
+                  v-if="shapeUnknownReason"
+                  multiline
+                  :description="shapeUnknownReason"
+                  :help-label="$t('task.allocation.shapeReasonLabel')"
+                />
+              </span>
+            </div>
           </div>
         </div>
       </div>
     </block-box>
   </div>
 
-  <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview">
+  <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview" variant="detail">
     <div class="row">
       <div class="row-card">
         <div class="row-card-content">
           <div class="row-card-content-icon"><svg-icon icon="vgpu-card" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.gpuCards }}</div>
-            <div class="row-card-sub-title">{{ $t('task.gpuCardCount') }}</div>
+            <div class="row-card-sub-title">{{ dt('task.gpuCardCount') }}</div>
           </div>
         </div>
       </div>
@@ -132,7 +186,14 @@
           <div class="row-card-content-icon"><svg-icon icon="vgpu-core" /></div>
           <div class="row-card-content-info">
             <div class="row-card-title">{{ resourceOverviewTexts.computeLimit }}</div>
-            <div class="row-card-sub-title">{{ $t('task.computePowerLimit') }}</div>
+            <div class="row-card-sub-title">
+              {{ $t('task.computePowerLimit') }}
+              <MetricHelp
+                v-if="coresUnknownReason"
+                :description="coresUnknownReason"
+                :help-label="$t('task.allocation.reasonLabel')"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -166,38 +227,36 @@
     </div>
   </block-box>
 
-  <TrendTimeFilter v-model="times" />
+  <block-box v-if="deviceSplits.length" :title="$t('card.split.title')" class="workload-split" variant="detail">
+    <template v-if="deviceSplits.some((split) => split.device.mode === 'mig')" #extra>
+      <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
+    </template>
+    <div class="workload-split-devices">
+      <DeviceSplit
+        v-for="split in deviceSplits"
+        :key="split.uuid"
+        show-device
+        :device="split.device"
+        :containers="split.containers"
+        :status="split.status"
+        :highlight="splitHighlight"
+        @retry="loadDeviceSplit(split)"
+      />
+    </div>
+  </block-box>
+
+  <TrendTimeFilter v-model="times" :loading="trendLoading" class="workload-trend-filter" />
 
   <div class="task-trend-row">
     <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
-      <div
-        class="trend-chart"
-        :aria-busy="item.status === REQUEST_STATUS.LOADING ? 'true' : 'false'"
+      <MetricChart
+        :status="item.status"
+        :option="item.option"
+        :state-text="item.stateText"
+        :refreshing="item.refreshing"
+        :refresh-error="Boolean(item.refreshError)"
       >
-        <template v-if="item.status === REQUEST_STATUS.LOADING">
-          <t-skeleton
-            animation="gradient"
-            :row-col="[
-              { width: '100%', height: '200px' },
-              { width: '42%', height: '16px', margin: '16px auto 0' },
-            ]"
-            class="trend-chart-skeleton"
-            aria-hidden="true"
-          />
-          <span class="trend-state-sr-only" role="status">{{ $t('common.loading') }}</span>
-        </template>
-        <VChart
-          v-else-if="item.status === REQUEST_STATUS.READY"
-          :option="getLineOptions({ data: item.data, seriesName: $t('dashboard.usageRateLegend'), animation: false })"
-          :autoresize="true"
-          class="trend-vchart"
-        />
-        <el-empty
-          v-else
-          :description="getTaskMonitoringStateText(item.status)"
-          :image-size="60"
-          class="trend-state"
-        >
+        <template #action>
           <el-button
             v-if="item.status === REQUEST_STATUS.ERROR || item.status === REQUEST_STATUS.INVALID"
             type="primary"
@@ -205,8 +264,8 @@
           >
             {{ $t('common.retry') }}
           </el-button>
-        </el-empty>
-      </div>
+        </template>
+      </MetricChart>
     </block-box>
   </div>
   </detail-page-state>
@@ -225,10 +284,12 @@ import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import { timeParse, calculatePrometheusStep, roundToDecimal } from '@/utils';
+import { formatQueryTimestamp } from '@/utils/query-time.mjs';
 import taskApi from '~/vgpu/api/task';
 import BlockBox from '@/components/BlockBox.vue';
-import { getLineOptions } from '~/vgpu/components/config';
-import VChart from 'vue-echarts';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
 import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
 import WorkloadStatus from './WorkloadStatus.vue';
@@ -241,6 +302,12 @@ import {
   readReadyMetricField,
 } from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
+import { deviceWording } from '~/vgpu/components/device-copy.mjs';
+import { getAllocationShapeCopy, getCoresOnlyReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getSplitIcon } from '~/vgpu/components/split-mode.mjs';
+import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import {
   GPU_UUID_TOOLTIP_STYLE,
   LONG_TEXT_TOOLTIP_STYLE,
@@ -276,6 +343,7 @@ const {
     expectedIdentity: identity,
   }),
 });
+const dt = (key) => deviceWording(t(key), detailStatus.value === REQUEST_STATUS.READY ? detail.value?.vendor : '');
 const workloadDisplayName = computed(() => (
   detailStatus.value === REQUEST_STATUS.READY
     ? formatWorkloadName(detail.value)
@@ -297,6 +365,8 @@ const times = ref([start, end]);
 const safeDeviceIds = computed(() => (
   Array.isArray(detail.value?.deviceIds) ? detail.value.deviceIds : []
 ));
+// One request can hold two MIG instances of the same GPU.
+const distinctDeviceIds = computed(() => [...new Set(safeDeviceIds.value)]);
 const monitoringAllocationShape = computed(() => (
   getTaskMonitoringAllocationShape({
     allocatedDevices: detail.value?.allocatedDevices,
@@ -304,29 +374,77 @@ const monitoringAllocationShape = computed(() => (
   })
 ));
 const gpuModelList = computed(() => {
-  if (!safeDeviceIds.value.length) return [];
+  if (!distinctDeviceIds.value.length) return [];
   const grouped = new Map();
-  safeDeviceIds.value.forEach((id) => {
+  distinctDeviceIds.value.forEach((id) => {
     const model = cardTypeById.value?.[id] || detail.value?.type || '--';
     grouped.set(model, (grouped.get(model) || 0) + 1);
   });
   return Array.from(grouped.entries()).map(([model, count]) => ({ model, count }));
 });
-const relatedGpuCountText = computed(() => t('task.relatedGpuCards', { count: safeDeviceIds.value.length }));
-const relatedGpuTableData = computed(() => safeDeviceIds.value.map((uuid) => ({
+const allocationShapeText = computed(() => {
+  const copy = detailStatus.value === REQUEST_STATUS.READY ? getAllocationShapeCopy(detail.value) : undefined;
+  return copy ? t(copy.key, copy.params) : '';
+});
+// Plugins that register no split mode leave the allocation without a shape and nothing to lay out.
+const splitDeviceIds = computed(() => {
+  const devices = Array.isArray(detail.value?.devices) ? detail.value.devices : [];
+  return distinctDeviceIds.value.filter((uuid) => devices.some((device) => device.id === uuid && device.allocationShape));
+});
+const deviceSplits = ref([]);
+const splitHighlight = computed(() => ({ podUid: detail.value?.podUid, container: detail.value?.name }));
+let workloadSplitGeneration = 0;
+const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
+  split.status = 'loading';
+  try {
+    const [card, workloads] = await Promise.all([
+      cardApi.getCardDetail({ uid: split.uuid }),
+      taskApi.getWorkloads({ filters: { deviceId: split.uuid }, page: 1, pageSize: 100 }),
+    ]);
+    if (generation !== workloadSplitGeneration) return;
+    split.device = { ...card, uuid: split.uuid };
+    split.containers = Array.isArray(workloads?.items) ? workloads.items : [];
+    split.status = 'ready';
+  } catch {
+    if (generation === workloadSplitGeneration) split.status = 'error';
+  }
+};
+watch([() => detail.value?.podUid, splitDeviceIds], ([podUid, uuids]) => {
+  const generation = ++workloadSplitGeneration;
+  deviceSplits.value = podUid
+    ? uuids.map((uuid) => ({ uuid, device: { uuid }, containers: [], status: 'loading' }))
+    : [];
+  deviceSplits.value.forEach((split) => loadDeviceSplit(split, generation));
+}, { immediate: true });
+const allocationIcon = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY ? getSplitIcon(detail.value?.allocationShape) : ''
+));
+const shapeUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getShapeUnknownReasonKey(detail.value) : '';
+  return key ? t(key) : '';
+});
+const coresUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getCoresOnlyReasonKey(detail.value) : '';
+  return key ? t(key) : '';
+});
+const relatedGpuCountText = computed(() => {
+  const count = distinctDeviceIds.value.length;
+  return deviceWording(t('task.relatedGpuCards', { count }, count), detail.value?.vendor);
+});
+const relatedGpuTableData = computed(() => distinctDeviceIds.value.map((uuid) => ({
   model: cardTypeById.value?.[uuid] || detail.value?.type || '--',
   uuid,
 })));
 const relatedGpuTableColumns = computed(() => [
   {
     colKey: 'model',
-    title: t('task.gpuModel'),
+    title: dt('task.gpuModel'),
     width: 104,
     ellipsis: true,
   },
   {
     colKey: 'uuid',
-    title: 'GPU',
+    title: dt('card.detail.title'),
     width: 236,
     ellipsis: true,
     cell: (_h, { row }) => (
@@ -437,7 +555,8 @@ const resourceOverviewTexts = computed(() => {
   const singleCardMemory = toNumOrUndefined(get('singleCardMemory'));
   return {
     gpuCards: gpuCards === undefined ? '--' : `${Math.round(gpuCards)}`,
-    computeLimit: computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
+    computeLimit: isUnreservedSoftSplit(detail.value || {}) ? t('common.notLimited')
+      : computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
     singleCardMemory: singleCardMemory === undefined ? '--' : `${roundToDecimal(singleCardMemory, 2)} GiB`,
     cpuLimit: formatLimit('cpuLimit', (value) => `${roundToDecimal(value, 3)} Core`),
     memoryLimit: formatLimit('memoryLimit', (value) => `${value.toFixed(1)} GiB`),
@@ -472,8 +591,8 @@ const taskMonitoringRange = computed(() => {
   const [rangeStart, rangeEnd] = times.value || [];
   if (!rangeStart || !rangeEnd) return null;
   return {
-    start: timeParse(rangeStart),
-    end: timeParse(rangeEnd),
+    start: formatQueryTimestamp(rangeStart),
+    end: formatQueryTimestamp(rangeEnd),
     step: calculatePrometheusStep(rangeStart, rangeEnd),
   };
 });
@@ -485,10 +604,21 @@ const {
   range: taskMonitoringRange,
   request: (payload) => cardApi.getRangeVector(payload),
 });
+const trendLoading = computed(() => taskMonitoringSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 const lineConfigView = computed(() =>
   taskMonitoringSeries.value.map((item) => ({
     ...item,
-    title: t(item.titleKey),
+    title: dt(item.titleKey),
+    stateText: getTaskMonitoringStateText(item.status),
+    option: buildTimeSeriesOptions({
+      series: [
+        {
+          name: t('dashboard.usageRateLegend'),
+          data: item.data,
+          color: CHART_COLORS.single,
+        },
+      ],
+    }),
   })),
 );
 const getTaskMonitoringStateText = (status) => {
@@ -561,7 +691,7 @@ watch(
     gap: 8px;
     align-items: center;
     margin-top: 0;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
   }
 
   .basic-info-card {
@@ -707,6 +837,18 @@ watch(
     min-width: 0;
   }
 
+  .summary-item-allocation {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+  }
+
   .summary-item-label {
     width: 120px;
     color: #939ea9;
@@ -748,6 +890,7 @@ watch(
 }
 
 .task-trend-row {
+  container: metric-trends / inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
@@ -755,29 +898,23 @@ watch(
   > .home-block {
     flex: 1 1 calc(50% - 10px);
     min-width: 0;
+    margin-bottom: 0;
   }
 }
 
-.basic-info-block :deep(.home-block-content),
-.workload-overview :deep(.home-block-content) {
-  padding-top: 20px;
-}
-
-.basic-info-block,
-.workload-overview {
-  box-shadow: none;
+// Narrow rows stack like the other trend pages, though these single-line charts have no legend.
+@container metric-trends (max-width: 699px) {
+  .task-trend-row > .home-block {
+    flex-basis: 100%;
+  }
 }
 
 .workload-overview {
-  margin-top: 16px;
-  margin-bottom: 24px;
-  padding: 20px;
-
   .row {
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-top: 0;
+    margin: 0;
   }
 
   .row-card {
@@ -836,41 +973,23 @@ watch(
   }
 
   .row-card-sub-title {
+    display: flex;
+    align-items: center;
+    gap: 2px;
     color: #939ea9;
     font-size: 12px;
     line-height: 20px;
   }
 }
 
-.trend-chart {
-  height: 250px;
-  margin-top: 15px;
+.workload-trend-filter {
+  margin-top: 24px;
 }
 
-.trend-chart-skeleton {
-  width: 100%;
-  padding: 8px 12px 0;
-}
-
-.trend-state {
-  height: 100%;
-}
-
-.trend-state-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.trend-vchart {
-  width: 100%;
-  height: 100%;
+.workload-split-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .relative-gpu-tooltip-content {

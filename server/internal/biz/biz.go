@@ -38,13 +38,44 @@ const (
 )
 
 type ContainerDevice struct {
-	Idx                 int
-	UUID                string
-	Type                string
-	Usedmem             int32
-	Usedcores           int32
-	CoreAllocationKnown bool
-	Priority            string
+	Idx       int
+	UUID      string
+	Type      string
+	Usedmem   int32
+	Usedcores int32
+	Priority  string
+
+	// Set by providers that interpret allocations against HAMi's device configuration.
+	Vendor string
+	Shape  string
+	// Why Shape is unknown, when the provider can tell.
+	ShapeReason string
+	Template    string
+	// Where a MIG device sits in the GPU's placement space; Size 0 when absent.
+	MigPlacement          MigPlacement
+	CoreAllocationUnknown bool
+	CoreReason            string
+	Ascend                *AscendFacts
+}
+
+// How HAMi divided a device for one container.
+const (
+	SplitShapeWhole    = "whole"
+	SplitShapeTemplate = "template"
+	// HAMi-core, whether on NVIDIA or Ascend.
+	SplitShapeSoft    = "soft"
+	SplitShapeMig     = "mig"
+	SplitShapeUnknown = "unknown"
+)
+
+type AscendFacts struct {
+	AnnotatedCore int32
+	Template      string
+	Recorded      bool
+	CardMemory    int64
+	NodeRead      bool
+	Mode          string
+	ModeReason    string
 }
 
 type ContainerDeviceRequest struct {

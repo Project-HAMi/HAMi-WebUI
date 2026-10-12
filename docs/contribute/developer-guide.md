@@ -119,6 +119,31 @@ server/build/web-entry --static-dir ./public
 The backend must be available at `http://127.0.0.1:8000` for API requests in
 this standalone mode.
 
+### Detail page sections
+
+Use `BlockBox` with `variant="detail"` for the main information, resource and
+allocation sections on detail pages. Pass the section heading through `title`
+and heading actions through the `extra` slot, so the shared component owns the
+space around the heading and content.
+
+| Spacing layer | Detail section rule |
+| --- | --- |
+| Card padding | 12px top, 16px on the other sides |
+| Section heading | 16px, weight 500, line height 28px |
+| Heading to content | 8px |
+| Between sibling sections | 16px |
+| Before the trend controls | 24px |
+
+Do not add a second top margin to the first content element or override these
+values independently on each page. A flex or grid parent that owns the section
+gap should clear its children's outer margins. Internal allocation diagrams,
+tables and chart legends keep their own content spacing; the default `BlockBox`
+variant remains available for chart and dashboard cards.
+
+Check Chinese and English at 1280, 1366, 1440 and 1920 CSS pixels when changing
+these shared rules. Include long device names, multiple devices, help buttons,
+and loading or unavailable states, as well as the normal populated view.
+
 ### Chart 2 application contract
 
 The official image owns its OCI entrypoint; the Chart does not inject an

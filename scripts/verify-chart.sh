@@ -1120,9 +1120,40 @@ for invalid in 'a..b/gpu' "example.com/$(printf 'x%.0s' {1..64})"; do
   fi
 done
 
-# Simulate --reuse-values from a release without a scheduling block.
+expect_device_config() {
+  local render="$1"
+  shift
+  for expected in "$@"; do
+    if ! grep -Fq -- "${expected}" <<<"${render}"; then
+      echo "Device configuration render lacks: ${expected}" >&2
+      echo "${render}" >&2
+      exit 1
+    fi
+  done
+}
+expect_device_config "$(render_template templates/configmap.yaml)" \
+  'device_config:' 'enabled: true' 'namespace: "kube-system"' 'name: "hami-scheduler-device"' \
+  'key: "device-config.yaml"' 'annotationless_pod_mode: "unknown"'
+expect_device_config "$(render_template templates/device-config-rbac.yaml \
+  --set hami.deviceConfig.namespace=hami-system --set hami.deviceConfig.name=hami-vgpu-scheduler-device)" \
+  'kind: Role' 'namespace: hami-system' 'resourceNames: [ "hami-vgpu-scheduler-device" ]' \
+  'verbs: [ "get", "list", "watch" ]' 'kind: RoleBinding' 'namespace: hami-webui-test'
+if render_template templates/device-config-rbac.yaml --set hami.deviceConfig.enabled=false 2>/dev/null | grep -Fq 'kind: Role'; then
+  echo "Disabling the device configuration must not grant ConfigMap access" >&2
+  exit 1
+fi
+expect_device_config "$(render_template templates/configmap.yaml --set hami.deviceConfig.enabled=false --set ascend.annotationlessPodMode=node)" \
+  'enabled: false' 'annotationless_pod_mode: "node"'
+for invalid in 'ascend.annotationlessPodMode=guess' 'hami.deviceConfig.namespace=Kube_System' 'hami.deviceConfig.name=bad/name'; do
+  if render_template templates/configmap.yaml --set "${invalid}" >/dev/null 2>&1; then
+    echo "The schema accepted ${invalid}" >&2
+    exit 1
+  fi
+done
+
+# Simulate --reuse-values from a release without scheduling or device configuration blocks.
 awk '
-  /^scheduling:$/ { skip = 1; next }
+  /^(scheduling|hami|ascend):$/ { skip = 1; next }
   skip && /^[^[:space:]#]/ { skip = 0 }
   !skip { print }
 ' "${work_dir}/hami-webui/values.yaml" >"${test_values_tmp}"
@@ -1132,5 +1163,7 @@ if grep -Fq 'resource_names:' <<<"${diagnostic_upgrade_render}"; then
   echo "An upgrade without scheduling values must retain backend defaults" >&2
   exit 1
 fi
+expect_device_config "${diagnostic_upgrade_render}" 'enabled: true' 'name: "hami-scheduler-device"' 'annotationless_pod_mode: "unknown"'
+expect_device_config "$(render_template templates/device-config-rbac.yaml)" 'namespace: kube-system' 'resourceNames: [ "hami-scheduler-device" ]'
 
-echo "Chart lint, single-container, migration, image reference, and scheduling checks passed."
+echo "Chart lint, single-container, migration, image reference, scheduling and device configuration checks passed."

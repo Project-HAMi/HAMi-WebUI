@@ -44,6 +44,8 @@ func (h *HCU) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 	}
 	valid := make([]*util.DeviceInfo, 0, len(devices))
 	for _, device := range devices {
+		// As for DCU, the registered hami-core is a format default.
+		device.Mode = ""
 		// The plugin prefixes the physical serial with HCU- in both Node and
 		// Pod annotations. hcu-exporter exposes that same serial as device_id;
 		// unlike legacy DCU, this is not a node-local minor number.

@@ -5,6 +5,7 @@ import { REQUEST_STATUS } from '../../../src/hooks/request-state.mjs';
 import {
   formatRankingValue,
   readRankingRows,
+  readUncountedRows,
 } from './tab-top-state.mjs';
 
 test('ranking values preserve meaningful fractional data', () => {
@@ -48,4 +49,14 @@ test('ranking rows render valid partial data without manufacturing zeroes', () =
       status: REQUEST_STATUS.READY,
     },
   );
+});
+
+test('per-row uncounted counts confirm zero for rows they omit and nothing when unreadable', () => {
+  assert.deepEqual(
+    readUncountedRows({ data: [{ metric: { node: 'npu-1' }, value: 2 }] }, 'node'),
+    { 'npu-1': 2 },
+  );
+  // count by () over nothing returns no series: every row is complete.
+  assert.deepEqual(readUncountedRows({ data: [] }, 'node'), {});
+  assert.equal(readUncountedRows({}, 'node'), null);
 });

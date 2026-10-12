@@ -16,7 +16,18 @@ const createSeries = (status, outcomes = {}) =>
     data: outcomes[definition.key]?.data || [],
     error: outcomes[definition.key]?.error || null,
     status: outcomes[definition.key]?.status || status,
+    refreshing: false,
+    refreshError: null,
   }));
+
+const FAILED_STATUSES = new Set([REQUEST_STATUS.ERROR, REQUEST_STATUS.INVALID]);
+// Only a real result, data or a confirmed empty one, is worth keeping through a failed refresh.
+const KEPT_STATUSES = new Set([REQUEST_STATUS.READY, REQUEST_STATUS.MISSING]);
+
+// The workload a result belongs to; another workload starts over instead of showing it.
+const sourceScope = (source) => (isValidSource(source)
+  ? [source.namespace, source.pod, source.podUid, source.container, source.expectedDeviceCount, source.expectedVgpuCount].join('\n')
+  : null);
 
 const hasText = (value) =>
   typeof value === 'string' && value.trim() !== '';
@@ -61,15 +72,23 @@ export const getTaskMonitoringAllocationShape = ({
 const useTaskMonitoring = ({ source, range, request }) => {
   const series = ref(createSeries(REQUEST_STATUS.LOADING));
   let requestId = 0;
+  let resolvedScope = null;
 
   const refresh = async () => {
     const currentRequestId = ++requestId;
-    series.value = createSeries(REQUEST_STATUS.LOADING);
-
     const currentSource = unref(source);
     const currentRange = unref(range);
+    // The same workload keeps its last result while a new range loads.
+    const scope = sourceScope(currentSource);
+    const keepPrevious = scope !== null && scope === resolvedScope;
+    if (!keepPrevious) resolvedScope = null;
+    series.value = keepPrevious
+      ? series.value.map((item) => ({ ...item, refreshing: true, refreshError: null }))
+      : createSeries(REQUEST_STATUS.LOADING);
+
     if (!isValidSource(currentSource) || !isValidRange(currentRange)) {
       if (currentRequestId === requestId) {
+        resolvedScope = null;
         series.value = createSeries(REQUEST_STATUS.MISSING);
       }
       return;
@@ -90,6 +109,7 @@ const useTaskMonitoring = ({ source, range, request }) => {
             status: REQUEST_STATUS.INVALID,
           }]),
         );
+        resolvedScope = null;
         series.value = createSeries(REQUEST_STATUS.INVALID, invalid);
       }
       return;
@@ -125,10 +145,15 @@ const useTaskMonitoring = ({ source, range, request }) => {
     );
 
     if (currentRequestId !== requestId) return;
-    series.value = createSeries(
-      REQUEST_STATUS.MISSING,
-      Object.fromEntries(outcomes),
-    );
+    const settled = createSeries(REQUEST_STATUS.MISSING, Object.fromEntries(outcomes));
+    // A chart whose refresh failed or returned unusable data keeps its last real result and says
+    // so; a chart that had none shows the new failure, and one chart's failure leaves the other's result.
+    series.value = settled.map((item, index) => {
+      const previous = series.value[index];
+      if (!keepPrevious || !FAILED_STATUSES.has(item.status) || !KEPT_STATUSES.has(previous.status)) return item;
+      return { ...previous, refreshing: false, refreshError: item.error || new Error('Invalid monitoring data') };
+    });
+    resolvedScope = scope;
   };
 
   watch(

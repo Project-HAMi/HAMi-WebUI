@@ -51,19 +51,27 @@ export const createRangeGroupState = (dataSource, key) => ({
   refreshError: null,
   range: null,
   pendingRange: null,
+  scope: null,
+  pendingScope: null,
 });
 
-export const startRangeGroupGeneration = (group, range) => {
-  const hasResolved = group.hasResolved;
+// What a group shows belongs to the queries it was read with, so a generation for
+// other queries, such as another resource's, starts over instead of keeping it.
+// Request ids keep counting, so a late reply for the old queries cannot land.
+export const startRangeGroupGeneration = (group, range, scope = group.scope) => {
+  const hasResolved = group.hasResolved && scope === group.scope;
   return {
     ...group,
     dataSource: hasResolved
       ? group.dataSource
       : group.dataSource.map((series) => createSeriesState(series)),
+    hasResolved,
     requestId: group.requestId + 1,
     refreshing: hasResolved,
     refreshError: null,
+    range: hasResolved ? group.range : null,
     pendingRange: { ...range },
+    pendingScope: scope,
   };
 };
 
@@ -96,14 +104,21 @@ export const settleRangeGroupGeneration = (
 ) => {
   if (group.requestId !== requestId) return group;
 
-  const failedOutcome = outcomes.find((outcome) => outcome.failed);
-  if (group.hasResolved && failedOutcome) {
+  // An optional series that fails settles as failed instead of holding the group back.
+  const failedOutcome = outcomes.find((outcome, index) => outcome.failed && !group.dataSource[index]?.optional);
+  // Only a chart that drew something, a line or a confirmed empty range, is kept through a
+  // failed refresh; one that showed a failure shows the new failure rather than claim an earlier result.
+  const required = group.dataSource.filter((series) => !series.optional);
+  const hasResult = required.some((series) => series.status === REQUEST_STATUS.READY)
+    || (required.length > 0 && required.every((series) => series.status === REQUEST_STATUS.MISSING));
+  if (group.hasResolved && failedOutcome && hasResult) {
     return {
       ...group,
       refreshing: false,
       refreshError:
         failedOutcome.error || new Error('Range vector refresh failed'),
       pendingRange: null,
+      pendingScope: null,
     };
   }
 
@@ -122,5 +137,7 @@ export const settleRangeGroupGeneration = (
     refreshError: null,
     range: group.pendingRange,
     pendingRange: null,
+    scope: group.pendingScope,
+    pendingScope: null,
   };
 };

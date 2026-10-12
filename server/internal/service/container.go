@@ -144,10 +144,12 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		containerReply.Namespace = container.Namespace
 		containerReply.Priority = container.Priority
 		allocatedCoresKnown := true
+		var selected biz.ContainerDevices
+		var vendors []string
 		for _, containerDevice := range container.ContainerDevices {
-			deviceID := containerDevice.UUID
+			deviceID, vendor := containerDevice.UUID, containerDevice.Vendor
 			if device, err := s.node.FindDeviceByAliasId(containerDevice.UUID); err == nil {
-				deviceID = device.Id
+				deviceID, vendor = device.Id, device.Provider
 			}
 
 			if deviceID == "" {
@@ -158,9 +160,11 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 				continue
 			}
 
+			selected = append(selected, containerDevice)
+			vendors = append(vendors, vendor)
 			containerReply.DeviceIds = append(containerReply.DeviceIds, deviceID)
 			containerReply.AllocatedCores = containerReply.AllocatedCores + containerDevice.Usedcores
-			if strings.HasPrefix(containerDevice.Type, biz.AscendGPUDevice) && !containerDevice.CoreAllocationKnown {
+			if containerDevice.CoreAllocationUnknown {
 				allocatedCoresKnown = false
 			}
 			containerReply.AllocatedMem = containerReply.AllocatedMem + containerDevice.Usedmem
@@ -171,6 +175,10 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 			continue
 		}
 		containerReply.AllocatedCoresKnown = &allocatedCoresKnown
+		containerReply.AllocationShape, containerReply.Template, containerReply.AllocatedCoresReason = describeAllocation(selected)
+		containerReply.AllocationShapeReason = shapeReason(selected, containerReply.AllocationShape)
+		containerReply.Vendor = sharedVendor(vendors)
+		containerReply.Devices = containerDevices(selected, containerReply.DeviceIds)
 		containerReply.CreateTime = container.CreateTime.Format(time.RFC3339)
 		res.Items = append(res.Items, containerReply)
 	}
@@ -224,18 +232,23 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	} else {
 		ctrReply.Images = uniqueNonEmpty([]string{container.Image})
 	}
+	var selected biz.ContainerDevices
+	var vendors []string
 	for _, containerDevice := range container.ContainerDevices {
 		if req.DeviceId != "" && req.DeviceId != containerDevice.UUID {
 			continue
 		}
+		selected = append(selected, containerDevice)
 		device, err := s.node.FindDeviceByAliasId(containerDevice.UUID)
 		if err != nil {
 			ctrReply.DeviceIds = append(ctrReply.DeviceIds, containerDevice.UUID)
+			vendors = append(vendors, containerDevice.Vendor)
 		} else {
 			ctrReply.DeviceIds = append(ctrReply.DeviceIds, device.Id)
+			vendors = append(vendors, device.Provider)
 		}
 		ctrReply.AllocatedCores = ctrReply.AllocatedCores + containerDevice.Usedcores
-		if strings.HasPrefix(containerDevice.Type, biz.AscendGPUDevice) && !containerDevice.CoreAllocationKnown {
+		if containerDevice.CoreAllocationUnknown {
 			allocatedCoresKnown = false
 		}
 		ctrReply.AllocatedMem = ctrReply.AllocatedMem + containerDevice.Usedmem
@@ -243,6 +256,88 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 		ctrReply.AllocatedDevices++
 	}
 	ctrReply.AllocatedCoresKnown = &allocatedCoresKnown
+	ctrReply.AllocationShape, ctrReply.Template, ctrReply.AllocatedCoresReason = describeAllocation(selected)
+	ctrReply.AllocationShapeReason = shapeReason(selected, ctrReply.AllocationShape)
+	ctrReply.Vendor = sharedVendor(vendors)
+	ctrReply.Devices = containerDevices(selected, ctrReply.DeviceIds)
 	ctrReply.CreateTime = container.CreateTime.Format(time.RFC3339)
 	return ctrReply, nil
+}
+
+// containerDevices reports each allocated device, so a page can place the
+// allocation on the device it shares with other workloads.
+func containerDevices(devices biz.ContainerDevices, ids []string) []*pb.ContainerDevice {
+	result := make([]*pb.ContainerDevice, 0, len(devices))
+	for i, device := range devices {
+		id := device.UUID
+		if i < len(ids) {
+			id = ids[i]
+		}
+		known := !device.CoreAllocationUnknown
+		coreReason := ""
+		if !known {
+			coreReason = device.CoreReason
+		}
+		item := &pb.ContainerDevice{
+			Id:                    id,
+			Type:                  device.Type,
+			AllocatedCores:        device.Usedcores,
+			AllocatedCoresKnown:   &known,
+			AllocatedMem:          device.Usedmem,
+			AllocationShape:       device.Shape,
+			AllocationShapeReason: device.ShapeReason,
+			AllocatedCoresReason:  coreReason,
+			Template:              device.Template,
+		}
+		if device.MigPlacement.Size > 0 {
+			start, size := device.MigPlacement.Start, device.MigPlacement.Size
+			item.MigStart, item.MigSize = &start, &size
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func sharedVendor(vendors []string) string {
+	if len(vendors) == 0 {
+		return ""
+	}
+	for _, vendor := range vendors {
+		if vendor != vendors[0] {
+			return ""
+		}
+	}
+	return vendors[0]
+}
+
+// shapeReason explains an unknown shape only when every device gives the same reason.
+func shapeReason(devices biz.ContainerDevices, shape string) string {
+	if shape != biz.SplitShapeUnknown || len(devices) == 0 {
+		return ""
+	}
+	for _, device := range devices[1:] {
+		if device.ShapeReason != devices[0].ShapeReason {
+			return ""
+		}
+	}
+	return devices[0].ShapeReason
+}
+
+// describeAllocation reports a shape only when every device agrees.
+func describeAllocation(devices biz.ContainerDevices) (shape, template, reason string) {
+	for i, device := range devices {
+		if i == 0 {
+			shape, template = device.Shape, device.Template
+		}
+		if device.Shape != shape {
+			shape = ""
+		}
+		if device.Template != template {
+			template = ""
+		}
+		if reason == "" && device.CoreAllocationUnknown {
+			reason = device.CoreReason
+		}
+	}
+	return shape, template, reason
 }

@@ -18,7 +18,7 @@ HAMi-WebUI は、Kubernetes ノード上のアクセラレータのインベン�
 - **アクセラレータ可視性：** デバイスごとの割り当てとベンダーテレメトリを確認します。
 - **ワークロード可視性：** 現在観測されている HAMi ワークロード（Pod/コンテナ）へのデバイス割り当てと、対象デバイスで利用可能な監視データを確認します。
 
-現在の連携対象は、NVIDIA GPU、Huawei Ascend 910B/310P、Hygon DCU/HCU、Cambricon MLU、および MetaX GPU/sGPU です。表示できるメトリクスは、デバイス種別ごとの HAMi 連携と exporter によって異なります。
+現在の連携対象は、NVIDIA GPU、HAMi のデバイス設定に記載された Huawei Ascend NPU、Hygon DCU/HCU、Cambricon MLU、および MetaX GPU/sGPU です。表示できるメトリクスは、デバイス種別ごとの HAMi 連携と exporter によって異なります。
 
 ## スコープとセキュリティ境界
 

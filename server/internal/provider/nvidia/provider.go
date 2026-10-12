@@ -1,7 +1,6 @@
 package nvidia
 
 import (
-	"encoding/json"
 	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/util"
@@ -35,24 +34,10 @@ func (n *Nvidia) GetProvider() string {
 }
 
 func (n *Nvidia) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
-	var err error
-	var deviceInfos []*util.DeviceInfo
-
-	deviceEncode, ok := node.Annotations[RegisterAnnos]
+	encoded, ok := node.Annotations[RegisterAnnos]
 	if !ok {
 		n.log.Warnf("%s node cloud not get hami.io/node-nvidia-register annotation", node.Name)
-		return deviceInfos, nil
+		return nil, nil
 	}
-	deviceInfos, err = util.DecodeNodeDevices(deviceEncode, n.log)
-	if err != nil {
-		var newDeviceInfos []*util.NewDeviceInfo
-		err = json.Unmarshal([]byte(deviceEncode), &newDeviceInfos)
-		if err != nil {
-			return deviceInfos, err
-		}
-		for _, newDeviceInfo := range newDeviceInfos {
-			deviceInfos = append(deviceInfos, util.MapNewDeviceInfoToDeviceInfo(newDeviceInfo))
-		}
-	}
-	return deviceInfos, err
+	return registeredDevices(encoded, n.log)
 }

@@ -417,3 +417,16 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+HAMi's device configuration reference. Releases upgraded with --reuse-values
+lack these values, so every field has a default.
+*/}}
+{{- define "hami-webui.deviceConfig" -}}
+{{- $config := default (dict) (get (default (dict) .Values.hami) "deviceConfig") -}}
+{{- $enabled := true -}}
+{{- if hasKey $config "enabled" -}}
+{{- $enabled = get $config "enabled" -}}
+{{- end -}}
+{{- dict "enabled" $enabled "namespace" (default "kube-system" (get $config "namespace")) "name" (default "hami-scheduler-device" (get $config "name")) "key" (default "device-config.yaml" (get $config "key")) | toJson -}}
+{{- end -}}

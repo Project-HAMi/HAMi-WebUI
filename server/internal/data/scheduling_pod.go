@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/util"
 
 	kratoserrors "github.com/go-kratos/kratos/v2/errors"
@@ -263,6 +264,7 @@ func schedulingContainerStatus(pod *corev1.Pod, ctr corev1.Container, kind strin
 
 func (r *podRepo) schedulingContainerRequest(ctr corev1.Container, kind string) biz.SchedulingContainerRequest {
 	result := biz.SchedulingContainerRequest{Container: ctr.Name, ContainerKind: kind}
+	snapshot := r.ascend.Snapshot()
 	for name := range r.schedulingResourceNames {
 		quantity, ok := ctr.Resources.Requests[name]
 		if !ok {
@@ -271,23 +273,29 @@ func (r *podRepo) schedulingContainerRequest(ctr corev1.Container, kind string) 
 		if !ok {
 			continue
 		}
-		result.Resources = append(result.Resources, schedulingResource(name, quantity))
+		result.Resources = append(result.Resources, schedulingResource(snapshot, name, quantity))
 	}
 	sort.Slice(result.Resources, func(i, j int) bool { return result.Resources[i].Name < result.Resources[j].Name })
 	return result
 }
 
-func schedulingResource(name corev1.ResourceName, quantity resource.Quantity) biz.SchedulingResource {
+func schedulingResource(snapshot *devicecatalog.Snapshot, name corev1.ResourceName, quantity resource.Quantity) biz.SchedulingResource {
 	result := biz.SchedulingResource{Name: string(name), Value: quantity.String(), Kind: "raw"}
 	switch name {
 	case "nvidia.com/gpu":
-		result.Kind = "count"
+		result.Kind, result.Vendor = "count", biz.NvidiaGPUDevice
 	case "nvidia.com/gpucores":
-		result.Kind, result.Unit = "core", "%"
+		result.Kind, result.Unit, result.Vendor = "core", "%", biz.NvidiaGPUDevice
 	case "nvidia.com/gpumem":
-		result.Kind, result.Unit = "memory", "MiB"
+		result.Kind, result.Unit, result.Vendor = "memory", "MiB", biz.NvidiaGPUDevice
 	case "nvidia.com/gpumem-percentage":
-		result.Kind, result.Unit = "memory_percentage", "%"
+		result.Kind, result.Unit, result.Vendor = "memory_percentage", "%", biz.NvidiaGPUDevice
+	default:
+		// HAMi's Ascend memory is in MiB and its core request a percentage, as for NVIDIA.
+		if _, role, ok := snapshot.AscendResource(string(name)); ok {
+			result.Kind, result.Vendor = role, biz.AscendGPUDevice
+			result.Unit = map[string]string{"memory": "MiB", "core": "%"}[role]
+		}
 	}
 	if result.Kind != "raw" {
 		result.Value = quantity.AsDec().String()

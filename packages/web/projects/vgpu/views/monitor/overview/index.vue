@@ -2,6 +2,8 @@
   <div class="home">
     <div class="home-page-title">{{ $t('dashboard.overview') }}</div>
 
+    <DeviceConfigAlert />
+
     <div class="home-top">
       <div class="home-top-left">
         <Block :title="$t('dashboard.cardResource')">
@@ -79,18 +81,25 @@
               {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
             </RouterLink>
           </template>
-          <div
-            v-if="nodeListState.status.value === 'loading'"
-            class="node-overview-skeleton"
-            aria-busy="true"
-          >
-            <t-skeleton
-              v-for="index in 2"
-              :key="index"
-              animation="gradient"
-              :row-col="[{ width: '100%', height: '56px' }]"
-              aria-hidden="true"
-            />
+          <div v-if="nodeListState.status.value === 'loading'" aria-busy="true">
+            <ul class="node-all node-overview-skeleton" aria-hidden="true" inert>
+              <li v-for="{ title, status, description } in nodes" :key="status" class="node-overview-card">
+                <div class="node-overview-title-wrap">
+                  <span class="node-overview-title-link">{{ title }}</span>
+                  <MetricHelp
+                    v-if="status === 'temporarilyUnschedulable'"
+                    :description="description"
+                    :help-label="$t('node.schedulingStatusHelpLabel')"
+                  />
+                </div>
+                <div class="node-overview-value-link">
+                  <div class="node-overview-value">
+                    <div class="count"><LoadingValue :height="24" width="1ch" /></div>
+                    <svg-icon icon="jump" class="node-overview-nav-icon" />
+                  </div>
+                </div>
+              </li>
+            </ul>
             <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
           </div>
           <div
@@ -177,109 +186,23 @@
 
     <div class="home-bottom">
       <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
-        <TrendTimeFilter v-model="times" />
+        <TrendTimeFilter v-model="times" :loading="trendLoading" />
       </div>
-      <div class="home-bottom-row" v-if="rangeConfig[0] || rangeConfig[1]">
-        <div class="home-bottom-col" v-if="rangeConfig[0]">
-          <Block :title="rangeConfig[0].title">
-            <div
-              class="range-chart-content"
-              :aria-busy="rangeConfig[0].status === 'loading' || rangeConfig[0].refreshing"
-            >
-              <template v-if="rangeConfig[0].status === 'loading'">
-                <t-skeleton
-                  animation="gradient"
-                  :row-col="[
-                    { width: '100%', height: '200px' },
-                    { width: '42%', height: '16px', margin: '16px auto 0' },
-                  ]"
-                  class="range-chart-skeleton"
-                  aria-hidden="true"
-                />
-                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-              </template>
-              <VChart
-                v-else-if="rangeConfig[0].status === 'ready'"
-                :option="getRangeOptions(rangeConfig[0].dataSource)"
-                :autoresize="true"
-                style="height: 250px"
-              />
-              <div v-else class="overview-state overview-state--chart">
-                {{ getStateText(rangeConfig[0].status) }}
-              </div>
-              <div
-                v-if="rangeConfig[0].refreshing || rangeConfig[0].refreshError || rangeConfig[0].partialStatusText"
-                class="range-status-list"
-                role="status"
-              >
-                <span
-                  v-if="rangeConfig[0].partialStatusText"
-                  class="range-partial-status"
-                >
-                  {{ rangeConfig[0].partialStatusText }}
-                </span>
-                <span v-if="rangeConfig[0].refreshing" class="range-refresh-status">
-                  {{ $t('common.loading') }}
-                </span>
-                <span
-                  v-else-if="rangeConfig[0].refreshError"
-                  class="range-refresh-status range-refresh-status--error"
-                >
-                  {{ $t('common.refreshFailedShowingPreviousResult') }}
-                </span>
-              </div>
-            </div>
-          </Block>
-        </div>
-        <div class="home-bottom-col" v-if="rangeConfig[1]">
-          <Block :title="rangeConfig[1].title">
-            <div
-              class="range-chart-content"
-              :aria-busy="rangeConfig[1].status === 'loading' || rangeConfig[1].refreshing"
-            >
-              <template v-if="rangeConfig[1].status === 'loading'">
-                <t-skeleton
-                  animation="gradient"
-                  :row-col="[
-                    { width: '100%', height: '200px' },
-                    { width: '42%', height: '16px', margin: '16px auto 0' },
-                  ]"
-                  class="range-chart-skeleton"
-                  aria-hidden="true"
-                />
-                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-              </template>
-              <VChart
-                v-else-if="rangeConfig[1].status === 'ready'"
-                :option="getRangeOptions(rangeConfig[1].dataSource)"
-                :autoresize="true"
-                style="height: 250px"
-              />
-              <div v-else class="overview-state overview-state--chart">
-                {{ getStateText(rangeConfig[1].status) }}
-              </div>
-              <div
-                v-if="rangeConfig[1].refreshing || rangeConfig[1].refreshError || rangeConfig[1].partialStatusText"
-                class="range-status-list"
-                role="status"
-              >
-                <span
-                  v-if="rangeConfig[1].partialStatusText"
-                  class="range-partial-status"
-                >
-                  {{ rangeConfig[1].partialStatusText }}
-                </span>
-                <span v-if="rangeConfig[1].refreshing" class="range-refresh-status">
-                  {{ $t('common.loading') }}
-                </span>
-                <span
-                  v-else-if="rangeConfig[1].refreshError"
-                  class="range-refresh-status range-refresh-status--error"
-                >
-                  {{ $t('common.refreshFailedShowingPreviousResult') }}
-                </span>
-              </div>
-            </div>
+      <div class="home-bottom-row home-bottom-trend-row" v-if="rangeConfig[0] || rangeConfig[1]">
+        <div
+          class="home-bottom-col"
+          v-for="section in rangeConfig"
+          :key="section.key"
+        >
+          <Block :title="section.title">
+            <MetricChart
+              :status="section.status"
+              :option="section.option"
+              :note="section.note"
+              :state-text="getStateText(section.status)"
+              :refreshing="section.refreshing"
+              :refresh-error="Boolean(section.refreshError)"
+            />
           </Block>
         </div>
       </div>
@@ -304,10 +227,15 @@
               class="workload-table-skeleton"
               aria-busy="true"
             >
-              <t-skeleton
-                animation="gradient"
-                :row-col="workloadTableSkeletonRows"
+              <t-table
+                :columns="nodeWorkloadSkeletonColumns"
+                :data="nodeWorkloadSkeletonData"
+                row-key="name"
+                row-class-name="top5-item-list-table-row"
+                class="top5-item-list-table"
+                :bordered="false"
                 aria-hidden="true"
+                inert
               />
               <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
             </div>
@@ -338,32 +266,11 @@
                 <svg-icon icon="help-circle" class="workload-distribution-tip-icon" />
               </t-tooltip>
             </template>
-            <div
-              class="workload-distribution-content"
-              :aria-busy="nodeWorkloadDistributionState.status === 'loading'"
-            >
-              <template v-if="nodeWorkloadDistributionState.status === 'loading'">
-                <t-skeleton
-                  animation="gradient"
-                  :row-col="[
-                    { width: '100%', height: '200px' },
-                    { width: '42%', height: '16px', margin: '16px auto 0' },
-                  ]"
-                  class="range-chart-skeleton"
-                  aria-hidden="true"
-                />
-                <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-              </template>
-              <VChart
-                v-else-if="nodeWorkloadDistributionState.status === 'ready'"
-                :option="nodeWorkloadDistributionOptions"
-                :autoresize="true"
-                style="height: 250px"
-              />
-              <div v-else class="overview-state overview-state--chart">
-                {{ getStateText(nodeWorkloadDistributionState.status) }}
-              </div>
-            </div>
+            <MetricChart
+              :status="nodeWorkloadDistributionState.status"
+              :option="nodeWorkloadDistributionOptions"
+              :state-text="getStateText(nodeWorkloadDistributionState.status)"
+            />
           </Block>
         </div>
       </div>
@@ -372,14 +279,13 @@
 </template>
 
 <script setup>
+import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
 import { ref, computed, reactive, onMounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
 import VChart from 'vue-echarts';
-import {
-  getCardOptions,
-  handleChartClick,
-  getRangeOptions,
-} from './getOptions';
+import { getCardOptions, handleChartClick } from './getOptions';
+import MetricChart from '~/vgpu/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
 import Block from './Block.vue';
 import './style.scss';
@@ -393,6 +299,7 @@ import useFetchList from '@/hooks/useFetchList';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
+import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { LONG_TEXT_TOOLTIP_STYLE } from '~/vgpu/components/tooltip-policy.mjs';
 import { getRangeConfigInit } from './config';
@@ -401,7 +308,8 @@ import {
   createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
-import { buildClusterAllocatableQueries } from '~/vgpu/metrics/query-contract.mjs';
+import { buildClusterAllocatableQueries, buildUnknownComputeShareQuery } from '~/vgpu/metrics/query-contract.mjs';
+import { isLowerBound, readTrendUncounted, readUncountedMetric } from '~/vgpu/metrics/uncounted.mjs';
 import {
   createRequestState,
   rejectRequest,
@@ -409,11 +317,8 @@ import {
   resolveRequest,
   startRequest,
 } from '@/hooks/request-state.mjs';
-import {
-  aggregateStatuses,
-  getPartialRangeStates,
-  stateTextKey,
-} from './overview-state.mjs';
+import { applyUncountedShares, readWorkloadTotal } from './overview-state.mjs';
+import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
 const router = useRouter();
@@ -424,10 +329,7 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const workloadTableSkeletonRows = Array.from({ length: 6 }, () => ({
-  width: '100%',
-  height: '32px',
-}));
+const nodeWorkloadSkeletonData = Array.from({ length: 5 }, (_, index) => ({ name: `loading-${index}` }));
 
 const handlePieClick = (params) => {
   router.push({
@@ -476,6 +378,12 @@ const nodeWorkloadColumns = computed(() => [
     title: t('dashboard.workloadCount'),
   },
 ]);
+const nodeWorkloadSkeletonColumns = computed(() => nodeWorkloadColumns.value.map(({ colKey, title, width }) => ({
+  colKey,
+  title,
+  width,
+  cell: () => h(LoadingValue, { height: 24, width: colKey === 'index' ? '24px' : '70%' }),
+})));
 const nodeWorkloadTop5TableData = computed(() =>
   nodeWorkloadTop5State.data.map((item, idx) => ({
     ...item,
@@ -570,8 +478,13 @@ const clusterResourceConfig = useInstantVector([
   },
 ]);
 
+const uncountedMetric = useInstantVector([{ query: buildUnknownComputeShareQuery() }]);
+const uncountedShares = computed(() => readUncountedMetric(uncountedMetric.value[0]));
+
 const cardGaugeConfig = computed(() => {
-  return _cardGaugeConfig.value.map((item) => ({
+  return applyUncountedShares(_cardGaugeConfig.value, uncountedShares.value, {
+    pendingStatus: REQUEST_STATUS.LOADING,
+  }).map((item) => ({
     ...item,
     title: t(item.titleKey),
     description: t(item.descriptionKey),
@@ -589,14 +502,27 @@ const nodeListState = useFetchList(() =>
 const cardListState = useFetchList(() =>
   cardApi.getCardListReq({ filters: {} }),
 );
-const taskListState = useFetchList(
-  () => taskApi.getTaskListReq({ filters: {} }),
-  'items',
-);
+// Counted by the workload list itself, so this number matches the list's "All" total.
+const workloadTotalState = reactive(createRequestState(undefined));
+const fetchWorkloadTotal = async () => {
+  const requestId = startRequest(workloadTotalState, { hasResolved: false });
+  try {
+    const total = readWorkloadTotal(await taskApi.getWorkloads({ filters: {}, page: 1, pageSize: 1 }));
+    if (total === undefined) {
+      rejectRequest(workloadTotalState, new TypeError('Expected workload items and a nonnegative total'), {
+        requestId,
+        status: REQUEST_STATUS.INVALID,
+      });
+      return;
+    }
+    resolveRequest(workloadTotalState, { data: total, requestId });
+  } catch (error) {
+    rejectRequest(workloadTotalState, error, { requestId });
+  }
+};
 
 const nodeData = nodeListState.data;
 const cardData = cardListState.data;
-const taskData = taskListState.data;
 
 const readyMetricValue = (metric, field, format) => {
   if (metric?.status !== REQUEST_STATUS.READY) return undefined;
@@ -637,8 +563,8 @@ const resourceOverview = computed(() => [
   },
   {
     title: t('dashboard.workloadCount'),
-    count: taskData.value.length,
-    status: taskListState.status.value,
+    count: workloadTotalState.data,
+    status: workloadTotalState.status,
     metric: false,
     icon: 'vgpu-workload',
     unit: '',
@@ -705,6 +631,7 @@ const nodeComputeTop5 = computed(() => ({
       nameKey: 'node',
       data: [],
       query: nodeTopQueries.computeAllocation,
+      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: 'node' }),
     },
     {
       tab: t('dashboard.usageRateLegend'),
@@ -739,46 +666,54 @@ const nodeMemoryTop5 = computed(() => ({
 
 
 const rangeDefinitions = getRangeConfigInit(t);
-const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) =>
-  section.dataSource.map((series, seriesIndex) => ({
+// The uncounted count joins the compute allocation line's group, so it always
+// describes the range the line shows; when it alone fails, the line is a bound.
+const UNCOUNTED_KEY = 'compute-uncounted';
+const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) => [
+  ...section.dataSource.map((series, seriesIndex) => ({
     ...series,
     sectionIndex,
     seriesIndex,
   })),
-);
+  ...(section.dataSource.some((series) => series.key === 'compute-allocation')
+    ? [{ key: UNCOUNTED_KEY, query: buildUnknownComputeShareQuery(), optional: true, sectionIndex, seriesIndex: section.dataSource.length }]
+    : []),
+]);
 const { data: rangeSeries } = useRangeVector(
   rangeSeriesDefinitions,
   (query) => query,
   times,
 );
+const trendLoading = computed(() => rangeSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 
 const rangeConfig = computed(() => {
   const translated = getRangeConfigInit(t);
   return translated.map((section, sectionIndex) => {
-    const dataSource = section.dataSource.map((series, seriesIndex) => {
-      const state = rangeSeries.value.find(
-        (item) =>
-          item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
-      );
-      return {
-        ...series,
-        data: state?.data || [],
-        status: state?.status || REQUEST_STATUS.LOADING,
-        refreshing: state?.refreshing || false,
-        refreshError: state?.refreshError || null,
-      };
-    });
-    const status = aggregateStatuses(dataSource);
-    const partialStatusText = getPartialRangeStates(dataSource)
-      .map((item) => `${item.name}: ${t(stateTextKey(item.status))}`)
-      .join(' · ');
+    const dataSource = applyUncountedShares(
+      section.dataSource.map((series, seriesIndex) => {
+        const state = rangeSeries.value.find(
+          (item) =>
+            item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
+        );
+        return {
+          ...series,
+          data: state?.data || [],
+          status: state?.status || REQUEST_STATUS.LOADING,
+          refreshing: state?.refreshing || false,
+          refreshError: state?.refreshError || null,
+        };
+      }),
+      readTrendUncounted(rangeSeries.value.find(
+        (item) => item.sectionIndex === sectionIndex && item.key === UNCOUNTED_KEY,
+      )),
+      // The line already draws the allocations it can measure; the legend says so.
+    ).map((series) => (isLowerBound(series.uncounted)
+      ? { ...series, name: t('dashboard.allocRateLowerBoundLegend') }
+      : series));
     return {
       ...section,
-      dataSource,
-      status,
-      refreshing: dataSource.some((item) => item.refreshing),
-      refreshError: dataSource.find((item) => item.refreshError)?.refreshError || null,
-      partialStatusText,
+      ...summarizeRangeSeries(dataSource, t),
+      option: buildTimeSeriesOptions({ series: dataSource }),
     };
   });
 });
@@ -787,6 +722,7 @@ const getStateText = (status, metric = true) =>
   t(stateTextKey(status, { metric }));
 
 onMounted(() => {
+  fetchWorkloadTotal();
   fetchNodeWorkloadTop5();
   fetchNodeWorkloadDistribution();
 });

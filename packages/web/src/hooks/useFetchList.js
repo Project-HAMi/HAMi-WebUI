@@ -44,7 +44,7 @@ const useFetchList = (req, pathOrOptions = 'list') => {
         });
         return;
       }
-      resolveRequest(state, {
+      return resolveRequest(state, {
         data: mappedData,
         status: REQUEST_STATUS.READY,
         requestId,

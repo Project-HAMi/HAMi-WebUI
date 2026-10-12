@@ -7,13 +7,13 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/informers"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"math"
 	"strings"
 	"sync"
-	"time"
 	"vgpu/internal/biz"
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/hygon"
@@ -21,6 +21,7 @@ import (
 	"vgpu/internal/provider/mlu"
 	"vgpu/internal/provider/mthreads"
 	"vgpu/internal/provider/nvidia"
+	"vgpu/internal/provider/util"
 )
 
 type nodeRepo struct {
@@ -34,7 +35,7 @@ type nodeRepo struct {
 }
 
 // NewNodeRepo .
-func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger) biz.NodeRepo {
+func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source) (biz.NodeRepo, error) {
 	nodeRepo := &nodeRepo{
 		data:       data,
 		nodeNotify: make(chan struct{}, 1),
@@ -43,15 +44,24 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger)
 		providers: []provider.Provider{
 			nvidia.NewNvidia(data.promCl, log.NewHelper(logger), nodeSelectors[biz.NvidiaGPUDevice]),
 			mlu.NewCambricon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.CambriconGPUDevice]),
-			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice]),
+			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice], catalog),
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
 			hygon.NewHCU(log.NewHelper(logger), nodeSelectors[biz.HygonHCUDevice]),
 			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
 			mthreads.NewMthreads(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MthreadsGPUDevice]),
 		},
 	}
-	nodeRepo.init()
-	return nodeRepo
+	// Subscribe first: the initial node sync must not miss a catalog change.
+	catalog.Subscribe(func(_, _ *devicecatalog.Snapshot) {
+		select {
+		case nodeRepo.nodeNotify <- struct{}{}:
+		default:
+		}
+	})
+	if err := nodeRepo.init(); err != nil {
+		return nil, err
+	}
+	return nodeRepo, nil
 }
 
 func (r *nodeRepo) updateLocalNodes() {
@@ -83,20 +93,22 @@ func (r *nodeRepo) updateLocalNodes() {
 				}
 				for _, device := range devices {
 					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
-						Index:    int(device.Index),
-						Id:       device.ID,
-						AliasId:  device.AliasId,
-						Count:    device.Count,
-						Devmem:   device.Devmem,
-						Devcore:  device.Devcore,
-						Type:     device.Type,
-						Numa:     device.Numa,
-						Mode:     device.Mode,
-						Health:   device.Health,
-						NodeName: node.Name,
-						NodeUid:  string(node.UID),
-						Provider: p.GetProvider(),
-						Driver:   device.Driver,
+						Index:        int(device.Index),
+						Id:           device.ID,
+						AliasId:      device.AliasId,
+						Count:        device.Count,
+						Devmem:       device.Devmem,
+						Devcore:      device.Devcore,
+						Type:         device.Type,
+						Numa:         device.Numa,
+						Mode:         device.Mode,
+						Health:       device.Health,
+						NodeName:     node.Name,
+						NodeUid:      string(node.UID),
+						Provider:     p.GetProvider(),
+						Driver:       device.Driver,
+						MigProfiles:  bizMigProfiles(device.MigProfiles),
+						Unconfigured: device.Unconfigured,
 					})
 				}
 			}
@@ -107,19 +119,46 @@ func (r *nodeRepo) updateLocalNodes() {
 	}
 }
 
-func (r *nodeRepo) init() {
+func bizMigProfiles(profiles []util.MigProfile) []biz.MigProfile {
+	if len(profiles) == 0 {
+		return nil
+	}
+	result := make([]biz.MigProfile, 0, len(profiles))
+profiles:
+	for _, profile := range profiles {
+		if profile.SliceCount > math.MaxInt32 {
+			continue
+		}
+		converted := biz.MigProfile{
+			Name:       profile.Name,
+			MemoryMB:   profile.MemoryMB,
+			SliceCount: int32(profile.SliceCount),
+			Core:       profile.Core,
+		}
+		for _, placement := range profile.Placements {
+			if placement.Start > math.MaxInt32 || placement.Size > math.MaxInt32 {
+				continue profiles
+			}
+			converted.Placements = append(converted.Placements, biz.MigPlacement{Start: int32(placement.Start), Size: int32(placement.Size)})
+		}
+		result = append(result, converted)
+	}
+	return result
+}
+
+func (r *nodeRepo) init() error {
+	nodes := r.data.informers.Core().V1().Nodes()
+	r.nodeLister = nodes.Lister()
 	go r.updateLocalNodes()
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
-	r.nodeLister = informerFactory.Core().V1().Nodes().Lister()
-	informer := informerFactory.Core().V1().Nodes().Informer()
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddNode,
 		UpdateFunc: r.onUpdateNode,
 		DeleteFunc: r.onDeletedNode,
-	})
-	stopCh := make(chan struct{})
-	informerFactory.Start(stopCh)
-	informerFactory.WaitForCacheSync(stopCh)
+	}); err != nil {
+		return fmt.Errorf("watch nodes: %w", err)
+	}
+	r.data.startInformers()
+	return nil
 }
 
 func (r *nodeRepo) onAddNode(obj interface{}) {
@@ -132,6 +171,15 @@ func (r *nodeRepo) onUpdateNode(old interface{}, new interface{}) {
 
 func (r *nodeRepo) onDeletedNode(obj interface{}) {
 	r.nodeNotify <- struct{}{}
+}
+
+// A Node that no kubelet created can lack nodeInfo.
+func capitalize(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return ""
+	}
+	return strings.ToUpper(string(runes[0])) + strings.ToLower(string(runes[1:]))
 }
 
 func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
@@ -150,7 +198,7 @@ func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
 	n.Uid = string(node.UID)
 	n.Name = node.Name
 	n.OSImage = node.Status.NodeInfo.OSImage
-	n.OperatingSystem = strings.ToUpper(node.Status.NodeInfo.OperatingSystem[:1]) + strings.ToLower(node.Status.NodeInfo.OperatingSystem[1:])
+	n.OperatingSystem = capitalize(node.Status.NodeInfo.OperatingSystem)
 	n.KernelVersion = node.Status.NodeInfo.KernelVersion
 	n.ContainerRuntimeVersion = node.Status.NodeInfo.ContainerRuntimeVersion
 	n.KubeletVersion = node.Status.NodeInfo.KubeletVersion

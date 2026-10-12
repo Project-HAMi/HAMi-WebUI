@@ -31,6 +31,26 @@ class nodeApi {
   getNodeListReq(data) {
     return request(this.getNodeList(data));
   }
+
+  getNodeDevices(nodeName, signal) {
+    return request({
+      url: apiPrefix + '/v1/gpus',
+      method: 'POST',
+      data: { filters: { nodeName } },
+      errorFeedback: 'inline',
+      signal,
+    });
+  }
+
+  getNodeAllocatedContainers(nodeUid, signal) {
+    return request({
+      url: apiPrefix + '/v1/containers',
+      method: 'POST',
+      data: { filters: { nodeUid } },
+      errorFeedback: 'inline',
+      signal,
+    });
+  }
 }
 
 export default new nodeApi();

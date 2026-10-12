@@ -11,6 +11,8 @@
 {{- $prometheusCAKey := default "" (get $prometheusTLS "caKey") -}}
 {{- $prometheusCertKey := default "" (get $prometheusTLS "certKey") -}}
 {{- $scheduling := default (dict) .Values.scheduling -}}
+{{- $deviceConfig := include "hami-webui.deviceConfig" . | fromJson -}}
+{{- $ascend := default (dict) .Values.ascend -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -56,6 +58,13 @@ data:
       resource_names:
         {{- toYaml . | nindent 8 }}
     {{- end }}
+    device_config:
+      enabled: {{ $deviceConfig.enabled }}
+      namespace: {{ $deviceConfig.namespace | quote }}
+      name: {{ $deviceConfig.name | quote }}
+      key: {{ $deviceConfig.key | quote }}
+    ascend:
+      annotationless_pod_mode: {{ default "unknown" (get $ascend "annotationlessPodMode") | quote }}
     node_selectors:
     {{- range $key, $value := .Values.vendorNodeSelectors }}
       {{ $key }}: {{ $value }}

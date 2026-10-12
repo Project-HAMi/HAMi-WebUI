@@ -42,11 +42,20 @@
             class="workload-search"
             clearable
             :placeholder="$t('task.searchWorkloadName')"
+            @clear="applyFilters"
             @enter="applyFilters"
             @blur="applyFilters"
           >
             <template #prefix-icon>
-              <search-icon :style="{ cursor: 'pointer' }" />
+              <button
+                type="button"
+                class="table-search-button"
+                :aria-label="$t('common.search')"
+                @mousedown.prevent
+                @click="applyFilters"
+              >
+                <search-icon aria-hidden="true" />
+              </button>
             </template>
           </t-input>
         </div>
@@ -56,8 +65,12 @@
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
         :has-rows="tableData.length > 0"
+        :filtered="displayedFiltered"
         :column-count="visibleColumns.length"
+        :columns="visibleColumns"
+        table-layout="auto"
         @retry="refreshTable"
+        @clear-filters="clearFilters"
       >
         <t-table
           :key="locale"
@@ -114,6 +127,9 @@ import { createRequestState, isLatestRequest, rejectRequest, REQUEST_STATUS, res
 import SchedulingDrawer from './SchedulingDrawer.vue';
 import SegmentedControl from '@/components/SegmentedControl/index.vue';
 import { getWorkloadRequestTotals } from './scheduling-display.mjs';
+import { getAllocationShapeCopy, getCoresOnlyReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getSplitIcon } from '~/vgpu/components/split-mode.mjs';
+import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
 const { t, locale } = useI18n();
@@ -253,16 +269,18 @@ const baseColumns = computed(() => [
   {
     title: t('task.resourceConfiguration'),
     dataIndex: 'deviceIds',
-    render: ({ deviceIds, allocatedCores, allocatedCoresKnown, allocatedMem, request: resourceRequest }) => {
+    render: (row) => {
+      const { deviceIds, allocatedCores, allocatedCoresKnown, allocatedMem, request: resourceRequest } = row;
       const ids = Array.isArray(deviceIds) ? deviceIds : [];
+      const coresReasonKey = resourceRequest ? '' : getCoresOnlyReasonKey(row);
       const totals = resourceRequest ? getWorkloadRequestTotals(resourceRequest) : {
         count: ids.length || null,
         cores: allocatedCoresKnown !== false ? allocatedCores : null,
         memoryMiB: allocatedMem,
       };
       const gpuCount = totals.count ?? '--';
-      const cores = totals.cores !== null && totals.cores !== undefined
-        ? roundToDecimal(totals.cores / 100, 2) : '--';
+      const cores = !resourceRequest && isUnreservedSoftSplit(row) ? t('common.notLimited')
+        : totals.cores !== null && totals.cores !== undefined ? roundToDecimal(totals.cores / 100, 2) : '--';
       const memoryGiB = totals.memoryMiB !== null && totals.memoryMiB !== undefined
         ? `${roundToDecimal(totals.memoryMiB / 1024, 2)} GiB` : '--';
       return (
@@ -272,10 +290,35 @@ const baseColumns = computed(() => [
           </span>
           <span class="task-gpu-cell-info">
             <span>{gpuCount}</span>
-            <span class="task-gpu-cell-segment">{cores}</span>
+            <span class="task-gpu-cell-segment">
+              {cores}
+              {coresReasonKey ? (
+                <MetricHelp description={t(coresReasonKey)} helpLabel={t('task.allocation.reasonLabel')} />
+              ) : null}
+            </span>
             <span class="task-gpu-cell-segment">{memoryGiB}</span>
           </span>
         </div>
+      );
+    },
+  },
+  {
+    title: t('task.allocation.label'),
+    dataIndex: 'allocationShape',
+    width: 180,
+    render: (row) => {
+      const copy = row.request ? undefined : getAllocationShapeCopy(row);
+      if (!copy) return <span>--</span>;
+      const icon = getSplitIcon(row.allocationShape);
+      const reasonKey = getShapeUnknownReasonKey(row);
+      return (
+        <span class="task-split-cell">
+          <span class="task-split-cell-icon" aria-hidden="true">{icon ? <svg-icon icon={icon} /> : null}</span>
+          <span>{t(copy.key, copy.params)}</span>
+          {reasonKey ? (
+            <MetricHelp description={t(reasonKey)} helpLabel={t('task.allocation.shapeReasonLabel')} />
+          ) : null}
+        </span>
       );
     },
   },
@@ -332,6 +375,15 @@ const syncRouteQuery = () => {
   lastRouteQuery = query;
   if (!sameQuery(query, route.query)) router.replace({ query }).catch(() => {});
 };
+const displayedFiltered = ref(false);
+const clearFilters = () => {
+  filters.name = props.filters?.name || '';
+  filters.nodeName = props.filters?.nodeName;
+  filters.deviceId = props.filters?.deviceId;
+  filters.status = props.filters?.status || '';
+  hasManualNodeScope.value = false;
+  applyFilters();
+};
 let tableController;
 const fetchTableData = async () => {
   syncRouteQuery();
@@ -347,6 +399,12 @@ const fetchTableData = async () => {
   delete baseFilters.deviceId;
   const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
   const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
+  const filtered = Boolean(
+    getTrimValue(filters.name) !== getTrimValue(props.filters?.name || '')
+    || (filters.nodeName || '') !== (props.filters?.nodeName || '')
+    || (filters.deviceId || '') !== (props.filters?.deviceId || '')
+    || (filters.status || '') !== (props.filters?.status || '')
+  );
   const payload = {
     filters: {
       ...baseFilters,
@@ -379,6 +437,7 @@ const fetchTableData = async () => {
       await fetchTableData();
       return;
     }
+    displayedFiltered.value = filtered;
     resolveRequest(tableState, {
       requestId,
       data: result.items.map((item) => ({
@@ -471,6 +530,26 @@ watch(() => route.query, (query) => {
 </script>
 
 <style scoped lang="scss">
+:deep(.task-split-cell) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+// A fixed slot keeps the text aligned when a shape has no icon.
+:deep(.task-split-cell-icon) {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+}
+
 .task-admin-page {
   &.is-embedded {
     .task-admin-table-wrap {
@@ -696,6 +775,9 @@ watch(() => route.query, (query) => {
 }
 
 :deep(.task-gpu-cell-segment) {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   margin-left: 8px;
   padding-left: 8px;
   border-left: 1px solid #d5dee7;

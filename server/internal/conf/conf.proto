@@ -11,6 +11,22 @@ message Bootstrap {
   map<string, string> node_selectors = 3;
   Exporter exporter = 4;
   Scheduling scheduling = 5;
+  DeviceConfig device_config = 6;
+  Ascend ascend = 7;
+}
+
+// HAMi's device configuration ConfigMap, shared by its scheduler and device plugins.
+message DeviceConfig {
+  bool enabled = 1;
+  string namespace = 2;
+  string name = 3;
+  // Defaults to device-config.yaml.
+  string key = 4;
+}
+
+message Ascend {
+  // For Pods without huawei.com/vnpu-mode on hami-vnpu-core nodes: unknown, node (plugin >= v1.4.1) or template (v1.4.0).
+  string annotationless_pod_mode = 1;
 }
 
 // Exact resource names; empty uses the NVIDIA HAMi defaults.

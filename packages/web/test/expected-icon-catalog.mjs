@@ -38,6 +38,8 @@ export const expectedIconIds = Object.freeze(
     'resource',
     'rpm',
     'search',
+    'split-hami-core',
+    'split-partition',
     'status-schedulable',
     'status-unmanaged',
     'status-unschedulable',

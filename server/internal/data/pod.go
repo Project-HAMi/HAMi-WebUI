@@ -3,20 +3,26 @@ package data
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
+	"vgpu/internal/devicecatalog"
+	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/mthreads"
+	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
-	"github.com/jinzhu/copier"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/informers"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
@@ -52,9 +58,10 @@ type podRepo struct {
 	podIndexer              cache.Indexer
 	schedulingResourceNames map[corev1.ResourceName]struct{}
 	schedulingEvents        *schedulingEventReader
+	ascend                  ascend.Decoder
 }
 
-func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap) (*podRepo, error) {
+func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap, catalog devicecatalog.Source) (*podRepo, error) {
 	resources, err := schedulingResources(config.GetScheduling())
 	if err != nil {
 		return nil, err
@@ -70,29 +77,38 @@ func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap) (*podRepo
 		log:                     log.NewHelper(logger),
 		schedulingResourceNames: resources,
 		schedulingEvents:        newSchedulingEventReader(eventsClient),
+		ascend:                  ascend.Decoder{Catalog: catalog, Policy: config.GetAscend().GetAnnotationlessPodMode()},
 	}
-	repo.init()
+	if err := repo.init(catalog); err != nil {
+		return nil, err
+	}
 	return repo, nil
 }
 
-func (r *podRepo) init() {
-	informerFactory := informers.NewSharedInformerFactoryWithOptions(r.data.k8sCl, time.Hour*1)
-	r.podLister = informerFactory.Core().V1().Pods().Lister()
-	r.nodeLister = informerFactory.Core().V1().Nodes().Lister()
-	informer := informerFactory.Core().V1().Pods().Informer()
+func (r *podRepo) init(catalog devicecatalog.Source) error {
+	// Pod events read their node, so the node cache is filled first.
+	r.nodeLister = r.data.informers.Core().V1().Nodes().Lister()
+	r.data.startInformers()
+
+	pods := r.data.informers.Core().V1().Pods()
+	r.podLister = pods.Lister()
+	// After the lister exists and before the first sync, so no configuration change is missed.
+	catalog.Subscribe(r.onCatalogChange)
+	informer := pods.Informer()
 	// An index on the existing informer, not another watch.
 	if err := informer.AddIndexers(cache.Indexers{schedulingGPUIndex: r.schedulingIndex}); err != nil {
-		panic(err)
+		return fmt.Errorf("index pods: %w", err)
 	}
 	r.podIndexer = informer.GetIndexer()
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddPod,
 		UpdateFunc: r.onUpdatePod,
 		DeleteFunc: r.onDeletedPod,
-	})
-	stopCh := make(chan struct{})
-	informerFactory.Start(stopCh)
-	informerFactory.WaitForCacheSync(stopCh)
+	}); err != nil {
+		return fmt.Errorf("watch pods: %w", err)
+	}
+	r.data.startInformers()
+	return nil
 }
 
 func (r *podRepo) onAddPod(obj interface{}) {
@@ -112,15 +128,160 @@ func (r *podRepo) onAddPod(obj interface{}) {
 		r.delPod(pod)
 		return
 	}
-	nodeUID, ascendMode := r.nodeAllocationContext(pod)
-	bizPodDev := biz.PodDevices{}
-	podDev, err := util.DecodePodDevices(pod, r.log, ascendMode)
+	node := r.assignedNode(pod)
+	nodeUID := ""
+	if node != nil {
+		nodeUID = string(node.UID)
+	}
+	podDev, err := util.DecodePodDevices(pod, r.log)
 	if err != nil {
 		r.log.Errorf("cannot decode device allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
 		return
 	}
-	copier.Copy(&bizPodDev, podDev)
+	gpus := nvidia.ReadAllocations(pod, nvidia.RegisteredModes(node, r.log))
+	if err := gpus.Err(); err != nil {
+		r.log.Warnf("ignore MIG reservations of pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	bizPodDev := bizPodDevices(gpus, podDev)
+	ascendDevices, err := r.ascend.Decode(pod, node)
+	if err != nil {
+		r.log.Errorf("cannot decode Ascend allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	for word, slots := range ascendDevices {
+		bizPodDev[word] = ascendPodSingleDevice(slots)
+	}
 	r.addPod(pod, nodeID, nodeUID, bizPodDev)
+}
+
+// Explicit conversion: copier silently drops devices once the structs differ.
+func bizPodDevices(gpus nvidia.Allocations, devices util.PodDevices) biz.PodDevices {
+	result := make(biz.PodDevices, len(devices))
+	for deviceType, slots := range devices {
+		converted := make(biz.PodSingleDevice, len(slots))
+		for i, slot := range slots {
+			converted[i] = make(biz.ContainerDevices, len(slot))
+			for j, device := range slot {
+				allocated := biz.ContainerDevice{
+					Idx:       device.Idx,
+					UUID:      device.UUID,
+					Type:      device.Type,
+					Usedmem:   device.Usedmem,
+					Usedcores: device.Usedcores,
+					Priority:  device.Priority,
+					// Non-Ascend providers key their allocations by vendor.
+					Vendor: deviceType,
+				}
+				if deviceType == biz.NvidiaGPUDevice {
+					gpu := gpus.Device(i, j, device.UUID)
+					allocated.UUID = gpu.UUID
+					allocated.Shape = nvidiaShapes[gpu.Mode]
+					allocated.ShapeReason = gpu.Reason
+					allocated.Template = gpu.Profile
+					allocated.MigPlacement = biz.MigPlacement{Start: gpu.Start, Size: gpu.Size}
+				}
+				converted[i][j] = allocated
+			}
+		}
+		result[deviceType] = converted
+	}
+	return result
+}
+
+var nvidiaShapes = map[string]string{
+	nvidia.ModeHamiCore: biz.SplitShapeSoft,
+	nvidia.ModeMig:      biz.SplitShapeMig,
+	"":                  biz.SplitShapeUnknown,
+}
+
+func ascendPodSingleDevice(slots [][]ascend.Device) biz.PodSingleDevice {
+	result := make(biz.PodSingleDevice, 0, len(slots))
+	for _, slot := range slots {
+		devices := make(biz.ContainerDevices, 0, len(slot))
+		for _, device := range slot {
+			facts := device.Facts
+			devices = append(devices, biz.ContainerDevice{
+				Idx:     device.Index,
+				UUID:    device.UUID,
+				Type:    facts.CommonWord,
+				Usedmem: int32(facts.Memory),
+				Vendor:  biz.AscendGPUDevice,
+				Ascend: &biz.AscendFacts{
+					AnnotatedCore: facts.AnnotatedCore,
+					Template:      facts.Template,
+					Recorded:      facts.Recorded,
+					CardMemory:    facts.CardMemory,
+					NodeRead:      facts.NodeRead,
+					Mode:          facts.Mode,
+					ModeReason:    facts.ModeReason,
+				},
+			})
+		}
+		result = append(result, devices)
+	}
+	return result
+}
+
+// Interpreting at read time applies configuration edits without decoding Pods again.
+// Containers without Ascend devices are returned as they are, so clusters
+// without NPUs copy nothing on every read.
+func (r *podRepo) interpretContainer(snapshot *devicecatalog.Snapshot, container *biz.Container) *biz.Container {
+	interprets := false
+	for _, device := range container.ContainerDevices {
+		if device.Ascend != nil {
+			interprets = true
+			break
+		}
+	}
+	if !interprets {
+		return container
+	}
+	interpreted := *container
+	interpreted.ContainerDevices = make(biz.ContainerDevices, len(container.ContainerDevices))
+	for i, device := range container.ContainerDevices {
+		if device.Ascend != nil {
+			result := ascend.Interpret(snapshot, ascend.Facts{
+				CommonWord:    device.Type,
+				Memory:        int64(device.Usedmem),
+				AnnotatedCore: device.Ascend.AnnotatedCore,
+				Template:      device.Ascend.Template,
+				Recorded:      device.Ascend.Recorded,
+				CardMemory:    device.Ascend.CardMemory,
+				NodeRead:      device.Ascend.NodeRead,
+				Mode:          device.Ascend.Mode,
+				ModeReason:    device.Ascend.ModeReason,
+			}, r.ascend.Policy)
+			device.Usedcores, device.Shape, device.Template = result.Cores, result.Shape, result.Template
+			device.CoreAllocationUnknown, device.CoreReason = !result.Known, result.Reason
+		}
+		interpreted.ContainerDevices[i] = device
+	}
+	return &interpreted
+}
+
+// Only newly configured words without the Ascend prefix were skipped when decoding.
+func (r *podRepo) onCatalogChange(previous, current *devicecatalog.Snapshot) {
+	var added []string
+	for _, word := range current.AscendCommonWords() {
+		if _, known := previous.AscendModel(word); !known && !strings.HasPrefix(word, "Ascend") {
+			added = append(added, word)
+		}
+	}
+	if len(added) == 0 {
+		return
+	}
+	pods, err := r.podLister.List(labels.Everything())
+	if err != nil {
+		r.log.Warnf("list pods after a device configuration change: %v", err)
+		return
+	}
+	for _, pod := range pods {
+		for _, word := range added {
+			if _, ok := pod.Annotations["hami.io/"+word+"-devices-allocated"]; ok {
+				r.onAddPod(pod)
+				break
+			}
+		}
+	}
 }
 
 func (r *podRepo) onUpdatePod(_ interface{}, new interface{}) {
@@ -209,8 +370,12 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
 		}
-		if len(containerDevices) > 0 {
-			c.Priority = containerDevices[0].Priority
+		// Not every device type carries a priority, and those that do may not sort first.
+		for _, device := range containerDevices {
+			if device.Priority != "" {
+				c.Priority = device.Priority
+				break
+			}
 		}
 		containers = append(containers, c)
 	}
@@ -219,8 +384,9 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 
 func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices) []biz.ContainerDevices {
 	containerDevices := make([]biz.ContainerDevices, totalContainers)
-	for _, devicesByContainer := range podDevices {
-		for i, devices := range devicesByContainer {
+	// Sorted so a mixed-type container keeps a stable device order.
+	for _, deviceType := range slices.Sorted(maps.Keys(podDevices)) {
+		for i, devices := range podDevices[deviceType] {
 			if i >= totalContainers {
 				break
 			}
@@ -230,39 +396,25 @@ func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices)
 	return containerDevices
 }
 
-func (r *podRepo) nodeAllocationContext(pod *corev1.Pod) (string, util.AscendAllocationMode) {
-	podMode := pod.Annotations[util.AscendVNPUModeAnnotation]
-	if pod.Spec.NodeName == "" {
-		return "", resolveAscendAllocationMode(podMode, "")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	node, err := r.data.k8sCl.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
-	if err != nil {
-		r.log.Warnf("cannot resolve Ascend allocation mode for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return "", resolveAscendAllocationMode(podMode, "")
-	}
-	return string(node.UID), resolveAscendAllocationMode(podMode, node.Annotations[util.AscendNodeHamiCoreAnnotation])
-}
+const nodeReadTimeout = 10 * time.Second
 
-func resolveAscendAllocationMode(podMode, nodeHamiCore string) util.AscendAllocationMode {
-	if podMode != "" {
-		if podMode == util.AscendVNPUModeHamiCore {
-			return util.AscendAllocationModeHamiCore
-		}
-		return util.AscendAllocationModeTemplate
+// assignedNode reads the Pod's node from the shared cache, so Pod events cost no API requests.
+func (r *podRepo) assignedNode(pod *corev1.Pod) *corev1.Node {
+	if pod.Spec.NodeName == "" {
+		return nil
 	}
-	switch nodeHamiCore {
-	case "true":
-		// Released plugin images disagree on whether an unannotated Pod inherits
-		// soft mode from the Node. The Node flag does not encode that runtime
-		// version, so this allocation cannot be decoded without guessing.
-		return util.AscendAllocationModeUnknown
-	case "false":
-		return util.AscendAllocationModeTemplate
-	default:
-		return util.AscendAllocationModeUnknown
+	node, err := r.nodeLister.Get(pod.Spec.NodeName)
+	if apierrors.IsNotFound(err) {
+		// The node watch can lag the Pod watch, and nothing re-reads this Pod once the node arrives.
+		ctx, cancel := context.WithTimeout(context.Background(), nodeReadTimeout)
+		node, err = r.data.k8sCl.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
+		cancel()
 	}
+	if err != nil {
+		r.log.Warnf("cannot read node %s for pod %s/%s: %v", pod.Spec.NodeName, pod.Namespace, pod.Name, err)
+		return nil
+	}
+	return node
 }
 
 func (r *podRepo) GetCreateTime(pod *corev1.Pod) time.Time {
@@ -284,11 +436,14 @@ func (r *podRepo) GetStartTime(pod *corev1.Pod) time.Time {
 }
 
 func (r *podRepo) ListAll(context.Context) ([]*biz.Container, error) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+	snapshot := r.ascend.Snapshot()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
 	var containerList []*biz.Container
 	for _, pod := range r.pods {
-		containerList = append(containerList, pod.Ctrs...)
+		for _, container := range pod.Ctrs {
+			containerList = append(containerList, r.interpretContainer(snapshot, container))
+		}
 	}
 	containerList = append(containerList, r.listWholeGPUContainers()...)
 	return containerList, nil
@@ -545,7 +700,7 @@ func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.C
 	}
 	for _, container := range pod.Ctrs {
 		if container.Name == name {
-			return container, nil
+			return r.interpretContainer(r.ascend.Snapshot(), container), nil
 		}
 	}
 

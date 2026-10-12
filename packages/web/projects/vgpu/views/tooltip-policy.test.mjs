@@ -46,3 +46,13 @@ test('GPU UUID tooltips remain complete on one line', () => {
   assert.match(cardList, /tooltipClass="vgpu-long-text-tooltip vgpu-single-line-tooltip"/);
   assert.match(taskDetail, /GPU_UUID_TOOLTIP_STYLE/);
 });
+
+test('a cut text is focusable only where a caller opts in', () => {
+  assert.match(ellipsisText, /focusable:\s*\{\s*type: Boolean,\s*default: false,/);
+  const [tooltipBranch, plainBranch] = ellipsisText.split('<span\n    v-else');
+  assert.match(tooltipBranch, /:trigger="focusable \? \['hover', 'focus'\] : 'hover'"/);
+  assert.match(tooltipBranch, /:tabindex="focusable \? 0 : undefined"/);
+  assert.match(tooltipBranch, /:tabindex="focusable \? 0 : undefined"\s*@keydown\.esc=/);
+  assert.doesNotMatch(plainBranch, /tabindex/);
+  assert.match(readSource('../components/previewBar.vue'), /<EllipsisText :text="name" focusable \/>/);
+});

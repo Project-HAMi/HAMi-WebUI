@@ -117,6 +117,53 @@ test('a failed refresh keeps the entire previous range and exposes refreshError'
   assert.equal(settled.refreshing, false);
 });
 
+test('a group that failed before shows a repeated failure instead of claiming an earlier result', () => {
+  let group = startGroup('1h');
+  group = settleRangeGroupGeneration(group, group.requestId, [failed('down'), failed('down')]);
+  assert.equal(group.dataSource[0].status, REQUEST_STATUS.ERROR);
+
+  group = startRangeGroupGeneration(group, { range: '7d' });
+  const settled = settleRangeGroupGeneration(group, group.requestId, [failed('still down'), failed('still down')]);
+  assert.equal(settled.refreshError, null);
+  assert.equal(settled.dataSource[0].status, REQUEST_STATUS.ERROR);
+  assert.match(settled.dataSource[0].error.message, /still down/);
+  assert.deepEqual(settled.range, { range: '7d' });
+});
+
+test('a chart that showed a failure next to an empty line is not kept as an earlier result', () => {
+  const empty = createRangeVectorOutcome({ data: [], status: REQUEST_STATUS.MISSING });
+  let group = startGroup('1h');
+  group = settleRangeGroupGeneration(group, group.requestId, [failed('down'), empty]);
+  group = startRangeGroupGeneration(group, { range: '7d' });
+  const settled = settleRangeGroupGeneration(group, group.requestId, [failed('still down'), failed('still down')]);
+  assert.equal(settled.refreshError, null);
+  assert.ok(settled.dataSource.every((series) => series.status === REQUEST_STATUS.ERROR));
+  assert.deepEqual(settled.range, { range: '7d' });
+});
+
+test('a chart with one drawn line is kept through a failed refresh', () => {
+  let group = startGroup('1h');
+  group = settleRangeGroupGeneration(group, group.requestId, [ready(1), failed('usage down')]);
+  group = startRangeGroupGeneration(group, { range: '7d' });
+  const error = failed('down');
+  const settled = settleRangeGroupGeneration(group, group.requestId, [error, error]);
+  assert.equal(settled.refreshError, error.error);
+  assert.equal(settled.dataSource[0].data[0].value, 1);
+  assert.deepEqual(settled.range, { range: '1h' });
+});
+
+test('a confirmed empty range is a result worth keeping through a failed refresh', () => {
+  const empty = createRangeVectorOutcome({ data: [], status: REQUEST_STATUS.MISSING });
+  let group = startGroup('1h');
+  group = settleRangeGroupGeneration(group, group.requestId, [empty, empty]);
+  group = startRangeGroupGeneration(group, { range: '7d' });
+  const error = failed('down');
+  const settled = settleRangeGroupGeneration(group, group.requestId, [error, error]);
+  assert.equal(settled.refreshError, error.error);
+  assert.equal(settled.dataSource[0].status, REQUEST_STATUS.MISSING);
+  assert.deepEqual(settled.range, { range: '1h' });
+});
+
 test('an initial generation publishes partial success and failure without an old group', () => {
   let group = startGroup('1h');
   const generation = group.requestId;
@@ -182,4 +229,33 @@ test('an older generation cannot overwrite the latest range', () => {
     settled.dataSource.map((series) => series.data[0].value),
     [7, 8],
   );
+});
+
+test('a group read for another resource starts over instead of keeping the last one', () => {
+  const settleFor = (group, scope, outcomes) => {
+    const started = startRangeGroupGeneration(group, { range: '1h' }, scope);
+    return settleRangeGroupGeneration(started, started.requestId, outcomes);
+  };
+  const shownB = settleFor(startGroup(), 'node=B', [ready(70), ready(80)]);
+
+  // Back on A, A's line fails: B's lines must not stay under A.
+  const backOnA = startRangeGroupGeneration(shownB, { range: '1h' }, 'node=A');
+  assert.equal(backOnA.hasResolved, false);
+  assert.equal(backOnA.range, null);
+  assert.deepEqual(backOnA.dataSource.map((series) => series.status), [REQUEST_STATUS.LOADING, REQUEST_STATUS.LOADING]);
+  const failedOnA = settleRangeGroupGeneration(backOnA, backOnA.requestId, [failed('allocation'), ready(30)]);
+  assert.deepEqual(failedOnA.dataSource.map((series) => series.data[0]?.value), [undefined, 30]);
+  assert.equal(failedOnA.dataSource[0].status, REQUEST_STATUS.ERROR);
+  assert.equal(failedOnA.scope, 'node=A');
+
+  // A reply for B that arrives after A's request was issued cannot land.
+  const late = settleRangeGroupGeneration(backOnA, backOnA.requestId - 1, [ready(71), ready(81)]);
+  assert.equal(late, backOnA);
+
+  // The same resource over a new time range still keeps its whole last range on failure.
+  const shownA = settleFor(startGroup(), 'node=A', [ready(30), ready(40)]);
+  const retried = startRangeGroupGeneration(shownA, { range: '7d' }, 'node=A');
+  const kept = settleRangeGroupGeneration(retried, retried.requestId, [failed('allocation'), ready(41)]);
+  assert.deepEqual(kept.dataSource.map((series) => series.data[0].value), [30, 40]);
+  assert.ok(kept.refreshError);
 });

@@ -80,7 +80,7 @@ func TestGetAllContainersMatchesPodOrContainerName(t *testing.T) {
 func TestGetAllContainersMarksUnknownAscendCoreAllocation(t *testing.T) {
 	containers := []*biz.Container{{
 		Name: "worker", PodName: "ascend-job", Status: biz.ContainerStatusSuccess, PodUID: "pod-1", NodeName: "node-1",
-		ContainerDevices: biz.ContainerDevices{{UUID: "ascend-0", Type: "Ascend910B4", Usedmem: 4096, CoreAllocationKnown: false}},
+		ContainerDevices: biz.ContainerDevices{{UUID: "ascend-0", Type: "Ascend910B4", Usedmem: 4096, CoreAllocationUnknown: true}},
 	}}
 	service := NewContainerService(
 		biz.NewNodeUsecase(&containerTestNodeRepo{}, log.DefaultLogger),

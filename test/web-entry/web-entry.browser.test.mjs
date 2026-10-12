@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
+import { mkdir } from 'node:fs/promises'
 import http from 'node:http'
+import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
+import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -296,6 +299,7 @@ async function assertChartRuntime(target) {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1000 }
   })
+  await page.clock.install()
   const runtimeErrors = []
   let rangeRequests = 0
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
@@ -348,7 +352,7 @@ async function assertChartRuntime(target) {
   await page.mouse.move(0, 0)
 
   const initialRangeRequests = rangeRequests
-  await page.locator('.home-bottom-trend-filter .t-radio-button').nth(1).click()
+  await selectTrendRange(page, '3h')
   await waitUntil(
     () => rangeRequests > initialRangeRequests,
     'Changing the time range did not update the chart data'
@@ -357,6 +361,8 @@ async function assertChartRuntime(target) {
     await page.locator('.home-bottom-row .echarts canvas').count() >= 2,
     'Trend charts disappeared after an option update'
   )
+
+  await assertTrendRefreshState(page)
 
   const pie = page.locator('.card-type-chart canvas').first()
   const pieBox = await pie.boundingBox()
@@ -399,10 +405,10 @@ async function assertChartRuntime(target) {
     return frame === canvas.toDataURL()
   }), 'Preview chart animation did not settle')
   const previewLegendItem = page.locator('.nodeCard-legend li').first()
-  assert.equal(
-    await previewLegendItem.evaluate((element) => element.style.fontWeight),
-    'bold'
+  const legendWeight = () => previewLegendItem.evaluate(
+    (element) => getComputedStyle(element).fontWeight
   )
+  assert.equal(await legendWeight(), '700', 'The active card type is not bold')
   const previewBox = await previewChart.boundingBox()
   assert.ok(previewBox?.width > 0, 'Preview chart has no width after resize')
   assert.ok(previewBox?.height > 0, 'Preview chart has no height after resize')
@@ -447,14 +453,145 @@ async function assertChartRuntime(target) {
     }
   })
   await waitUntil(
-    () => previewLegendItem.evaluate(
-      (element) => element.style.fontWeight === 'normal'
-    ),
+    async() => (await legendWeight()) === '400',
     'Preview chart click did not clear the active card-type filter'
   )
 
+  // Whole-pixel scrollWidth and clientWidth cannot see a name cut by a fraction of a pixel.
+  const legendName = page.locator('.nodeCard-legend .legend-name').first()
+  const legendText = legendName.locator('.ellipsis-text')
+  const fitLegendName = (cut) => legendName.evaluate((element, cut) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    element.style.flex = 'none'
+    element.style.width = `${range.getBoundingClientRect().width - cut}px`
+  }, cut)
+  await fitLegendName(0)
+  await waitUntil(
+    async() => (await legendText.getAttribute('tabindex')) === null,
+    'A legend name that fits exactly still offers a tooltip'
+  )
+  await fitLegendName(1 / 64)
+  await waitUntil(
+    async() => (await legendText.getAttribute('tabindex')) === '0',
+    'A legend name cut by a fraction of a pixel cannot be read in full'
+  )
+  const fullName = (await legendText.textContent()).trim()
+  await legendText.focus()
+  const legendTooltip = page.locator('[role="tooltip"].vgpu-long-text-tooltip')
+    .filter({ hasText: fullName })
+    .last()
+  await legendTooltip.waitFor({ state: 'visible' })
+  await legendText.press('Escape')
+  await legendTooltip.waitFor({ state: 'hidden' })
+  await legendName.evaluate((element) => element.removeAttribute('style'))
+
   assert.deepEqual(runtimeErrors, [])
   await page.close()
+}
+
+// A refreshing trend keeps its chart, blocks hover and zoom at once, and shows its
+// indicator only once the refresh has lasted past a short delay.
+async function assertTrendRefreshState(page) {
+  const trend = page.locator('.home-bottom-row .metric-chart').first()
+  const canvas = trend.locator('canvas').first()
+  const refreshState = () => trend.evaluate((element) => {
+    const overlay = element.querySelector('.metric-chart__updating')
+    const tooltip = [...element.querySelectorAll('div')]
+      .find((node) => node.style.zIndex === '9999999')
+    const tooltipStyle = tooltip && getComputedStyle(tooltip)
+    return {
+      blocking: Boolean(overlay),
+      visible: Boolean(overlay?.classList.contains('is-visible')),
+      busy: element.getAttribute('aria-busy') === 'true',
+      canvas: Boolean(element.querySelector('canvas')),
+      refreshError: Boolean(element.querySelector('.metric-chart__refresh--error')),
+      bodyHeight: element.querySelector('.metric-chart__body').getBoundingClientRect().height,
+      tooltip: Boolean(tooltipStyle && tooltipStyle.display !== 'none' &&
+        tooltipStyle.visibility !== 'hidden' && Number(tooltipStyle.opacity) > 0.5)
+    }
+  })
+  const waitForIdle = () => waitUntil(
+    async() => !(await refreshState()).busy,
+    'The trend chart did not finish refreshing'
+  )
+  const hoverPlot = async() => {
+    const box = await canvas.boundingBox()
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.4, { steps: 3 })
+  }
+  // Clicking without moving the pointer keeps a tooltip up unless the chart hides it.
+  const selectRange = (index) => page.evaluate((position) => {
+    document.querySelectorAll('.home-bottom-trend-filter .segmented-control__option')[position].click()
+  }, index)
+  const pauseClock = async() => page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+
+  let mode = 'pass'
+  const held = []
+  await page.route('**/v1/monitor/query/range-vector', async(route) => {
+    if (mode === 'pass') return route.continue()
+    await new Promise((release) => held.push(release))
+    if (mode === 'fail') return route.fulfill({ status: 500, body: 'injected failure' })
+    return route.continue()
+  })
+  const releaseHeld = () => held.splice(0).forEach((release) => release())
+
+  try {
+    await trend.scrollIntoViewIfNeeded()
+    await waitForIdle()
+    const idleHeight = (await refreshState()).bodyHeight
+
+    // A refresh that finishes inside the delay never shows the indicator.
+    await pauseClock()
+    await selectRange(2)
+    await waitForIdle()
+    await page.clock.runFor(400)
+    assert.equal((await refreshState()).visible, false, 'A quick refresh flashed the indicator')
+    await page.clock.resume()
+
+    // The next refresh starts its own delay, and an open tooltip closes at once.
+    await hoverPlot()
+    await waitUntil(async() => (await refreshState()).tooltip, 'The trend tooltip did not open')
+    await pauseClock()
+    mode = 'hold'
+    await selectRange(3)
+    await waitUntil(async() => (await refreshState()).blocking, 'A refresh did not block the chart')
+    // Browser-command latency must not consume the interval we are asserting.
+    await page.clock.runFor(249)
+    await waitUntil(async() => !(await refreshState()).tooltip, 'An open tooltip stayed up during a refresh')
+    assert.equal((await refreshState()).visible, false, 'The indicator showed before its delay')
+    await hoverPlot()
+    await page.clock.runFor(1)
+    await waitUntil(async() => (await refreshState()).visible, 'A slow refresh never showed its indicator')
+    const slow = await refreshState()
+    assert.equal(slow.canvas, true, 'The previous chart disappeared during a refresh')
+    assert.equal(slow.tooltip, false, 'The chart answered hover during a refresh')
+    assert.equal(slow.bodyHeight, idleHeight, 'The refresh indicator changed the chart height')
+    mode = 'pass'
+    releaseHeld()
+    await waitForIdle()
+    assert.equal((await refreshState()).blocking, false)
+    await page.clock.resume()
+    await hoverPlot()
+    await waitUntil(async() => (await refreshState()).tooltip, 'Hover did not return after a refresh')
+
+    // A failed refresh keeps the previous chart and says so.
+    await page.mouse.move(0, 0)
+    mode = 'fail'
+    await selectRange(1)
+    await waitUntil(async() => (await refreshState()).visible, 'A failing refresh never showed its indicator')
+    releaseHeld()
+    await waitUntil(async() => (await refreshState()).refreshError, 'A failed refresh was not reported')
+    const failed = await refreshState()
+    assert.equal(failed.blocking, false)
+    assert.equal(failed.canvas, true, 'A failed refresh removed the previous chart')
+    assert.equal(failed.bodyHeight, idleHeight)
+  } finally {
+    // A failed assertion must not leave requests held for the rest of the journey.
+    mode = 'pass'
+    releaseHeld()
+    await page.unrouteAll({ behavior: 'wait' })
+    await page.clock.resume()
+  }
 }
 
 function trackMonitorRequests(page) {
@@ -465,6 +602,115 @@ function trackMonitorRequests(page) {
     }
   })
   return requests
+}
+
+function trackTrendRequests(page) {
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  return requests
+}
+
+// Read local picker values in the browser's zone, independently of the query formatter.
+async function localRangeAsUTC(page, values) {
+  return page.evaluate((timestamps) => timestamps.map((value) => {
+    const [year, month, day, hour, minute, second] = value.split(/[- :]/).map(Number)
+    return new Date(year, month - 1, day, hour, minute, second).toISOString().replace('.000Z', 'Z')
+  }), values)
+}
+
+const trendPages = [
+  ['overview', 5],
+  ['nodes/node-1?nodeName=node-1', 5],
+  ['accelerators/gpu-1', 7],
+  ['workloads/pod-1/containers/worker', 2]
+]
+
+function trendRangeButton(page, value) {
+  const index = ['1h', '3h', '6h', '24h', '168h', '720h', 'custom'].indexOf(value)
+  assert.ok(index >= 0, `Unknown trend preset: ${value}`)
+  return page.locator('.trend-time-filter-presets .segmented-control__option').nth(index)
+}
+
+async function selectTrendRange(page, value) {
+  const filter = page.locator('.trend-time-filter')
+  const button = trendRangeButton(page, value)
+  if (await button.isVisible()) return button.click()
+  const label = (await button.textContent()).trim()
+  await filter.locator('.trend-time-filter-select').click()
+  await page.locator('.t-select-option:visible').getByText(label, { exact: true }).click()
+}
+
+async function waitForChartPaint(page) {
+  let previous
+  await waitUntil(async() => {
+    const frame = await page.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
+      const bounds = canvas.getBoundingClientRect()
+      const body = canvas.closest('.metric-chart__body, .card-type-chart')?.getBoundingClientRect()
+      return {
+        fits: !body || (Math.abs(bounds.width - body.width) < 1 && Math.abs(bounds.height - body.height) < 1),
+        image: canvas.toDataURL(),
+      }
+    }))
+    const snapshot = JSON.stringify(frame)
+    const settled = frame.every(({ fits }) => fits) && snapshot === previous
+    previous = snapshot
+    return settled
+  }, 'Chart paint did not settle to the current container size')
+}
+
+async function captureTrendScreenshot(page, name) {
+  const directory = process.env.WEB_ENTRY_SCREENSHOT_DIR
+  if (!directory) return
+  await page.evaluate(async() => {
+    await document.fonts.ready
+    await Promise.all(document.getAnimations()
+      .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
+      .map((animation) => animation.finished.catch(() => {})))
+  })
+  await waitForChartPaint(page)
+  await mkdir(directory, { recursive: true })
+  await page.screenshot({ path: join(directory, `${name}.png`) })
+}
+
+async function stablePopupBounds(popup) {
+  let previous
+  return waitUntil(async() => {
+    const bounds = await popup.boundingBox()
+    const snapshot = JSON.stringify(bounds)
+    const animating = await popup.evaluate((element) => element.getAnimations({ subtree: true }).some((animation) => animation.playState === 'running'))
+    const settled = bounds && !animating && snapshot === previous
+    previous = snapshot
+    return settled ? bounds : false
+  }, 'Popup placement did not settle')
+}
+
+async function customTimestampFieldsFit(filter) {
+  return filter.locator('.trend-time-filter-custom input').evaluateAll((elements) => elements.length === 2 && elements.every((element) => {
+    const width = element.getBoundingClientRect().width
+    const context = document.createElement('canvas').getContext('2d')
+    const style = getComputedStyle(element)
+    context.font = style.font
+    return context.measureText(element.value).width <= width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+  }))
+}
+
+async function assertRefreshAnimation(page, button, originalIcon) {
+  assert.ok(await originalIcon.evaluate((element) => element.isConnected), 'Refreshing must retain the same refresh SVG')
+  const icon = button.locator('.refresh-button__icon')
+  const animation = () => icon.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return [style.animationName, style.animationDuration, style.animationTimingFunction, style.animationIterationCount]
+  })
+  const [name, ...timing] = await animation()
+  assert.match(name, /^refresh-button-spin/)
+  assert.deepEqual(timing, ['0.9s', 'linear', 'infinite'])
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await waitUntil(async() => (await animation())[0] === 'none', 'Reduced motion must stop the refresh rotation')
+  assert.equal(await button.getAttribute('aria-busy'), 'true', 'Reduced motion must retain the busy indication')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await waitUntil(async() => (await animation())[0] === name, 'Normal motion must restore the shared rotation')
 }
 
 async function assertMissingDetail(target, route) {
@@ -875,9 +1121,7 @@ test('browser language selects English without leaking active Chinese UI text', 
     await requestsCard.locator('.title')
       .filter({ hasText: 'Workload Allocation Top5' })
       .waitFor()
-    await requestsCard.locator('.t-radio-button')
-      .filter({ hasText: 'vGPU' })
-      .click()
+    await requestsCard.getByRole('button', { name: 'vGPU', exact: true }).click()
     const value = requestsCard.locator('.tab-top-value').first()
     await value.waitFor()
     assert.equal((await value.textContent()).trim(), '0.4 slots')
@@ -950,7 +1194,7 @@ test('workload and detail views keep dense identity content readable', async() =
 
   await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { code: 0, items: workloads, total: workloads.length }))
 
-  const assertIconGeometry = async(selector) => {
+  const assertIconGeometry = async(selector, outerSize = [40, 40]) => {
     const boxes = await page.locator(selector).evaluateAll((elements) =>
       elements.map((element) => {
         const icon = element.querySelector('svg')
@@ -964,7 +1208,7 @@ test('workload and detail views keep dense identity content readable', async() =
     )
     assert.ok(boxes.length > 0, `No icons matched ${selector}`)
     for (const box of boxes) {
-      assert.deepEqual(box.outer, [40, 40])
+      assert.deepEqual(box.outer, outerSize)
       assert.deepEqual(box.inner, [20, 20])
     }
   }
@@ -1334,7 +1578,21 @@ test('workload and detail views keep dense identity content readable', async() =
         .map((value) => value.trim()),
       ['Alloc Rate', 'Usage Rate', 'Alloc Rate', 'Usage Rate']
     )
-    await assertIconGeometry('.resource-card-icon')
+    // The resource cards follow their panel's width: compact beside the sidebar at 1280 px, full size with more room.
+    const resourcePanelWidth = () => page.locator('.node-workload-panel').evaluate((element) => element.clientWidth)
+    const compactPanelWidth = await resourcePanelWidth()
+    await assertIconGeometry('.resource-card-icon', [32, 32])
+    await page.setViewportSize({ width: 1600, height: 900 })
+    await waitUntil(
+      async() => (await resourcePanelWidth()) > compactPanelWidth + 100,
+      'The node resource panel did not widen with the viewport'
+    )
+    await assertIconGeometry('.resource-card-icon', [40, 40])
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await waitUntil(
+      async() => (await resourcePanelWidth()) === compactPanelWidth,
+      'The node resource panel did not return to its 1280 px width'
+    )
     const rateTiles = page.locator('.resource-overview-card').first()
       .locator('.resource-card-rate-wrap')
     const rateTileBoxes = await rateTiles.evaluateAll((elements) =>
@@ -1389,14 +1647,261 @@ test('workload and detail views keep dense identity content readable', async() =
       (await page.locator('.resource-card-footer-label').allTextContents())
         .map((value) => value.trim()),
       [
-        'Allocated / Alloc Rate',
-        'Used / Usage Rate',
-        'Allocated / Alloc Rate',
-        'Used / Usage Rate'
+        'Allocated',
+        'Used',
+        'Allocated',
+        'Used'
       ]
     )
     await assertIconGeometry('.resource-card-icon')
     await assertNoHorizontalOverflow()
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('GPU resource cards stay compact across panel widths and languages', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  let deviceMode = 'hami-core'
+  let longValues = false
+  await page.route('**/v1/gpu?**', async(route) => {
+    const response = await route.fetch()
+    const device = await response.json()
+    return route.fulfill({ json: { ...device, vendor: 'NVIDIA', mode: deviceMode } })
+  })
+  await page.route('**/v1/monitor/query/instant-vector', (route) => {
+    const { query } = route.request().postDataJSON()
+    let value = 100
+    if (query.includes('hami_container_vcore_allocation_known')) value = 0
+    else if (query.includes('hami_container_vmemory_allocated')) value = longValues ? 2048.75 : 512.25
+    else if (query.includes('hami_vmemory_size')) value = 1024.5
+    else if (query.includes('hami_memory_used')) value = 128.25
+    else if (query.includes('hami_memory_size')) value = 2048.5
+    else if (query.includes('hami_container_vcore_allocated')) value = 85.25
+    else if (query.includes('hami_core_util')) value = 64.25
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ data: [{ metric: { device_uuid: 'gpu-1' }, value }] })
+    })
+  })
+  const inspectLayout = () => page.locator('.resource-overview-cards').evaluate((element) => {
+    const rect = (node) => {
+      const { x, y, width, height, right, bottom } = node.getBoundingClientRect()
+      return { x, y, width, height, right, bottom }
+    }
+    const overview = element.closest('.resource-overview-layout')
+    const gauge = overview.querySelector('.resource-slot-card')
+    return {
+      ...rect(element),
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      overview: { ...rect(overview), scrollWidth: overview.scrollWidth },
+      gauge: gauge ? rect(gauge) : null,
+      gaugeContent: gauge ? rect(gauge.querySelector('.resource-slot-gauge')) : null,
+      itemCount: element.children.length,
+      cards: [...element.querySelectorAll('.resource-card')].map((card) => ({
+        ...rect(card),
+        rows: [...card.querySelectorAll('.resource-card-footer-item')].map((row) => {
+          const title = row.querySelector('.resource-card-footer-title')
+          const value = row.querySelector('.resource-card-footer-value')
+          return {
+            ...rect(row),
+            title: rect(title),
+            value: rect(value),
+            titleFits: title.scrollWidth <= title.clientWidth + 1,
+            valueFits: value.scrollWidth <= value.clientWidth + 1,
+          }
+        }),
+      })),
+    }
+  })
+  const toggleSidebar = async(name) => {
+    await page.getByRole('button', { name, exact: true }).click()
+    await page.locator('.page-aside').evaluate(async(element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished))
+    })
+  }
+  const assertLayout = async(context) => {
+    const layout = await inspectLayout()
+    assert.equal(layout.itemCount, 2, `${context}: gauge must not replace either resource card`)
+    assert.equal(layout.cards.length, 2)
+    assert.ok(layout.scrollWidth <= layout.width + 1, `${context}: resource cards overflow`)
+    assert.ok(layout.overview.scrollWidth <= layout.overview.width + 1, `${context}: resource overview overflows`)
+    assert.equal(Boolean(layout.gauge), deviceMode === 'hami-core', `${context}: slot gauge does not follow the sharing mode`)
+    if (!layout.gauge) {
+      assert.ok(Math.abs(layout.x - layout.overview.x) < 1 && Math.abs(layout.width - layout.overview.width) < 1,
+        `${context}: hidden slot gauge leaves an empty column`)
+    } else if (layout.overview.width >= 900) {
+      assert.ok(layout.gauge.right <= layout.x, `${context}: gauge overlaps resource cards`)
+      assert.ok(Math.abs(layout.gauge.y - layout.y) < 1 && Math.abs(layout.gauge.height - layout.height) < 1,
+        `${context}: gauge and resource cards do not align in the wide layout`)
+    } else {
+      assert.ok(layout.gauge.bottom <= layout.y, `${context}: narrow layout does not place the gauge above both cards`)
+      assert.ok(layout.gauge.height <= 150, `${context}: narrow gauge leaves excessive vertical space`)
+      assert.ok(Math.abs(layout.gaugeContent.x + layout.gaugeContent.width / 2 -
+        (layout.overview.x + layout.overview.width / 2)) < 1, `${context}: narrow gauge is not centered`)
+    }
+    const rows = layout.cards.flatMap((card) => card.rows)
+    assert.equal(rows.length, 4)
+    const narrow = layout.overview.width < 320
+    if (!narrow) {
+      assert.ok(Math.max(...rows.map((row) => row.height)) - Math.min(...rows.map((row) => row.height)) < 1,
+        `${context}: metric rows have different heights`)
+    }
+    for (const row of rows) {
+      if (narrow) {
+        assert.ok(row.value.y >= row.title.bottom, `${context}: narrow metric row does not separate its label and reading`)
+      } else {
+        assert.ok(row.height <= 25 && row.value.y < row.title.bottom - 1,
+          `${context}: metric row expands into separate label and value lines`)
+        assert.ok(row.title.right <= row.value.x + 1, `${context}: label overlaps values`)
+      }
+      assert.ok(row.titleFits && row.valueFits, `${context}: metric text is clipped`)
+      assert.ok(row.title.x >= row.x - 1 && row.title.right <= row.right + 1 &&
+        row.value.x >= row.x - 1 && row.value.right <= row.right + 1,
+      `${context}: metric content escapes its row`)
+      assert.ok(row.value.bottom <= row.bottom + 1, `${context}: metric reading escapes its row vertically`)
+    }
+    const [compute, memory] = layout.cards
+    if (page.viewportSize().width >= 1024) {
+      assert.ok(Math.abs(compute.y - memory.y) < 1, `${context}: notebook viewport should keep both cards side by side`)
+    } else {
+      assert.ok(memory.y >= compute.bottom, `${context}: narrow viewport should stack complete cards`)
+    }
+    if (Math.abs(compute.y - memory.y) < 1) {
+      assert.ok(Math.abs(compute.width - memory.width) < 1, `${context}: resource card widths differ`)
+      assert.ok(Math.abs(compute.rows[0].y - memory.rows[0].y) < 1,
+        `${context}: resource card rows are vertically misaligned`)
+    }
+  }
+  try {
+    await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+    await page.locator('.resource-card-footer-metric').filter({ hasText: '512.3 GiB' }).waitFor()
+    assert.equal(
+      (await page.locator('.resource-card-footer-reading').nth(2).textContent()).trim().replace(/\s+/g, ' '),
+      '512.3 GiB (50%)'
+    )
+    await page.locator('.resource-overview-layout .workload-progress-ring').waitFor()
+    for (const language of ['en', 'zh-CN']) {
+      if (language === 'zh-CN') await page.getByRole('button', { name: '中文', exact: true }).click()
+      await page.locator(`html[lang="${language}"]`).waitFor()
+      for (const [width, height] of [[1024, 768], [1280, 800], [1366, 768], [1440, 900], [1920, 1080], [768, 900]]) {
+        await page.setViewportSize({ width, height })
+        await assertLayout(`${language}, ${width}px, expanded`)
+        await toggleSidebar(language === 'en' ? 'Collapse sidebar' : '收起侧栏')
+        await assertLayout(`${language}, ${width}px, collapsed`)
+        await toggleSidebar(language === 'en' ? 'Expand sidebar' : '展开侧栏')
+      }
+      for (const mode of ['hami-core', 'mig']) {
+        deviceMode = mode
+        longValues = true
+        await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+        await page.locator('.resource-card-footer-metric').filter({ hasText: '2048.8 GiB' }).waitFor()
+        assert.equal(
+          (await page.locator('.resource-card-footer-reading').nth(2).textContent()).trim().replace(/\s+/g, ' '),
+          '2048.8 GiB (199.98%)',
+          `${language}, ${mode}: overallocated memory must keep its full value and percentage`
+        )
+        for (const width of [1024, 600]) {
+          await page.setViewportSize({ width, height: 900 })
+          await assertLayout(`${language}, ${mode}, ${width}px, expanded, long values`)
+        }
+        await toggleSidebar(language === 'en' ? 'Collapse sidebar' : '收起侧栏')
+        for (const width of [375, 390]) {
+          await page.setViewportSize({ width, height: 900 })
+          await assertLayout(`${language}, ${mode}, ${width}px, collapsed, long values`)
+        }
+        await toggleSidebar(language === 'en' ? 'Expand sidebar' : '展开侧栏')
+      }
+      deviceMode = 'hami-core'
+      longValues = false
+      await page.setViewportSize({ width: 1366, height: 900 })
+      await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+      await page.locator('.resource-card-footer-metric').filter({ hasText: '512.3 GiB' }).waitFor()
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('device holders omit duplicate shared counts while keeping allocation distribution and workload context', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const shared = { mode: 'hami-core', shape: 'soft', allocatedMem: 4096 }
+  const cases = [
+    { name: 'occupied shared device', ...shared },
+    { name: 'idle shared device', ...shared, empty: true },
+    { name: 'overallocated shared memory', ...shared, allocatedMem: 20_480, warning: '4 GiB over the device memory' },
+    { name: 'MIG device', mode: 'mig', shape: 'mig', allocatedMem: 5120, template: '1g.5gb', migStart: 0, migSize: 1 },
+    { name: 'template device', mode: 'template', shape: 'template', allocatedMem: 4096, template: 'vir01' },
+  ]
+  let current = cases[0]
+  const workload = () => ({
+    name: 'worker', appName: 'example-job', podUid: 'pod-split', namespace: 'research',
+    nodeName: 'node-1', nodeUid: 'node-1', status: 'success', type: 'NVIDIA',
+    deviceIds: ['gpu-1'], allocatedDevices: 1, allocatedCores: 25, allocatedMem: current.allocatedMem,
+    devices: [{
+      id: 'gpu-1', allocationShape: current.shape, allocatedCores: 25, allocatedCoresKnown: true,
+      allocatedMem: current.allocatedMem, template: current.template,
+      migStart: current.migStart, migSize: current.migSize,
+    }],
+  })
+  await page.route('**/v1/gpu?**', (route) => route.fulfill({ json: {
+    uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true,
+    mode: current.mode, vgpuUsed: current.empty ? 0 : 1, vgpuTotal: 10, coreTotal: 100, memoryTotal: 16_384,
+    migProfiles: [{ name: '1g.5gb', placements: [{ start: 0, size: 1 }, { start: 1, size: 1 }] }],
+  } }))
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, {
+    items: current.empty ? [] : [workload()],
+  }))
+  await page.route('**/v1/container?**', (route) => route.fulfill({ json: workload() }))
+  try {
+    for (const scenario of cases) {
+      current = scenario
+      await page.goto(`${target}${basePath}accelerators/gpu-1`, { waitUntil: 'networkidle' })
+      const split = page.locator('.device-split-block .device-split[aria-busy="false"]')
+      await split.waitFor()
+      assert.equal(await split.locator('.split-meter').count(), scenario.mode === 'hami-core' && !scenario.empty ? 2 : 0, `${scenario.name}: shared allocation distribution is missing or idle bars remain`)
+      assert.doesNotMatch(await split.textContent(), /Shared by/, `${scenario.name}: duplicate shared count remains`)
+      assert.equal(await split.locator('.split-row').count(), scenario.empty ? 0 : 1, scenario.name)
+      if (scenario.empty) {
+        assert.equal((await split.locator('.device-split__empty').textContent()).trim(), 'No workload holds this device.')
+        assert.equal(await split.locator('.device-split__head').count(), 0, 'Idle shared device leaves an empty summary header')
+        assert.ok((await split.boundingBox()).height <= 80, 'Idle shared device leaves an oversized empty panel')
+      } else {
+        const holder = split.locator('.split-row')
+        assert.match(await holder.textContent(), /Compute 25%/)
+        assert.match(await holder.locator('.split-row__memory').textContent(), /GiB/)
+        assert.match(await holder.locator('.split-row__link').getAttribute('href'), /workloads\/pod-split\/containers\/worker$/)
+        if (scenario.mode === 'hami-core') {
+          await holder.hover()
+          assert.equal(await split.locator('.split-meter__part.is-active').count(), 2, 'Holder hover no longer identifies its memory and compute shares')
+        }
+      }
+      if (scenario.warning) {
+        assert.equal((await split.locator('.device-split__item.is-warning').textContent()).trim(), scenario.warning)
+      } else if (scenario.mode === 'hami-core') {
+        assert.equal(await split.locator('.device-split__head').count(), 0, `${scenario.name}: empty summary header remains`)
+      }
+      if (scenario.mode === 'mig') {
+        assert.equal(await split.locator('.split-mig').count(), 1, 'MIG placement diagram was removed')
+        assert.match(await split.locator('.device-split__summary').textContent(), /1 instance allocated/)
+        assert.match(await split.locator('.device-split__summary').textContent(), /Room for 1g\.5gb ×1/)
+        assert.equal((await split.locator('.split-row__slot').textContent()).trim(), 'Slice 0')
+      } else if (scenario.mode === 'template') {
+        assert.equal(await split.locator('.split-strip').count(), 1, 'Template partition diagram was removed')
+        assert.match(await split.locator('.device-split__summary').textContent(), /4 GiB of 16 GiB allocated/)
+        assert.match(await split.locator('.split-row__part').textContent(), /vir01/)
+      }
+    }
+    current = cases[0]
+    await page.goto(`${target}${basePath}workloads/pod-split/containers/worker`, { waitUntil: 'networkidle' })
+    const workloadSplit = page.locator('.workload-split .device-split[aria-busy="false"]')
+    await workloadSplit.waitFor()
+    assert.match(await workloadSplit.locator('.device-split__summary').textContent(), /Shared by 1 of 10/)
+    assert.equal(await workloadSplit.locator('.split-meter').count(), 2, 'Workload detail lost its device allocation context')
+    assert.equal(await workloadSplit.locator('.split-row.is-current').count(), 1, 'Current workload is no longer highlighted')
   } finally {
     await page.close()
   }
@@ -1450,6 +1955,97 @@ test('runtime language updates the document and Element Plus services', async() 
     await page.close()
   }
 }, { timeout: 60_000 })
+
+test('compact Top5 switches retain sorted data, keyboard operation and readable bilingual headers', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+  const fixtures = new Map()
+  const fixtureQueries = (nameKey, queries) => Object.values(queries).map((query, index) => {
+    const values = [[7, 31, 18], [42, 9, 26], [14, 6, 21], [1, 33, 12]][index]
+    const data = values.map((value, position) => ({
+      metric: { [nameKey]: `${nameKey === 'container_pod_uuid' ? 'worker:ranking-fixture' : nameKey}-${position}` }, value
+    }))
+    fixtures.set(query, { nameKey, data })
+    return query
+  })
+  const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
+  const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
+  const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
+  const workloadQueries = fixtureQueries('container_pod_uuid', buildTaskAllocationTopQueries())
+  const requests = trackMonitorRequests(page)
+  await page.route('**/v1/monitor/query/instant-vector', (route) => {
+    const fixture = fixtures.get(route.request().postDataJSON()?.query)
+    return fixture ? route.fulfill({ json: { code: 0, data: fixture.data } }) : route.continue()
+  })
+  try {
+    for (const [path, queries] of [
+      ['overview', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
+      ['nodes', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
+      ['accelerators', [deviceQueries.slice(0, 2), deviceQueries.slice(2)]],
+      ['workloads', [countQueries, workloadQueries]]
+    ]) {
+      await page.goto(`${target}${basePath}${path}`, { waitUntil: 'networkidle' })
+      const cards = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') })
+      assert.equal(await cards.count(), 2)
+      const beforeSwitch = requests.length
+      for (const [cardIndex, options] of queries.entries()) {
+        const card = cards.nth(cardIndex)
+        const buttons = card.locator('.tab-top-switch button')
+        assert.equal(await buttons.count(), options.length)
+        for (const [index, query] of options.entries()) {
+          await buttons.nth(index).press(index % 2 ? 'Space' : 'Enter')
+          assert.equal(await buttons.nth(index).getAttribute('aria-pressed'), 'true')
+          const fixture = fixtures.get(query)
+          const expected = fixture.data.slice().sort((left, right) => right.value - left.value)
+          const rows = card.locator('.tab-top-item')
+          await waitUntil(async() => await rows.count() === expected.length, 'Top5 switch did not show its data')
+          assert.deepEqual(await rows.locator('.tab-top-value').evaluateAll((elements) => elements.map((element) => Number(element.textContent.match(/[\d.]+/)[0]))), expected.map((item) => item.value))
+          for (const [position, item] of expected.entries()) {
+            const name = await rows.nth(position).evaluate((element) => element.querySelector('.ranking-workload-link')?.getAttribute('aria-label') || element.querySelector('.tab-top-name')?.getAttribute('title'))
+            assert.ok(name.includes(item.metric[fixture.nameKey].split(':').at(-1)), `${path}: switching metrics changed value-to-name ordering: ${JSON.stringify({ cardIndex, index, position, name, expected: item.metric[fixture.nameKey] })}`)
+          }
+        }
+      }
+      assert.equal(requests.length, beforeSwitch, 'Switching between loaded Top5 views must not issue monitoring requests')
+      const originalLanguage = await page.locator('html').getAttribute('lang')
+      for (const language of [originalLanguage, originalLanguage === 'en' ? 'zh-CN' : 'en']) {
+        if (await page.locator('html').getAttribute('lang') !== language) {
+          await page.getByRole('button', { name: language === 'en' ? 'English' : '中文', exact: true }).click()
+          await page.waitForLoadState('networkidle')
+        }
+        for (const width of [1280, 1366]) {
+          await page.setViewportSize({ width, height: 900 })
+          const headers = await cards.locator('.home-block-header').evaluateAll((elements) => elements.map((header) => {
+            const title = header.querySelector('.title')
+            const group = header.querySelector('.tab-top-switch')
+            const titleBox = title.getBoundingClientRect()
+            const groupBox = group.getBoundingClientRect()
+            const box = header.getBoundingClientRect()
+            return {
+              title: title.textContent.trim(), label: group.getAttribute('aria-label'), height: groupBox.height,
+              titleFits: title.scrollWidth <= title.clientWidth + 1,
+              groupFits: groupBox.left >= box.left && groupBox.right <= box.right + 1,
+              separated: groupBox.top >= titleBox.bottom || titleBox.top >= groupBox.bottom || groupBox.left >= titleBox.right,
+              fontSizes: [...group.querySelectorAll('button')].map((button) => getComputedStyle(button).fontSize)
+            }
+          }))
+          for (const header of headers) {
+            assert.ok(header.titleFits && header.groupFits && header.separated, `${path} ${language} ${width}: clipped Top5 header ${JSON.stringify(header)}`)
+            assert.equal(header.label, header.title)
+            assert.equal(header.height, 30)
+            assert.ok(header.fontSizes.every((size) => size === '13px'))
+          }
+          if (path === 'overview' || path === 'workloads') {
+            await cards.first().scrollIntoViewIfNeeded()
+            await captureTrendScreenshot(page, `p7-${path}-${language}-${width}-compact-top5`)
+          }
+        }
+      }
+    }
+  } finally {
+    await page.close()
+  }
+})
 
 test('workload rankings show Pod and container names independently of list filters', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
@@ -1623,7 +2219,8 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
       0
     )
 
-    const refreshButton = page.locator('.table-toolbar-right .t-button').nth(1)
+    const refreshButton = page.locator('.table-toolbar-right').getByRole('button', { name: 'Refresh', exact: true })
+    const refreshIcon = await refreshButton.locator('.refresh-button__icon').elementHandle()
     enqueue((route) => fulfill(route, [workload('stable-worker')]))
     await refreshButton.click()
     await page.locator('.workload-table .ellipsis-text')
@@ -1652,6 +2249,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
     await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'attached' })
     assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'true')
     assert.equal(await refreshButton.isEnabled(), true)
+    await assertRefreshAnimation(page, refreshButton, refreshIcon)
     await assertTablePosition()
     await page.locator('.workload-table .ellipsis-text')
       .filter({ hasText: 'stable-worker' })
@@ -1714,6 +2312,148 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
     await page.close()
   }
 }, { timeout: 60_000 })
+
+test('detail loading shells follow each page layout and container breakpoints', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const fixtures = [
+    { name: 'node', route: 'nodes/node-1?nodeName=node-1', api: /\/v1\/node\?/, charts: 2, legendCounts: [2, 2], shells: '.node-overview-panel',
+      groups: { '.node-overview-panel': 2, '.node-system-resource-cards > li': 2 } },
+    { name: 'card', route: 'accelerators/gpu-1', api: /\/v1\/gpu\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
+      groups: { '.basic-info-row > .basic-info-card': 5, '.resource-overview-cards > li': 2 } },
+    { name: 'workload', route: 'workloads/pod-1/containers/worker', api: /\/v1\/container\?/,
+      charts: 2, legendCounts: [0, 0], shells: '.basic-info-block, .workload-overview', groups: { '.basic-info-cards > .basic-info-card': 4, '.workload-overview .row-card': 5 } },
+  ]
+  const viewports = [
+    { width: 1920 }, { width: 1440 }, { width: 1366 }, { width: 1280 },
+    { width: 1024 }, { width: 600 }, { width: 1440, collapsed: true }, { width: 375, collapsed: true },
+  ]
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const fixture of fixtures) {
+      await t.test(`${fixture.name} ${locale}`, async() => {
+        const page = await browser.newPage({ locale, viewport: { width: 1440, height: 1000 } })
+        let release
+        const gate = new Promise((resolve) => { release = resolve })
+        const errors = []
+        page.on('pageerror', (error) => errors.push(error.message))
+        await page.route(fixture.api, async(route) => {
+          const response = await route.fetch()
+          await gate
+          await route.fulfill({ response })
+        })
+        const configure = async({ width, collapsed = false }) => {
+          await page.setViewportSize({ width, height: 1000 })
+          const buttonName = locale === 'zh-CN'
+            ? (collapsed ? '收起侧栏' : '展开侧栏')
+            : (collapsed ? 'Collapse sidebar' : 'Expand sidebar')
+          const toggle = page.getByRole('button', { name: buttonName, exact: true })
+          if (await toggle.count()) await toggle.click()
+          await page.locator('.page-aside').evaluate(async(element) => {
+            await Promise.all(element.getAnimations().map((animation) => animation.finished))
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+          })
+          await waitForChartPaint(page)
+        }
+        const geometry = async() => {
+          const groups = {}
+          for (const [selector, count] of Object.entries(fixture.groups)) {
+            const elements = page.locator(`.detail-page-state ${selector}`)
+            assert.equal(await elements.count(), count, `${fixture.name}: ${selector} count`)
+            groups[selector] = await elements.evaluateAll((items) => {
+              const firstTop = items[0].getBoundingClientRect().top
+              return items.map((item) => {
+                const { x, top, width } = item.getBoundingClientRect()
+                return { x, y: top - firstTop, width }
+              })
+            })
+          }
+          const charts = page.locator('.detail-page-state .metric-chart__body')
+          assert.equal(await charts.count(), fixture.charts)
+          if (await page.locator('[data-testid="detail-page-skeleton"]').count()) {
+            const rows = await charts.evaluateAll((items) => items.map((item) => ({
+              count: item.querySelectorAll('.t-skeleton__row').length,
+              width: item.getBoundingClientRect().width,
+            })))
+            assert.deepEqual(rows.map(({ count }) => count), rows.map(({ width }, index) =>
+              1 + (fixture.legendCounts[index] ? (width < 360 ? fixture.legendCounts[index] : 1) : 0)),
+            'Loading charts must reserve the same horizontal or stacked legends as ready charts')
+          }
+          const chartSizes = await charts.evaluateAll((items) => items.map((item) => {
+            const { x, width, height } = item.getBoundingClientRect()
+            return { x, width, height }
+          }))
+          assert.ok(chartSizes.every(({ height }) => height === 250), 'Each loading and ready chart reserves 250px')
+          const shells = await page.locator('.detail-page-state').locator(fixture.shells).evaluateAll((items) => items.map((item) => {
+            const style = getComputedStyle(item)
+            const title = item.querySelector(':scope > .home-block-header > .title')
+            const content = item.querySelector(':scope > .home-block-content')
+            const first = content?.firstElementChild
+            return {
+              title: title?.textContent.trim(),
+              padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+              border: style.borderTopWidth,
+              radius: style.borderTopLeftRadius,
+              titleHeight: title?.getBoundingClientRect().height,
+              titleGap: first && title ? first.getBoundingClientRect().top - title.getBoundingClientRect().bottom : null,
+            }
+          }))
+          assert.equal(shells.length, 2, 'Basic information and resource overview must retain their own panels')
+          for (const shell of shells) {
+            assert.ok(shell.title, `${fixture.name}: a loading panel lost its known section title`)
+            assert.deepEqual(shell.padding, ['12px', '16px', '16px', '16px'], `${fixture.name}: detail panel spacing drifted`)
+            assert.equal(shell.border, '1px')
+            assert.equal(shell.radius, '12px')
+            assert.equal(shell.titleHeight, 28, `${fixture.name}: section title height differs from the detail convention`)
+            assert.equal(shell.titleGap, 8, `${fixture.name}: section title and content must share the existing 8px gap`)
+          }
+          const filterSpacing = await page.locator('.detail-page-state .trend-time-filter').evaluate((element) => {
+            const style = getComputedStyle(element)
+            return [style.marginTop, style.marginBottom]
+          })
+          return { groups, chartSizes, shells, filterSpacing }
+        }
+        try {
+          await page.goto(`${target}${basePath}${fixture.route}`, { waitUntil: 'domcontentloaded' })
+          await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
+          assert.equal(await page.locator('[data-testid="detail-page-skeleton"] [inert]').count(), 1)
+          const pending = []
+          for (const viewport of viewports) {
+            await configure(viewport)
+            pending.push(await geometry())
+            if (viewport.width === 1280) await captureTrendScreenshot(page, `skeleton-${fixture.name}-${locale}-1280`)
+          }
+          release()
+          await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+          for (const [index, viewport] of viewports.entries()) {
+            await configure(viewport)
+            const resolved = await geometry()
+            assert.deepEqual(resolved.shells, pending[index].shells, `${fixture.name} ${locale} ${viewport.width}: known panel geometry changes after loading`)
+            assert.deepEqual(resolved.filterSpacing, pending[index].filterSpacing, `${fixture.name}: time controls change spacing after loading`)
+            for (const [selector, boxes] of Object.entries(resolved.groups)) {
+              for (const [card, box] of boxes.entries()) {
+                // Content can wrap after it arrives; compare row membership rather than guessing its height.
+                assert.equal(box.y === 0, pending[index].groups[selector][card].y === 0,
+                  `${fixture.name} ${viewport.width}: ${selector} ${card} changes row after loading`)
+                for (const field of ['x', 'width']) {
+                  assert.ok(Math.abs(box[field] - pending[index].groups[selector][card][field]) <= 1,
+                    `${fixture.name} ${locale} ${viewport.width}: ${selector} ${card} ${field} differs between loading ${pending[index].groups[selector][card][field]} and ready ${box[field]}`)
+                }
+              }
+            }
+            for (const [chart, box] of resolved.chartSizes.entries()) {
+              assert.ok(Math.abs(box.width - pending[index].chartSizes[chart].width) <= 1,
+                `${fixture.name} ${viewport.width}: chart column width changes after loading`)
+            }
+            if (viewport.width === 1280) await captureTrendScreenshot(page, `ready-${fixture.name}-${locale}-1280`)
+          }
+          assert.deepEqual(errors, [])
+        } finally {
+          release()
+          await page.close()
+        }
+      })
+    }
+  }
+})
 
 test('detail pages expose truthful asynchronous resource states', async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
@@ -1856,6 +2596,1037 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
 test('ECharts runtime renders, updates and handles interaction in Chromium', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   await assertChartRuntime(target)
+}, { timeout: 60_000 })
+
+test('trend pages request each series once on mount and once when refreshing a preset', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route, expectedCount] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US' })
+      await page.clock.install({ time: Date.now() })
+      const requests = trackTrendRequests(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        assert.equal(requests.length, expectedCount, 'Mount must preserve the parent range')
+        const initialEnd = requests[0].range.end
+        await page.clock.setSystemTime(Date.now() + 61_000)
+        await selectTrendRange(page, '1h')
+        await page.waitForLoadState('networkidle')
+        assert.equal(requests.length, expectedCount * 2, 'Reselecting a preset must publish once')
+        assert.notEqual(requests.at(-1).range.end, initialEnd)
+
+        await selectTrendRange(page, '3h')
+        await page.waitForLoadState('networkidle')
+        assert.equal(requests.length, expectedCount * 3, 'Changing presets must publish once')
+
+        const selected = trendRangeButton(page, '3h')
+        for (const [index, key] of ['Enter', 'Space'].entries()) {
+          await page.clock.setSystemTime(Date.now() + 120_000 + index * 61_000)
+          await selected.press(key)
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, expectedCount * (4 + index), `${key} must refresh once`)
+        }
+      } finally {
+        await page.close()
+      }
+    })
+  }
+}, { timeout: 60_000 })
+
+test('all trend pages send the same UTC seconds across browser time zones', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const timezoneId of ['UTC', 'Asia/Shanghai', 'America/New_York']) {
+    for (const [route, seriesCount] of trendPages) {
+      await t.test(`${timezoneId}: ${route}`, async() => {
+        const page = await browser.newPage({ locale: 'en-US', timezoneId })
+        await page.clock.setFixedTime(new Date('2026-10-07T12:00:00.987Z'))
+        const requests = trackTrendRequests(page)
+        try {
+          await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+          assert.equal(requests.length, seriesCount)
+          for (const request of requests) {
+            assert.deepEqual(request.range, { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' })
+          }
+          await page.clock.setFixedTime(new Date('2026-10-07T12:01:01.999Z'))
+          await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, seriesCount * 2)
+          for (const request of requests.slice(seriesCount)) {
+            assert.deepEqual(request.range, { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' })
+          }
+        } finally {
+          await page.close()
+        }
+      })
+    }
+  }
+})
+
+test('local custom ranges preserve UTC instants through refresh and cancellation in standard and daylight time', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const cases = [
+    { timezoneId: 'UTC', now: '2026-10-07T12:00:00Z', local: ['2026-10-06 10:12:34', '2026-10-06 11:23:45'], utc: ['2026-10-06T10:12:34Z', '2026-10-06T11:23:45Z'] },
+    { timezoneId: 'Asia/Shanghai', now: '2026-10-07T12:00:00Z', local: ['2026-10-06 18:12:34', '2026-10-06 19:23:45'], utc: ['2026-10-06T10:12:34Z', '2026-10-06T11:23:45Z'] },
+    { timezoneId: 'America/New_York', now: '2026-10-07T12:00:00Z', local: ['2026-10-06 06:12:34', '2026-10-06 07:23:45'], utc: ['2026-10-06T10:12:34Z', '2026-10-06T11:23:45Z'] },
+    { timezoneId: 'America/New_York', now: '2026-01-07T12:00:00Z', local: ['2026-01-06 05:12:34', '2026-01-06 06:23:45'], utc: ['2026-01-06T10:12:34Z', '2026-01-06T11:23:45Z'] },
+    { timezoneId: 'America/New_York', now: '2026-03-09T12:00:00Z', local: ['2026-03-08 01:30:00', '2026-03-08 03:30:00'], utc: ['2026-03-08T06:30:00Z', '2026-03-08T07:30:00Z'] }
+  ]
+  // Overview and workload exercise both active range builders. Other trend pages
+  // share the overview hook and are covered by the time-zone matrix above.
+  for (const fixture of cases) {
+    for (const [route, seriesCount] of [trendPages[0], trendPages[3]]) {
+      await t.test(`${fixture.timezoneId} ${fixture.now}: ${route}`, async() => {
+        const page = await browser.newPage({ locale: 'en-US', timezoneId: fixture.timezoneId })
+        await page.clock.install({ time: new Date(fixture.now) })
+        const requests = trackTrendRequests(page)
+        try {
+          await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+          await selectTrendRange(page, 'custom')
+          const filter = page.locator('.trend-time-filter')
+          const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+          const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+          await start.click()
+          await page.locator('.trend-time-filter-popup:visible').getByText(`Local time · ${fixture.timezoneId}`, { exact: true }).waitFor()
+          await start.fill(fixture.local[0])
+          await end.click()
+          await end.fill(fixture.local[1])
+          await end.press('Enter')
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, seriesCount * 2)
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], fixture.local)
+          for (const request of requests.slice(seriesCount)) {
+            assert.deepEqual([request.range.start, request.range.end], fixture.utc)
+          }
+          await start.click()
+          await start.fill('2025-01-01 01:02:03')
+          await page.locator(route === 'overview' ? '.home-page-title' : '.layout-title').first().click()
+          await waitUntil(async() => await start.inputValue() === fixture.local[0], 'Leaving a local draft must restore the applied range')
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], fixture.local)
+          assert.equal(requests.length, seriesCount * 2, 'Canceling a local draft must not query')
+          await page.clock.setSystemTime(new Date(new Date(fixture.now).getTime() + 61_999))
+          await start.click()
+          await start.fill('2025-01-01 01:02:03')
+          await filter.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+          await page.waitForLoadState('networkidle')
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], fixture.local)
+          assert.equal(requests.length, seriesCount * 3, 'Custom refresh must discard the draft and query once')
+          for (const request of requests.slice(seriesCount * 2)) {
+            assert.deepEqual([request.range.start, request.range.end], fixture.utc)
+          }
+        } finally {
+          await page.close()
+        }
+      })
+    }
+  }
+})
+
+test('explicit trend refresh advances relative ranges once and blocks repeat requests on every trend page', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route, seriesCount] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+      await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+      const requests = trackTrendRequests(page)
+      const held = []
+      let hold = true
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const refresh = page.getByRole('button', { name: 'Refresh trends', exact: true })
+        const refreshIcon = await refresh.locator('.refresh-button__icon').elementHandle()
+        assert.equal(requests.length, seriesCount)
+        assert.equal(await refresh.isEnabled(), true)
+        await page.route('**/v1/monitor/query/range-vector', async(route) => {
+          if (hold) await new Promise((release) => held.push(release))
+          await route.continue()
+        })
+        await page.clock.setSystemTime(new Date('2026-10-07T12:01:01Z'))
+        await refresh.click()
+        await waitUntil(() => held.length === seriesCount, 'Refresh did not start exactly one batch of trend requests')
+        assert.equal(requests.length, seriesCount * 2)
+        assert.equal(await refresh.isDisabled(), true, 'Refresh must be disabled while trend requests are pending')
+        assert.equal(await refresh.getAttribute('aria-busy'), 'true')
+        if (route === 'overview') await assertRefreshAnimation(page, refresh, refreshIcon)
+        for (const request of requests.slice(seriesCount)) {
+          assert.deepEqual([request.range.start, request.range.end], ['2026-10-07T11:01:01Z', '2026-10-07T12:01:01Z'])
+        }
+        const bounds = await refresh.boundingBox()
+        await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        await page.keyboard.press('Enter')
+        await page.keyboard.press('Space')
+        assert.equal(requests.length, seriesCount * 2, 'Mouse and keyboard activation while busy must not start another batch')
+        hold = false
+        held.splice(0).forEach((release) => release())
+        await waitUntil(() => refresh.isEnabled(), 'Refresh did not become available after every trend request completed')
+        await page.waitForLoadState('networkidle')
+        assert.equal(await refresh.isEnabled(), true)
+        for (const [index, key] of ['Enter', 'Space'].entries()) {
+          await page.clock.setSystemTime(new Date(`2026-10-07T12:0${index + 2}:02Z`))
+          if (key === 'Enter') {
+            await refresh.focus()
+            await page.keyboard.down(key)
+            await waitUntil(() => requests.length === seriesCount * (3 + index), 'Keyboard refresh did not request one batch')
+            await waitUntil(() => refresh.isEnabled(), 'The first Enter refresh must finish before testing key repeat')
+            await page.waitForLoadState('networkidle')
+            await refresh.focus()
+            await page.keyboard.down(key)
+            await page.keyboard.up(key)
+          } else {
+            await refresh.press(key)
+          }
+          await page.waitForLoadState('networkidle')
+          assert.equal(requests.length, seriesCount * (3 + index), `${key} must refresh exactly once, including a held key after the response`)
+          assert.equal(requests.at(-1).range.end, `2026-10-07T12:0${index + 2}:02Z`)
+          assert.equal(await trendRangeButton(page, '1h').getAttribute('aria-pressed'), 'true')
+        }
+      } finally {
+        hold = false
+        held.splice(0).forEach((release) => release())
+        await page.close()
+      }
+    })
+  }
+})
+
+test('explicit custom refresh cancels drafts, preserves applied dates and can retry after failure', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    const refresh = filter.getByRole('button', { name: 'Refresh trends', exact: true })
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const applied = ['2026-10-03 10:12:34', '2026-10-06 11:23:45']
+    await start.click()
+    await start.fill(applied[0])
+    await end.click()
+    await end.fill(applied[1])
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 10)
+    for (const width of [960, 1000, 1024]) {
+      await filter.evaluate(async(element, width) => {
+        element.style.width = `${width}px`
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }, width)
+      assert.ok(await customTimestampFieldsFit(filter), `Full timestamps must remain readable at the ${width}px container boundary`)
+      assert.equal(requests.length, 10, 'Resizing custom controls must not query')
+    }
+    await filter.evaluate((element) => { element.style.width = '' })
+
+    await page.clock.setSystemTime(new Date('2026-10-07T12:05:00Z'))
+    await start.click()
+    await start.fill('2026-10-02 01:02:03')
+    await refresh.click()
+    await page.locator('.trend-time-filter-popup:visible').waitFor({ state: 'hidden' })
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 15, 'Refreshing a custom range must request once without applying the draft')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+    assert.equal(await trendRangeButton(page, 'custom').getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.locator('.t-message').count(), 0)
+    for (const request of requests.slice(10)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
+
+    let fail = true
+    await page.route('**/v1/monitor/query/range-vector', (route) => fail
+      ? route.fulfill({ status: 500, body: 'injected refresh failure' })
+      : route.continue())
+    await refresh.press('Enter')
+    await page.locator('.metric-chart__refresh--error').first().waitFor()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 20)
+    assert.equal(await refresh.isEnabled(), true, 'A failed refresh must allow another attempt')
+    fail = false
+    await refresh.press('Space')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 25, 'Retry must request exactly one batch')
+    assert.equal(await page.locator('.metric-chart__refresh--error').count(), 0)
+    await waitUntil(() => refresh.isEnabled(), 'A completed retry must enable refresh again')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+    for (const request of requests.slice(15)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
+    await captureTrendScreenshot(page, 'p7-custom-refresh-applied')
+  } finally {
+    await page.close()
+  }
+})
+
+test('responsive trend controls fit all trend pages without fetching on resize, language or sidebar changes', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route, expectedCount] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+      const requests = trackTrendRequests(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const filter = page.locator('.trend-time-filter')
+        for (const language of ['en', 'zh-CN']) {
+          if (language === 'zh-CN') await page.getByRole('button', { name: '中文', exact: true }).click()
+          await page.locator(`html[lang="${language}"]`).waitFor()
+          for (const width of [1280, 1366, 1440, 1920]) {
+            await page.setViewportSize({ width, height: 900 })
+            for (const collapsed of [false, true]) {
+              if (collapsed) await page.getByRole('button', { name: language === 'en' ? 'Collapse sidebar' : '收起侧栏', exact: true }).click()
+              await page.locator('.page-aside').evaluate(async(element) => {
+                await Promise.all(element.getAnimations().map((animation) => animation.finished))
+              })
+              const context = `${route}, ${language}, ${width}px, ${collapsed ? 'collapsed' : 'expanded'}`
+              const layout = await filter.evaluate((element) => {
+                const rect = (node) => {
+                  const { x, y, width, height, right, bottom } = node.getBoundingClientRect()
+                  return { x, y, width, height, right, bottom }
+                }
+                const group = element.querySelector('.trend-time-filter-presets')
+                const select = element.querySelector('.trend-time-filter-select')
+                const visible = (node) => node && node.getBoundingClientRect().width > 0
+                const buttons = [...group.querySelectorAll('.segmented-control__option')]
+                const selected = group.querySelector('[aria-pressed="true"]')
+                const indicator = group.querySelector('.segmented-control__indicator')
+                const refresh = element.querySelector('.trend-time-filter-refresh')
+                return {
+                  ...rect(element), clientWidth: element.clientWidth, scrollWidth: element.scrollWidth,
+                  group: { ...rect(group), visible: visible(group), background: getComputedStyle(group).backgroundColor },
+                  selectVisible: visible(select),
+                  refresh: { ...rect(refresh), label: refresh.getAttribute('aria-label') },
+                  buttons: buttons.map((button) => ({ ...rect(button), fontSize: getComputedStyle(button).fontSize, labelFits: button.scrollWidth <= button.clientWidth + 1 })),
+                  selectedBackground: getComputedStyle(indicator).backgroundColor,
+                  selected: buttons.indexOf(selected)
+                }
+              })
+              assert.ok(layout.scrollWidth <= layout.clientWidth + 1 && layout.right <= width + 1, `${context}: selector overflows`)
+              assert.notEqual(layout.group.visible, layout.selectVisible, `${context}: exactly one preset entry must be visible`)
+              assert.equal(layout.selected, 0)
+              assert.ok(layout.refresh.width >= 28 && Math.abs(layout.refresh.right - layout.right) <= 1, `${context}: refresh must remain at the right edge`)
+              assert.equal(layout.refresh.label, language === 'en' ? 'Refresh trends' : '刷新趋势')
+              if (layout.group.visible) {
+                assert.equal(layout.buttons.length, 7)
+                assert.notEqual(layout.group.background, 'rgba(0, 0, 0, 0)', `${context}: presets need a filled background`)
+                assert.notEqual(layout.group.background, layout.selectedBackground, `${context}: selected range needs a distinct fill`)
+                assert.equal(layout.selectedBackground, 'rgb(255, 255, 255)')
+                for (const button of layout.buttons) {
+                  assert.ok(button.x >= layout.x - 1 && button.right <= layout.right + 1 && button.labelFits, `${context}: a preset is clipped or requires horizontal scrolling`)
+                  assert.ok(button.height >= 24 && button.height <= 32, `${context}: presets must retain the shared segmented-control height`)
+                  assert.equal(button.fontSize, '14px', `${context}: labels must not shrink to fit`)
+                }
+              }
+              assert.equal(requests.length, expectedCount, `${context}: presentation changes must not fetch trends`)
+              if (route === 'overview' && ((language === 'en' && width === 1280 && !collapsed) || (language === 'zh-CN' && width === 1920 && collapsed))) {
+                await captureTrendScreenshot(page, `p7-${language}-${width}-${collapsed ? 'collapsed' : 'expanded'}`)
+              }
+              if (collapsed) await page.getByRole('button', { name: language === 'en' ? 'Expand sidebar' : '展开侧栏', exact: true }).click()
+            }
+          }
+        }
+        await page.waitForLoadState('networkidle')
+        assert.equal(requests.length, expectedCount, 'The complete layout matrix must retain the applied range')
+      } finally {
+        await page.close()
+      }
+    })
+  }
+})
+
+test('narrow trend presets preserve selection, keyboard focus and exactly one refresh per activation', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    const selected = trendRangeButton(page, '1h')
+    await selected.focus()
+    await filter.evaluate((element) => { element.style.width = '600px' })
+    const narrow = filter.locator('.trend-time-filter-select')
+    const input = narrow.getByRole('textbox', { name: 'Time range', exact: true })
+    await narrow.waitFor()
+    await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Narrow mode must retain focus on the visible preset entry')
+    assert.equal(requests.length, 5)
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await selected.waitFor()
+    await waitUntil(async() => await selected.evaluate((element) => element === document.activeElement || element.contains(document.activeElement)), 'Wide mode must return focus to the selected preset')
+    assert.equal(requests.length, 5)
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    await input.press('Enter')
+    const options = page.locator('.t-select-option:visible')
+    await options.first().waitFor()
+    await stablePopupBounds(page.locator('.t-popup:visible').filter({ has: page.locator('.t-select-option') }))
+    await captureTrendScreenshot(page, 'p7-en-360-preset-menu')
+    assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), (await filter.locator('.segmented-control__option').allTextContents()).map((label) => label.trim()))
+    assert.equal(requests.length, 5, 'Opening presets must not refresh')
+    await input.press('Escape')
+    await options.first().waitFor({ state: 'hidden' })
+    assert.equal(requests.length, 5, 'Escape must not refresh')
+    assert.ok(await narrow.evaluate((element) => element.contains(document.activeElement)))
+
+    await input.press('Space')
+    await options.first().waitFor()
+    for (let index = 0; index < 4; index += 1) await input.press('ArrowDown')
+    await input.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 10, 'A keyboard selection must publish once')
+    assert.equal(new Date(requests.at(-1).range.end) - new Date(requests.at(-1).range.start), 24 * 60 * 60 * 1000)
+
+    const initialEnd = requests.at(-1).range.end
+    await page.clock.setSystemTime(new Date('2026-10-07T12:01:01Z'))
+    await selectTrendRange(page, '24h')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 15, 'Reselecting the current dropdown item must refresh once')
+    assert.notEqual(requests.at(-1).range.end, initialEnd)
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await trendRangeButton(page, '24h').waitFor()
+    await waitUntil(async() => await trendRangeButton(page, '24h').evaluate((element) => element === document.activeElement), 'Returning to wide mode must focus the current non-default preset')
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Returning to narrow mode must preserve selector focus')
+    await narrow.click()
+    await options.first().waitFor()
+    await input.press('Tab')
+    await page.keyboard.press('Tab')
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await options.first().waitFor({ state: 'hidden' })
+    assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Closing a hidden dropdown after Tab must not pull focus back')
+    assert.equal(requests.length, 15, 'Hiding an open dropdown must not select an option')
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    await narrow.click()
+    await options.first().waitFor()
+    await page.locator('.home-page-title').click()
+    await options.first().waitFor({ state: 'hidden' })
+    assert.equal(requests.length, 15, 'Outside dismissal must not refresh')
+    await filter.evaluate((element) => { element.style.width = '900px' })
+    await trendRangeButton(page, '24h').waitFor()
+    assert.equal(await trendRangeButton(page, '24h').getAttribute('aria-pressed'), 'true')
+    assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Resizing after clicking the page title must not steal focus back')
+    assert.equal(requests.length, 15, 'Returning to wide mode must preserve the selected range')
+    await captureTrendScreenshot(page, 'p7-preset-keyboard-wide')
+    await filter.evaluate((element) => { element.style.width = '360px' })
+    await narrow.waitFor()
+    const refresh = filter.getByRole('button', { name: 'Refresh trends', exact: true })
+    const [filterBounds, refreshBounds] = await Promise.all([filter.boundingBox(), refresh.boundingBox()])
+    assert.ok(Math.abs(refreshBounds.x + refreshBounds.width - filterBounds.x - filterBounds.width) <= 1, 'Compact refresh must stay at the right edge')
+    await page.clock.setSystemTime(new Date('2026-10-07T12:02:02Z'))
+    await refresh.click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 20, 'Compact refresh must publish exactly once')
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-06T12:02:02Z', '2026-10-07T12:02:02Z'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('custom trend drafts survive resizing and narrow calendars keep confirmation reachable', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 }, timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    let start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    let end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const applied = [await start.inputValue(), await end.inputValue()]
+    await start.click()
+    const startElement = await start.elementHandle()
+    const rawDraft = '2026-10-03 10:12:'
+    await start.fill(rawDraft)
+    for (const width of [600, 360, 900, 360]) {
+      await filter.evaluate(async(element, width) => {
+        element.style.width = `${width}px`
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }, width)
+      assert.ok(await startElement.evaluate((element) => element.isConnected && element === document.activeElement), 'Resizing must keep the same focused date input')
+      assert.equal(await start.inputValue(), rawDraft, 'Resizing must retain incomplete text exactly')
+      assert.equal(await end.inputValue(), applied[1])
+      assert.equal(requests.length, 5)
+    }
+    await page.getByRole('button', { name: 'Switch to 中文', exact: true }).click()
+    await page.locator('html[lang="zh-CN"]').waitFor()
+    start = filter.getByRole('textbox', { name: '开始时间', exact: true })
+    end = filter.getByRole('textbox', { name: '结束时间', exact: true })
+    await waitUntil(async() => await start.inputValue() === applied[0], 'Clicking the language button must cancel an unconfirmed draft')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+    assert.equal(requests.length, 5, 'Changing language must not apply the canceled draft')
+
+    await start.click()
+    await start.fill(rawDraft)
+    await filter.evaluate((element) => { element.style.width = '100%' })
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    for (const width of [390, 1440, 375]) {
+      await page.setViewportSize({ width, height: 844 })
+      await stablePopupBounds(panel)
+      assert.equal(await start.inputValue(), rawDraft, 'Changing calendar height must not turn scroll anchoring into a time edit')
+      assert.ok(await start.evaluate((element) => element === document.activeElement), 'Viewport changes must not steal date-input focus')
+    }
+    const selected = ['2026-10-03 10:12:34', '2026-10-06 11:23:45']
+    await start.fill(selected[0])
+    await end.click()
+    await end.fill(selected[1])
+    await panel.waitFor()
+    await panel.getByText('本地时间 · UTC', { exact: true }).waitFor()
+    const confirm = panel.getByRole('button', { name: '确定', exact: true })
+    for (const [width, height] of [[390, 844], [375, 667]]) {
+      await page.setViewportSize({ width, height })
+      const bounds = await stablePopupBounds(panel)
+      await captureTrendScreenshot(page, `p7-zh-${width}-calendar-bounds`)
+      assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= height + 1, `Calendar leaves ${width}x${height} viewport: ${JSON.stringify(bounds)}`)
+      await confirm.scrollIntoViewIfNeeded()
+      assert.ok(await confirm.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        return rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight &&
+          element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+      }), `Calendar confirmation must be visible and unobstructed at ${width}x${height}`)
+    }
+    assert.equal(requests.length, 5, 'Narrow calendar drafts must not submit early')
+    await confirm.click()
+    await panel.waitFor({ state: 'hidden' })
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
+    assert.equal(requests.length, 10, 'Narrow confirmation must apply exactly once')
+    assert.ok(await end.evaluate((element) => element === document.activeElement))
+    await waitUntil(async() => await end.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor) === 'rgb(242, 243, 255)', 'Narrow focused input must retain the accepted light-blue fill')
+    assert.ok(await customTimestampFieldsFit(filter), 'Narrow fields must show complete timestamps without horizontal scrolling')
+    await captureTrendScreenshot(page, 'p7-zh-375-custom-applied')
+
+    await end.click()
+    await panel.waitFor()
+    const beforeWheel = await end.inputValue()
+    await panel.locator('.t-time-picker__panel-body-scroll').nth(1).hover()
+    await page.mouse.wheel(0, 60)
+    await waitUntil(async() => await end.inputValue() !== beforeWheel, 'Real mouse wheel must still edit the time')
+    const afterWheel = await end.inputValue()
+    assert.ok(Number.isFinite(new Date(afterWheel).getTime()))
+    assert.equal(requests.length, 10, 'Wheel editing must not submit before confirmation')
+    await confirm.click()
+    await waitUntil(() => requests.length === 15, 'Confirming a wheel edit must fetch exactly once')
+    assert.equal(requests.at(-1).range.end, (await localRangeAsUTC(page, [afterWheel]))[0])
+  } finally {
+    await page.close()
+  }
+})
+
+test('workload status segments keep same-selection no-op behavior when shared controls emit activation', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const requests = []
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/v1/workloads')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'networkidle' })
+    const segments = page.locator('.workload-status-filter')
+    const selected = segments.locator('[aria-pressed="true"]')
+    const initialCount = requests.length
+    assert.ok(initialCount > 0)
+    await selected.click()
+    await selected.press('Enter')
+    await selected.press('Space')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, initialCount, 'Activating the current workload status must remain a no-op')
+    const next = segments.locator('[aria-pressed="false"]').first()
+    await next.click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, initialCount + 1, 'Changing the workload status must request once')
+    assert.ok(requests.at(-1).filters.status)
+    await segments.locator('[aria-pressed="true"]').click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, initialCount + 1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('custom trend dates apply exact input and restore the applied range on cancellation or invalid input', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 }, timezoneId: 'America/Argentina/Buenos_Aires' })
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    assert.equal(await start.getAttribute('aria-label'), 'Start Time')
+    assert.equal(await end.getAttribute('aria-label'), 'End Time')
+    assert.ok(await start.inputValue())
+    assert.ok(await end.inputValue())
+    assert.equal(requests.length, 5)
+
+    const inputBackground = (input) => input.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor)
+    const title = page.locator('.home-page-title')
+    const restingBackgrounds = await Promise.all([inputBackground(start), inputBackground(end)])
+    for (const [index, input] of [start, end].entries()) {
+      await input.hover()
+      await waitUntil(async() => await inputBackground(input) === 'rgb(242, 243, 255)', 'An enabled date input must use a light brand hover background')
+      await title.hover()
+      await waitUntil(async() => await inputBackground(input) === restingBackgrounds[index], 'Leaving an unfocused date input must restore its background')
+    }
+    await start.click()
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    const timezone = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)
+    const timezoneNote = panel.getByText(`Local time · ${timezone}`, { exact: true })
+    await timezoneNote.waitFor()
+    await page.setViewportSize({ width: 375, height: 667 })
+    await stablePopupBounds(panel)
+    const [noteBounds, confirmBounds] = await Promise.all([
+      timezoneNote.boundingBox(),
+      panel.getByRole('button', { name: 'Confirm', exact: true }).boundingBox()
+    ])
+    assert.ok(noteBounds.x >= 0 && noteBounds.y >= 0 && noteBounds.x + noteBounds.width <= 375 && noteBounds.y + noteBounds.height <= 667, 'The complete long timezone note must remain inside the narrow viewport')
+    assert.ok(noteBounds.x + noteBounds.width <= confirmBounds.x || noteBounds.y + noteBounds.height <= confirmBounds.y, 'The timezone note must not overlap calendar confirmation')
+    assert.ok(await panel.getByRole('button', { name: 'Confirm', exact: true }).evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight &&
+        element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
+    }), 'Long timezone text must leave confirmation visible and unobstructed')
+    await page.setViewportSize({ width: 1366, height: 900 })
+    await stablePopupBounds(panel)
+    await waitUntil(async() => await inputBackground(start) === 'rgb(242, 243, 255)', 'The focused start input must not look disabled')
+    const originalStart = await start.inputValue()
+    await start.press('ControlOrMeta+A')
+    assert.deepEqual(await start.evaluate((element) => [element.selectionStart, element.selectionEnd]), [0, originalStart.length])
+    await start.press('ArrowRight')
+    await start.press('Backspace')
+    await start.press(originalStart.at(-1))
+    assert.equal(await start.inputValue(), originalStart, 'Keyboard editing must preserve the entered timestamp')
+    await title.hover()
+    await start.press('Tab')
+    assert.ok(await end.evaluate((element) => element === document.activeElement), 'Tab must move from start to end')
+    await waitUntil(async() => await inputBackground(end) === 'rgb(242, 243, 255)', 'The focused end input must not look disabled')
+    await end.press('Tab')
+    assert.ok(await filter.getByRole('button', { name: 'Refresh trends', exact: true }).evaluate((element) => element === document.activeElement), 'Tab from the end input must go directly to refresh')
+    await title.click()
+    await waitUntil(async() => JSON.stringify(await Promise.all([inputBackground(start), inputBackground(end)])) === JSON.stringify(restingBackgrounds), 'Blurring the picker must restore both input backgrounds')
+    assert.equal(requests.length, 5, 'Hover, focus, selection, and unchanged typing must not request another range')
+
+    await start.click()
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 5, 'Confirming unchanged visible seconds must not refetch')
+
+    const selected = ['2025-09-01 10:12:34', '2025-09-01 11:23:45']
+    await start.click()
+    await start.fill(selected[0])
+    await end.click()
+    await end.fill(selected[1])
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+    assert.equal(await page.locator('.t-message').count(), 0, 'Valid Enter must not show a warning')
+    assert.deepEqual(
+      [requests.at(-1).range.start, requests.at(-1).range.end],
+      ['2025-09-01T13:12:34Z', '2025-09-01T14:23:45Z']
+    )
+
+    await start.click()
+    await start.fill('2025-08-01 01:02:03')
+    await page.locator('.home-page-title').click()
+    await waitUntil(async() => await start.inputValue() === selected[0], 'Cancel did not restore the applied start')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+
+    await start.fill('')
+    await page.locator('.home-page-title').click()
+    assert.equal(await start.inputValue(), selected[0])
+    assert.equal(requests.length, 10)
+
+    await end.fill('2999-01-01 00:00:00')
+    await end.press('Enter')
+    await page.locator('.t-message').filter({ hasText: 'End time cannot be in the future. The previous range has been restored.' }).waitFor()
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+
+    await start.fill('2025-10-01 00:00:00')
+    await end.press('Enter')
+    await page.locator('.t-message').filter({ hasText: 'End time must be after start time. The previous range has been restored.' }).waitFor()
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(requests.length, 10)
+
+    await selectTrendRange(page, '3h')
+    await page.waitForLoadState('networkidle')
+    assert.equal(await page.locator('.t-message').count(), 0, 'Changing presets must clear the range warning')
+    assert.equal(await filter.getByRole('status').textContent(), '')
+    await selectTrendRange(page, 'custom')
+    assert.deepEqual(
+      await localRangeAsUTC(page, [await start.inputValue(), await end.inputValue()]),
+      [requests.at(-1).range.start, requests.at(-1).range.end]
+    )
+    assert.equal(requests.length, 15)
+
+    for (const locale of ['en', 'zh-CN']) {
+      if (locale === 'zh-CN') {
+        await page.getByRole('button', { name: '中文', exact: true }).click()
+        await page.locator('html[lang="zh-CN"]').waitFor()
+        assert.equal(await filter.getByRole('textbox', { name: '开始时间', exact: true }).getAttribute('aria-label'), '开始时间')
+        assert.equal(await filter.getByRole('textbox', { name: '结束时间', exact: true }).getAttribute('aria-label'), '结束时间')
+      }
+      for (const width of [1280, 1366, 1440]) {
+        await page.setViewportSize({ width, height: 900 })
+        const dimensions = await filter.evaluate((element) => ({
+          width: element.clientWidth,
+          content: element.scrollWidth,
+          right: element.getBoundingClientRect().right
+        }))
+        assert.ok(dimensions.content <= dimensions.width + 1, `${locale} filter overflows at ${width}`)
+        assert.ok(dimensions.right <= width, `${locale} filter leaves the viewport at ${width}`)
+      }
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('custom trend Enter rejects empty and malformed input with one warning and preserves keyboard cancellation', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const name of ['empty start', 'empty end', 'malformed start']) {
+    await t.test(name, async() => {
+      const page = await browser.newPage({ locale: 'en-US' })
+      await page.clock.install({ time: new Date('2026-10-06T12:00:00.123Z') })
+      const requests = []
+      page.on('request', (request) => {
+        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+        const filter = page.locator('.trend-time-filter')
+        await selectTrendRange(page, 'custom')
+        const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+        const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+        const applied = [await start.inputValue(), await end.inputValue()]
+        assert.equal(requests.length, 5)
+        await page.clock.setSystemTime(new Date('2026-10-06T12:01:01.123Z'))
+
+        const input = name === 'empty end' ? end : start
+        await input.click()
+        const panel = page.locator('.t-date-range-picker__panel-container:visible')
+        await panel.waitFor()
+        await input.fill(name === 'malformed start' ? 'not-a-date' : '')
+        await input.press('Enter')
+        await panel.waitFor({ state: 'hidden' })
+        await page.waitForLoadState('networkidle')
+        assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+        assert.equal(requests.length, 5, 'Invalid Enter must not change the chart range')
+        const warning = page.locator('.t-message')
+        assert.equal(await warning.count(), 1, 'One Enter must show exactly one warning')
+        assert.equal(await warning.textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
+        assert.equal(await filter.getByRole('status').textContent(), await warning.textContent())
+        assert.equal(await filter.getByRole('status').getAttribute('aria-atomic'), 'true')
+        assert.equal(await filter.locator('.t-is-error, [aria-invalid="true"]').count(), 0, 'Restored valid inputs must not have error styling')
+
+        if (name === 'malformed start') {
+          await start.fill('2025-08-01 01:02:03')
+          await start.press('Tab')
+          await end.press('Tab')
+          await waitUntil(async() => await start.inputValue() === applied[0], 'Tabbing away after malformed Enter must discard the next draft')
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+          assert.equal(await panel.count(), 0)
+          assert.equal(requests.length, 5)
+        }
+      } finally {
+        await page.close()
+      }
+    })
+  }
+}, { timeout: 60_000 })
+
+test('custom trend warnings preserve aligned controls and chart position in both languages', async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    await t.test(locale, async() => {
+      const page = await browser.newPage({ locale, viewport: { width: 1440, height: 900 } })
+      const requests = []
+      page.on('request', (request) => {
+        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+        const filter = page.locator('.trend-time-filter')
+        const chinese = locale === 'zh-CN'
+        await selectTrendRange(page, 'custom')
+        const start = filter.getByRole('textbox', { name: chinese ? '开始时间' : 'Start Time', exact: true })
+        const end = filter.getByRole('textbox', { name: chinese ? '结束时间' : 'End Time', exact: true })
+        const applied = [await start.inputValue(), await end.inputValue()]
+        const geometry = () => filter.evaluate((element) => {
+          const rect = (target) => {
+            const bounds = target.getBoundingClientRect()
+            return { top: bounds.top + window.scrollY, height: bounds.height }
+          }
+          return {
+            filter: rect(element),
+            radio: rect(element.querySelector('.trend-time-filter-presets')),
+            picker: rect(element.querySelector('.trend-time-filter-custom')),
+            chart: rect(document.querySelector('.home-bottom-row')),
+            width: element.clientWidth,
+            content: element.scrollWidth,
+            right: element.getBoundingClientRect().right
+          }
+        })
+        for (const width of [1280, 1366, 1440]) {
+          await page.setViewportSize({ width, height: 900 })
+          // ECharts throttles resizing; measure feedback after the surrounding layout settles.
+          let previousGeometry
+          let stableSince = Date.now()
+          const before = await waitUntil(async() => {
+            const current = await geometry()
+            const currentGeometry = JSON.stringify(current)
+            if (currentGeometry !== previousGeometry) {
+              previousGeometry = currentGeometry
+              stableSince = Date.now()
+            }
+            return Date.now() - stableSince >= 200 ? current : false
+          }, `${locale} layout did not settle at ${width}`)
+          if (Math.abs(before.radio.top - before.picker.top) <= 1) {
+            assert.ok(Math.abs(before.radio.height - before.picker.height) <= 1, `${locale} control heights differ at ${width}`)
+          } else {
+            assert.ok(before.picker.top >= before.radio.top + before.radio.height, `${locale} wrapped picker overlaps presets at ${width}`)
+          }
+          assert.ok(before.content <= before.width + 1, `${locale} filter overflows at ${width}`)
+          assert.ok(before.right <= width, `${locale} filter leaves the viewport at ${width}`)
+
+          await end.fill('2999-01-01 00:00:00')
+          await end.press('Enter')
+          const warning = page.locator('.t-message')
+          await warning.waitFor()
+          const expected = chinese
+            ? '结束时间不能晚于当前时间，已恢复原范围。'
+            : 'End time cannot be in the future. The previous range has been restored.'
+          assert.equal(await warning.textContent(), expected)
+          assert.equal(await warning.count(), 1)
+          assert.equal(await filter.getByRole('status').textContent(), expected)
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+          assert.equal(requests.length, 5, 'Rejected edits must not fetch another range')
+          assert.equal(await filter.locator('.t-is-error, [aria-invalid="true"], .t-input__tips').count(), 0)
+          const after = await geometry()
+          assert.equal(after.filter.height, before.filter.height, `${locale} rejection changes filter height at ${width}`)
+          assert.equal(after.chart.top, before.chart.top, `${locale} rejection moves charts at ${width}`)
+          assert.deepEqual(after.radio, before.radio, `${locale} rejection moves preset buttons at ${width}`)
+          assert.deepEqual(after.picker, before.picker, `${locale} rejection moves the picker at ${width}`)
+
+          await end.press('Enter')
+          await warning.waitFor({ state: 'detached' })
+          assert.equal(await filter.getByRole('status').textContent(), '', 'Accepting the restored range clears feedback')
+          assert.equal(requests.length, 5, 'Accepting unchanged seconds must not refetch')
+        }
+      } finally {
+        await page.close()
+      }
+    })
+  }
+}, { timeout: 60_000 })
+
+test('custom trend warnings repeat without stacking and ignore composing or repeated Enter', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  await page.clock.install({ time: Date.now() })
+  const requests = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const applied = [await start.inputValue(), await end.inputValue()]
+    const warning = page.locator('.t-message')
+
+    await start.fill('2025-08-01 01:02:03')
+    for (const options of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }]) {
+      await start.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', ...options })
+      assert.equal(await warning.count(), 0)
+      assert.equal(requests.length, 5, 'Composition and key repeats must not submit a draft')
+      assert.equal(await start.inputValue(), '2025-08-01 01:02:03')
+    }
+    await page.locator('.home-page-title').click()
+    await waitUntil(async() => await start.inputValue() === applied[0], 'Cancel must restore the IME draft')
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await start.fill('not-a-date')
+      await start.press('Enter')
+      await warning.waitFor()
+      assert.equal(await warning.count(), 1, 'Repeating the same rejected input must replace its own warning')
+      assert.equal(await filter.getByRole('status').textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
+      assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
+      assert.equal(requests.length, 5)
+    }
+    await page.clock.fastForward(5500)
+    await warning.waitFor({ state: 'detached' })
+    await start.fill('not-a-date')
+    await start.press('Enter')
+    await warning.waitFor()
+    assert.equal(await warning.count(), 1, 'The same error must be explained again after the earlier warning expires')
+    assert.equal(requests.length, 5)
+
+    await page.getByRole('link', { name: 'Nodes', exact: true }).click()
+    await warning.waitFor({ state: 'detached' })
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('custom trend calendar hover preserves continuous range colors and disabled dates', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC' })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackMonitorRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    const cells = panel.locator('.t-date-picker__cell:not(.t-date-picker__cell--additional)')
+    const readCells = () => cells.evaluateAll((elements) => elements.map((cell) => {
+      const inner = cell.querySelector('.t-date-picker__cell-inner')
+      const { x, y, width, height } = inner.getBoundingClientRect()
+      const before = getComputedStyle(cell, '::before')
+      const after = getComputedStyle(cell, '::after')
+      return {
+        day: cell.textContent.trim(), classes: cell.className, hovered: cell.matches(':hover'),
+        bounds: { x, y, width, height }, fill: getComputedStyle(inner).backgroundColor,
+        outline: getComputedStyle(inner).boxShadow, color: getComputedStyle(inner).color,
+        before: before.backgroundColor, after: after.backgroundColor, opacity: after.opacity
+      }
+    }))
+    for (const [range, hovers] of [
+      [['2026-10-03 10:00:00', '2026-10-06 11:00:00'], [['start', '2'], ['start', '3'], ['end', '7'], ['end', '8']]],
+      [['2026-10-03 10:00:00', '2026-10-03 11:00:00'], [['start', '2']]],
+      [['2026-09-29 10:00:00', '2026-10-03 11:00:00'], [['end', '2']]]
+    ]) {
+      await start.click()
+      await start.fill(range[0])
+      await end.click()
+      await end.fill(range[1])
+      await end.press('Enter')
+      await page.waitForLoadState('networkidle')
+      assert.deepEqual([await start.inputValue(), await end.inputValue()], range)
+      const appliedRequestCount = requests.length
+      for (const [editing, date] of hovers) {
+        await (editing === 'start' ? start : end).click()
+        await panel.waitFor()
+        await delay(250) // Opening the other input also transitions endpoint colors.
+        const resting = await readCells()
+        const day = cells.filter({ hasText: new RegExp(`^${date}$`) })
+        await day.hover()
+        await delay(250) // Let the range opacity and hover fill settle.
+        const hovered = await readCells()
+        const hoveredDay = hovered.find((cell) => cell.day === date)
+        assert.ok(hoveredDay.hovered, 'The pointer must actually hover the requested day')
+        assert.deepEqual(hovered.map((cell) => cell.bounds), resting.map((cell) => cell.bounds), 'Hover moved calendar cells')
+        const unchanged = (cell) => cell.day !== date || cell.classes.includes('t-date-picker__cell--active') || cell.classes.includes('t-date-picker__cell--disabled')
+        assert.deepEqual(hovered.filter(unchanged).map((cell) => cell.fill), resting.filter(unchanged).map((cell) => cell.fill), 'Hover changed an unhovered, selected, or disabled cell fill')
+        const preview = hovered.filter((cell) => cell.classes.includes('t-date-picker__cell--hover-highlight'))
+        if (date === '8') {
+          assert.ok(hoveredDay.classes.includes('t-date-picker__cell--disabled'))
+          assert.equal(preview.length, 0, 'A disabled future date must not preview a range')
+          await day.click()
+          assert.deepEqual([await start.inputValue(), await end.inputValue()], range)
+        } else {
+          if (!hoveredDay.classes.includes('t-date-picker__cell--active')) {
+            assert.equal(hoveredDay.outline, 'none', 'Pointer hover must not draw a focus-like outline')
+            assert.equal(hoveredDay.fill, 'rgba(0, 0, 0, 0)', 'A range preview must not add another hover block')
+            assert.equal(hoveredDay.color, 'rgb(0, 82, 217)', 'Hover text must use the brand color')
+          }
+          const overlap = preview.filter((cell) => cell.classes.includes('t-date-picker__cell--highlight'))
+          assert.ok(overlap.length > 0, 'The test must overlap a preview and applied range')
+          for (const cell of overlap) {
+            assert.equal(cell.after, cell.before, `Day ${cell.day} changes the range color at the endpoint`)
+            assert.notEqual(cell.after, 'rgba(0, 0, 0, 0)', 'The preview must bridge the endpoint with a solid color')
+            assert.equal(cell.opacity, '1')
+          }
+        }
+        assert.equal(requests.length, appliedRequestCount, 'Hover or a disabled click submitted a range')
+        await panel.locator('.t-date-picker__header').hover()
+        await delay(250)
+        assert.deepEqual((await readCells()).map((cell) => cell.fill), resting.map((cell) => cell.fill), 'Leaving the calendar must restore the resting fills')
+        await page.locator('.home-page-title').click()
+        await panel.waitFor({ state: 'hidden' })
+        assert.deepEqual([await start.inputValue(), await end.inputValue()], range)
+      }
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
+test('calendar confirmation applies one range and canceled calendar edits keep it', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
+  const requests = []
+  await page.clock.install({ time: new Date('2026-10-06T12:00:00.123Z') })
+  page.on('request', (request) => {
+    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    await start.click()
+    const panel = page.locator('.t-date-range-picker__panel-container:visible')
+    const day = (text) => panel.locator('.t-date-picker__cell:not(.t-date-picker__cell--additional)').filter({ hasText: new RegExp(`^${text}$`) })
+    assert.ok((await day('7').getAttribute('class')).includes('t-date-picker__cell--disabled'))
+    await day('1').click()
+    await end.click()
+    await day('2').click()
+    await panel.locator('.t-time-picker__panel-body-scroll').first().getByText('04', { exact: true }).click()
+    await waitUntil(async() => (await end.inputValue()).includes(' 04:'), 'Time column selection did not update the draft')
+    assert.equal(requests.length, 5, 'Calendar drafts must not fetch before confirmation')
+    const selected = [await start.inputValue(), await end.inputValue()]
+    assert.ok(selected[0].startsWith('2026-10-01 '), JSON.stringify(selected))
+    assert.ok(selected[1].startsWith('2026-10-02 '), JSON.stringify(selected))
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 10)
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
+    assert.equal(await panel.count(), 0, 'Confirm must finish editing and close the calendar')
+    assert.ok(await end.evaluate((element) => element === document.activeElement), 'Confirm must return keyboard focus to the date input')
+
+    await start.click()
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await waitUntil(async() => await panel.count() === 0, 'Confirming an unchanged range must also close the calendar')
+    assert.equal(requests.length, 10, 'Confirming the applied range must not fetch again')
+
+    await start.fill('2025-08-01 01:02:03')
+    await start.press('Tab')
+    await end.press('Tab')
+    await waitUntil(async() => await start.inputValue() === selected[0], 'Tabbing away after Confirm must discard unconfirmed input')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
+    assert.equal(await panel.count(), 0)
+    assert.equal(requests.length, 10)
+
+    await start.click()
+    await end.click()
+    await day('3').click()
+    const nextSelected = [await start.inputValue(), await end.inputValue()]
+    assert.ok(nextSelected[1].startsWith('2026-10-03 '), JSON.stringify(nextSelected))
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(requests.length, 15, 'A new calendar range after Confirm must apply once')
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, nextSelected))
+    assert.equal(await panel.count(), 0)
+
+    await start.click()
+    await day('4').click()
+    await page.locator('.home-page-title').click()
+    await waitUntil(async() => await start.inputValue() === nextSelected[0], 'Calendar cancellation did not restore the applied range')
+    assert.deepEqual([await start.inputValue(), await end.inputValue()], nextSelected)
+    assert.equal(requests.length, 15)
+  } finally {
+    await page.close()
+  }
 }, { timeout: 60_000 })
 
 test('workload status labels stay concise while accessible help explains container evidence', async() => {
@@ -2042,6 +3813,189 @@ test('workload status labels stay concise while accessible help explains contain
     await page.close()
   }
 }, { timeout: 60_000 })
+
+test('distribution legends keep each name and its count on one line', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 800 } })
+  const legends = {
+    'count by (device_type)': [['NVIDIA-A100-SXM4-80GB', 59], ['Ascend910B3', 42], ['NVIDIA-H100-SXM5-80GB', 24], ['DCU', 12345]],
+    'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['DCU', 1], ['HCU', 1]],
+  }
+  await page.route('**/monitor/query/instant-vector', async(route) => {
+    const query = route.request().postDataJSON()?.query || ''
+    const prefix = Object.keys(legends).find((key) => query.startsWith(key))
+    if (!prefix) return route.fallback()
+    const label = prefix.includes('provider') ? 'provider' : 'device_type'
+    await route.fulfill({
+      json: { code: 0, data: legends[prefix].map(([name, value]) => ({ metric: { [label]: name }, value })) }
+    })
+  })
+  const legendRows = () => page.locator('.nodeCard-legend li').evaluateAll((items) => items.map((item) => {
+    const text = item.querySelector('.ellipsis-text')
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    const name = text.getBoundingClientRect()
+    const row = item.getBoundingClientRect()
+    const count = item.querySelector('.legend-count')
+    const countBox = count.getBoundingClientRect()
+    return {
+      name: text.textContent.trim(),
+      height: row.height,
+      sameLine: Math.abs(name.top + name.bottom - countBox.top - countBox.bottom) < 2,
+      countInside: countBox.left >= row.left - 0.5 && countBox.right <= row.right + 0.5,
+      countInset: row.right - countBox.right,
+      countWhole: count.scrollWidth <= count.clientWidth,
+      cut: range.getBoundingClientRect().width - name.width > 0.001,
+      focusable: text.getAttribute('tabindex') === '0',
+    }
+  }))
+
+  try {
+    for (const path of ['accelerators', 'nodes']) {
+      await page.goto(`${target}${basePath}${path}`, { waitUntil: 'domcontentloaded' })
+      // 1334 puts two English Top5 titles of different lengths on either side of the width that fits a title and its switch.
+      for (const [width, height] of [[1280, 800], [1334, 768], [1512, 982], [1024, 768]]) {
+        await page.setViewportSize({ width, height })
+        await page.locator('.nodeCard-legend li').nth(3).waitFor()
+        // Only a name the browser cuts takes focus; the check follows the resize.
+        await waitUntil(
+          async() => (await legendRows()).every((row) => row.cut === row.focusable),
+          `${path} ${width}: focus does not follow which names are cut`
+        )
+        const rows = await legendRows()
+        for (const row of rows) {
+          assert.ok(row.height <= 18.5 && row.sameLine && row.countInside && row.countWhole, `${path} ${width}: ${JSON.stringify(row)}`)
+        }
+        const insets = rows.map((row) => row.countInset)
+        assert.ok(Math.max(...insets) - Math.min(...insets) < 0.5, `${path} ${width}: counts do not share a right edge`)
+        await page.locator('.preview .tab-top-item').nth(1).waitFor()
+        const cards = await page.locator('.preview > li').evaluateAll((items) => items.map((item) => ({
+          top: Math.round(item.getBoundingClientRect().top),
+          header: item.querySelector('.tab-top-switch')?.closest('.home-block-header').getBoundingClientRect().height,
+          switchTop: item.querySelector('.tab-top-switch')?.getBoundingClientRect().top,
+          firstItemTop: item.querySelector('.tab-top-item')?.getBoundingClientRect().top,
+        })))
+        if (width === 1512) {
+          assert.equal(new Set(cards.map((card) => card.top)).size, 1, `${path} ${width}: the distribution and Top5 cards wrapped`)
+        }
+        const [, firstTop5, secondTop5] = cards
+        if (firstTop5.top === secondTop5.top) {
+          assert.ok(
+            firstTop5.header === secondTop5.header &&
+              Math.abs(firstTop5.switchTop - secondTop5.switchTop) < 0.5 &&
+              Math.abs(firstTop5.firstItemTop - secondTop5.firstItemTop) < 0.5,
+            `${path} ${width}: Top5 headers side by side differ ${JSON.stringify(cards)}`
+          )
+        }
+      }
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('unconfigured accelerator allocation rates stay unavailable', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
+  const device = (uuid, fields) => ({
+    uuid, type: 'NVIDIA', nodeName: 'node-1', health: true,
+    coreTotal: 100, coreUsed: 0, coreUsedKnown: true, memoryTotal: 24576, memoryUsed: 0, vgpuTotal: 10, vgpuUsed: 0,
+    ...fields,
+  })
+  const devices = [
+    device('unc-idle', { type: 'Ascend910', unconfigured: true, memoryTotal: 32768 }),
+    device('unc-used', { type: 'Ascend910', unconfigured: true, memoryTotal: 32768, coreUsed: 30, memoryUsed: 8192, vgpuUsed: 1 }),
+    device('cfg-idle', {}),
+    device('share-unk', { coreUsedKnown: false, memoryUsed: 4096, vgpuUsed: 1 }),
+    // The API does not send isExternal today; this guards the existing frontend branch only.
+    device('external', { isExternal: true }),
+  ]
+  await page.route('**/v1/gpus', (route) => route.fulfill({ json: { code: 0, list: devices, total: devices.length } }))
+  const rateCells = (uuid) => page.locator('.accelerator-table').evaluate((table, uuid) => {
+    const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim())
+    const row = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes(uuid))
+    const cell = (title) => row?.querySelectorAll('td')[headers.indexOf(title)]
+    const read = (td) => ({ text: td?.textContent.trim(), ring: Boolean(td?.querySelector('.t-progress')) })
+    return { compute: read(cell('Compute Allocation')), memory: read(cell('Memory Allocation')) }
+  }, uuid)
+
+  try {
+    await page.goto(`${target}${basePath}accelerators`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.accelerator-table tbody tr', { hasText: 'external' }).waitFor()
+    const notCounted = { text: '--', ring: false }
+    // An unconfigured device has no schedulable capacity, so neither rate reads as a real 0%.
+    assert.deepEqual(await rateCells('unc-idle'), { compute: notCounted, memory: notCounted })
+    assert.deepEqual(await rateCells('unc-used'), { compute: notCounted, memory: notCounted })
+    // A configured device with nothing allocated keeps its real zero.
+    assert.deepEqual(await rateCells('cfg-idle'), { compute: { text: '0%', ring: true }, memory: { text: '0%', ring: true } })
+    // An unknown compute share hides only the compute rate.
+    assert.deepEqual(await rateCells('share-unk'), { compute: notCounted, memory: { text: '16.67%', ring: true } })
+    assert.deepEqual(await rateCells('external'), { compute: notCounted, memory: notCounted })
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview workload count matches the workload list total', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
+  const workloadRequests = []
+  let containerRequests = 0
+  let reply = 'empty'
+  // The old source: 62 containers, which the overview used to count.
+  await page.route('**/v1/containers', (route) => {
+    containerRequests += 1
+    const items = Array.from({ length: 62 }, (_, index) => ({ name: `worker-${index}`, podUid: `pod-${index}`, namespace: 'default' }))
+    return route.fulfill({ json: { code: 0, items, total: items.length } })
+  })
+  const row = { name: 'worker', podUid: 'pod-1', namespace: 'default' }
+  await page.route('**/v1/workloads', (route) => {
+    workloadRequests.push(route.request().postDataJSON())
+    if (reply === 'failed') return route.fulfill({ status: 500, json: { code: 500, message: 'injected failure' } })
+    if (reply === 'empty') return route.fulfill({ json: { code: 0, items: [], total: 0, statusCounts: {} } })
+    if (reply === 'no total') return route.fulfill({ json: { code: 0, items: [row] } })
+    // One row on the page, while the list counts 68 across all pages.
+    return route.fulfill({
+      json: { code: 0, items: [row], total: 68, statusCounts: { all: 68, pending: 6, success: 60, abnormal: 2 } },
+    })
+  })
+  const workloadCard = page.locator('.resource-overview-item', { hasText: 'Workloads' })
+  const cardCount = async() => {
+    await workloadCard.locator('.count, .resource-state-text').first().waitFor()
+    const shown = await workloadCard.locator('.count').count()
+    return shown ? (await workloadCard.locator('.count').textContent()).trim() : null
+  }
+
+  try {
+    await page.goto(`${target}${basePath}overview`, { waitUntil: 'domcontentloaded' })
+    assert.equal(await cardCount(), '0', 'An empty list is a real zero')
+
+    reply = 'no total'
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    assert.equal(await cardCount(), null, 'A reply without a total must not read as a number')
+
+    reply = 'counted'
+    workloadRequests.length = 0
+    containerRequests = 0
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    assert.equal(await cardCount(), '68')
+    assert.deepEqual(workloadRequests[0], { filters: {}, page: 1, pageSize: 1 })
+    assert.equal(containerRequests, 0, 'The overview still read the container list')
+
+    await workloadCard.click()
+    await page.waitForURL((url) => url.pathname.endsWith('/workloads'))
+    const listTotal = page.locator('.table-plus-pagination-total')
+    await listTotal.waitFor()
+    assert.match(await listTotal.textContent(), /\b68\b/, 'The list behind the card counts the same total')
+
+    reply = 'failed'
+    await page.goBack({ waitUntil: 'domcontentloaded' })
+    await page.waitForURL((url) => url.pathname.endsWith('/overview'))
+    assert.equal(await cardCount(), null, 'A failed total must not read as a number')
+  } finally {
+    await page.close()
+  }
+})
 
 test('resource names navigate while decorative table icons do not', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
@@ -2330,6 +4284,464 @@ test('node and GPU detail pages do not fetch cluster-wide pending Pods', async()
   }
 }, { timeout: 30_000 })
 
+const allocationNode = { uid: '4fbeb06d-b761-47cb-ba21-6b94cee70023', name: 'allocation-node-001' }
+const allocationDeviceIDs = Array.from({ length: 8 }, (_, index) => `GPU-c4ac69${String(index + 1).padStart(2, '0')}-dad4-5833-a440-68ebcad8e1cf`)
+
+function nodeAllocationFixture(count = 8) {
+  const devices = allocationDeviceIDs.slice(0, count).map((uuid) => ({
+    uuid, nodeUid: allocationNode.uid, nodeName: allocationNode.name,
+    type: 'NVIDIA-A100-SXM4-80GB-with-a-long-inventory-model-name', vendor: 'NVIDIA',
+    mode: 'hami-core', unconfigured: false, health: true,
+    vgpuUsed: 2, vgpuTotal: 10, memoryUsed: 12288, memoryTotal: 81920,
+    coreUsed: 30, coreTotal: 100, coreUsedKnown: true,
+  }))
+  const containers = ['worker-0', 'worker-1'].map((name, index) => ({
+    name, appName: 'eight-device-job', podUid: '57d04cdc-7597-4585-bd2d-63d562b9863b', namespace: 'research',
+    nodeUid: allocationNode.uid, nodeName: allocationNode.name, status: 'success',
+    deviceIds: devices.map(({ uuid }) => uuid),
+    devices: devices.map(({ uuid }) => ({
+      id: uuid, allocatedMem: (index + 1) * 4096, allocatedCores: (index + 1) * 10,
+      allocatedCoresKnown: true, allocationShape: 'soft',
+    })),
+  }))
+  return { devices, containers: count ? containers : [] }
+}
+
+async function installNodeAllocationFixture(page, state) {
+  const requests = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (/\/v1\/(?:gpus?|containers?|workloads)$/.test(path)) {
+      requests.push({ path: path.slice(path.lastIndexOf('/')), body: request.postDataJSON() })
+    }
+  })
+  await page.route('**/v1/node?**', (route) => route.fulfill({ json: {
+    ...allocationNode, ip: '192.0.2.30', isReady: true, isSchedulable: true,
+    type: ['NVIDIA'], cardCnt: state.devices.length,
+    vgpuUsed: state.devices.length * 2, vgpuTotal: state.devices.length * 10,
+    coreUsed: state.devices.length * 30, coreTotal: state.devices.length * 100,
+    memoryUsed: state.devices.length * 12288, memoryTotal: state.devices.length * 81920,
+  } }))
+  await page.route('**/v1/gpus', (route) => route.fulfill({ json: {
+    code: 0, list: state.devices, total: state.devices.length,
+  } }))
+  await page.route('**/v1/containers', (route) => route.fulfill({
+    status: state.containerStatus ?? 200,
+    json: state.containerPayload ?? { code: 0, items: state.containers, total: state.containers.length },
+  }))
+  return requests
+}
+
+function assertNodeAllocationRequests(requests) {
+  assert.deepEqual(requests.map(({ path }) => path).sort(), ['/containers', '/gpus'], 'Node allocation must use two batch requests without per-device detail or workload requests')
+  assert.deepEqual(requests.find(({ path }) => path === '/gpus').body, { filters: { nodeName: allocationNode.name } })
+  assert.deepEqual(requests.find(({ path }) => path === '/containers').body, { filters: { nodeUid: allocationNode.uid } })
+}
+
+test('node device allocation uses two node-scoped batches and shows at most four devices initially', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const state = nodeAllocationFixture()
+  const requests = await installNodeAllocationFixture(page, state)
+  try {
+    for (const count of [0, 1, 4, 5, 8]) {
+      Object.assign(state, nodeAllocationFixture(count))
+      const start = requests.length
+      await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=incorrect-url-name`, { waitUntil: 'networkidle' })
+      const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+      await section.waitFor()
+      const cards = section.locator('article[data-device-id]:visible')
+      assert.equal(await cards.count(), Math.min(count, 4), `Node with ${count} devices has the wrong initial visible count`)
+      if (!count) await section.getByText('No devices on this node', { exact: true }).waitFor()
+      assertNodeAllocationRequests(requests.slice(start))
+      const expand = section.getByRole('button', { name: `Show ${count - 4} more ${count === 5 ? 'device' : 'devices'}`, exact: true })
+      assert.equal(await expand.count(), count > 4 ? 1 : 0)
+      if (count) {
+        const deviceLink = cards.first().getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true })
+        assert.equal(await deviceLink.getAttribute('href'), `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+        assert.match(await cards.first().textContent(), /2 workloads/)
+        assert.doesNotMatch(await cards.first().textContent(), /[·•]/)
+      }
+      if (count > 4) {
+        await expand.click()
+        assert.equal(await cards.count(), count)
+        await section.getByRole('button', { name: 'Show fewer', exact: true }).click()
+        assert.equal(await cards.count(), 4)
+        assertNodeAllocationRequests(requests.slice(start))
+      }
+    }
+  } finally {
+    await page.close()
+  }
+}, { timeout: 45_000 })
+
+test('node device allocation keyboard expansion and occupancy drawer preserve identity and focus', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 800 } })
+  const state = nodeAllocationFixture()
+  const requests = await installNodeAllocationFixture(page, state)
+  try {
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+    const expand = section.getByRole('button', { name: 'Show 4 more devices', exact: true })
+    await expand.focus()
+    await expand.press('Enter')
+    const fifth = section.locator(`article[data-device-id="${allocationDeviceIDs[4]}"]`)
+    const fifthLink = fifth.getByRole('link', { name: `View device ${allocationDeviceIDs[4]}`, exact: true })
+    await waitUntil(() => fifthLink.evaluate((element) => element === document.activeElement), 'Keyboard expansion did not focus the first newly revealed device')
+    assert.equal(await section.locator('article[data-device-id]:visible').count(), 8)
+    const opener = fifth.getByRole('button', { name: `View occupancy for ${allocationDeviceIDs[4]}`, exact: true })
+    const earlyEscape = await opener.evaluate(async(button) => {
+      button.focus()
+      button.click()
+      // Flush Vue's render and nextTick focus while staying ahead of TDesign's
+      // deferred open timer, the same opening window that lost Escape in CI.
+      await Promise.resolve()
+      await Promise.resolve()
+      const dialog = document.querySelector('.node-occupancy-drawer')
+      const focusedBeforeEscape = document.activeElement === dialog
+      const openBeforeEscape = dialog.classList.contains('t-drawer--open')
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+      const dismissedBeforeTimers = dialog.getAttribute('aria-hidden') === 'true' && !dialog.hasAttribute('role')
+      // Drain the already queued visibility updates before checking that an
+      // older open callback cannot leave the dismissed drawer open again.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      return {
+        focusedBeforeEscape,
+        openBeforeEscape,
+        dismissedBeforeTimers,
+        openAfterTimers: dialog.classList.contains('t-drawer--open'),
+        contentAfterTimers: Boolean(dialog.querySelector('.node-occupancy')),
+      }
+    })
+    assert.deepEqual(earlyEscape, {
+      focusedBeforeEscape: true,
+      openBeforeEscape: false,
+      dismissedBeforeTimers: true,
+      openAfterTimers: false,
+      contentAfterTimers: false,
+    }, 'Escape during the focused opening phase must dismiss the drawer without a deferred reopen')
+    await waitUntil(() => opener.evaluate((element) => element === document.activeElement), 'Early Escape did not restore the originating device occupancy entry')
+    await opener.click()
+    const drawer = page.getByRole('dialog', { name: 'Device occupancy', exact: true })
+    await drawer.waitFor()
+    assert.match(await drawer.textContent(), new RegExp(allocationDeviceIDs[4]))
+    for (const container of state.containers) {
+      const link = drawer.locator(`a[href="${basePath}workloads/${container.podUid}/containers/${container.name}"]`)
+      assert.equal(await link.count(), 1, 'Every distinct container must retain its real workload destination')
+    }
+    const meters = drawer.locator('.split-meters')
+    await meters.waitFor()
+    assert.deepEqual((await meters.locator('.split-meter__value').allTextContents()).map((value) => value.trim()), ['12 GiB / 80 GiB', '30% / 100%'], 'The drawer must show the same memory and compute allocations as the device card')
+    const readParts = () => meters.locator('.split-meter__track').evaluateAll((tracks) => tracks.map((track) =>
+      Array.from(track.querySelectorAll('.split-meter__part')).map((part) => ({
+        active: part.classList.contains('is-active'),
+        fill: getComputedStyle(part).backgroundColor,
+        visible: part.getBoundingClientRect().width > 0,
+      }))))
+    const restingParts = await readParts()
+    assert.deepEqual(restingParts.map((parts) => parts.length), [2, 2], 'Both quota bars must retain the two distinct workload allocations')
+    assert.ok(restingParts.flat().every((part) => part.visible && !part.active))
+    await captureTrendScreenshot(page, 'node-device-allocation-drawer')
+    for (const [index, container] of state.containers.entries()) {
+      const destination = `a[href="${basePath}workloads/${container.podUid}/containers/${container.name}"]`
+      const link = drawer.locator(destination)
+      const holder = drawer.locator('.split-row').filter({ has: page.locator(destination) })
+      await holder.hover()
+      await waitUntil(async() => (await readParts()).every((parts, trackIndex) => parts.every((part, partIndex) =>
+        part.active === (partIndex === index) && (partIndex === index ? part.fill !== restingParts[trackIndex][partIndex].fill : part.fill === restingParts[trackIndex][partIndex].fill))), 'Hover must highlight only the selected workload in both allocation bars')
+      if (!index) await captureTrendScreenshot(page, 'node-device-allocation-drawer-highlight')
+      await drawer.locator('.device-split__device').hover()
+      await waitUntil(async() => JSON.stringify(await readParts()) === JSON.stringify(restingParts), 'Leaving a workload must restore both allocation bars')
+      await link.focus()
+      await waitUntil(async() => (await readParts()).every((parts) => parts.every((part, partIndex) => part.active === (partIndex === index))), 'Keyboard focus must identify the same workload segments as pointer hover')
+      await drawer.getByRole('button', { name: 'Close device occupancy', exact: true }).focus()
+      await waitUntil(async() => JSON.stringify(await readParts()) === JSON.stringify(restingParts), 'Moving keyboard focus out of a workload must clear the segment highlight')
+    }
+    await drawer.getByRole('button', { name: 'Close device occupancy', exact: true }).focus()
+    await page.keyboard.press('Shift+Tab')
+    assert.equal(await drawer.evaluate((element) => element.contains(document.activeElement)), true, 'Reverse tabbing escaped the modal drawer')
+    await page.keyboard.press('Tab')
+    assert.equal(await drawer.evaluate((element) => element.contains(document.activeElement)), true, 'Tabbing past the last drawer link escaped to the page')
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    await waitUntil(() => opener.evaluate((element) => element === document.activeElement), 'Escape did not restore the originating device occupancy entry')
+    assert.equal(await section.locator('article[data-device-id]:visible').count(), 8)
+    await opener.press('Enter')
+    await drawer.waitFor()
+    await drawer.getByRole('button', { name: 'Close device occupancy', exact: true }).click()
+    await drawer.waitFor({ state: 'hidden' })
+    await waitUntil(() => opener.evaluate((element) => element === document.activeElement), 'Closing the drawer did not restore its entry')
+    const collapse = section.getByRole('button', { name: 'Show fewer', exact: true })
+    await collapse.focus()
+    await collapse.press('Enter')
+    assert.equal(await section.locator('article[data-device-id]:visible').count(), 4)
+    await waitUntil(() => section.getByRole('button', { name: 'Show 4 more devices', exact: true }).evaluate((element) => element === document.activeElement), 'Collapsing lost the surviving expansion control focus')
+    assertNodeAllocationRequests(requests)
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
+test('node device allocation remains readable in Chinese and English across common widths', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const state = nodeAllocationFixture(4)
+  Object.assign(state.devices[1], {
+    mode: 'mig', memoryUsed: 51200, coreUsed: 56,
+    migProfiles: [
+      { name: '3g.40gb', placements: [{ start: 0, size: 4 }] },
+      { name: '1g.10gb', placements: [{ start: 4, size: 1 }, { start: 5, size: 1 }, { start: 6, size: 1 }] },
+    ],
+  })
+  for (const [index, container] of state.containers.entries()) {
+    Object.assign(container.devices[1], {
+      allocationShape: 'mig', allocatedMem: index ? 10240 : 40960,
+      allocatedCores: index ? 14 : 42, template: index ? '1g.10gb' : '3g.40gb',
+      migStart: index ? 4 : 0, migSize: index ? 1 : 4,
+    })
+  }
+  Object.assign(state.devices[3], {
+    type: 'NVIDIA H100', mode: 'mig', vgpuUsed: 1, memoryUsed: 81920, coreUsed: 100,
+    migProfiles: [{ name: '7g.80gb', placements: [{ start: 0, size: 8 }] }],
+  })
+  Object.assign(state.containers[0].devices[3], {
+    allocationShape: 'mig', allocatedMem: 81920, allocatedCores: 100,
+    template: '7g.80gb', migStart: 0, migSize: 8,
+  })
+  state.containers[1].devices = state.containers[1].devices.filter((device) => device.id !== allocationDeviceIDs[3])
+  state.containers[1].deviceIds = state.containers[1].deviceIds.filter((id) => id !== allocationDeviceIDs[3])
+  for (const locale of ['zh-CN', 'en-US']) {
+    const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
+    await installNodeAllocationFixture(page, state)
+    try {
+      await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+      const section = page.getByRole('region', { name: locale === 'zh-CN' ? '设备分配' : 'Device allocation', exact: true })
+      await section.waitFor()
+      assert.equal(await section.locator('article[data-device-id]:visible').count(), 4)
+      assert.match(await section.locator(`article[data-device-id="${allocationDeviceIDs[1]}"]`).textContent(), /3g\.40gb/)
+      const layouts = [1280, 1366, 1440, 1920, 390].map((width) => ({ width, collapsed: false }))
+      layouts.push({ width: 390, collapsed: true })
+      for (const { width, collapsed } of layouts) {
+        await page.setViewportSize({ width, height: 900 })
+        if (collapsed) {
+          await page.getByRole('button', { name: locale === 'zh-CN' ? '收起侧栏' : 'Collapse sidebar', exact: true }).click()
+          await waitUntil(async() => (await section.boundingBox()).width > 250, 'The collapsed sidebar did not release space for narrow node details')
+        }
+        await section.scrollIntoViewIfNeeded()
+        const geometry = await section.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          const cards = Array.from(element.querySelectorAll('article[data-device-id]')).filter((card) => card.getClientRects().length).map((card) => {
+            const box = card.getBoundingClientRect()
+            const name = card.querySelector('.device-split__name')
+            const mode = card.querySelector('.device-split__mode')
+            const nameBox = name.getBoundingClientRect()
+            const modeBox = mode.getBoundingClientRect()
+            return {
+              x: box.x, y: box.y, right: box.right, bottom: box.bottom,
+              nameSingleLine: nameBox.height <= Number.parseFloat(getComputedStyle(name).lineHeight) + 1,
+              nameVisible: nameBox.width > 0,
+              modeOnNameLine: Math.abs(nameBox.top + nameBox.height / 2 - modeBox.top - modeBox.height / 2) < 1,
+              overflow: card.scrollWidth > card.clientWidth + 1,
+              overflowingContent: Array.from(card.querySelectorAll('*')).filter((child) => {
+                const style = getComputedStyle(child)
+                return child.getClientRects().length && child.scrollWidth > child.clientWidth + 1 && style.overflowX === 'visible'
+              }).map((child) => ({
+                selector: child.className, clientWidth: child.clientWidth, scrollWidth: child.scrollWidth,
+                text: child.textContent.trim().slice(0, 80),
+              })),
+              escapedActions: Array.from(card.querySelectorAll('a, button')).some((action) => {
+                const actionBox = action.getBoundingClientRect()
+                return actionBox.left < box.left - 1 || actionBox.right > box.right + 1
+              }),
+            }
+          })
+          return { left: rect.left, right: rect.right, overflow: element.scrollWidth > element.clientWidth + 1, cards }
+        })
+        await captureTrendScreenshot(page, `node-device-allocation-${locale}-${width}${collapsed ? '-collapsed-sidebar' : ''}`)
+        for (const index of [1, 3]) {
+          const migCard = section.locator(`article[data-device-id="${allocationDeviceIDs[index]}"]`)
+          const identity = await migCard.locator('.device-split__device').boundingBox()
+          const summary = await migCard.locator('.device-split__summary').boundingBox()
+          assert.ok(summary && summary.y >= identity.y + identity.height - 1, `${locale} ${index === 1 ? 'long' : 'short'} MIG summary must stay below the device identity at ${width}`)
+          assert.ok(Math.abs(summary.x - identity.x) < 1, `${locale} MIG summary must align with the device identity at ${width}`)
+        }
+        assert.equal(geometry.overflow, false, `${locale} allocation section overflows at ${width}: ${JSON.stringify(geometry)}`)
+        for (const card of geometry.cards) {
+          assert.equal(card.overflow, false, `${locale} allocation card overflows at ${width}: ${JSON.stringify(card)}`)
+          assert.equal(card.nameSingleLine && card.nameVisible && card.modeOnNameLine, true, `${locale} long names must stay on one line beside the mode at ${width}`)
+          assert.equal(card.escapedActions, false, `${locale} device or occupancy link escapes its card at ${width}`)
+          assert.ok(card.x >= geometry.left - 1 && card.right <= geometry.right + 1)
+        }
+        if (width >= 1280) {
+          assert.ok(Math.abs(geometry.cards[0].y - geometry.cards[1].y) < 1, `Expected two device cards per row at ${width}`)
+          assert.ok(geometry.cards[2].y >= geometry.cards[0].bottom)
+        } else {
+          assert.ok(geometry.cards[1].y >= geometry.cards[0].bottom, 'A narrow allocation section must use a single column')
+          const mode = section.locator('.device-split__mode').first().locator('[title]')
+          assert.equal(await mode.getAttribute('title'), locale === 'zh-CN' ? 'HAMi-core 模式' : 'HAMi-core mode', 'A truncated mode tag must retain its complete name')
+        }
+        assert.equal(await section.locator('article[data-device-id]:visible').count(), 4, 'Narrow layouts must retain the default four devices')
+        if (width === 1280) {
+          const name = section.locator('.device-split__name .ellipsis-text').first()
+          assert.equal(await name.evaluate((element) => element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis'), true, 'A long model must use an end ellipsis rather than displacing its mode')
+          const tooltip = page.getByRole('tooltip').filter({ hasText: state.devices[0].type })
+          await name.hover()
+          await tooltip.waitFor()
+          assert.equal((await tooltip.textContent()).trim(), state.devices[0].type, 'Hover must expose the full model name')
+          await section.getByRole('heading').hover()
+          await tooltip.waitFor({ state: 'hidden' })
+          await name.focus()
+          await tooltip.waitFor()
+          assert.equal((await tooltip.textContent()).trim(), state.devices[0].type, 'Keyboard focus must expose the same full model name')
+          await name.press('Escape')
+          await tooltip.waitFor({ state: 'hidden' })
+          await section.getByRole('button', { name: locale === 'zh-CN' ? '刷新设备分配' : 'Refresh device allocation', exact: true }).focus()
+        }
+      }
+    } finally {
+      await page.close()
+    }
+  }
+}, { timeout: 45_000 })
+
+test('node device allocation never turns failed or incomplete holder data into free capacity', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 900 } })
+  const state = nodeAllocationFixture(4)
+  await installNodeAllocationFixture(page, state)
+  try {
+    for (const scenario of [
+      { label: 'failed request', status: 503, payload: { code: 503, message: 'holder snapshot temporarily unavailable' }, text: 'Allocation data unavailable' },
+      { label: 'missing items field', status: 200, payload: { code: 0 }, text: 'Allocation data unavailable' },
+      { label: 'empty list despite inventory allocations', status: 200, payload: { code: 0, items: [], total: 0 }, text: 'Allocation details are incomplete' },
+    ]) {
+      state.containerStatus = scenario.status
+      state.containerPayload = scenario.payload
+      await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+      const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+      const cards = section.locator('article[data-device-id]:visible')
+      assert.equal(await cards.count(), 4, `${scenario.label}: device inventory disappeared with its holders`)
+      assert.equal(await cards.getByText(scenario.text, { exact: true }).count(), 4, scenario.label)
+      assert.equal(await cards.getByText('No allocations', { exact: true }).count(), 0, `${scenario.label}: missing holders appeared idle`)
+      assert.equal(await cards.getByText('0 workloads', { exact: true }).count(), 0, `${scenario.label}: an unverified zero looked complete`)
+      assert.equal(await cards.locator('.split-meter__track').count(), 0, `${scenario.label}: incomplete snapshots must not draw apparent free capacity`)
+      assert.equal(await cards.getByText('12 GiB', { exact: true }).count(), 4, `${scenario.label}: known inventory allocation must remain visible`)
+      assert.equal(await cards.getByRole('button', { name: /View occupancy for/ }).count(), 0, `${scenario.label}: no confirmed holders should produce an empty drawer`)
+    }
+    state.containerStatus = 200
+    state.containerPayload = undefined
+    const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+    await section.getByRole('button', { name: 'Refresh device allocation', exact: true }).click()
+    await waitUntil(async() => await section.locator('.split-meters').count() === 4, 'A refreshed complete snapshot did not recover allocation meters')
+    assert.equal(await section.getByText('2 workloads', { exact: true }).count(), 4)
+
+    Object.assign(state, nodeAllocationFixture(1))
+    Object.assign(state.devices[0], { mode: 'mig', vgpuUsed: 1, memoryUsed: 10240, coreUsed: 0 })
+    state.containers = [state.containers[0]]
+    state.containers[0].devices = [{ id: allocationDeviceIDs[0], allocationShape: 'mig', template: '1g.10gb', allocatedCoresKnown: false }]
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    const card = section.locator('article[data-device-id]')
+    await card.getByText('Allocation details are incomplete', { exact: true }).waitFor()
+    assert.equal(await card.getByText('10 GiB', { exact: true }).count(), 1, 'Known inventory memory was discarded with missing allocation fields')
+    assert.equal(await card.getByText('1g.10gb', { exact: true }).count(), 1, 'A known MIG profile must survive missing placement metadata')
+    assert.equal(await card.locator('.split-mig').count(), 0, 'Missing MIG placement metadata must not produce an invented partition map')
+    assert.equal(await card.getByText('0%', { exact: true }).count(), 0, 'An occupied device with unknown compute reservations appeared unallocated')
+    await card.getByRole('button', { name: `View occupancy for ${allocationDeviceIDs[0]}`, exact: true }).click()
+    const drawer = page.getByRole('dialog', { name: 'Device occupancy', exact: true })
+    await drawer.waitFor()
+    assert.equal((await drawer.locator('.split-row__memory').textContent()).trim(), 'Memory --')
+    assert.equal((await drawer.locator('.split-row__compute').textContent()).trim(), 'Compute unknown', 'Missing compute allocation must remain unknown in the holder drawer')
+    assert.match(await drawer.locator('.split-row__part').textContent(), /1g\.10gb/)
+    assert.equal(await drawer.locator('.split-meters, .split-mig, .split-strip').count(), 0, 'Incomplete holder metadata must not become invented capacity in the drawer')
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    state.devices[0].mode = 'hami-core'
+    state.containers[0].devices[0].allocationShape = 'soft'
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    await card.getByText('Allocation details are incomplete', { exact: true }).waitFor()
+    await card.getByRole('button', { name: `View occupancy for ${allocationDeviceIDs[0]}`, exact: true }).click()
+    await drawer.waitFor()
+    assert.equal(await drawer.locator('.split-meters').count(), 0, 'Shared workloads with missing quotas must not display fabricated zero allocation bars')
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    Object.assign(state, nodeAllocationFixture(1))
+    Object.assign(state.devices[0], { vgpuUsed: 0, memoryUsed: 0, coreUsed: 0 })
+    state.containers = []
+    await section.getByRole('button', { name: 'Refresh device allocation', exact: true }).click()
+    await card.getByText('No allocations', { exact: true }).waitFor()
+    assert.equal(await card.locator('.split-meter__track').count(), 2, 'A complete, genuinely idle device must retain valid zero allocation meters')
+  } finally {
+    await page.close()
+  }
+}, { timeout: 45_000 })
+
+test('node device allocation retains the same allocation display when opening device and workload details', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const state = nodeAllocationFixture()
+  const requests = await installNodeAllocationFixture(page, state)
+  await page.route('**/v1/gpu?**', (route) => {
+    const uid = new URL(route.request().url()).searchParams.get('uid')
+    return route.fulfill({ json: state.devices.find((device) => device.uuid === uid) || {} })
+  })
+  await page.route('**/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: state.containers }))
+  await page.route('**/v1/container?**', (route) => {
+    const name = new URL(route.request().url()).searchParams.get('name')
+    const container = state.containers.find((item) => item.name === name)
+    return route.fulfill({ json: container ? {
+      ...container, type: state.devices[0].type,
+      allocatedDevices: container.devices.length,
+      allocatedMem: container.devices.reduce((sum, allocation) => sum + allocation.allocatedMem, 0),
+      allocatedCores: container.devices.reduce((sum, allocation) => sum + allocation.allocatedCores, 0),
+    } : {} })
+  })
+  const allocationDisplay = async(split) => {
+    await split.locator('.split-meters').waitFor()
+    const values = (await split.locator('.split-meter__value').allTextContents()).map((value) => value.trim())
+    const parts = await split.locator('.split-meter__track').evaluateAll((tracks) => tracks.map((track) =>
+      Array.from(track.querySelectorAll('.split-meter__part')).filter((part) => part.getBoundingClientRect().width > 0).length))
+    return { values, parts }
+  }
+  try {
+    await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'networkidle' })
+    const firstCard = page.getByRole('region', { name: 'Device allocation', exact: true })
+      .locator(`article[data-device-id="${allocationDeviceIDs[0]}"]`)
+    const nodeSplit = firstCard.locator('.device-split')
+    const nodeDisplay = await allocationDisplay(nodeSplit)
+    assert.deepEqual(nodeDisplay, { values: ['12 GiB / 80 GiB', '30% / 100%'], parts: [2, 2] })
+    assert.equal(await nodeSplit.locator('.split-row').count(), 0, 'The node summary must leave detailed holders in its occupancy drawer')
+    assert.ok((await nodeSplit.locator('.device-split__model').textContent()).includes(state.devices[0].type))
+    assertNodeAllocationRequests(requests)
+    await nodeSplit.scrollIntoViewIfNeeded()
+    await captureTrendScreenshot(page, 'node-shared-device-split')
+
+    await firstCard.getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true }).click()
+    await page.waitForURL((url) => url.pathname === `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+    const deviceSplit = page.locator('.device-split-block .device-split[aria-busy="false"]')
+    assert.deepEqual(await allocationDisplay(deviceSplit), nodeDisplay, 'The device detail changed the allocation values or collapsed the per-holder segments')
+    assert.equal(await deviceSplit.locator('.split-row').count(), 2)
+    await deviceSplit.scrollIntoViewIfNeeded()
+    await captureTrendScreenshot(page, 'device-shared-device-split')
+
+    const container = state.containers[0]
+    await deviceSplit.locator(`a[href="${basePath}workloads/${container.podUid}/containers/${container.name}"]`).click()
+    await page.waitForURL((url) => url.pathname === `${basePath}workloads/${container.podUid}/containers/${container.name}`)
+    const workloadSplits = page.locator('.workload-split .device-split[aria-busy="false"]')
+    await waitUntil(async() => await workloadSplits.count() === 8, 'The eight-device workload lost one of its allocation displays')
+    const workloadSplit = workloadSplits.filter({ has: page.locator(`a[href="${basePath}accelerators/${allocationDeviceIDs[0]}"]`) })
+    assert.deepEqual(await allocationDisplay(workloadSplit), nodeDisplay, 'The workload detail changed the same device allocation values or segments')
+    assert.equal(await workloadSplit.locator('.split-row.is-current').count(), 1, 'The selected container must remain highlighted in its device allocation')
+    assert.equal(await workloadSplit.locator('.split-row').count(), 2)
+    assert.ok((await workloadSplit.locator('.device-split__model').textContent()).includes(state.devices[0].type))
+    await workloadSplit.scrollIntoViewIfNeeded()
+    await captureTrendScreenshot(page, 'workload-shared-device-split')
+  } finally {
+    await page.close()
+  }
+}, { timeout: 30_000 })
+
 test('closing a scheduling diagnosis prevents its delayed response from replacing another Pod', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
@@ -2382,3 +4794,1181 @@ test('closing a scheduling diagnosis prevents its delayed response from replacin
     await page.close()
   }
 }, { timeout: 30_000 })
+
+// Capture the current canvas frame, including actual rendered text bounds.
+// Accumulating text across frames would let obsolete labels hide a regression
+// after changing the range or resizing the chart.
+async function installTimeAxisFixture(page, valueForIndex = (index) => index === 20 ? null : 20 + index % 35, sampleCount = 61) {
+  await page.addInitScript(() => {
+    const clearRect = CanvasRenderingContext2D.prototype.clearRect
+    CanvasRenderingContext2D.prototype.clearRect = function(...args) {
+      this.canvas.drawnTexts = []
+      return clearRect.call(this, ...args)
+    }
+    const fillText = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function(text, x, y, ...args) {
+      const metrics = this.measureText(text)
+      const transform = this.getTransform()
+      const left = x - metrics.actualBoundingBoxLeft
+      const right = x + metrics.actualBoundingBoxRight
+      const top = y - metrics.actualBoundingBoxAscent
+      const bottom = y + metrics.actualBoundingBoxDescent
+      const start = new DOMPoint(left, top).matrixTransform(transform)
+      const end = new DOMPoint(right, bottom).matrixTransform(transform)
+      this.canvas.drawnTexts ??= []
+      this.canvas.drawnTexts.push({ text: String(text), x: start.x, y: start.y, right: end.x, bottom: end.y })
+      return fillText.call(this, text, x, y, ...args)
+    }
+  })
+  await page.route('**/v1/monitor/query/range-vector', async(route) => {
+    const { range } = route.request().postDataJSON()
+    const start = Date.parse(range.start)
+    const end = Date.parse(range.end)
+    const values = Array.from({ length: sampleCount }, (_, index) => ({
+      timestamp: start + (end - start) * index / (sampleCount - 1),
+      value: valueForIndex(index)
+    }))
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, data: [{ metric: { node: 'node-1' }, values }] }) })
+  })
+}
+
+// Observe actual canvas painting so a valid option object cannot mask a hover
+// rendering regression. Legend symbols are excluded when reading the plot.
+async function installTrendSymbolRecorder(page) {
+  await page.addInitScript(() => {
+    const prototype = CanvasRenderingContext2D.prototype
+    const clearRect = prototype.clearRect
+    prototype.clearRect = function(...args) {
+      this.canvas.drawnCircles = []
+      return clearRect.apply(this, args)
+    }
+    const beginPath = prototype.beginPath
+    prototype.beginPath = function(...args) {
+      this.currentCircles = []
+      return beginPath.apply(this, args)
+    }
+    const arc = prototype.arc
+    prototype.arc = function(x, y, radius, ...args) {
+      const transform = this.getTransform()
+      const point = new DOMPoint(x, y).matrixTransform(transform)
+      this.currentCircles ??= []
+      this.currentCircles.push({ x: point.x, y: point.y, radius: radius * Math.hypot(transform.a, transform.b) })
+      return arc.call(this, x, y, radius, ...args)
+    }
+    for (const method of ['stroke', 'fill']) {
+      const paint = prototype[method]
+      prototype[method] = function(...args) {
+        if (this.globalAlpha > 0.99) {
+          this.canvas.drawnCircles ??= []
+          this.canvas.drawnCircles.push(...(this.currentCircles ?? []))
+        }
+        return paint.apply(this, args)
+      }
+    }
+  })
+}
+
+async function readTrendSymbols(chart) {
+  return chart.locator('canvas').evaluateAll((canvases) => canvases.flatMap((canvas) => {
+    const box = canvas.getBoundingClientRect()
+    const scale = box.width / canvas.width
+    return (canvas.drawnCircles ?? [])
+      .map((circle) => ({ x: circle.x * scale, y: circle.y * scale, radius: circle.radius * scale }))
+      .filter(({ x, y, radius }) => radius >= 2 && radius <= 8 && x >= box.width * 0.07 && y >= 12 && y <= box.height - 25)
+  }))
+}
+
+test('trend lines reveal hover markers without hiding isolated zero reports on every trend page', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1440, height: 900 } })
+      await page.clock.install({ time: new Date('2026-10-09T04:00:00Z') })
+      await installTimeAxisFixture(page, (index) => [30, 32].includes(index) ? null : index === 31 ? 0 : 40)
+      await installTrendSymbolRecorder(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const chart = page.locator('.metric-chart').first()
+        await chart.scrollIntoViewIfNeeded()
+        await page.mouse.move(0, 0)
+        const canvas = chart.locator('canvas').first()
+        const box = await canvas.boundingBox()
+        const plotLeft = box.width * 0.07
+        const plotWidth = box.width * 0.93 - 10
+        const isolatedX = plotLeft + plotWidth * 31 / 60
+        const hoverX = plotLeft + plotWidth * 10 / 60
+        await waitUntil(async() => {
+          const symbols = await readTrendSymbols(chart)
+          return symbols.length > 0 && symbols.every(({ x }) => Math.abs(x - isolatedX) < 2)
+        }, `${route}: normal rendering hides the isolated report or adds markers to a continuous line`)
+        await captureTrendScreenshot(page, `p8-symbols-${route.split('/')[0]}-normal`)
+
+        await page.mouse.move(box.x + hoverX, box.y + 80)
+        await chart.getByText('2026-10-09 11:10:00 UTC+08:00', { exact: true }).waitFor()
+        await waitUntil(async() => (await readTrendSymbols(chart)).some(({ x }) => Math.abs(x - hoverX) < 2), `${route}: axis hover did not reveal the corresponding marker`)
+        await captureTrendScreenshot(page, `p8-symbols-${route.split('/')[0]}-hover`)
+
+        await page.mouse.move(0, 0)
+        await waitUntil(async() => {
+          const symbols = await readTrendSymbols(chart)
+          return symbols.length > 0 && symbols.every(({ x }) => Math.abs(x - isolatedX) < 2)
+        }, `${route}: leaving the chart did not remove hover markers`)
+      } finally {
+        await page.close()
+      }
+    })
+  }
+})
+
+test('sparse month reports remain visible at rest and become plain lines after zooming', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1440, height: 900 } })
+  await page.clock.setFixedTime(new Date('2026-10-09T14:00:00Z'))
+  await installTimeAxisFixture(page, (index) => index === 650 ? 0 : (index >= 660 && index <= 672) || index >= 719 ? 40 : null, 721)
+  await installTrendSymbolRecorder(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await selectTrendRange(page, '720h')
+    await page.waitForLoadState('networkidle')
+    const chart = page.locator('.metric-chart').first()
+    const canvas = chart.locator('canvas').first()
+    for (const width of [1440, 1280]) {
+      await page.setViewportSize({ width, height: 900 })
+      await chart.scrollIntoViewIfNeeded()
+      await page.mouse.move(0, 0)
+      await assertTimeAxisLayout(page, `Sparse month ${width}px`)
+      const box = await canvas.boundingBox()
+      const isolatedX = box.width * 0.07 + (box.width * 0.93 - 10) * 650 / 720
+      const latestX = box.width - 10
+      await waitUntil(async() => {
+        const symbols = await readTrendSymbols(chart)
+        return symbols.some(({ x }) => Math.abs(x - isolatedX) < 2)
+          && symbols.some(({ x }) => Math.abs(x - latestX) < 2)
+          && symbols.every(({ x, radius }) => radius <= 2.1 && (Math.abs(x - isolatedX) < 2 || Math.abs(x - latestX) < 2))
+      }, `${width}px: a sparse report disappeared or the short line regained a string of markers`)
+      await captureTrendScreenshot(page, `p8-sparse-month-${width}-normal`)
+    }
+    const box = await canvas.boundingBox()
+    await page.mouse.move(box.x + box.width - 10, box.y + 80)
+    await chart.getByText('2026-10-09 22:00:00 UTC+08:00', { exact: true }).waitFor()
+    await waitUntil(async() => (await readTrendSymbols(chart)).some(({ x, radius }) => x > box.width - 12 && radius > 2.1), 'Hover did not emphasize the latest sparse report')
+    await captureTrendScreenshot(page, 'p8-sparse-month-latest-hover')
+
+    let zoomedToLine = false
+    const zoomFrames = []
+    for (let gesture = 0; gesture < 30; gesture += 1) {
+      await page.mouse.move(box.x + box.width - 10, box.y + 80)
+      await page.mouse.wheel(0, -300)
+      await assertTimeAxisLayout(page, `Sparse month zoom ${gesture + 1}`)
+      await page.mouse.move(0, 0)
+      await delay(100)
+      const symbols = await readTrendSymbols(chart)
+      zoomFrames.push({ labels: await readTimeAxisTexts(page), symbols })
+      // The isolated zero at the bottom may still be in view. Only the latest
+      // continuous fragment at the top should lose its permanent marker.
+      if (symbols.every(({ y }) => y > box.height / 2)) {
+        zoomedToLine = true
+        break
+      }
+    }
+    assert.ok(zoomedToLine, `Zooming did not restore the short continuous report to a plain line: ${JSON.stringify(zoomFrames.slice(-3))}`)
+    await chart.getByText('2026-10-09 22:00:00 UTC+08:00', { exact: true }).waitFor({ state: 'hidden' })
+    await captureTrendScreenshot(page, 'p8-sparse-month-zoomed-line')
+    await page.mouse.move(box.x + box.width - 10, box.y + 80)
+    await chart.getByText('2026-10-09 22:00:00 UTC+08:00', { exact: true }).waitFor()
+    await chart.getByText('40.00 %', { exact: true }).first().waitFor()
+    await waitUntil(async() => (await readTrendSymbols(chart)).some(({ y }) => y < box.height / 2), 'The zoomed fragment has no real report to highlight')
+    await captureTrendScreenshot(page, 'p8-sparse-month-zoomed-hover')
+  } finally {
+    await page.close()
+  }
+})
+
+async function readChartTexts(page) {
+  return page.locator('.metric-chart canvas').first().evaluate((canvas) => {
+    const scale = canvas.getBoundingClientRect().width / canvas.width
+    return (canvas.drawnTexts ?? [])
+      .map((label) => ({ ...label, x: label.x * scale, right: label.right * scale, y: label.y * scale, bottom: label.bottom * scale }))
+  })
+}
+
+async function readTimeAxisLabels(page) {
+  return (await readChartTexts(page)).filter(({ text }) => /^(?:\d{2}:\d{2}|(?:\d{4}-)?\d{2}-\d{2}|UTC[+-]|\d{4}$)/.test(text))
+}
+
+async function readTimeAxisTexts(page) {
+  return (await readTimeAxisLabels(page)).map(({ text }) => text)
+}
+
+async function assertTimeAxisLayout(page, context) {
+  const canvas = page.locator('.metric-chart canvas').first()
+  let previousFrame
+  const labels = await waitUntil(async() => {
+    const current = await readTimeAxisLabels(page)
+    const frame = JSON.stringify(current)
+    const settled = current.length > 0 && frame === previousFrame
+    previousFrame = frame
+    return settled ? current : false
+  }, `${context}: time labels did not settle after resizing`).catch(async(error) => {
+    await captureTrendScreenshot(page, `p8-failure-${context.replaceAll('/', '-')}`)
+    const state = await canvas.evaluate((element) => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, drawnTexts: element.drawnTexts }))
+    throw new Error(`${error.message}: ${JSON.stringify(state)}`)
+  })
+  const box = await canvas.boundingBox()
+  assert.ok(labels.length > 0, `${context}: no time labels rendered`)
+  for (const label of labels) {
+    assert.ok(label.x >= -0.5 && label.right <= box.width + 0.5, `${context}: ${label.text} clipped`)
+    assert.ok(label.y >= 0 && label.bottom <= box.height + 0.5, `${context}: ${label.text} clipped vertically`)
+  }
+  for (let index = 0; index < labels.length; index += 1) {
+    for (const previous of labels.slice(0, index)) {
+      const label = labels[index]
+      const overlaps = label.x < previous.right && label.right > previous.x && label.y < previous.bottom && label.bottom > previous.y
+      assert.equal(overlaps, false, `${context}: ${label.text} overlaps ${previous.text}`)
+    }
+  }
+  const legends = (await readChartTexts(page)).filter(({ text }) => /[A-Za-z\u4e00-\u9fff]/.test(text) && !text.startsWith('UTC'))
+  for (const label of labels) {
+    for (const legend of legends) {
+      const overlaps = label.x < legend.right && label.right > legend.x && label.y < legend.bottom && label.bottom > legend.y
+      assert.equal(overlaps, false, `${context}: ${label.text} overlaps legend ${legend.text}`)
+    }
+  }
+  return labels.map(({ text }) => text)
+}
+
+test('trend dates stay readable across all trend pages, languages and ordinary widths', { timeout: 240_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const [route] of trendPages) {
+    await t.test(route, async() => {
+      const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1280, height: 900 } })
+      const errors = []
+      page.on('pageerror', (error) => errors.push(error.message))
+      // Off-grid request boundaries must not turn into off-grid tick labels.
+      await page.clock.install({ time: new Date('2027-01-01T04:00:37Z') })
+      await installTimeAxisFixture(page)
+      const requests = trackTrendRequests(page)
+      try {
+        await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
+        const chart = page.locator('.metric-chart').first()
+        await chart.scrollIntoViewIfNeeded()
+        const setSidebarCollapsed = async(collapsed, language) => {
+          const name = language === 'en' ? (collapsed ? 'Collapse sidebar' : 'Expand sidebar') : (collapsed ? '收起侧栏' : '展开侧栏')
+          const control = page.getByRole('button', { name, exact: true })
+          if (await control.count()) await control.click()
+          await page.locator('.page-aside').evaluate(async(element) => { await Promise.all(element.getAnimations().map((animation) => animation.finished)) })
+        }
+        for (const language of ['en', 'zh-CN']) {
+          await page.setViewportSize({ width: 1280, height: 900 })
+          await setSidebarCollapsed(false, 'en')
+          if (language === 'zh-CN') await page.getByRole('button', { name: '中文', exact: true }).click()
+          for (const range of ['1h', '168h', '720h']) {
+            await page.setViewportSize({ width: 1280, height: 900 })
+            await setSidebarCollapsed(false, language)
+            await selectTrendRange(page, range)
+            await page.waitForLoadState('networkidle')
+            await chart.scrollIntoViewIfNeeded()
+            await waitUntil(async() => {
+              const labels = await readTimeAxisTexts(page)
+              return range === '1h' ? labels.some((text) => /^11:\d{2}$/.test(text)) : labels.some((text) => /(?:2026-)?12-\d{2}/.test(text)) && !labels.some((text) => /^\d{2}:\d{2}/.test(text))
+            }, `${route}/${range}: labels did not match the visible time granularity`)
+            const count = requests.length
+            for (const width of [1280, 1366, 1440, 1920, 390, 320]) {
+              await page.setViewportSize({ width, height: 900 })
+              // The app keeps its desktop sidebar at phone widths; close it
+              // explicitly so this test checks chart layout in usable space.
+              await setSidebarCollapsed(width < 600, language)
+              await chart.scrollIntoViewIfNeeded()
+              await waitUntil(async() => chart.locator('canvas').evaluate((canvas) => Math.abs(canvas.getBoundingClientRect().width - canvas.closest('.metric-chart__body').getBoundingClientRect().width) < 2), 'Canvas did not resize')
+              const texts = await assertTimeAxisLayout(page, `${route}/${language}/${range}/${width}`)
+              assert.ok(texts.length <= 14, 'Time labels became an unreadable wall of text')
+              const layout = await chart.evaluate((element) => {
+                const body = element.querySelector('.metric-chart__body').getBoundingClientRect()
+                return { height: body.height, right: body.right }
+              })
+              assert.equal(layout.height, 250, `${route}/${width}: labels changed the card height`)
+              assert.ok(layout.right <= width + 1, `${route}/${width}: chart overflows`)
+              if ([1280, 320].includes(width)) await captureTrendScreenshot(page, `p8-${route.split('/')[0]}-${language}-${range}-${width}`)
+            }
+            assert.equal(requests.length, count, 'Resizing must not refetch or reset the selected range')
+          }
+        }
+        await page.setViewportSize({ width: 1280, height: 900 })
+        await chart.scrollIntoViewIfNeeded()
+        await setSidebarCollapsed(true, 'zh-CN')
+        await assertTimeAxisLayout(page, `${route}/collapsed sidebar`)
+        const box = await chart.locator('canvas').boundingBox()
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+        await chart.getByText(/2026-12-\d{2} \d{2}:\d{2}:\d{2} UTC\+08:00/).waitFor()
+        assert.deepEqual(errors, [])
+      } finally {
+        await page.close()
+      }
+    })
+  }
+})
+
+test('short-window labels show seconds and repeated-hour tooltips show the point offset', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'America/New_York', viewport: { width: 1280, height: 900 } })
+  await page.clock.install({ time: new Date('2026-11-01T07:00:37Z') })
+  await installTimeAxisFixture(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await selectTrendRange(page, '3h')
+    await page.waitForLoadState('networkidle')
+    const chart = page.locator('.metric-chart').first()
+    await chart.scrollIntoViewIfNeeded()
+    await waitUntil(async() => (await readTimeAxisTexts(page)).includes('UTC-04:00') && (await readTimeAxisTexts(page)).includes('UTC-05:00'), 'Repeated-hour labels lost their UTC offsets')
+    await assertTimeAxisLayout(page, 'DST repeated hour')
+    await captureTrendScreenshot(page, 'p8-dst-repeated-hour')
+    const box = await chart.locator('canvas').boundingBox()
+    await page.mouse.move(box.x + box.width * 0.85, box.y + box.height / 2)
+    await chart.getByText(/2026-11-01 01:\d{2}:\d{2} UTC-05:00/).waitFor()
+    await selectTrendRange(page, 'custom')
+    const filter = page.locator('.trend-time-filter')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    await start.click()
+    await start.fill('2026-10-31 12:00:00')
+    await start.press('Tab')
+    await end.click()
+    await end.fill('2026-10-31 12:00:30')
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    await chart.scrollIntoViewIfNeeded()
+    await waitUntil(async() => (await readTimeAxisTexts(page)).some((text) => /^12:00:\d{2}$/.test(text)), 'Sub-minute axis did not show seconds')
+    await assertTimeAxisLayout(page, 'Sub-minute range')
+    await captureTrendScreenshot(page, 'p8-short-window-seconds')
+  } finally {
+    await page.close()
+  }
+})
+
+test('trend zoom survives responsive resizing without refetching or restoring the full range', { timeout: 45_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'Asia/Shanghai', viewport: { width: 1440, height: 900 } })
+  await page.clock.install({ time: new Date('2026-10-09T04:00:37Z') })
+  await installTimeAxisFixture(page)
+  const requests = trackTrendRequests(page)
+  const visibleMinutes = async() => (await readTimeAxisTexts(page))
+    .filter((text) => /^\d{2}:\d{2}(?::\d{2})?$/.test(text))
+    .map((text) => { const [hour, minute, second = 0] = text.split(':').map(Number); return hour * 60 + minute + second / 60 })
+  const span = (values) => Math.max(...values) - Math.min(...values)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const chart = page.locator('.metric-chart').first()
+    await chart.scrollIntoViewIfNeeded()
+    await waitUntil(async() => (await visibleMinutes()).length >= 3, 'Full-range time ticks did not render')
+    const before = span(await visibleMinutes())
+    const count = requests.length
+    const box = await chart.locator('canvas').boundingBox()
+    await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.4)
+    for (let gesture = 0; gesture < 6; gesture += 1) {
+      await page.mouse.wheel(0, -300)
+      await assertTimeAxisLayout(page, `Wheel zoom ${gesture + 1}`)
+    }
+    await waitUntil(async() => {
+      const values = await visibleMinutes()
+      return values.length >= 2 && span(values) < before
+    }, 'Wheel zoom did not reduce the visible interval')
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await chart.scrollIntoViewIfNeeded()
+    await assertTimeAxisLayout(page, 'Zoomed chart after resize')
+    const after = await visibleMinutes()
+    assert.ok(after.length >= 2 && span(after) < before, 'Responsive resizing reset the user zoom')
+    assert.equal(requests.length, count, 'Client-side zoom and resizing refetched the range')
+  } finally {
+    await page.close()
+  }
+})
+
+async function withCalendarDraftProbe(run) {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({
+    locale: 'en-US', timezoneId: 'UTC', viewport: { width: 1440, height: 900 }
+  })
+  await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+  const requests = trackTrendRequests(page)
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+    await selectTrendRange(page, 'custom')
+    const filter = page.locator('.trend-time-filter')
+    const inputs = [
+      filter.getByRole('textbox', { name: 'Start Time', exact: true }),
+      filter.getByRole('textbox', { name: 'End Time', exact: true })
+    ]
+    const panel = page.locator('.trend-time-filter-popup:visible')
+    const applied = await Promise.all(inputs.map((input) => input.inputValue()))
+    assert.equal(requests.length, 5, 'Opening custom controls must not issue another range batch')
+    await run({ page, filter, inputs, panel, applied, requests })
+  } finally {
+    await page.close()
+  }
+}
+
+async function openCalendarDraftProbe({ page, inputs, panel }, index, draft, timing) {
+  if (timing === 'early') {
+    // Control the observed input-before-popup ordering, without altering product code.
+    // Advancing the virtual clock is not a wall-clock sleep.
+    await page.clock.pauseAt(new Date('2026-10-07T12:05:00Z'))
+  }
+  await inputs[index].click()
+  if (timing === 'ready') await stablePopupBounds(panel)
+  await inputs[index].fill(draft)
+  assert.equal(await inputs[index].inputValue(), draft)
+  if (timing === 'early') {
+    assert.equal(await panel.count(), 0, 'The early case must type before the popup is visible')
+    await page.clock.resume()
+  }
+  await stablePopupBounds(panel)
+  assert.equal(await inputs[index].inputValue(), draft, 'Opening alone must preserve the typed draft')
+}
+
+async function hoverCalendarDraftProbe({ inputs, panel }, index) {
+  const day = index === 0 ? '3' : '6'
+  const cell = panel
+    .locator('.t-date-picker__cell:not(.t-date-picker__cell--additional):not(.t-date-picker__cell--disabled)')
+    .filter({ hasText: new RegExp(`^${day}$`) }).first()
+  // Real mouse movement exercises the user-visible calendar preview and its exit.
+  await cell.hover()
+  await inputs[index].hover()
+}
+
+test('calendar hover preserves exact incomplete drafts before and after popup initialization', { timeout: 60_000 }, async(t) => {
+  for (const index of [0, 1]) {
+    for (const timing of ['early', 'ready']) {
+      await t.test(`${index === 0 ? 'start' : 'end'} / ${timing}`, async() => {
+        await withCalendarDraftProbe(async(context) => {
+          const { inputs, applied, requests } = context
+          const draft = index === 0 ? '2026-10-03 10:12:' : '2026-10-06 11:23:'
+          await openCalendarDraftProbe(context, index, draft, timing)
+          await hoverCalendarDraftProbe(context, index)
+          assert.equal(await inputs[index].inputValue(), draft, 'Leaving a calendar preview must restore the exact unconfirmed draft')
+          assert.equal(await inputs[1 - index].inputValue(), applied[1 - index], 'A draft must not alter the other endpoint')
+          assert.ok(await inputs[index].evaluate((element) => element === document.activeElement), 'Calendar hover must retain input focus')
+          assert.equal(requests.length, 5, 'Opening, typing and hover must not submit a draft')
+        })
+      })
+    }
+  }
+})
+
+test('canceling an invalid early calendar draft restores applied dates and cannot revive it on reopen', { timeout: 30_000 }, async() => {
+  await withCalendarDraftProbe(async(context) => {
+    const { page, inputs, panel, applied, requests } = context
+    const draft = 'not-a-date'
+    await openCalendarDraftProbe(context, 1, draft, 'early')
+    await hoverCalendarDraftProbe(context, 1)
+    assert.equal(await inputs[1].inputValue(), draft, 'Unparseable text must survive hover while it is still being edited')
+    assert.equal(requests.length, 5)
+
+    await page.locator('.home-page-title').click()
+    await page.locator('.trend-time-filter-popup').waitFor({ state: 'hidden' })
+    await waitUntil(async() => JSON.stringify(await Promise.all(inputs.map((input) => input.inputValue()))) === JSON.stringify(applied), 'Canceling must restore the applied range')
+    assert.equal(requests.length, 5, 'Canceling an invalid draft must not submit')
+
+    await inputs[1].click()
+    await stablePopupBounds(panel)
+    await hoverCalendarDraftProbe(context, 1)
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied, 'A reopened picker must not restore a previously canceled draft')
+    assert.equal(requests.length, 5)
+  })
+})
+
+test('a complete early calendar draft submits its own values exactly once after hover', { timeout: 30_000 }, async() => {
+  await withCalendarDraftProbe(async(context) => {
+    const { page, inputs, panel, requests } = context
+    const selected = ['2026-10-03 10:12:34', '2026-10-06 11:23:45']
+    await openCalendarDraftProbe(context, 0, selected[0], 'early')
+    await hoverCalendarDraftProbe(context, 0)
+    assert.equal(await inputs[0].inputValue(), selected[0])
+    await inputs[1].click()
+    await inputs[1].fill(selected[1])
+    await hoverCalendarDraftProbe(context, 1)
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
+    assert.equal(requests.length, 5, 'Hover must not apply the complete draft early')
+
+    await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await panel.waitFor({ state: 'hidden' })
+    await page.waitForLoadState('networkidle')
+    const expected = await localRangeAsUTC(page, selected)
+    assert.equal(requests.length, 10, 'Confirmation must publish exactly one range-query batch')
+    for (const request of requests.slice(5)) {
+      assert.deepEqual([request.range.start, request.range.end], expected, 'Confirmed requests must use the typed range, not stale applied dates')
+    }
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
+  })
+})
+
+test('typing over a calendar preview preserves invalid drafts without selecting a fallback date', { timeout: 30_000 }, async() => {
+  await withCalendarDraftProbe(async(context) => {
+    const { page, inputs, panel, applied, requests } = context
+    const errors = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+    await openCalendarDraftProbe(context, 0, '2026-10-03 10:12:34', 'ready')
+    const cell = (day) => panel
+      .locator('.t-date-picker__cell:not(.t-date-picker__cell--additional):not(.t-date-picker__cell--disabled)')
+      .filter({ hasText: new RegExp(`^${day}$`) }).first()
+    await cell('3').click()
+    await inputs[0].hover()
+    assert.equal(await inputs[0].inputValue(), '2026-10-03 10:12:34', 'Leaving a clicked date must retain the selection')
+    await inputs[0].focus()
+    await cell('4').hover()
+    await cell('5').hover()
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.insertText('not-a-date')
+    await inputs[0].hover()
+    assert.equal(await inputs[0].inputValue(), 'not-a-date', 'Typing while the pointer stays over the calendar must replace the preview')
+    assert.equal(await inputs[1].inputValue(), applied[1])
+    await inputs[1].click()
+    await cell('6').hover()
+    await inputs[1].hover()
+    assert.equal(await inputs[0].inputValue(), 'not-a-date', 'Hovering the other endpoint must preserve the invalid draft without parsing it')
+    assert.equal(await inputs[1].inputValue(), applied[1])
+    assert.equal(requests.length, 5, 'Neither a date pick nor invalid text may apply before confirmation')
+    assert.deepEqual(errors, [], 'Invalid text must not reach the calendar date parser')
+    await page.locator('.home-page-title').click()
+    await panel.waitFor({ state: 'hidden' })
+    assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied)
+  })
+})
+
+test('list loading tables reuse visible column geometry and retain rows during refresh', { timeout: 120_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const fixtures = [
+    { name: 'node', route: 'nodes', api: /\/api\/vgpu\/v1\/nodes$/, table: '.node-table',
+      layout: 'auto', widths: ['', '', '', '', ''], minWidths: ['200px', '200px', '100px', '280px', '280px'] },
+    { name: 'card', route: 'accelerators', api: /\/api\/vgpu\/v1\/gpus$/, table: '.accelerator-table',
+      layout: 'fixed', widths: ['250px', '150px', '170px', '200px', '220px', '180px', '220px', '180px'],
+      minWidths: ['', '', '', '', '', '', '', ''] },
+    { name: 'workload', route: 'workloads', api: workloadListPattern, table: '.workload-table',
+      layout: 'auto', widths: ['', '', '', '180px', ''], minWidths: ['', '', '', '', ''] },
+  ]
+  const viewports = [1440, 600]
+  const createGate = () => {
+    let release
+    const promise = new Promise((resolve) => { release = resolve })
+    return { promise, release }
+  }
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const fixture of fixtures) {
+      await t.test(`${fixture.name} ${locale}`, async() => {
+        const context = await browser.newContext({ locale, viewport: { width: 1440, height: 1000 } })
+        const page = await context.newPage()
+        const errors = []
+        page.on('pageerror', (error) => errors.push(error.message))
+        const initialGate = createGate()
+        let gate = initialGate
+        let fetched = 0
+        await page.route(fixture.api, async(route) => {
+          const heldGate = gate
+          const response = await route.fetch()
+          const payload = await response.json()
+          if (fixture.name === 'workload') {
+            payload.items = payload.items.map((item) => ({ ...item, createTime: '2026-09-12T00:00:00Z' }))
+          }
+          fetched += 1
+          await heldGate.promise
+          await route.fulfill({ response, json: payload })
+        })
+        const geometry = (selector) => page.locator(selector).evaluate((root) => {
+          const table = root.querySelector('table')
+          const content = root.querySelector('.t-table__content')
+          const shell = root.closest('.stateful-table')
+          const toolbar = shell.parentElement.querySelector('.table-toolbar')
+          const cols = [...table.querySelectorAll('colgroup col')]
+          const headers = [...table.querySelectorAll('thead th')]
+          return {
+            labels: headers.map((header) => header.textContent.trim()),
+            layout: getComputedStyle(table).tableLayout,
+            widths: cols.map((col) => col.style.width),
+            minWidths: cols.map((col) => col.style.minWidth),
+            headerWidths: headers.map((header) => header.getBoundingClientRect().width),
+            rowHeight: table.querySelector('tbody tr').getBoundingClientRect().height,
+            topOffset: table.getBoundingClientRect().top - toolbar.getBoundingClientRect().bottom,
+            shellWidth: shell.getBoundingClientRect().width,
+            contentWidth: content.getBoundingClientRect().width,
+            overflowX: getComputedStyle(content).overflowX,
+            forces720: [root, ...root.querySelectorAll('*')].some((element) => getComputedStyle(element).minWidth === '720px'),
+          }
+        })
+        const configure = async(width) => {
+          await page.setViewportSize({ width, height: 1000 })
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+        }
+        const assertColumnContract = (measured, stage) => {
+          const label = `${fixture.name} ${locale} ${stage}`
+          assert.equal(measured.labels.length, fixture.widths.length, `${label}: visible column count`)
+          assert.equal(measured.layout, fixture.layout, `${label}: table layout`)
+          assert.deepEqual(measured.widths, fixture.widths, `${label}: declared column widths`)
+          assert.deepEqual(measured.minWidths, fixture.minWidths, `${label}: declared minimum column widths`)
+          assert.equal(measured.forces720, false, `${label}: a table descendant forces the old 720px skeleton width`)
+          assert.equal(measured.overflowX, 'auto', `${label}: the table owns horizontal scrolling`)
+          assert.ok(measured.contentWidth <= measured.shellWidth + 1, `${label}: scroll content escapes its table shell`)
+        }
+        try {
+          await page.goto(`${target}${basePath}${fixture.route}`, { waitUntil: 'domcontentloaded' })
+          const skeleton = page.locator('[data-testid="stateful-table-skeleton"]')
+          await skeleton.waitFor()
+          const placeholderTable = skeleton.locator('.stateful-table__skeleton-table')
+          assert.equal(await placeholderTable.getAttribute('inert'), '')
+          assert.equal(await placeholderTable.getAttribute('tabindex'), '0')
+          await placeholderTable.evaluate((table) => table.focus())
+          assert.equal(await skeleton.evaluate((element) => element.contains(document.activeElement)), false,
+            'Programmatic focus must not enter an aria-hidden placeholder table')
+          const lastToolbarButton = page.locator('.table-toolbar button').last()
+          await lastToolbarButton.focus()
+          await page.keyboard.press('Tab')
+          assert.equal(await skeleton.evaluate((element) => element.contains(document.activeElement)), false,
+            'Keyboard navigation must skip the inert placeholder table')
+          await waitUntil(() => fetched > 0, `${fixture.name}: the initial backend response was not fetched`)
+          const pending = []
+          for (const width of viewports) {
+            await configure(width)
+            const measured = await geometry('.stateful-table__skeleton-table')
+            assertColumnContract(measured, `loading ${width}`)
+            assert.equal(await skeleton.locator('tbody tr').count(), 5, 'Loading rows are a fixed sample, not the result count')
+            assert.ok(measured.rowHeight >= 40, `${fixture.name}: the loading row is smaller than its reserved icon container`)
+            pending.push(measured)
+            await page.locator('.stateful-table').scrollIntoViewIfNeeded()
+            await captureTrendScreenshot(page, `skeleton-list-${fixture.name}-${locale}-${width}`)
+          }
+          initialGate.release()
+          await page.locator(`${fixture.table} tbody tr`).first().waitFor()
+          await skeleton.waitFor({ state: 'hidden' })
+          await lastToolbarButton.focus()
+          await page.keyboard.press('Tab')
+          assert.equal(await page.locator(fixture.table).evaluate((element) => element.contains(document.activeElement)), true,
+            'Keyboard navigation must still enter the ready table from the last toolbar button')
+          for (const [index, width] of viewports.entries()) {
+            await configure(width)
+            const resolved = await geometry(fixture.table)
+            assertColumnContract(resolved, `ready ${width}`)
+            assert.deepEqual(resolved.labels, pending[index].labels, `${fixture.name}: known column labels change after loading`)
+            assert.ok(Math.abs(resolved.topOffset - pending[index].topOffset) < 1, `${fixture.name}: the table moves relative to its toolbar after loading`)
+            if (fixture.name !== 'workload' || width === 1440) {
+              assert.ok(Math.abs(resolved.rowHeight - pending[index].rowHeight) < 1, `${fixture.name} ${locale} ${width}: default row height changes from loading ${pending[index].rowHeight}px to ready ${resolved.rowHeight}px`)
+            } else {
+              // The narrow auto-layout workload row can wrap unknown text; report it without promising equal height.
+              t.diagnostic(`workload ${locale} ${width}: loading row ${pending[index].rowHeight}px, ready row ${resolved.rowHeight}px`)
+            }
+            await page.locator('.stateful-table').scrollIntoViewIfNeeded()
+            await captureTrendScreenshot(page, `ready-list-${fixture.name}-${locale}-${width}`)
+            // Auto-layout columns may grow for real text. Only the fixed-layout card table promises equal widths.
+            if (fixture.layout === 'fixed') {
+              for (const [column, columnWidth] of resolved.headerWidths.entries()) {
+                assert.ok(Math.abs(columnWidth - pending[index].headerWidths[column]) < 1,
+                  `card ${locale} ${width}: column ${column} changes width from ${pending[index].headerWidths[column]} to ${columnWidth}`)
+              }
+            }
+          }
+          await configure(1440)
+          const table = page.locator(fixture.table)
+          const existingRow = await table.locator('tbody tr').first().elementHandle()
+          const existingText = await table.innerText()
+          const settled = await geometry(fixture.table)
+          gate = createGate()
+          const beforeRefresh = fetched
+          const refreshName = locale === 'zh-CN' ? '刷新' : 'Refresh'
+          await page.locator('.table-toolbar-right').getByRole('button', { name: refreshName, exact: true }).click()
+          await waitUntil(() => fetched > beforeRefresh, `${fixture.name}: refresh did not fetch a response`)
+          await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'attached' })
+          assert.equal(await skeleton.count(), 0, `${fixture.name}: refresh replaced usable rows with loading placeholders`)
+          assert.equal(await existingRow.evaluate((row) => row.isConnected), true, `${fixture.name}: refresh removed the previous row`)
+          assert.equal(await table.innerText(), existingText, `${fixture.name}: refresh changed the previous content before a response`)
+          assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'true')
+          assert.ok(Math.abs((await geometry(fixture.table)).topOffset - settled.topOffset) < 1, `${fixture.name}: refresh moved the existing table`)
+          await captureTrendScreenshot(page, `refresh-list-${fixture.name}-${locale}-1440`)
+          gate.release()
+          await page.locator('[data-testid="stateful-table-refreshing"]').waitFor({ state: 'detached' })
+          assert.equal(await page.locator('.stateful-table').getAttribute('aria-busy'), 'false')
+          assert.deepEqual(errors, [])
+        } finally {
+          initialGate.release()
+          gate.release()
+          await context.close()
+        }
+      })
+    }
+  }
+})
+
+test('overview loading regions keep page containers while data arrives', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    await t.test(locale, async() => {
+      const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
+      let release
+      const gate = new Promise((resolve) => { release = resolve })
+      await page.route(/\/v1\/(?:nodes|gpus|monitor\/query\/instant-vector)$/, async(route) => {
+        const response = await route.fetch()
+        const query = route.request().method() === 'POST' ? route.request().postDataJSON()?.query : ''
+        const ranking = query?.includes('topk(')
+        await gate
+        await route.fulfill(ranking ? { json: { data: Array.from({ length: 5 }, (_, index) => ({
+          metric: { node: `node-${index + 1}`, device_uuid: `gpu-${index + 1}` }, value: 5 - index,
+        })) } } : { response })
+      })
+      const measure = () => page.evaluate(() => {
+        const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height
+        return {
+          node: height('.node-overview-skeleton') ?? height('.node-all'),
+          nodeBlock: height('.home-top-right-card'),
+          type: height('.card-type-skeleton') ?? height('.card-type-chart'),
+          top5: [...document.querySelectorAll('.tab-top-list')].map((element) => element.getBoundingClientRect().height),
+          workload: height('.workload-table-skeleton') ?? height('.top5-item-list-table'),
+          chart: [...document.querySelectorAll('.metric-chart__body')].map((element) => element.getBoundingClientRect().height),
+        }
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
+        await page.locator('.node-overview-skeleton').waitFor()
+        const countFonts = await page.locator('.node-overview-skeleton .count').evaluateAll((counts) => counts.map((count) => {
+          const font = (element) => {
+            const style = getComputedStyle(element)
+            return { size: style.fontSize, family: style.fontFamily, weight: style.fontWeight }
+          }
+          return { count: font(count), placeholder: font(count.querySelector('.loading-value')) }
+        }))
+        for (const fonts of countFonts) {
+          assert.deepEqual(fonts.placeholder, fonts.count, 'Character-width placeholders must use the count font, not the skeleton library font')
+        }
+        const pending = []
+        for (const width of [1280, 1366, 1440, 1920, 600]) {
+          await page.setViewportSize({ width, height: 1000 })
+          await waitForChartPaint(page)
+          await delay(50)
+          pending.push({ width, ...await measure() })
+          if (width === 1280) await captureTrendScreenshot(page, `skeleton-overview-${locale}-1280`)
+        }
+        release()
+        await page.locator('.node-all').waitFor()
+        await page.locator('.tab-top-skeleton').first().waitFor({ state: 'detached' })
+        const ready = []
+        for (const width of [1280, 1366, 1440, 1920, 600]) {
+          await page.setViewportSize({ width, height: 1000 })
+          await waitForChartPaint(page)
+          await delay(50)
+          ready.push({ width, ...await measure() })
+          if (width === 1280) await captureTrendScreenshot(page, `ready-overview-${locale}-1280`)
+        }
+        t.diagnostic(JSON.stringify({ locale, pending, ready }))
+        assert.ok(ready.every((state) => state.chart.every((height) => height === 250)))
+        for (const [index, state] of ready.entries()) {
+          assert.equal(state.node, pending[index].node, 'Known node status labels must reserve their wrapped height')
+          assert.equal(state.workload, pending[index].workload, 'Five loading rows must match five result rows in the count table')
+          assert.ok(state.top5.every((height, rank) => Math.abs(height - pending[index].top5[rank]) < 4),
+            'Five ranking placeholders must retain the five-item row rhythm')
+        }
+      } finally {
+        release()
+        await page.close()
+      }
+    })
+  }
+})
+
+test('scheduling loading preserves its snapshot and refresh record position', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    await t.test(locale, async() => {
+      const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
+      const pod = { name: 'loading-snapshot', namespace: 'research', uid: 'loading-snapshot-uid', stage: 'waiting',
+        schedulerName: 'hami-scheduler', reasonCodes: ['CardInsufficientMemory'], reasonSource: 'hami',
+        requests: [{ container: 'main', containerKind: 'regular', resources: [{ name: 'nvidia.com/gpu', value: '1', kind: 'count' }] }] }
+      let release
+      let gate = new Promise((resolve) => { release = resolve })
+      let requested = 0
+      await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [pendingWorkloadFixture(pod)] }))
+      await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+        requested += 1
+        await gate
+        await route.fulfill({ json: { pod, events: [], eventStatus: 'empty' } })
+      })
+      try {
+        await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('button', { name: 'loading-snapshot / main', exact: true }).click()
+        const dialog = page.getByRole('dialog')
+        const records = dialog.locator('.scheduling-records')
+        await waitUntil(() => requested === 1, 'Opening the drawer did not request its evidence')
+        await dialog.locator('.sd-status-line').waitFor()
+        const before = await dialog.locator('.scheduling-summary').innerText()
+        assert.ok(before.includes('hami-scheduler'), 'The initial drawer must retain its real list snapshot')
+        await captureTrendScreenshot(page, `skeleton-drawer-${locale}-1280`)
+        release()
+        const refresh = dialog.locator('.sd-header button[aria-busy]')
+        await waitUntil(async() => (await refresh.getAttribute('aria-busy')) === 'false', 'Initial evidence did not finish')
+        const stable = await records.boundingBox()
+        const summary = await dialog.locator('.scheduling-summary').innerText()
+        gate = new Promise((resolve) => { release = resolve })
+        await refresh.click()
+        await waitUntil(() => requested === 2, 'The drawer did not refresh')
+        const during = await records.boundingBox()
+        assert.equal(await dialog.locator('.scheduling-summary').innerText(), summary)
+        t.diagnostic(JSON.stringify({ locale, stableRecordY: stable.y, refreshingRecordY: during.y }))
+        assert.ok(Math.abs(stable.y - during.y) < 1, 'Refreshing must not move the existing evidence records')
+        await captureTrendScreenshot(page, `refresh-drawer-${locale}-1280`)
+        release()
+      } finally {
+        release()
+        await page.close()
+      }
+    })
+  }
+})
+
+test('node allocation loading follows identity and both allocation snapshots without inventing results', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const { width, first } of [{ width: 1440, first: 'devices' }, { width: 375, first: 'containers' }]) {
+    await t.test(`${width}px ${first} first`, async() => {
+      const page = await browser.newPage({ locale: 'en-US', viewport: { width, height: 1000 } })
+      const requests = await installNodeAllocationFixture(page, nodeAllocationFixture())
+      const gates = Object.fromEntries(['node', 'devices', 'containers'].map((key) => {
+        let release
+        const promise = new Promise((resolve) => { release = resolve })
+        return [key, { promise, release, delivered: false }]
+      }))
+      for (const [key, pattern] of [['node', '**/v1/node?**'], ['devices', '**/v1/gpus'], ['containers', '**/v1/containers']]) {
+        await page.route(pattern, async(route) => {
+          await gates[key].promise
+          await route.fallback()
+          gates[key].delivered = true
+        })
+      }
+      try {
+        await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'domcontentloaded' })
+        await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
+        if (width === 375) await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+        assert.equal(await page.locator('.node-allocation').count(), 0, 'Unknown node identity must not imply four real devices or a split mode')
+        assert.equal(requests.length, 0, 'Allocation requests need the resolved node identity')
+        await captureTrendScreenshot(page, `skeleton-node-identity-${width}`)
+
+        gates.node.release()
+        const section = page.getByRole('region', { name: 'Device allocation', exact: true })
+        await section.locator('.node-device--loading').first().waitFor()
+        await waitUntil(() => requests.length === 2, 'Resolved node identity did not start the two scoped snapshots')
+        assert.equal(await page.locator('.detail-page-state').getAttribute('data-detail-state'), 'ready')
+        assert.equal(await section.getAttribute('aria-busy'), 'true')
+        assert.equal(await section.locator('.node-device--loading[aria-hidden="true"]').count(), 4)
+        assert.equal(await section.locator('article[data-device-id]').count(), 0)
+        assert.equal(await section.locator('button[aria-haspopup="dialog"]').count(), 0, 'Sample placeholders cannot expose occupancy actions')
+        const placeholderBoxes = await section.locator('.node-device--loading').evaluateAll((items) => items.map((item) => {
+          const { x, width } = item.getBoundingClientRect()
+          return { x, width }
+        }))
+        await section.scrollIntoViewIfNeeded()
+        await captureTrendScreenshot(page, `skeleton-node-allocation-${width}`)
+
+        gates[first].release()
+        await waitUntil(() => gates[first].delivered, 'The first allocation snapshot did not finish')
+        assert.equal(await section.getAttribute('aria-busy'), 'true', 'One snapshot cannot establish complete occupancy')
+        assert.equal(await section.locator('.node-device--loading').count(), 4)
+        assert.equal(await section.locator('.split-meter__part, .split-mig__segment').count(), 0, 'An unfinished holder snapshot must not suggest free capacity')
+        gates[first === 'devices' ? 'containers' : 'devices'].release()
+        await section.locator('article[data-device-id]').first().waitFor()
+        assert.equal(await section.getAttribute('aria-busy'), 'false')
+        assert.equal(await section.locator('.node-device--loading').count(), 0)
+        assert.equal(await section.locator('article[data-device-id]').count(), 4)
+        assert.equal(await section.getByRole('button', { name: 'Show 4 more devices', exact: true }).count(), 1)
+        const readyBoxes = await section.locator('article[data-device-id]').evaluateAll((items) => items.map((item) => {
+          const { x, width } = item.getBoundingClientRect()
+          return { x, width }
+        }))
+        for (const [index, box] of readyBoxes.entries()) {
+          assert.ok(Math.abs(box.x - placeholderBoxes[index].x) < 1 && Math.abs(box.width - placeholderBoxes[index].width) < 1,
+            'Known two-column or one-column allocation geometry must not change when snapshots complete')
+        }
+        assertNodeAllocationRequests(requests)
+        await captureTrendScreenshot(page, `ready-node-allocation-${width}`)
+      } finally {
+        Object.values(gates).forEach((gate) => gate.release())
+        await page.unrouteAll({ behavior: 'wait' })
+        await page.close()
+      }
+    })
+  }
+})
+
+test('chart loading reserves the painted plot and legend rows on narrow hourly and cross-day charts', { timeout: 60_000 }, async(t) => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const { name, now, width } of [
+    { name: 'hour-wide', now: '2026-10-07T12:00:00Z', width: 1440 },
+    { name: 'hour-narrow', now: '2026-10-07T12:00:00Z', width: 375 },
+    { name: 'cross-day-narrow', now: '2026-10-07T00:30:00Z', width: 375 },
+  ]) {
+    await t.test(name, async() => {
+      const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC', viewport: { width, height: 1000 } })
+      await page.clock.install({ time: new Date(now) })
+      await installTimeAxisFixture(page)
+      await page.addInitScript(() => {
+        const prototype = CanvasRenderingContext2D.prototype
+        const clearRect = prototype.clearRect
+        prototype.clearRect = function(...args) {
+          this.canvas.loadingProbeLines = []
+          return clearRect.apply(this, args)
+        }
+        const beginPath = prototype.beginPath
+        prototype.beginPath = function(...args) {
+          this.loadingProbePath = []
+          return beginPath.apply(this, args)
+        }
+        for (const method of ['moveTo', 'lineTo']) {
+          const original = prototype[method]
+          prototype[method] = function(x, y, ...args) {
+            const point = new DOMPoint(x, y).matrixTransform(this.getTransform())
+            this.loadingProbePath ??= []
+            this.loadingProbePath.push({ method, x: point.x, y: point.y })
+            return original.call(this, x, y, ...args)
+          }
+        }
+        const stroke = prototype.stroke
+        prototype.stroke = function(...args) {
+          const path = this.loadingProbePath ?? []
+          for (let index = 1; index < path.length; index += 1) {
+            const previous = path[index - 1]
+            const point = path[index]
+            if (point.method === 'lineTo' && Math.abs(point.y - previous.y) < 1 && Math.abs(point.x - previous.x) > this.canvas.width / 2) {
+              this.canvas.loadingProbeLines ??= []
+              this.canvas.loadingProbeLines.push(point.y)
+            }
+          }
+          return stroke.apply(this, args)
+        }
+      })
+      let release
+      const gate = new Promise((resolve) => { release = resolve })
+      await page.route('**/v1/monitor/query/range-vector', async(route) => {
+        await gate
+        await route.fallback()
+      })
+      try {
+        await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
+        await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+        const chart = page.locator('.metric-chart').first()
+        const plot = chart.locator('.metric-chart__skeleton-plot')
+        await plot.waitFor()
+        await page.locator('.page-aside').evaluate(async(element) => {
+          await Promise.all(element.getAnimations().map((animation) => animation.finished))
+          await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        })
+        const pending = await chart.evaluate((element) => {
+          const body = element.querySelector('.metric-chart__body').getBoundingClientRect()
+          const plot = element.querySelector('.metric-chart__skeleton-plot').getBoundingClientRect()
+          const legends = [...element.querySelectorAll('.metric-chart__skeleton-legend .t-skeleton__col')].map((item) => {
+            const rect = item.getBoundingClientRect()
+            return { top: rect.top - body.top, bottom: rect.bottom - body.top }
+          })
+          return { width: body.width, height: body.height, plot: { top: plot.top - body.top, bottom: plot.bottom - body.top }, legends }
+        })
+        assert.equal(pending.height, 250)
+        assert.equal(pending.legends.length, pending.width < 360 ? 2 : 1)
+        assert.ok(pending.plot.bottom < pending.legends[0].top, 'Loading plot and legend must not overlap')
+        assert.ok(pending.legends.at(-1).bottom <= 250, 'Loading legend escapes the chart body')
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+        const animations = await chart.locator('.t-skeleton__col').evaluateAll((items) => items.map((item) => ({
+          self: getComputedStyle(item).animationName,
+          gradient: getComputedStyle(item, '::after').animationName,
+        })))
+        assert.ok(animations.every(({ self, gradient }) => self === 'none' && gradient === 'none'), 'Reduced-motion users must not receive shimmer animations')
+        await chart.scrollIntoViewIfNeeded()
+        await captureTrendScreenshot(page, `skeleton-chart-${name}`)
+        release()
+        await chart.locator('canvas').waitFor()
+        await assertTimeAxisLayout(page, `loading-parity-${name}`)
+        const painted = await chart.locator('canvas').first().evaluate((canvas) => {
+          const scale = canvas.getBoundingClientRect().width / canvas.width
+          const lines = (canvas.loadingProbeLines ?? []).map((y) => y * scale)
+          const texts = (canvas.drawnTexts ?? []).filter(({ text }) => /[A-Za-z]/.test(text) && !text.startsWith('UTC'))
+          return {
+            plot: { top: Math.min(...lines), bottom: Math.max(...lines) },
+            legends: texts.map(({ text, y, bottom }) => ({ text, top: y * scale, bottom: bottom * scale })),
+          }
+        })
+        t.diagnostic(JSON.stringify({ name, pending, painted }))
+        assert.ok(Number.isFinite(painted.plot.top), 'The actual chart grid was not painted')
+        assert.ok(Math.abs(pending.plot.top - painted.plot.top) <= 1.5 && Math.abs(pending.plot.bottom - painted.plot.bottom) <= 1.5,
+          `${name}: loading plot ${JSON.stringify(pending.plot)} differs from painted plot ${JSON.stringify(painted.plot)}`)
+        assert.equal(painted.legends.length, 2)
+        const paintedRows = pending.width < 360 ? painted.legends : [painted.legends[0]]
+        for (const [index, row] of pending.legends.entries()) {
+          const actual = paintedRows[index]
+          assert.ok(Math.abs((row.top + row.bottom) / 2 - (actual.top + actual.bottom) / 2) <= 4.5,
+            `${name}: placeholder legend row ${index} is displaced from its painted label: ${JSON.stringify({ row, actual })}`)
+        }
+        await captureTrendScreenshot(page, `ready-chart-${name}`)
+      } finally {
+        release()
+        await page.unrouteAll({ behavior: 'wait' })
+        await page.close()
+      }
+    })
+  }
+})
+
+const listSearchCases = [
+  { route: 'nodes', endpoint: 'nodes', field: 'ip', placeholder: 'Enter full IP address', value: '192.0.2.10', partial: '192.0.2', row: { name: 'node-1', uid: 'node-1', ip: '192.0.2.10', type: ['NVIDIA'], isSchedulable: true }, selector: '.node-table' },
+  { route: 'accelerators', endpoint: 'gpus', field: 'uid', placeholder: 'Enter full device ID', value: 'gpu-1', partial: 'gpu', row: { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', health: true }, selector: '.accelerator-table' },
+  { route: 'workloads', endpoint: 'workloads', field: 'name', placeholder: 'Search Pod or container name', value: 'worker', partial: 'work', row: { name: 'worker', appName: 'training-job', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }, selector: '.workload-table' },
+]
+
+test('list searches distinguish empty, unmatched and failed results and recover through clear actions', { timeout: 90_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const config of listSearchCases) {
+    const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+    const queries = []
+    let inventoryEmpty = true
+    await page.route(`**/api/vgpu/v1/${config.endpoint}`, async(route) => {
+      const query = route.request().postDataJSON()
+      queries.push(query)
+      const value = query?.filters?.[config.field]
+      if (value === 'fail') return route.fulfill({ status: 503, json: { code: 503, message: 'unavailable' } })
+      const matches = !value || (config.field === 'name'
+        ? config.row.name.includes(value) || config.row.appName.includes(value)
+        : value === config.value)
+      const rows = !inventoryEmpty && matches ? [config.row] : []
+      return route.fulfill({ json: config.field === 'name' ? { items: rows, total: rows.length } : { list: rows } })
+    })
+    try {
+      await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
+      const empty = page.getByTestId('stateful-table-empty')
+      const search = page.getByPlaceholder(config.placeholder, { exact: true })
+      await empty.getByText('No Data', { exact: true }).waitFor()
+      await search.fill('unmatched')
+      assert.equal((await empty.textContent()).trim(), 'No Data', 'Draft text must not change the resolved empty state')
+      await search.press('Enter')
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      assert.equal(queries.at(-1).filters[config.field], 'unmatched')
+
+      // A failed new search keeps the last result and its empty-state explanation.
+      await search.fill('fail')
+      await search.press('Enter')
+      await page.getByTestId('stateful-table-refresh-error').waitFor()
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      assert.equal(await page.getByTestId('stateful-table-error').count(), 0)
+
+      inventoryEmpty = false
+      await empty.getByRole('button', { name: 'Clear filters', exact: true }).click()
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(await search.inputValue(), '')
+      assert.equal(queries.at(-1).filters[config.field], undefined)
+      assert.equal(await page.getByTestId('stateful-table-refresh-error').count(), 0)
+      if (config.field === 'name') assert.equal(new URL(page.url()).searchParams.has('name'), false)
+
+      await search.fill('unmatched')
+      await page.getByRole('button', { name: 'Search', exact: true }).click()
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      await search.hover()
+      await search.locator('..').locator('.t-input__suffix-clear').click()
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(queries.at(-1).filters[config.field], undefined, 'Clearing the input must fetch immediately')
+
+      await search.fill(config.partial)
+      await search.press('Enter')
+      if (config.field === 'name') {
+        await waitUntil(() => queries.at(-1).filters.name === config.partial, 'Workload partial name was not submitted')
+        await page.locator(`${config.selector} tbody tr`).first().waitFor()
+        assert.equal(await empty.count(), 0)
+      } else {
+        await empty.getByText('No matching results', { exact: true }).waitFor()
+      }
+      await search.fill(` ${config.value} `)
+      const searchButton = page.getByRole('button', { name: 'Search', exact: true })
+      await searchButton.focus()
+      await searchButton.press('Enter')
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(queries.at(-1).filters[config.field], config.value)
+
+      await search.fill('fail')
+      await search.press('Enter')
+      await page.getByTestId('stateful-table-refresh-error').waitFor()
+      assert.equal(await page.locator(`${config.selector} tbody tr`).count(), 1, 'Failure must preserve the previous result')
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      if (config.field === 'name') {
+        await page.getByTestId('stateful-table-error').waitFor()
+        assert.equal(await empty.count(), 0, 'An initial failed filtered request is an error, not no results')
+      }
+    } finally {
+      await page.close()
+    }
+  }
+})
+
+test('list no-match recovery fits common screen widths in both languages', { timeout: 90_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const config of listSearchCases) {
+      const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
+      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.field === 'name' ? { items: [], total: 0 } : { list: [] } }))
+      try {
+        await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
+        await page.getByTestId('stateful-table-empty').waitFor()
+        const search = page.locator('.table-toolbar input:not([readonly])').last()
+        await search.fill('no-match')
+        await search.press('Enter')
+        const clearLabel = locale === 'en-US' ? 'Clear filters' : '清除筛选'
+        const action = page.getByRole('button', { name: clearLabel, exact: true })
+        await action.waitFor()
+        for (const width of [1280, 1366, 1440, 1920]) {
+          await page.setViewportSize({ width, height: 900 })
+          for (const collapsed of [false, true]) {
+            if (collapsed) await page.getByRole('button', { name: locale === 'en-US' ? 'Collapse sidebar' : '收起侧栏', exact: true }).click()
+            await action.scrollIntoViewIfNeeded()
+            const dimensions = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }))
+            assert.ok(dimensions.document <= dimensions.viewport, `${config.route} ${locale} ${width}: ${JSON.stringify(dimensions)}`)
+            const bounds = await action.boundingBox()
+            assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width, 'Recovery button is clipped')
+            if (!collapsed && (width === 1366 || width === 1920)) await captureTrendScreenshot(page, `p5-${config.route}-${locale}-${width}`)
+            if (collapsed) await page.getByRole('button', { name: locale === 'en-US' ? 'Expand sidebar' : '展开侧栏', exact: true }).click()
+          }
+        }
+      } finally {
+        await page.close()
+      }
+    }
+  }
+})
+
+test('clearing list filters removes route filters while the input clear preserves other filters', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const config of [
+    { ...listSearchCases[0], query: 'schedulingEligibility=temporarilyUnschedulable' },
+    { ...listSearchCases[1], query: 'type=NVIDIA' },
+    { ...listSearchCases[2], query: 'status=pending&nodeName=node-1&deviceId=gpu-1&page=2' },
+  ]) {
+    const page = await browser.newPage({ locale: 'en-US' })
+    const queries = []
+    await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
+      queries.push(route.request().postDataJSON())
+      return route.fulfill({ json: config.field === 'name' ? { items: [], total: 0 } : { list: [] } })
+    })
+    try {
+      await page.goto(`${target}${basePath}${config.route}?${config.query}`, { waitUntil: 'domcontentloaded' })
+      const empty = page.getByTestId('stateful-table-empty')
+      await empty.getByText('No matching results', { exact: true }).waitFor()
+      const search = page.getByPlaceholder(config.placeholder, { exact: true })
+      await search.fill('unmatched')
+      await search.press('Enter')
+      await waitUntil(() => queries.at(-1).filters[config.field] === 'unmatched', 'Search was not applied')
+      await search.hover()
+      await search.locator('..').locator('.t-input__suffix-clear').click()
+      await waitUntil(() => !queries.at(-1).filters[config.field], 'Input was not cleared')
+      if (config.field === 'uid') assert.equal(queries.at(-1).filters.type, 'NVIDIA')
+      if (config.field === 'name') {
+        assert.deepEqual(queries.at(-1).filters, { status: 'pending', nodeName: 'node-1', deviceId: 'gpu-1' })
+        assert.equal(queries.at(-1).page, 1)
+      }
+      await empty.getByRole('button', { name: 'Clear filters', exact: true }).click()
+      await empty.getByText('No Data', { exact: true }).waitFor()
+      await waitUntil(() => new URL(page.url()).search === '', 'Cleared route filters must not return on reload')
+      assert.deepEqual(queries.at(-1).filters, {})
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await empty.getByText('No Data', { exact: true }).waitFor()
+      assert.equal(await empty.getByRole('button').count(), 0)
+    } finally {
+      await page.close()
+    }
+  }
+})

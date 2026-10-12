@@ -83,30 +83,26 @@ test('live range chart series retain gaps and never reconnect missing slots', ()
     { timestamp: 2000, missing: true },
     { timestamp: 3000, value: 2048 },
   ];
-  const cases = [
-    { name: 'overview', presentation: undefined, expected: [0, null, 2048] },
-    { name: 'node detail', presentation: undefined, expected: [0, null, 2048] },
-    {
-      name: 'card common line',
-      presentation: { digits: 1 },
-      expected: [0, null, 2048],
-    },
-    {
-      name: 'task common line',
-      presentation: { digits: 1 },
-      expected: [0, null, 2048],
-    },
-  ];
+  const series = buildRangeLineSeries({ name: 'usage', data: points });
+  assert.deepEqual(series.data, [0, null, 2048]);
+  assert.equal(series.connectNulls, false);
+});
 
-  for (const { name, presentation, expected } of cases) {
-    const series = buildRangeLineSeries({ name, data: points }, presentation);
-    assert.deepEqual(series.data, expected, name);
-    assert.equal(series.connectNulls, false, name);
-  }
+test('a line keeps a small value instead of rounding it onto zero', () => {
+  const series = buildRangeLineSeries({ data: [{ timestamp: 1, value: 0.04 }, { timestamp: 2, value: '0.004' }] });
+  assert.deepEqual(series.data, [0.04, 0.004]);
 });
 
 test('range tooltips render missing values as a dash without hiding real zero', () => {
   assert.equal(formatRangeTooltipValue(null, { digits: 1, unit: '%' }), '-');
   assert.equal(formatRangeTooltipValue('NaN', { digits: 1, unit: '%' }), '-');
   assert.equal(formatRangeTooltipValue(0, { digits: 1, unit: '%' }), '0.0%');
+});
+
+test('a range tooltip shows a small non-zero value as below its precision', () => {
+  assert.equal(formatRangeTooltipValue(0.04, { digits: 1, unit: '%' }), '<0.1%');
+  assert.equal(formatRangeTooltipValue(0.004, { digits: 2, unit: '%', separator: ' ' }), '<0.01 %');
+  assert.equal(formatRangeTooltipValue(-0.004, { digits: 2 }), '>-0.01');
+  assert.equal(formatRangeTooltipValue(0.005, { digits: 2 }), '0.01');
+  assert.equal(formatRangeTooltipValue(37.524, { digits: 2, unit: '%' }), '37.52%');
 });

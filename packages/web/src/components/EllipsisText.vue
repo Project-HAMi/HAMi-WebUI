@@ -1,17 +1,21 @@
 <template>
   <el-tooltip
     v-if="tooltipEnabled"
+    ref="tooltipRef"
     effect="dark"
     placement="top"
     :content="text"
     :show-after="300"
     :popper-class="tooltipClass"
+    :trigger="focusable ? ['hover', 'focus'] : 'hover'"
   >
     <span
       ref="textRef"
       class="ellipsis-text"
       :class="linesClass"
       :style="clampStyle"
+      :tabindex="focusable ? 0 : undefined"
+      @keydown.esc="tooltipRef?.onClose(undefined, 0)"
     >
       {{ displayText }}
     </span>
@@ -60,9 +64,15 @@ const props = defineProps({
     type: Number,
     default: 1,
   },
+  // Opt-in: a text that is cut becomes focusable so keyboard users can read it in the tooltip.
+  focusable: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const textRef = ref(null);
+const tooltipRef = ref(null);
 const isOverflow = ref(false);
 
 const linesClass = computed(() => (props.lines > 1 ? 'is-multiline' : 'is-singleline'));
@@ -87,11 +97,17 @@ const tooltipEnabled = computed(() => {
   return isOverflow.value;
 });
 
+// scrollWidth and clientWidth are whole pixels, so they miss a text the browser cuts by a fraction of one.
+const isCutByFraction = (el) => {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  return range.getBoundingClientRect().width - el.getBoundingClientRect().width > 0.001;
+};
+
 const checkOverflow = () => {
   const el = textRef.value;
   if (!el) return;
-  const hasOverflow = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
-  isOverflow.value = hasOverflow;
+  isOverflow.value = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth || isCutByFraction(el);
 };
 
 let ro;
@@ -101,6 +117,13 @@ onMounted(() => {
     ro = new ResizeObserver(() => checkOverflow());
     if (textRef.value) ro.observe(textRef.value);
   }
+});
+
+// Turning the tooltip on or off swaps the span, so the observer has to follow it.
+watch(textRef, (el, previous) => {
+  if (!ro) return;
+  if (previous) ro.unobserve(previous);
+  if (el) ro.observe(el);
 });
 
 onBeforeUnmount(() => {
