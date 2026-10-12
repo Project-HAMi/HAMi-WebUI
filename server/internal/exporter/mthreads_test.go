@@ -131,6 +131,56 @@ func TestMthreadsDeviceMetricsEmitCapacityGauges(t *testing.T) {
 	assertTrackedGaugeValue(t, generator, HamiVcoreSize, labels, 100)
 }
 
+// The provider returns before the shared block that derives
+// hami_vmemory_scaling, so it must emit schedulable/physical itself.
+func TestMthreadsDeviceMetricsEmitMemoryScaling(t *testing.T) {
+	// 40960 MiB schedulable out of an 81920 MiB framebuffer => 0.5.
+	device := mthreadsDevice("node-a-mthreads-0", biz.MthreadsGPUDevice, 0, 100, 40960)
+	generator, _ := mthreadsGeneratorFor(t, device, dcgmQueries("node-a", 0, map[string]float32{
+		"FB_USED": 40960,
+		"FB_FREE": 40960,
+	}))
+
+	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	labels := []string{"node-a", biz.MthreadsGPUDevice, biz.MthreadsGPUDevice, device.Id, "", ""}
+	assertTrackedGaugeValue(t, generator, HamiVMemoryScaling, labels, 0.5)
+}
+
+// An empty framebuffer yields no physical size, so no scaling ratio exists.
+func TestMthreadsDeviceMetricsSkipsMemoryScalingWithoutFramebuffer(t *testing.T) {
+	device := mthreadsDevice("node-a-mthreads-0", biz.MthreadsGPUDevice, 0, 100, 81920)
+	generator, _ := mthreadsGeneratorFor(t, device, dcgmQueries("node-a", 0, map[string]float32{
+		"FB_USED": 0,
+		"FB_FREE": 0,
+	}))
+
+	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	labels := []string{"node-a", biz.MthreadsGPUDevice, biz.MthreadsGPUDevice, device.Id, "", ""}
+	assertGaugeTracked(t, generator, HamiVMemoryScaling, labels, false)
+}
+
+// HAMi does not schedule unconfigured devices, so they contribute no
+// schedulable capacity and must not report a scaling ratio.
+func TestMthreadsDeviceMetricsSkipMemoryScalingForUnconfigured(t *testing.T) {
+	device := mthreadsDevice("node-a-mthreads-0", biz.MthreadsGPUDevice, 0, 100, 81920)
+	device.Unconfigured = true
+	generator, _ := mthreadsGeneratorFor(t, device, dcgmQueries("node-a", 0, map[string]float32{
+		"FB_USED": 40960,
+		"FB_FREE": 40960,
+	}))
+
+	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	labels := []string{"node-a", biz.MthreadsGPUDevice, biz.MthreadsGPUDevice, device.Id, "", ""}
+	assertGaugeTracked(t, generator, HamiVMemoryScaling, labels, false)
+	assertGaugeTracked(t, generator, HamiVgpuCount, labels, false)
+}
+
 // Missing vendor samples must mark the cycle degraded; otherwise the commit
 // would prune the series while reporting success.
 func TestMthreadsDeviceMetricsReportMissingSamples(t *testing.T) {

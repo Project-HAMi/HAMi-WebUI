@@ -1059,6 +1059,13 @@ func (s *MetricsGenerator) generateMthreadsDeviceMetrics(ctx context.Context, de
 		s.set(HamiMemorySize, float64(memTotal), node, prov, typ, device.Id, "", "")
 		if memTotal > 0 {
 			s.set(HamiMemoryUtil, roundToOneDecimal(float64(100*memUsed/memTotal)), node, prov, typ, device.Id, "", "")
+			// This provider returns before the shared block that derives
+			// hami_vmemory_scaling from the vendor-reported framebuffer, so
+			// emit it here with the same schedulable/physical semantics.
+			// Unconfigured devices are excluded there as well.
+			if !device.Unconfigured {
+				s.set(HamiVMemoryScaling, roundToOneDecimal(float64(device.Devmem)/float64(memTotal)), node, prov, typ, device.Id, "", "")
+			}
 		}
 	}
 	return nil
