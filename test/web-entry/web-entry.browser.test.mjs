@@ -3629,6 +3629,106 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
   }
 }, { timeout: 60_000 })
 
+test('custom trend end days start at the visible start and reversed or future submits are rejected', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 }, timezoneId: 'UTC' })
+  const requests = trackTrendRequests(page)
+  await page.clock.install({ time: new Date('2026-10-06T12:30:20Z') })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const filter = page.locator('.trend-time-filter')
+    await selectTrendRange(page, 'custom')
+    const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
+    const panel = page.locator('.t-date-range-picker__panel-container:visible')
+    const day = (text) => panel.locator('.t-date-picker__cell:not(.t-date-picker__cell--additional)').filter({ hasText: new RegExp(`^${text}$`) })
+    const disabledDays = () => panel.locator('.t-date-picker__cell--disabled:not(.t-date-picker__cell--additional)').allTextContents()
+    const column = (index) => panel.locator('.t-time-picker__panel-body-scroll').nth(index)
+    const confirm = () => panel.getByRole('button', { name: 'Confirm', exact: true }).click()
+    const inputs = async() => [await start.inputValue(), await end.inputValue()]
+    const focused = (input) => input.evaluate((element) => element === document.activeElement)
+    const warning = (text) => page.locator('.t-message').filter({ hasText: text }).waitFor()
+    const future = Array.from({ length: 25 }, (_, index) => String(index + 7))
+    let applied = ['2026-10-02 10:00:00', '2026-10-04 12:00:00']
+    await start.fill(applied[0])
+    await end.fill(applied[1])
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual(await inputs(), applied)
+    let count = requests.length
+
+    await end.click()
+    await panel.waitFor()
+    await waitUntil(async() => (await disabledDays()).length === 26, 'End days before the start day must be disabled')
+    assert.deepEqual(await disabledDays(), ['1', ...future])
+    for (const [index, items] of [[0, 24], [1, 60], [2, 60]]) {
+      assert.equal(await column(index).locator('.t-time-picker__panel-body-scroll-item').count(), items, 'Time columns must keep every item')
+      assert.equal(await column(index).evaluate((element) => getComputedStyle(element).scrollbarWidth), 'none', 'Time columns must not show a native scrollbar')
+    }
+    for (const name of ['year', 'month']) {
+      await panel.locator(`.t-date-picker__header-controller-${name}`).click()
+      const list = panel.locator(`.t-date-picker__header-controller-${name}-popup > .t-popup__content`)
+      await list.waitFor()
+      assert.equal(await list.evaluate((element) => getComputedStyle(element).scrollbarWidth), 'none', `The ${name} list must not show a native scrollbar`)
+      await panel.locator(`.t-date-picker__header-controller-${name}`).click()
+      await list.waitFor({ state: 'hidden' })
+    }
+    await day('1').click()
+    assert.deepEqual(await inputs(), applied, 'A disabled end day must not be selectable')
+    await start.click()
+    await waitUntil(async() => (await disabledDays()).length === 25, 'Start days must only exclude the future')
+    assert.deepEqual(await disabledDays(), future)
+
+    await day('5').click()
+    await confirm()
+    await waitUntil(async() => await end.inputValue() === '', 'The first Confirm of a start after the end must clear the end')
+    assert.equal(await start.inputValue(), '2026-10-05 10:00:00')
+    assert.ok(await focused(end), 'Focus must move to the cleared end')
+    await waitUntil(async() => (await disabledDays()).length === 29, 'End days before the new start must be disabled')
+    assert.deepEqual(await disabledDays(), ['1', '2', '3', '4', ...future])
+    assert.equal(requests.length, count)
+    await day('6').click()
+    await confirm()
+    await page.waitForLoadState('networkidle')
+    applied = ['2026-10-05 10:00:00', '2026-10-06 12:00:00']
+    assert.deepEqual(await inputs(), applied)
+    assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-05T10:00:00Z', '2026-10-06T12:00:00Z'])
+    assert.equal(await panel.count(), 0)
+    count = requests.length
+
+    await end.click()
+    await day('5').click()
+    await column(0).getByText('09', { exact: true }).click()
+    await waitUntil(async() => await end.inputValue() === '2026-10-05 09:00:00', 'The start day must stay selectable for the end')
+    await confirm()
+    await waitUntil(async() => await start.inputValue() === '', 'The first Confirm of a same-day reversed end must clear the start')
+    await day('5').click()
+    await confirm()
+    await warning('End time must be after start time. The previous range has been restored.')
+    assert.deepEqual(await inputs(), applied, 'A same-day reversed range must not be applied')
+    assert.equal(requests.length, count)
+
+    await end.fill(applied[0])
+    await end.press('Enter')
+    await warning('End time must be after start time. The previous range has been restored.')
+    assert.deepEqual(await inputs(), applied, 'A zero-length range must not be applied')
+    assert.equal(requests.length, count)
+
+    await end.click()
+    await panel.waitFor()
+    assert.equal(await panel.locator('.t-is-disabled').count(), 0, 'Time columns must not disable items the wheel can still land on')
+    await column(0).hover()
+    await page.mouse.wheel(0, 100)
+    await waitUntil(async() => await end.inputValue() > '2026-10-06 12:30:20', 'A wheel over future hours must select the hour it stops on')
+    await confirm()
+    await warning('End time cannot be in the future. The previous range has been restored.')
+    assert.deepEqual(await inputs(), applied, 'A future end must not be applied')
+    assert.equal(requests.length, count)
+  } finally {
+    await page.close()
+  }
+}, { timeout: 60_000 })
+
 test('workload status labels stay concise while accessible help explains container evidence', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
@@ -5227,7 +5327,8 @@ async function openCalendarDraftProbe({ page, inputs, panel }, index, draft, tim
 }
 
 async function hoverCalendarDraftProbe({ inputs, panel }, index) {
-  const day = index === 0 ? '3' : '6'
+  // End days before the start day are disabled, so the end previews today.
+  const day = index === 0 ? '3' : '7'
   const cell = panel
     .locator('.t-date-picker__cell:not(.t-date-picker__cell--additional):not(.t-date-picker__cell--disabled)')
     .filter({ hasText: new RegExp(`^${day}$`) }).first()
