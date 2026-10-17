@@ -97,3 +97,50 @@ index 40703cbcfada9c82a3b35fbc8e6c3bd24dbffa2f..27609d549e3a35684a1a075dc58d3692
          var newYear = [];
          var newMonth = [];
          var newTime = [];
+diff --git a/es/select/hooks/useKeyboardControl.mjs b/es/select/hooks/useKeyboardControl.mjs
+index 1417c9db7111f06245a269c0de7f96d99780794b..2e01f71a337f7284cf3433e0e4c1ecd847f749eb 100644
+--- a/es/select/hooks/useKeyboardControl.mjs
++++ b/es/select/hooks/useKeyboardControl.mjs
+@@ -81,6 +81,8 @@ function useKeyboardControl(_ref) {
+         if (hoverIndex.value === -1) break;
+         var finalOptions = selectPanelRef.value.isVirtual && isFilterable.value && virtualFilteredOptions.value.length ? virtualFilteredOptions.value : isRemoteSearch.value ? optionsList.value : filteredOptions.value;
+         if (!finalOptions.length) finalOptions = optionsList.value;
++        // With no option under the highlight, such as no matches, Enter selects nothing.
++        if (innerPopupVisible.value && !finalOptions[hoverIndex.value]) break;
+         if (!innerPopupVisible.value) {
+           setInnerPopupVisible(true, {
+             e: e
+@@ -137,6 +139,20 @@ function useKeyboardControl(_ref) {
+   });
+   watch(hoverIndex, function (index) {
+     var _selectPanelRef$value;
++    // Options can differ in height and spacing, so bring the highlighted one itself into view.
++    // Virtual lists mount only a slice of equal-height options and keep the offset by index below.
++    if (!((_selectPanelRef$value = selectPanelRef.value) !== null && _selectPanelRef$value !== void 0 && _selectPanelRef$value.isVirtual)) {
++      var options = (_selectPanelRef$value = selectPanelRef.value) === null || _selectPanelRef$value === void 0 || (_selectPanelRef$value = _selectPanelRef$value.innerRef) === null || _selectPanelRef$value === void 0 ? void 0 : _selectPanelRef$value.querySelectorAll(".".concat(classPrefix.value, "-select-option"));
++      var option = options === null || options === void 0 ? void 0 : options[index];
++      var container = popupContentRef.value;
++      if (!option || !container) return;
++      var optionRect = option.getBoundingClientRect();
++      var containerRect = container.getBoundingClientRect();
++      // Scroll at once: smooth scrolls started by fast or held keys fall behind the highlight.
++      if (optionRect.top < containerRect.top) container.scrollTop += optionRect.top - containerRect.top;
++      else if (optionRect.bottom > containerRect.bottom) container.scrollTop += optionRect.bottom - containerRect.bottom;
++      return;
++    }
+     var optionHeight = (_selectPanelRef$value = selectPanelRef.value) === null || _selectPanelRef$value === void 0 || (_selectPanelRef$value = _selectPanelRef$value.innerRef) === null || _selectPanelRef$value === void 0 || (_selectPanelRef$value = _selectPanelRef$value.querySelector(".".concat(classPrefix.value, "-select-option"))) === null || _selectPanelRef$value === void 0 ? void 0 : _selectPanelRef$value.clientHeight;
+     var scrollHeight = optionHeight * index;
+     popupContentRef.value.scrollTo({
+diff --git a/es/select/select.mjs b/es/select/select.mjs
+index 906d62851c7f5c7bea6bade0c2b556296293f7a4..46ad8cc16802e69043aad67150a8f7b5744814f9 100644
+--- a/es/select/select.mjs
++++ b/es/select/select.mjs
+@@ -432,6 +432,8 @@ var _Select = defineComponent({
+         });
+       }
+       setInputValue(value2);
++      // The highlighted index belongs to the previous matches; keyboard picks follow the new ones.
++      hoverIndex.value = -1;
+       handleSearch("".concat(value2), {
+         e: context.e
+       });

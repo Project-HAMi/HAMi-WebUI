@@ -23,6 +23,8 @@ message ListWorkloadsRequest {
     string node_uid = 5;
     string namespace = 6;
     string priority = 7;
+    // Case-insensitive fragments of the Pod name, container name or namespace; every word must match.
+    string keyword = 8;
   }
   Filters filters = 1;
   int32 page = 2;
@@ -34,4 +36,9 @@ message WorkloadsReply {
   int32 total = 2;
   // Rows per status (all, pending, waiting, success, abnormal), ignoring the status filter.
   map<string, int32> status_counts = 3;
+  // Rows that picking each node or device would list under the other filters. Picking a node
+  // drops a device it does not hold, so such nodes are counted without the device filter.
+  // Rows without a node or device are not counted.
+  map<string, int32> node_counts = 4;
+  map<string, int32> device_counts = 5;
 }

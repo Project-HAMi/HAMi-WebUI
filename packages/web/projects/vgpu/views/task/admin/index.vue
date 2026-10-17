@@ -25,37 +25,41 @@
             v-model="filters.nodeName"
             class="workload-filter-select"
             clearable
+            filterable
+            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: nodePopupStyle }"
+            :panel-bottom-content="shownNodeOptions.hidden ? renderMoreOptions(shownNodeOptions.hidden) : undefined"
             :placeholder="$t('task.allNodes')"
-            :options="nodeOptions"
+            :options="shownNodeOptions.options"
+            @search="showGivenOptions"
+            @input-change="(text) => (nodeSearch = text)"
             @change="onNodeNameChange"
           />
           <t-select
             v-model="filters.deviceId"
             class="workload-filter-select"
             clearable
+            filterable
+            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: cardPopupStyle }"
+            :panel-bottom-content="shownCardOptions.hidden ? renderMoreOptions(shownCardOptions.hidden) : undefined"
             :placeholder="$t('task.allCards')"
-            :options="cardOptions"
+            :options="shownCardOptions.options"
+            @search="showGivenOptions"
+            @input-change="(text) => (cardSearch = text)"
             @change="applyFilters"
           />
           <t-input
-            v-model="filters.name"
+            v-model="filters.keyword"
             class="workload-search"
             clearable
-            :placeholder="$t('task.searchWorkloadName')"
-            @clear="applyFilters"
-            @enter="applyFilters"
-            @blur="applyFilters"
+            :placeholder="$t('task.searchKeyword')"
+            :aria-label="$t('task.searchKeyword')"
+            @clear="submitKeyword"
+            @enter="onKeywordEnter"
+            @compositionstart="onKeywordCompositionStart"
+            @compositionend="onKeywordCompositionEnd"
           >
             <template #prefix-icon>
-              <button
-                type="button"
-                class="table-search-button"
-                :aria-label="$t('common.search')"
-                @mousedown.prevent
-                @click="applyFilters"
-              >
-                <search-icon aria-hidden="true" />
-              </button>
+              <search-icon aria-hidden="true" />
             </template>
           </t-input>
         </div>
@@ -130,6 +134,9 @@ import { getWorkloadRequestTotals } from './scheduling-display.mjs';
 import { getAllocationShapeCopy, getCoresOnlyReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
 import { getSplitIcon } from '~/vgpu/components/split-mode.mjs';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
+import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
+import { limitOptions } from '@/utils/keyword-search.mjs';
+import { optionCountOf, readOptionCounts } from './option-counts.mjs';
 
 const props = defineProps(['hideTitle', 'filters', 'style']);
 const { t, locale } = useI18n();
@@ -138,27 +145,59 @@ const selectedSchedulingPod = ref(null);
 const selectedSchedulingContainer = ref('');
 const hasManualNodeScope = ref(false);
 const filters = reactive({
-  name: props.filters?.name || '',
+  keyword: props.filters?.name || '',
   nodeName: props.filters?.nodeName,
   status: props.filters?.status || '',
   deviceId: props.filters?.deviceId,
 });
-const rawNodeNames = ref([]);
+const rawNodes = ref([]);
 const rawCards = ref([]);
 const nodeOptions = computed(() => [
-  { label: t('task.allNodes'), value: undefined },
-  ...rawNodeNames.value.map((name) => ({ label: name, value: name })),
+  // An empty value keeps "All" pickable without showing its label as typed text before a filter is chosen.
+  { label: t('task.allNodes'), value: '' },
+  ...rawNodes.value.map((node) => ({
+    label: node.name,
+    value: node.name,
+    content: () => <SelectOptionLabel label={node.name} hints={[node.ip]} {...optionCount(nodeCounts.value, node.name)} />,
+  })),
 ]);
+const nodeIps = computed(() => new Map(rawNodes.value.map((node) => [node.name, node.ip])));
+// A fixed width keeps the popup steady while typing changes the matches.
+const nodePopupStyle = { width: '280px', maxWidth: 'calc(100vw - 24px)' };
+const cardPopupStyle = { width: '400px', maxWidth: 'calc(100vw - 24px)' };
+// Workloads each option would list under the other filters; older backends send no counts.
+const nodeCounts = ref(null);
+const deviceCounts = ref(null);
+const optionCount = (counts, key) => {
+  if (!counts) return {};
+  const count = optionCountOf(counts, key);
+  return { count, countLabel: t('task.workloadCount', { count }, count) };
+};
+const cardsById = computed(() => new Map(rawCards.value.map((card) => [card.uuid, card])));
+const renderMoreOptions = (count) => () => <div class="select-more-hint">{t('common.moreOptionsHidden', { count })}</div>;
 const cardOptions = computed(() => {
   // When a node is selected, only offer the cards that live on that node.
   const cards = filters.nodeName
     ? rawCards.value.filter((card) => card.nodeName === filters.nodeName)
     : rawCards.value;
   return [
-    { label: t('task.allCards'), value: undefined },
-    ...cards.map((card) => ({ label: card.uuid, value: card.uuid })),
+    { label: t('task.allCards'), value: '' },
+    ...cards.map((card) => ({
+      label: card.uuid,
+      value: card.uuid,
+      // The node is already chosen when the list is scoped to it.
+      content: () => <SelectOptionLabel label={card.uuid} hints={[card.type, filters.nodeName ? undefined : card.nodeName]} {...optionCount(deviceCounts.value, card.uuid)} />,
+    })),
   ];
 });
+// Large clusters have thousands of candidates; render the first matches and filter the rest by typing.
+const nodeSearch = ref('');
+const cardSearch = ref('');
+// An onSearch handler makes TDesign show these options as given. The text comes from
+// input-change instead, which is not debounced and is cleared when the popup closes.
+const showGivenOptions = () => {};
+const shownNodeOptions = computed(() => limitOptions(nodeOptions.value, nodeSearch.value, (name) => [nodeIps.value.get(name)]));
+const shownCardOptions = computed(() => limitOptions(cardOptions.value, cardSearch.value, (uuid) => [cardsById.value.get(uuid)?.type, cardsById.value.get(uuid)?.nodeName]));
 const statusCounts = ref(null);
 const statusTabOptions = computed(() => {
   const counts = statusCounts.value;
@@ -178,14 +217,14 @@ const fetchFilterOptions = async () => {
       request(nodeApi.getNodeList({ filters: {} })),
       request(cardApi.getCardList({ filters: {} })),
     ]);
-    rawNodeNames.value = nodeList
-      .map((item) => item?.name)
-      .filter(Boolean);
+    rawNodes.value = nodeList
+      .filter((item) => item?.name)
+      .map((item) => ({ name: item.name, ip: item.ip }));
     rawCards.value = cardList
       .filter((item) => item?.uuid)
-      .map((item) => ({ uuid: item.uuid, nodeName: item.nodeName }));
+      .map((item) => ({ uuid: item.uuid, nodeName: item.nodeName, type: item.type }));
   } catch {
-    rawNodeNames.value = [];
+    rawNodes.value = [];
     rawCards.value = [];
   }
 };
@@ -353,7 +392,8 @@ const applyRouteQuery = (query) => {
   const status = queryText(query, 'status');
   const page = Number(queryText(query, 'page'));
   const pageSize = Number(queryText(query, 'pageSize'));
-  filters.name = queryText(query, 'name');
+  // Older links used ?name= for the Pod or container name.
+  filters.keyword = queryText(query, 'q') || queryText(query, 'name');
   filters.nodeName = queryText(query, 'nodeName') || undefined;
   filters.deviceId = queryText(query, 'deviceId') || undefined;
   filters.status = ROUTE_STATUSES.includes(status) ? status : '';
@@ -363,12 +403,12 @@ const applyRouteQuery = (query) => {
 };
 const syncRouteQuery = () => {
   if (!syncsRoute || route.path !== listPath) return;
-  const name = typeof filters.name === 'string' ? filters.name.trim() : '';
+  const keyword = typeof filters.keyword === 'string' ? filters.keyword.trim() : '';
   const query = {
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.nodeName ? { nodeName: filters.nodeName } : {}),
     ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
-    ...(name ? { name } : {}),
+    ...(keyword ? { q: keyword } : {}),
     ...(pagination.current > 1 ? { page: String(pagination.current) } : {}),
     ...(pagination.pageSize !== DEFAULT_PAGE_SIZE ? { pageSize: String(pagination.pageSize) } : {}),
   };
@@ -377,7 +417,7 @@ const syncRouteQuery = () => {
 };
 const displayedFiltered = ref(false);
 const clearFilters = () => {
-  filters.name = props.filters?.name || '';
+  filters.keyword = props.filters?.name || '';
   filters.nodeName = props.filters?.nodeName;
   filters.deviceId = props.filters?.deviceId;
   filters.status = props.filters?.status || '';
@@ -385,7 +425,10 @@ const clearFilters = () => {
   applyFilters();
 };
 let tableController;
+let submittedKeyword = '';
 const fetchTableData = async () => {
+  cancelKeywordTimer();
+  submittedKeyword = getTrimValue(filters.keyword);
   syncRouteQuery();
   const hasResolved = tableState.hasResolved && tableState.status === REQUEST_STATUS.READY;
   const requestId = startRequest(tableState, { hasResolved });
@@ -400,7 +443,7 @@ const fetchTableData = async () => {
   const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
   const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
   const filtered = Boolean(
-    getTrimValue(filters.name) !== getTrimValue(props.filters?.name || '')
+    getTrimValue(filters.keyword) !== getTrimValue(props.filters?.name || '')
     || (filters.nodeName || '') !== (props.filters?.nodeName || '')
     || (filters.deviceId || '') !== (props.filters?.deviceId || '')
     || (filters.status || '') !== (props.filters?.status || '')
@@ -408,7 +451,7 @@ const fetchTableData = async () => {
   const payload = {
     filters: {
       ...baseFilters,
-      ...(getTrimValue(filters.name) ? { name: getTrimValue(filters.name) } : {}),
+      ...(submittedKeyword ? { keyword: submittedKeyword } : {}),
       ...(nodeName ? { nodeName } : {}),
       ...(nodeUid ? { nodeUid } : {}),
       ...(filters.status ? { status: filters.status } : {}),
@@ -431,6 +474,8 @@ const fetchTableData = async () => {
     // Older backends omit status counts; the filter then shows labels only.
     const counts = result?.statusCounts;
     statusCounts.value = counts && typeof counts === 'object' && Object.values(counts).every(Number.isInteger) ? counts : null;
+    nodeCounts.value = readOptionCounts(result?.nodeCounts);
+    deviceCounts.value = readOptionCounts(result?.deviceCounts);
     const lastPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
     if (pagination.current > lastPage) {
       pagination.current = lastPage;
@@ -474,6 +519,36 @@ const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
   fetchTableData,
   resetBeforeApply: resetToFirstPage,
 });
+// Typing waits briefly before searching; Enter and clearing search at once, and IME composition does not search.
+const KEYWORD_DELAY = 250;
+let keywordTimer;
+const composingKeyword = ref(false);
+function cancelKeywordTimer() {
+  clearTimeout(keywordTimer);
+  keywordTimer = undefined;
+}
+const submitKeyword = () => {
+  cancelKeywordTimer();
+  if (!composingKeyword.value && getTrimValue(filters.keyword) !== submittedKeyword) applyFilters();
+};
+// A pause queued before composition must not search the text being composed.
+const onKeywordCompositionStart = () => {
+  composingKeyword.value = true;
+  cancelKeywordTimer();
+};
+const onKeywordEnter = (_, { e } = {}) => {
+  if (!composingKeyword.value && !e?.isComposing) submitKeyword();
+};
+const scheduleKeyword = () => {
+  cancelKeywordTimer();
+  if (composingKeyword.value || getTrimValue(filters.keyword) === submittedKeyword) return;
+  keywordTimer = setTimeout(submitKeyword, KEYWORD_DELAY);
+};
+const onKeywordCompositionEnd = () => {
+  composingKeyword.value = false;
+  scheduleKeyword();
+};
+watch(() => filters.keyword, scheduleKeyword);
 const onNodeNameChange = () => {
   hasManualNodeScope.value = true;
   // The card dropdown is scoped to the selected node; drop a previously chosen
@@ -494,6 +569,7 @@ onMounted(() => {
   fetchFilterOptions();
 });
 onBeforeUnmount(() => {
+  cancelKeywordTimer();
   tableState.requestId += 1;
   tableController?.abort();
 });
@@ -513,7 +589,7 @@ watch(
       return;
     }
     hasManualNodeScope.value = false;
-    filters.name = props.filters?.name || '';
+    filters.keyword = props.filters?.name || '';
     filters.nodeName = props.filters?.nodeName;
     filters.status = props.filters?.status;
     filters.deviceId = props.filters?.deviceId;

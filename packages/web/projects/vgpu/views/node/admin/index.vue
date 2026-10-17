@@ -17,35 +17,28 @@
           <t-select
             v-model="filters.schedulingEligibility"
             clearable
+            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: fitPopupToOptions }"
             :placeholder="$t('node.allSchedulingEligibilityStatuses')"
             :options="statusOptions"
-            @change="applyFilters"
           />
           <t-select
             v-model="filters.type"
             clearable
+            filterable
+            :filter="filterOption"
+            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: fitPopupToOptions }"
             :placeholder="$t('node.allTypes')"
             :options="cardTypeOptions"
-            @change="applyFilters"
           />
           <t-input
-            v-model="filters.ip"
+            v-model="filters.keyword"
+            class="list-keyword-search"
             clearable
-            :placeholder="$t('node.searchIP')"
-            @clear="applyFilters"
-            @enter="applyFilters"
-            @blur="applyFilters"
+            :placeholder="$t('node.searchKeyword')"
+            :aria-label="$t('node.searchKeyword')"
           >
             <template #prefix-icon>
-              <button
-                type="button"
-                class="table-search-button"
-                :aria-label="$t('common.search')"
-                @mousedown.prevent
-                @click="applyFilters"
-              >
-                <search-icon aria-hidden="true" />
-              </button>
+              <search-icon aria-hidden="true" />
             </template>
           </t-input>
         </t-space>
@@ -54,8 +47,8 @@
         :status="tableStatus"
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
-        :has-rows="tableData.length > 0"
-        :filtered="displayedFiltered"
+        :has-rows="visibleNodes.length > 0"
+        :filtered="filtered"
         :column-count="visibleColumns.length"
         :columns="visibleColumns"
         table-layout="auto"
@@ -66,7 +59,7 @@
           :key="locale"
           row-key="uid"
           class="node-table vgpu-table-skin"
-          :data="tableData"
+          :data="visibleNodes"
           :columns="visibleColumns"
           table-layout="auto"
         />
@@ -84,6 +77,7 @@ import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TextPlus from '@/components/TextPlus.vue';
+import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
 import request from '@/utils/request';
@@ -91,8 +85,11 @@ import { SearchIcon } from 'tdesign-icons-vue-next';
 import { computed, ref, reactive, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
-import useTableFilters from '~/vgpu/hooks/useTableFilters';
+import { readQuery, sameQuery, writeQuery } from '~/vgpu/hooks/route-filters.mjs';
+import { createOptionFilter, matchesKeywords, parseKeywords } from '@/utils/keyword-search.mjs';
+import { fitPopupToOptions } from '@/utils/select-popup.mjs';
 import useFetchList from '@/hooks/useFetchList';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import {
   getNodeSchedulingEligibilityStatus,
   matchesNodeSchedulingEligibility,
@@ -105,17 +102,28 @@ const allNodeMap = ref(new Map());
 const filters = reactive({
   schedulingEligibility: undefined,
   type: undefined,
-  ip: '',
+  keyword: '',
 });
+const filterOption = createOptionFilter();
 const rawCardTypes = ref([]);
+const statusOption = (key, value) => ({
+  label: t(key),
+  value,
+  content: () => <SelectOptionLabel label={t(key)} {...nodeCount(statusNodeCount.value(value))} />,
+});
 const statusOptions = computed(() => [
   { label: t('node.allSchedulingEligibilityStatuses'), value: undefined },
-  { label: t('node.schedulable'), value: 'schedulable' },
-  { label: t('node.temporarilyUnschedulable'), value: 'temporarilyUnschedulable' },
+  statusOption('node.schedulable', 'schedulable'),
+  statusOption('node.temporarilyUnschedulable', 'temporarilyUnschedulable'),
 ]);
 const cardTypeOptions = computed(() => [
-  { label: t('node.allTypes'), value: undefined },
-  ...rawCardTypes.value.map((type) => ({ label: type, value: type })),
+  // An empty value keeps "All" pickable without showing its label as typed text before a filter is chosen.
+  { label: t('node.allTypes'), value: '' },
+  ...rawCardTypes.value.map((type) => ({
+    label: type,
+    value: type,
+    content: () => <SelectOptionLabel label={type} {...nodeCount(typeNodeCounts.value.get(type))} />,
+  })),
 ]);
 
 const fetchCardTypeOptions = async () => {
@@ -257,63 +265,71 @@ const baseColumns = computed(() => [
 ]);
 const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
 
-const tableState = useFetchList(() => {
-  const payload = {
-    filters: {
-      ...(filters.type ? { type: filters.type } : {}),
-      ...(getTrimValue(filters.ip) ? { ip: getTrimValue(filters.ip) } : {}),
-    },
-  };
-  return request(nodeApi.getNodeList(payload));
-}, {
-  immediate: false,
-  mapData: (items) => items.filter((item) =>
-    matchesNodeSchedulingEligibility(item, filters.schedulingEligibility)),
-});
+// The list is small enough to load once; every filter runs locally while typing.
+const tableState = useFetchList(() => request(nodeApi.getNodeList({ filters: {} })), { immediate: false });
 const {
   data: tableData,
-  refresh: fetchList,
+  refresh: refreshTable,
   refreshError: tableRefreshError,
   refreshing: tableRefreshing,
   status: tableStatus,
 } = tableState;
-const displayedFiltered = ref(false);
-const fetchTableData = async () => {
-  const filtered = Boolean(filters.type || getTrimValue(filters.ip) || filters.schedulingEligibility);
-  if (await fetchList()) displayedFiltered.value = filtered;
-};
+const keywords = computed(() => parseKeywords(filters.keyword));
+const filtered = computed(() => Boolean(filters.type || filters.schedulingEligibility || keywords.value.length));
+const keywordNodes = computed(() => tableData.value.filter((node) =>
+  matchesKeywords(keywords.value, [node.name, node.ip, node.uid, ...(node.type ?? [])])));
+const hasType = (node, type) => !type || (node.type ?? []).includes(type);
+const visibleNodes = computed(() => keywordNodes.value.filter((node) =>
+  matchesNodeSchedulingEligibility(node, filters.schedulingEligibility) && hasType(node, filters.type)));
+// Options show how many nodes picking them would list under the other filters.
+const statusNodeCount = computed(() => {
+  const nodes = keywordNodes.value.filter((node) => hasType(node, filters.type));
+  return (status) => nodes.filter((node) => matchesNodeSchedulingEligibility(node, status)).length;
+});
+const typeNodeCounts = computed(() => {
+  const counts = new Map();
+  for (const node of keywordNodes.value) {
+    if (!matchesNodeSchedulingEligibility(node, filters.schedulingEligibility)) continue;
+    for (const type of new Set(node.type ?? [])) counts.set(type, (counts.get(type) ?? 0) + 1);
+  }
+  return counts;
+});
+// Counts stay hidden until the list loads; a loaded empty list still shows 0.
+const nodeCount = (count = 0) => (tableStatus.value === REQUEST_STATUS.READY ? { count, countLabel: t('node.nodeCount', { count }, count) } : {});
 const clearFilters = () => {
-  filters.ip = '';
+  filters.keyword = '';
   filters.type = undefined;
   filters.schedulingEligibility = undefined;
-  if (route.query.schedulingEligibility) {
-    const query = { ...route.query };
-    delete query.schedulingEligibility;
-    router.replace({ query });
-  }
-  applyFilters();
-};
-const { getTrimValue, applyFilters, refreshTable } = useTableFilters({ fetchTableData });
-
-const parseSchedulingEligibilityFromQuery = (value) => {
-  if (value === 'schedulable' || value === 'temporarilyUnschedulable') return value;
-  return undefined;
 };
 
-let hasInitializedByRoute = false;
+const parseSchedulingEligibility = (value) =>
+  (value === 'schedulable' || value === 'temporarilyUnschedulable' ? value : undefined);
+const ROUTE_KEYS = ['q', 'schedulingEligibility', 'type'];
 watch(
-  () => route.query.schedulingEligibility,
-  (value) => {
-    const next = parseSchedulingEligibilityFromQuery(value);
-    if (filters.schedulingEligibility === next && hasInitializedByRoute) return;
-    hasInitializedByRoute = true;
-    filters.schedulingEligibility = next;
-    applyFilters();
+  () => route.query,
+  (query) => {
+    const values = readQuery(query, ROUTE_KEYS);
+    // Keep the typed text, including spaces between words, when the query only trimmed it.
+    if ((values.q ?? '') !== filters.keyword.trim()) filters.keyword = values.q ?? '';
+    filters.schedulingEligibility = parseSchedulingEligibility(values.schedulingEligibility);
+    filters.type = values.type;
   },
   { immediate: true },
 );
+watch(
+  () => [filters.keyword, filters.schedulingEligibility, filters.type],
+  () => {
+    const query = writeQuery(route.query, {
+      q: filters.keyword.trim(),
+      schedulingEligibility: filters.schedulingEligibility,
+      type: filters.type,
+    });
+    if (!sameQuery(query, route.query)) router.replace({ query });
+  },
+);
 
 onMounted(() => {
+  refreshTable();
   fetchCardTypeOptions();
   fetchAllNodeMap();
 });

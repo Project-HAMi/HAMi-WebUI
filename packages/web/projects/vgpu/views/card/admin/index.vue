@@ -25,6 +25,9 @@
           <t-select
             v-model="filters.type"
             clearable
+            filterable
+            :filter="filterOption"
+            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: fitPopupToOptions }"
             :placeholder="$t('card.allCardTypes')"
             :options="cardTypeOptions"
             @change="onTypeChange"
@@ -32,28 +35,24 @@
           <t-select
             v-model="filters.nodeName"
             clearable
+            filterable
+            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: nodePopupStyle }"
+            :panel-bottom-content="shownNodeOptions.hidden ? renderMoreOptions(shownNodeOptions.hidden) : undefined"
             :placeholder="$t('card.allNodes')"
-            :options="nodeOptions"
+            :options="shownNodeOptions.options"
+            @search="showGivenOptions"
+            @input-change="(text) => (nodeSearch = text)"
             @change="onNodeNameChange"
           />
           <t-input
-            v-model="filters.uid"
+            v-model="filters.keyword"
+            class="list-keyword-search"
             clearable
-            :placeholder="$t('card.searchById')"
-            @clear="applyFilters"
-            @enter="applyFilters"
-            @blur="applyFilters"
+            :placeholder="$t('card.searchKeyword')"
+            :aria-label="$t('card.searchKeyword')"
           >
             <template #prefix-icon>
-              <button
-                type="button"
-                class="table-search-button"
-                :aria-label="$t('common.search')"
-                @mousedown.prevent
-                @click="applyFilters"
-              >
-                <search-icon aria-hidden="true" />
-              </button>
+              <search-icon aria-hidden="true" />
             </template>
           </t-input>
         </t-space>
@@ -62,8 +61,8 @@
         :status="tableStatus"
         :refreshing="tableRefreshing"
         :refresh-error="tableRefreshError"
-        :has-rows="tableData.length > 0"
-        :filtered="displayedFiltered"
+        :has-rows="visibleCards.length > 0"
+        :filtered="filtered"
         :column-count="visibleColumns.length"
         :columns="visibleColumns"
         table-layout="fixed"
@@ -110,7 +109,10 @@ import { ref, watch, computed, reactive, onMounted } from 'vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
-import useTableFilters from '~/vgpu/hooks/useTableFilters';
+import { readQuery, sameQuery, writeQuery } from '~/vgpu/hooks/route-filters.mjs';
+import { createOptionFilter, limitOptions, matchesKeywords, parseKeywords } from '@/utils/keyword-search.mjs';
+import { fitPopupToOptions } from '@/utils/select-popup.mjs';
+import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 import { getAllocationPercent } from './allocation-percent.mjs';
 import UnconfiguredTag from './components/UnconfiguredTag.vue';
@@ -118,6 +120,7 @@ import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
 import { deviceWording } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import useFetchList from '@/hooks/useFetchList';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 
 const props = defineProps(['hideTitle', 'filters']);
 
@@ -133,11 +136,12 @@ const parseTypeFromQuery = (value) => {
 const currentType = computed(() => filters.type || '');
 const hasManualNodeScope = ref(false);
 const filters = reactive({
-  uid: props.filters?.uid || '',
+  keyword: '',
   nodeName: props.filters?.nodeName,
   type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
 });
 const rawNodes = ref([]);
+const nodesLoaded = ref(false);
 const rawCardTypes = ref([]);
 const nodeOptions = computed(() => {
   // When a card type is selected, only offer nodes that actually carry that type.
@@ -145,13 +149,34 @@ const nodeOptions = computed(() => {
     ? rawNodes.value.filter((node) => node.types.includes(filters.type))
     : rawNodes.value;
   return [
-    { label: t('card.allNodes'), value: undefined },
-    ...nodes.map((node) => ({ label: node.name, value: node.name })),
+  // An empty value keeps "All" pickable without showing its label as typed text before a filter is chosen.
+    { label: t('card.allNodes'), value: '' },
+    ...nodes.map((node) => ({
+      label: node.name,
+      value: node.name,
+      content: () => <SelectOptionLabel label={node.name} hints={[node.ip]} {...cardCount(nodeCardCounts.value.get(node.name))} />,
+    })),
   ];
 });
+const filterOption = createOptionFilter();
+const nodeIps = computed(() => new Map(rawNodes.value.map((node) => [node.name, node.ip])));
+// A fixed width keeps the popup steady while typing changes the matches.
+const nodePopupStyle = { width: '260px', maxWidth: 'calc(100vw - 24px)' };
+// Large clusters have thousands of candidates; render the first matches and filter the rest by typing.
+const nodeSearch = ref('');
+// An onSearch handler makes TDesign show these options as given. The text comes from
+// input-change instead, which is not debounced and is cleared when the popup closes.
+const showGivenOptions = () => {};
+const shownNodeOptions = computed(() => limitOptions(nodeOptions.value, nodeSearch.value, (name) => [nodeIps.value.get(name)]));
+const renderMoreOptions = (count) => () => <div class="select-more-hint">{t('common.moreOptionsHidden', { count })}</div>;
 const cardTypeOptions = computed(() => [
-  { label: t('card.allCardTypes'), value: undefined },
-  ...rawCardTypes.value.map((type) => ({ label: type, value: type })),
+  // An empty value keeps "All" pickable without showing its label as typed text before a filter is chosen.
+  { label: t('card.allCardTypes'), value: '' },
+  ...rawCardTypes.value.map((type) => ({
+    label: type,
+    value: type,
+    content: () => <SelectOptionLabel label={type} {...cardCount(typeCardCount.value(type))} />,
+  })),
 ]);
 
 const fetchFilterOptions = async () => {
@@ -162,7 +187,8 @@ const fetchFilterOptions = async () => {
     ]);
     rawNodes.value = nodeList
       .filter((item) => item?.name)
-      .map((item) => ({ name: item.name, types: Array.isArray(item.type) ? item.type : [] }));
+      .map((item) => ({ name: item.name, ip: item.ip, types: Array.isArray(item.type) ? item.type : [] }));
+    nodesLoaded.value = true;
     rawCardTypes.value = typeList
       .map((item) => item?.type)
       .filter(Boolean);
@@ -176,7 +202,8 @@ const fetchFilterOptions = async () => {
 // the table isn't filtered by an out-of-scope node. Call synchronously before
 // applyFilters at every type-mutation site to avoid querying with a stale node.
 const pruneNodeScopeByType = () => {
-  if (!filters.type || !filters.nodeName) {
+  // Unloaded or failed options must not drop a node restored from the URL.
+  if (!filters.type || !filters.nodeName || !nodesLoaded.value) {
     return;
   }
   const node = rawNodes.value.find((item) => item.name === filters.nodeName);
@@ -439,19 +466,10 @@ watch(
   },
 );
 
+// Embedded lists keep their fixed server filters; the toolbar filters run locally while typing.
 const tableState = useFetchList(() => {
-  const baseFilters = { ...(props.filters || {}) };
-  delete baseFilters.nodeName;
-  const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
-  const payload = {
-    filters: {
-      ...baseFilters,
-      ...(getTrimValue(filters.uid) ? { uid: getTrimValue(filters.uid) } : {}),
-      ...(nodeName ? { nodeName } : {}),
-      ...(filters.type ? { type: filters.type } : {}),
-    },
-  };
-  return request(cardApi.getCardList(payload));
+  const { nodeName, type, ...baseFilters } = props.filters || {};
+  return request(cardApi.getCardList({ filters: baseFilters }));
 }, { immediate: false });
 const {
   data: tableData,
@@ -460,46 +478,94 @@ const {
   refreshing: tableRefreshing,
   status: tableStatus,
 } = tableState;
-const displayedFiltered = ref(false);
-const fetchTableData = async () => {
-  const filtered = Boolean(
-    getTrimValue(filters.uid) !== getTrimValue(props.filters?.uid || '')
-    || (filters.type || '') !== (props.filters?.type || '')
-    || (filters.nodeName || '') !== (props.filters?.nodeName || '')
-  );
-  if (await fetchList()) displayedFiltered.value = filtered;
+const refreshTable = fetchList;
+const scopedNodeName = computed(() => (hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName));
+const keywords = computed(() => parseKeywords(filters.keyword));
+const keywordCards = computed(() => tableData.value.filter((card) =>
+  matchesKeywords(keywords.value, [card.uuid, card.type, card.nodeName, card.vendor])));
+const visibleCards = computed(() => keywordCards.value.filter((card) =>
+  (!scopedNodeName.value || card.nodeName === scopedNodeName.value)
+  && (!filters.type || card.type === filters.type)));
+// Options show how many cards picking them would list under the other filters.
+const countBy = (cards, keyOf) => {
+  const counts = new Map();
+  for (const card of cards) counts.set(keyOf(card), (counts.get(keyOf(card)) ?? 0) + 1);
+  return counts;
 };
+const nodeCardCounts = computed(() => countBy(keywordCards.value.filter((card) => !filters.type || card.type === filters.type), (card) => card.nodeName));
+const typeCardCount = computed(() => {
+  const all = countBy(keywordCards.value, (card) => card.type);
+  const onNode = scopedNodeName.value ? countBy(keywordCards.value.filter((card) => card.nodeName === scopedNodeName.value), (card) => card.type) : all;
+  const node = rawNodes.value.find((item) => item.name === filters.nodeName);
+  // Picking a type drops a node that does not carry it, as pruneNodeScopeByType does.
+  const keepsNode = (type) => !filters.nodeName || !nodesLoaded.value || Boolean(node?.types.includes(type));
+  return (type) => ((keepsNode(type) ? onNode : all).get(type) ?? 0);
+});
+// Counts stay hidden until the list loads; a loaded empty list still shows 0.
+const cardCount = (count = 0) => (tableStatus.value === REQUEST_STATUS.READY ? { count, countLabel: t('card.deviceCount', { count }, count) } : {});
+const filtered = computed(() => Boolean(
+  keywords.value.length
+  || (filters.type || '') !== (props.filters?.type || '')
+  || (scopedNodeName.value || '') !== (props.filters?.nodeName || '')
+));
 const clearFilters = () => {
-  filters.uid = props.filters?.uid || '';
+  filters.keyword = '';
   filters.type = props.filters?.type;
   filters.nodeName = props.filters?.nodeName;
   hasManualNodeScope.value = false;
-  if (!props.hideTitle && route.query.type) {
-    const query = { ...route.query };
-    delete query.type;
-    router.replace({ query });
-  }
-  applyFilters();
 };
-const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(tableData);
-watch(tableData, syncTotalAndClamp, { immediate: true, flush: 'sync' });
-const { getTrimValue, applyFilters, refreshTable } = useTableFilters({
-  fetchTableData,
-  resetBeforeApply: resetToFirstPage,
+const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(visibleCards);
+// A page restored from the URL waits for the list before it is clamped.
+watch([visibleCards, tableStatus], () => {
+  if (tableStatus.value === REQUEST_STATUS.READY) syncTotalAndClamp();
+  else pagination.total = visibleCards.value.length;
+}, { immediate: true, flush: 'sync' });
+const applyFilters = resetToFirstPage;
+const filterKey = computed(() => JSON.stringify([keywords.value, filters.type, scopedNodeName.value]));
+let restoredFilterKey;
+// Changing a filter starts from the first page; restoring one from the URL keeps its page.
+watch(filterKey, (key) => {
+  if (key !== restoredFilterKey) resetToFirstPage();
+  restoredFilterKey = undefined;
 });
 const onNodeNameChange = () => {
   hasManualNodeScope.value = true;
   applyFilters();
 };
 
+const syncsRoute = !props.hideTitle && !props.filters;
+const ROUTE_KEYS = ['q', 'type', 'nodeName', 'page', 'pageSize'];
+const DEFAULT_PAGE_SIZE = 10;
 watch(
-  () => route.query.type,
-  (value) => {
-    const next = parseTypeFromQuery(value);
-    if (filters.type === next) return;
-    filters.type = next;
-    pruneNodeScopeByType();
-    applyFilters();
+  () => route.query,
+  (query) => {
+    if (!syncsRoute) return;
+    const values = readQuery(query, ROUTE_KEYS);
+    // Keep the typed text, including spaces between words, when the query only trimmed it.
+    if ((values.q ?? '') !== filters.keyword.trim()) filters.keyword = values.q ?? '';
+    filters.type = values.type;
+    filters.nodeName = values.nodeName;
+    hasManualNodeScope.value = Boolean(values.nodeName);
+    const page = Number(values.page);
+    const pageSize = Number(values.pageSize);
+    pagination.pageSize = pagination.pageSizeOptions.includes(pageSize) ? pageSize : DEFAULT_PAGE_SIZE;
+    pagination.current = Number.isInteger(page) && page > 0 ? page : 1;
+    restoredFilterKey = filterKey.value;
+  },
+  { immediate: true },
+);
+watch(
+  () => [filters.keyword, filters.type, filters.nodeName, pagination.current, pagination.pageSize],
+  () => {
+    if (!syncsRoute) return;
+    const query = writeQuery(route.query, {
+      q: filters.keyword.trim(),
+      type: filters.type,
+      nodeName: filters.nodeName,
+      page: pagination.current > 1 ? pagination.current : undefined,
+      pageSize: pagination.pageSize !== DEFAULT_PAGE_SIZE ? pagination.pageSize : undefined,
+    });
+    if (!sameQuery(query, route.query)) router.replace({ query });
   },
 );
 
@@ -511,7 +577,7 @@ watch(
   ],
   () => {
     hasManualNodeScope.value = false;
-    filters.uid = props.filters?.uid || '';
+    filters.keyword = '';
     filters.type = props.filters?.type;
     filters.nodeName = props.filters?.nodeName;
     applyFilters();
@@ -520,7 +586,7 @@ watch(
 
 onMounted(() => {
   fetchFilterOptions();
-  applyFilters();
+  refreshTable();
 });
 </script>
 

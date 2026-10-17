@@ -2058,7 +2058,7 @@ test('workload rankings show Pod and container names independently of list filte
   ].map((item) => ({ ...item, nodeName: 'node-1', status: 'success', deviceIds: ['gpu-1'], createTime: '2026-09-12T00:00:00Z' }))
   let filteredRequests = 0
   await page.route(workloadListPattern, (route) => {
-    const name = route.request().postDataJSON()?.filters?.name
+    const name = route.request().postDataJSON()?.filters?.keyword
     if (name) filteredRequests += 1
     const items = name ? workloads.filter((item) => item.name === name) : workloads
     return fulfillWorkloadFixture(route, { code: 0, items, total: items.length })
@@ -2118,7 +2118,7 @@ test('workload rankings show Pod and container names independently of list filte
     await tooltip.waitFor({ state: 'visible' })
     assert.equal((await tooltip.textContent()).trim(), podName)
 
-    const search = page.getByRole('textbox', { name: 'Search Pod or container name', exact: true })
+    const search = page.getByRole('textbox', { name: 'Name or namespace', exact: true })
     await search.fill('worker')
     await search.press('Enter')
     await waitUntil(() => filteredRequests > 0, 'Workload name filter did not issue a request')
@@ -3825,7 +3825,7 @@ test('workload status labels stay concise while accessible help explains contain
     await help.press('Escape')
     await tooltip.waitFor({ state: 'hidden' })
     await page.mouse.move(0, 0)
-    await page.getByPlaceholder('Search Pod or container name').focus()
+    await page.getByPlaceholder('Name or namespace').focus()
     await help.focus()
     await tooltip.waitFor({ state: 'visible' })
     await help.press('Escape')
@@ -4213,7 +4213,7 @@ test('one workload table combines pending requests and allocations with shared f
     const rows = [allocatedRow, ...pods.map(pendingWorkloadFixture)]
     if (detailMode === 'bound') rows[1] = { ...allocatedRow, appName: pods[0].name, podUid: pods[0].uid, status: 'waiting' }
     const filters = query.filters || {}
-    const filtered = rows.filter((row) => (!filters.name || row.appName.includes(filters.name) || row.name.includes(filters.name))
+    const filtered = rows.filter((row) => (!filters.keyword || row.appName.includes(filters.keyword) || row.name.includes(filters.keyword))
       && (!filters.status || row.status === filters.status)
       && (!filters.nodeName || row.nodeName === filters.nodeName))
     return fulfillWorkloadFixture(route, { items: filtered })
@@ -4265,7 +4265,7 @@ test('one workload table combines pending requests and allocations with shared f
     await page.getByRole('listitem').filter({ hasText: /^2$/ }).click()
     await table.getByRole('button', { name: 'pending-09 / main', exact: true }).waitFor()
     assert.ok(listQueries.some((query) => query.page === 2))
-    const search = page.getByRole('textbox', { name: 'Search Pod or container name', exact: true })
+    const search = page.getByRole('textbox', { name: 'Name or namespace', exact: true })
     await search.fill('pending-00')
     await search.press('Enter')
     await pendingEntry.waitFor()
@@ -5910,14 +5910,16 @@ test('chart loading reserves the painted plot and legend rows on narrow hourly a
 })
 
 const listSearchCases = [
-  { route: 'nodes', endpoint: 'nodes', field: 'ip', placeholder: 'Enter full IP address', value: '192.0.2.10', partial: '192.0.2', row: { name: 'node-1', uid: 'node-1', ip: '192.0.2.10', type: ['NVIDIA'], isSchedulable: true }, selector: '.node-table' },
-  { route: 'accelerators', endpoint: 'gpus', field: 'uid', placeholder: 'Enter full device ID', value: 'gpu-1', partial: 'gpu', row: { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', health: true }, selector: '.accelerator-table' },
-  { route: 'workloads', endpoint: 'workloads', field: 'name', placeholder: 'Search Pod or container name', value: 'worker', partial: 'work', row: { name: 'worker', appName: 'training-job', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }, selector: '.workload-table' },
+  { route: 'nodes', endpoint: 'nodes', local: true, row: { name: 'node-1', uid: 'node-1', ip: '192.0.2.10', type: ['NVIDIA'], isSchedulable: true }, selector: '.node-table' },
+  { route: 'accelerators', endpoint: 'gpus', local: true, row: { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', health: true }, selector: '.accelerator-table' },
+  { route: 'workloads', endpoint: 'workloads', field: 'keyword', placeholder: 'Name or namespace', value: 'worker', partial: 'work', row: { name: 'worker', appName: 'training-job', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }, selector: '.workload-table' },
 ]
+// Node and accelerator lists load once and filter locally; only workloads search on the server.
+const serverSearchCases = listSearchCases.filter((config) => !config.local)
 
 test('list searches distinguish empty, unmatched and failed results and recover through clear actions', { timeout: 90_000 }, async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
-  for (const config of listSearchCases) {
+  for (const config of serverSearchCases) {
     const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
     const queries = []
     let inventoryEmpty = true
@@ -5926,11 +5928,9 @@ test('list searches distinguish empty, unmatched and failed results and recover 
       queries.push(query)
       const value = query?.filters?.[config.field]
       if (value === 'fail') return route.fulfill({ status: 503, json: { code: 503, message: 'unavailable' } })
-      const matches = !value || (config.field === 'name'
-        ? config.row.name.includes(value) || config.row.appName.includes(value)
-        : value === config.value)
+      const matches = !value || config.row.name.includes(value) || config.row.appName.includes(value)
       const rows = !inventoryEmpty && matches ? [config.row] : []
-      return route.fulfill({ json: config.field === 'name' ? { items: rows, total: rows.length } : { list: rows } })
+      return route.fulfill({ json: { items: rows, total: rows.length } })
     })
     try {
       await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
@@ -5938,10 +5938,9 @@ test('list searches distinguish empty, unmatched and failed results and recover 
       const search = page.getByPlaceholder(config.placeholder, { exact: true })
       await empty.getByText('No Data', { exact: true }).waitFor()
       await search.fill('unmatched')
-      assert.equal((await empty.textContent()).trim(), 'No Data', 'Draft text must not change the resolved empty state')
-      await search.press('Enter')
+      // The keyword searches after a short pause, without Enter.
+      await waitUntil(() => queries.at(-1).filters[config.field] === 'unmatched', 'The typed keyword was not searched')
       await empty.getByText('No matching results', { exact: true }).waitFor()
-      assert.equal(queries.at(-1).filters[config.field], 'unmatched')
 
       // A failed new search keeps the last result and its empty-state explanation.
       await search.fill('fail')
@@ -5956,10 +5955,10 @@ test('list searches distinguish empty, unmatched and failed results and recover 
       assert.equal(await search.inputValue(), '')
       assert.equal(queries.at(-1).filters[config.field], undefined)
       assert.equal(await page.getByTestId('stateful-table-refresh-error').count(), 0)
-      if (config.field === 'name') assert.equal(new URL(page.url()).searchParams.has('name'), false)
+      assert.equal(new URL(page.url()).searchParams.has('q'), false)
 
       await search.fill('unmatched')
-      await page.getByRole('button', { name: 'Search', exact: true }).click()
+      await search.press('Enter')
       await empty.getByText('No matching results', { exact: true }).waitFor()
       await search.hover()
       await search.locator('..').locator('.t-input__suffix-clear').click()
@@ -5968,17 +5967,11 @@ test('list searches distinguish empty, unmatched and failed results and recover 
 
       await search.fill(config.partial)
       await search.press('Enter')
-      if (config.field === 'name') {
-        await waitUntil(() => queries.at(-1).filters.name === config.partial, 'Workload partial name was not submitted')
-        await page.locator(`${config.selector} tbody tr`).first().waitFor()
-        assert.equal(await empty.count(), 0)
-      } else {
-        await empty.getByText('No matching results', { exact: true }).waitFor()
-      }
+      await waitUntil(() => queries.at(-1).filters.keyword === config.partial, 'Workload partial keyword was not submitted')
+      await page.locator(`${config.selector} tbody tr`).first().waitFor()
+      assert.equal(await empty.count(), 0)
       await search.fill(` ${config.value} `)
-      const searchButton = page.getByRole('button', { name: 'Search', exact: true })
-      await searchButton.focus()
-      await searchButton.press('Enter')
+      await search.press('Enter')
       await page.locator(`${config.selector} tbody tr`).first().waitFor()
       assert.equal(queries.at(-1).filters[config.field], config.value)
 
@@ -5987,10 +5980,8 @@ test('list searches distinguish empty, unmatched and failed results and recover 
       await page.getByTestId('stateful-table-refresh-error').waitFor()
       assert.equal(await page.locator(`${config.selector} tbody tr`).count(), 1, 'Failure must preserve the previous result')
       await page.reload({ waitUntil: 'domcontentloaded' })
-      if (config.field === 'name') {
-        await page.getByTestId('stateful-table-error').waitFor()
-        assert.equal(await empty.count(), 0, 'An initial failed filtered request is an error, not no results')
-      }
+      await page.getByTestId('stateful-table-error').waitFor()
+      assert.equal(await empty.count(), 0, 'An initial failed filtered request is an error, not no results')
     } finally {
       await page.close()
     }
@@ -6002,7 +5993,7 @@ test('list no-match recovery fits common screen widths in both languages', { tim
   for (const locale of ['en-US', 'zh-CN']) {
     for (const config of listSearchCases) {
       const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
-      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.field === 'name' ? { items: [], total: 0 } : { list: [] } }))
+      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? { list: [] } : { items: [], total: 0 } }))
       try {
         await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
         await page.getByTestId('stateful-table-empty').waitFor()
@@ -6035,15 +6026,13 @@ test('list no-match recovery fits common screen widths in both languages', { tim
 test('clearing list filters removes route filters while the input clear preserves other filters', { timeout: 60_000 }, async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   for (const config of [
-    { ...listSearchCases[0], query: 'schedulingEligibility=temporarilyUnschedulable' },
-    { ...listSearchCases[1], query: 'type=NVIDIA' },
     { ...listSearchCases[2], query: 'status=pending&nodeName=node-1&deviceId=gpu-1&page=2' },
   ]) {
     const page = await browser.newPage({ locale: 'en-US' })
     const queries = []
     await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
       queries.push(route.request().postDataJSON())
-      return route.fulfill({ json: config.field === 'name' ? { items: [], total: 0 } : { list: [] } })
+      return route.fulfill({ json: config.local ? { list: [] } : { items: [], total: 0 } })
     })
     try {
       await page.goto(`${target}${basePath}${config.route}?${config.query}`, { waitUntil: 'domcontentloaded' })
@@ -6056,8 +6045,7 @@ test('clearing list filters removes route filters while the input clear preserve
       await search.hover()
       await search.locator('..').locator('.t-input__suffix-clear').click()
       await waitUntil(() => !queries.at(-1).filters[config.field], 'Input was not cleared')
-      if (config.field === 'uid') assert.equal(queries.at(-1).filters.type, 'NVIDIA')
-      if (config.field === 'name') {
+      if (config.field === 'keyword') {
         assert.deepEqual(queries.at(-1).filters, { status: 'pending', nodeName: 'node-1', deviceId: 'gpu-1' })
         assert.equal(queries.at(-1).page, 1)
       }
@@ -6071,5 +6059,608 @@ test('clearing list filters removes route filters while the input clear preserve
     } finally {
       await page.close()
     }
+  }
+})
+
+// The keyboard highlight must be scrolled into the visible part of the popup, not only selected.
+const highlightIsVisible = (page) => page.evaluate(() => {
+  const popup = [...document.querySelectorAll('.t-select__dropdown .t-popup__content')].find((element) => element.getBoundingClientRect().height > 0)
+  const highlighted = popup?.querySelector('.t-select-option__hover')
+  if (!highlighted) return false
+  const outer = popup.getBoundingClientRect()
+  const inner = highlighted.getBoundingClientRect()
+  return inner.top >= outer.top && inner.bottom <= outer.bottom
+})
+
+const localSearchRows = {
+  nodes: [
+    { name: 'gpu-node-a', uid: 'node-a', ip: '10.0.12.34', type: ['NVIDIA-A100-SXM4-80GB'], isSchedulable: true, isReady: true },
+    { name: 'gpu-node-b', uid: 'node-b', ip: '10.0.56.78', type: ['NVIDIA-H100-SXM5-80GB'], isSchedulable: true, isReady: true },
+    { name: 'npu-node-c', uid: 'node-c', ip: '10.1.12.9', type: ['Ascend910B4'], isSchedulable: false, isReady: true },
+  ],
+  gpus: [
+    { uuid: 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525', nodeName: 'gpu-node-a', type: 'NVIDIA-A100-SXM4-80GB', health: true },
+    { uuid: 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', nodeName: 'gpu-node-b', type: 'NVIDIA-H100-SXM5-80GB', health: true },
+    { uuid: '57cd034427925618899c0cfd6c607d98', nodeName: 'npu-node-c', type: 'Ascend910B4', health: true },
+  ],
+}
+const localSearchPages = [
+  {
+    route: 'nodes', endpoint: 'nodes', selector: '.node-table', placeholder: 'Search name, IP or model',
+    cases: [['12.3', 1], ['a100sxm4', 1], ['NODE 12', 2], ['h100 npu', 0]],
+    linked: { keyword: '12.3', path: '/nodes/node-a' },
+    routeQuery: 'schedulingEligibility=temporarilyUnschedulable&q=node', routeRows: 1, kept: 'schedulingEligibility',
+  },
+  {
+    route: 'accelerators', endpoint: 'gpus', selector: '.accelerator-table', placeholder: 'Search device ID, model or node',
+    cases: [['f95362fb-79f5', 1], ['79F5', 1], ['node-b', 1], ['ascend 7d98', 1], ['sxm', 2], ['zzz', 0]],
+    linked: { keyword: 'f95362fb', path: '/accelerators/GPU-f95362fb-79f5-57bb-9972-86156cd5f525' },
+    routeQuery: 'type=NVIDIA-A100-SXM4-80GB&q=gpu', routeRows: 1, kept: 'type',
+  },
+]
+const mockLocalSearchLists = async(page, counts = {}) => {
+  for (const endpoint of ['nodes', 'gpus']) {
+    await page.route(`**/api/vgpu/v1/${endpoint}`, (route) => {
+      counts[endpoint] = (counts[endpoint] ?? 0) + 1
+      return route.fulfill({ json: { list: localSearchRows[endpoint] } })
+    })
+  }
+  const types = [...new Set(localSearchRows.gpus.map((gpu) => gpu.type))].map((type) => ({ type }))
+  await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: types } }))
+  return counts
+}
+
+test('node and accelerator keywords match fragments of several fields while typing and survive reload and Back', { timeout: 90_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  for (const config of localSearchPages) {
+    const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+    const counts = await mockLocalSearchLists(page)
+    try {
+      await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
+      const rows = page.locator(`${config.selector} tbody tr`)
+      await waitUntil(async() => await rows.count() === 3, `${config.route}: all rows must load first`)
+      const loaded = counts[config.endpoint]
+      const search = page.getByPlaceholder(config.placeholder, { exact: true })
+      const empty = page.getByTestId('stateful-table-empty')
+      for (const [keyword, expected] of config.cases) {
+        await search.fill(keyword)
+        if (expected) await waitUntil(async() => await empty.count() === 0 && await rows.count() === expected, `${config.route} "${keyword}" must leave ${expected} rows`)
+        else await empty.getByText('No matching results', { exact: true }).waitFor()
+        await waitUntil(() => new URL(page.url()).searchParams.get('q') === keyword.trim(), `${config.route} "${keyword}" must be in the URL`)
+      }
+      assert.equal(counts[config.endpoint], loaded, 'Typing must filter locally without requests')
+
+      await search.fill(config.linked.keyword)
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await waitUntil(async() => await search.inputValue() === config.linked.keyword && await rows.count() === 1, 'Reload must restore the keyword')
+      await rows.first().locator('.link').first().click()
+      await waitUntil(() => new URL(page.url()).pathname.endsWith(config.linked.path), 'The row must open its detail page')
+      await page.goBack({ waitUntil: 'domcontentloaded' })
+      await waitUntil(async() => await search.inputValue() === config.linked.keyword && await rows.count() === 1, 'Back must return to the same filtered list')
+
+      // Filters from a link combine with the keyword; clearing the input keeps them, Clear filters drops all.
+      await page.goto(`${target}${basePath}${config.route}?${config.routeQuery}`, { waitUntil: 'domcontentloaded' })
+      await waitUntil(async() => await rows.count() === config.routeRows, `${config.route}: route filters and keyword must combine`)
+      await search.hover()
+      await search.locator('..').locator('.t-input__suffix-clear').click()
+      await waitUntil(() => !new URL(page.url()).searchParams.has('q'), 'Clearing the input must drop q')
+      assert.equal(new URL(page.url()).searchParams.has(config.kept), true, 'Clearing the input must keep other filters')
+      await search.fill('zzz')
+      await empty.getByRole('button', { name: 'Clear filters', exact: true }).click()
+      await waitUntil(async() => await rows.count() === 3 && new URL(page.url()).search === '', 'Clear filters must drop every filter')
+      assert.equal(await search.inputValue(), '')
+    } finally {
+      await page.close()
+    }
+  }
+})
+
+test('accelerators restore page and node filters from the URL when the data arrives late', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const gpus = Array.from({ length: 25 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(2, '0')}`, nodeName: 'gpu-node-a', type: 'NVIDIA-A100-SXM4-80GB', health: true }))
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  await page.route('**/api/vgpu/v1/gpus', async(route) => {
+    await gate
+    return route.fulfill({ json: { list: gpus } })
+  })
+  await page.route('**/api/vgpu/v1/nodes', async(route) => {
+    await gate
+    return route.fulfill({ json: { list: localSearchRows.nodes } })
+  })
+  await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: [{ type: 'NVIDIA-A100-SXM4-80GB' }] } }))
+  try {
+    const query = 'type=NVIDIA-A100-SXM4-80GB&nodeName=gpu-node-a&page=3'
+    await page.goto(`${target}${basePath}accelerators?${query}`, { waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(500)
+    assert.equal(new URL(page.url()).search, `?${query}`, 'Loading must not rewrite the restored filters or page')
+    release()
+    const rows = page.locator('.accelerator-table tbody tr')
+    await waitUntil(async() => await rows.count() === 5, 'Page 3 of 25 rows must show the last 5 rows')
+    assert.match(await rows.first().textContent(), /GPU-20/)
+    assert.equal(new URL(page.url()).search, `?${query}`, 'The restored page and node must survive the late data')
+  } finally {
+    await page.close()
+  }
+})
+
+test('long node dropdowns show the first matches and keep keyboard picks correct after the scope changes', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const errors = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const nodes = Array.from({ length: 150 }, (_, index) => ({ name: `node-${String(index).padStart(3, '0')}`, uid: `uid-${index}`, ip: `10.0.${index}.1`, type: [index % 3 ? 'NVIDIA-A100-SXM4-80GB' : 'NVIDIA-H100-SXM5-80GB'], isSchedulable: true, isReady: true }))
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  await page.route('**/api/vgpu/v1/gpus', (route) => route.fulfill({ json: { list: nodes.map((node) => ({ uuid: `GPU-${node.name}`, nodeName: node.name, type: node.type[0], health: true })) } }))
+  await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: [{ type: 'NVIDIA-A100-SXM4-80GB' }, { type: 'NVIDIA-H100-SXM5-80GB' }] } }))
+  const options = page.locator('.t-select__dropdown:visible .t-select-option')
+  const hint = page.locator('.t-select__dropdown:visible .select-more-hint')
+  try {
+    await page.goto(`${target}${basePath}accelerators`, { waitUntil: 'domcontentloaded' })
+    await waitUntil(async() => await page.locator('.accelerator-table tbody tr').count() > 0, 'Accelerators must load')
+    const typeSelect = page.locator('.table-toolbar .t-select').nth(0)
+    const nodeSelect = page.locator('.table-toolbar .t-select').nth(1)
+    await nodeSelect.click()
+    await waitUntil(async() => await options.count() === 100, 'Only the first 100 node options must render')
+    assert.equal((await hint.textContent()).trim(), '51 more not shown. Keep typing to narrow the list.')
+    await page.keyboard.type('10.0.14')
+    await waitUntil(async() => await options.count() === 11 && await hint.count() === 0, 'Typing must search every node, not only the rendered ones')
+    await page.keyboard.press('Escape')
+
+    // Narrow the node scope by model, restore it, then pick far down the list by keyboard.
+    await typeSelect.click()
+    await page.keyboard.type('h100')
+    await waitUntil(async() => await options.count() === 1, 'One H100 model must remain')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => new URL(page.url()).searchParams.get('type') === 'NVIDIA-H100-SXM5-80GB', 'The model must apply')
+    await waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The model popup must close')
+    await typeSelect.click()
+    // Typing starts once the options show, as a user would; TDesign clears the picked label then.
+    await waitUntil(async() => await options.count() === 3, 'All model options must show')
+    await page.keyboard.type('all')
+    await waitUntil(async() => await options.count() === 1, 'Only the All option must remain')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => !new URL(page.url()).searchParams.has('type'), 'All models must clear the model')
+    await waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The model popup must close')
+    await nodeSelect.click()
+    await waitUntil(async() => await options.count() === 100, 'The restored scope must show the first 100 nodes again')
+    for (let index = 0; index < 51; index += 1) await page.keyboard.press('ArrowDown')
+    await waitUntil(() => highlightIsVisible(page), 'The 51st node must be scrolled into view')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => new URL(page.url()).searchParams.get('nodeName') === 'node-049', 'The 51st keyboard step must pick node-049')
+    await waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'Picking must close the popup')
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
+test('workload keywords search after a pause, at once on Enter or clear, and not during IME composition', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const queries = []
+  const rows = [
+    { name: 'worker-0', appName: 'Training-Job', podUid: 'pod-a', namespace: 'team-a', nodeName: 'node-1', status: 'success' },
+    { name: 'main', appName: 'inference', podUid: 'pod-b', namespace: 'team-b', nodeName: 'node-1', status: 'success' },
+  ]
+  await page.route('**/api/vgpu/v1/workloads', (route) => {
+    const query = route.request().postDataJSON()
+    queries.push(query)
+    const keyword = (query?.filters?.keyword ?? '').toLowerCase()
+    const items = rows.filter((row) => !keyword || [row.name, row.appName, row.namespace].some((field) => field.toLowerCase().includes(keyword)))
+    return fulfillWorkloadFixture(route, { items, total: items.length })
+  })
+  const keywords = () => queries.map((query) => query?.filters?.keyword ?? '')
+  try {
+    // Older links searched with ?name=; they still apply and are rewritten to ?q=.
+    await page.goto(`${target}${basePath}workloads?name=TEAM-A`, { waitUntil: 'domcontentloaded' })
+    const search = page.getByPlaceholder('Name or namespace', { exact: true })
+    const tableRows = page.locator('.workload-table tbody tr')
+    await waitUntil(async() => await search.inputValue() === 'TEAM-A' && await tableRows.count() === 1, 'A legacy name link must apply as the keyword')
+    await waitUntil(() => new URL(page.url()).searchParams.get('q') === 'TEAM-A' && !new URL(page.url()).searchParams.has('name'), 'The legacy link must move to q')
+    assert.equal(keywords().at(-1), 'TEAM-A')
+
+    await search.fill('')
+    await search.press('Enter')
+    await waitUntil(async() => await tableRows.count() === 2, 'Clearing must restore every workload')
+    let count = queries.length
+    await search.pressSequentially('infer', { delay: 40 })
+    await waitUntil(() => keywords().at(-1) === 'infer', 'Typing must search after a pause')
+    assert.equal(queries.length, count + 1, 'Typing must send one request, not one per keystroke')
+
+    count = queries.length
+    await search.fill('worker')
+    await search.press('Enter')
+    await waitUntil(() => keywords().at(-1) === 'worker', 'Enter must search at once')
+    await page.waitForTimeout(400)
+    assert.equal(queries.length, count + 1, 'Enter must not leave a second delayed request')
+
+    count = queries.length
+    await search.evaluate((input) => input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })))
+    await search.fill('训练')
+    await search.dispatchEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true })
+    await page.waitForTimeout(400)
+    assert.equal(queries.length, count, 'Text being composed must not search')
+    await search.evaluate((input) => input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '训练' })))
+    await waitUntil(() => keywords().at(-1) === '训练', 'Finishing composition must search')
+
+    // A pause already queued before composition starts must not search the half-typed text.
+    count = queries.length
+    await search.fill('team-')
+    await page.waitForTimeout(100)
+    await search.evaluate((input) => input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })))
+    await page.waitForTimeout(400)
+    assert.equal(queries.length, count, 'A queued search must not fire during composition')
+    await search.fill('team-训')
+    await search.evaluate((input) => input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '训' })))
+    await waitUntil(() => keywords().at(-1) === 'team-训', 'Finishing composition must search the composed text')
+    await page.waitForTimeout(400)
+    assert.equal(queries.length, count + 1, 'Composition must end with exactly one search')
+
+    await search.hover()
+    await search.locator('..').locator('.t-input__suffix-clear').click()
+    await waitUntil(() => keywords().at(-1) === '' && !new URL(page.url()).searchParams.has('q'), 'Clearing the input must search at once')
+  } finally {
+    await page.close()
+  }
+})
+
+test('long workload device dropdowns keep keyboard picks correct after the node scope changes', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  const errors = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const nodes = ['node-a', 'node-b', 'node-c'].map((name, index) => ({ name, uid: `uid-${name}`, ip: `10.0.${index}.1`, type: ['NVIDIA-A100-SXM4-80GB'], isSchedulable: true, isReady: true }))
+  const gpus = Array.from({ length: 150 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(3, '0')}`, nodeName: nodes[Math.floor(index / 50)].name, type: 'NVIDIA-A100-SXM4-80GB', health: true }))
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  await page.route('**/api/vgpu/v1/gpus', (route) => route.fulfill({ json: { list: gpus } }))
+  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [], total: 0 }))
+  const options = page.locator('.t-select__dropdown:visible .t-select-option')
+  const popupClosed = () => waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The popup must close')
+  try {
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
+    const nodeSelect = page.locator('.workload-filters .t-select').nth(0)
+    const deviceSelect = page.locator('.workload-filters .t-select').nth(1)
+    await nodeSelect.click()
+    await waitUntil(async() => await options.count() === 4, 'All node options must load')
+    await page.keyboard.type('10.0.1')
+    await waitUntil(async() => await options.count() === 1, 'One node must match the IP fragment')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => new URL(page.url()).searchParams.get('nodeName') === 'node-b', 'The node must apply')
+    await popupClosed()
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() === 51, 'The node scope must leave its 50 devices and All')
+    await page.keyboard.press('Escape')
+    await popupClosed()
+    await nodeSelect.click()
+    await waitUntil(async() => await options.count() === 4, 'All node options must show')
+    await page.keyboard.type('all')
+    await waitUntil(async() => await options.count() === 1, 'Only All Nodes must remain')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => !new URL(page.url()).searchParams.has('nodeName'), 'All Nodes must clear the node')
+    await popupClosed()
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() === 100, 'The restored scope must show the first 100 devices')
+    await page.keyboard.type(' ')
+    for (let index = 0; index < 51; index += 1) await page.keyboard.press('ArrowDown')
+    await waitUntil(() => highlightIsVisible(page), 'The 51st device must be scrolled into view')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-049', 'The 51st keyboard step must pick GPU-049')
+    await popupClosed()
+
+    // Moving up and wrapping around either end keep the highlight in view.
+    const highlighted = () => page.evaluate(() => {
+      const option = [...document.querySelectorAll('.t-select__dropdown .t-select-option__hover')].find((element) => element.getBoundingClientRect().height > 0)
+      return option?.querySelector('.select-option-label__main')?.textContent ?? option?.textContent.trim()
+    })
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() === 100, 'All device options must show again')
+    await page.keyboard.type(' ')
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('ArrowUp')
+    await waitUntil(async() => await highlighted() === 'GPU-098' && await highlightIsVisible(page), 'Up from the first option must wrap to the last one in view')
+    await page.keyboard.press('ArrowDown')
+    await waitUntil(async() => await highlighted() === 'All GPUs' && await highlightIsVisible(page), 'Down from the last option must wrap to the first one in view')
+    for (let index = 0; index < 8; index += 1) await page.keyboard.press('ArrowUp')
+    await waitUntil(async() => await highlighted() === 'GPU-091' && await highlightIsVisible(page), 'Moving up must keep the highlight in view')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-091', 'Enter must pick the highlighted device')
+    await popupClosed()
+
+    // A highlight moved before the matches shrink must not point past the new list.
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() === 100, 'All device options must show again')
+    for (let index = 0; index < 3; index += 1) await page.keyboard.press('ArrowDown')
+    await page.keyboard.type('GPU-120')
+    await waitUntil(async() => await options.count() === 1, 'One device must match')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(200)
+    assert.equal(new URL(page.url()).searchParams.get('deviceId'), 'GPU-091', 'Enter without a highlight must not pick anything')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-120', 'The highlighted match must be picked')
+    await popupClosed()
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() > 1, 'Device options must show')
+    await page.keyboard.type('no-such-device')
+    await waitUntil(async() => await options.count() === 0, 'Nothing must match')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(200)
+    assert.equal(new URL(page.url()).searchParams.get('deviceId'), 'GPU-120', 'Enter with no matches must keep the device')
+    assert.deepEqual(errors, [])
+  } finally {
+    await page.close()
+  }
+})
+
+test('dropdown searches start from every option after the popup closes', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  await mockLocalSearchLists(page)
+  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [], total: 0 }))
+  const options = page.locator('.t-select__dropdown:visible .t-select-option')
+  try {
+    for (const [path, scope, index] of [['workloads', '.workload-filters', 0], ['accelerators', '.table-toolbar', 1]]) {
+      await page.goto(`${target}${basePath}${path}`, { waitUntil: 'domcontentloaded' })
+      const select = page.locator(`${scope} .t-select`).nth(index)
+      for (const pause of [450, 0]) {
+        await select.click()
+        await waitUntil(async() => await options.count() === 4, `${path}: all node options must show`)
+        await page.keyboard.type('56.7')
+        await page.keyboard.press('Escape')
+        // TDesign reports searches after a 300 ms debounce; a late report must not narrow the reopened list.
+        if (pause) await page.waitForTimeout(pause)
+        await select.click()
+        await page.waitForTimeout(450)
+        assert.equal(await select.locator('input').inputValue(), '', `${path}: the reopened input must be empty`)
+        assert.equal(await options.count(), 4, `${path}: the reopened list must show every node`)
+        await page.keyboard.press('Escape')
+      }
+      await select.click()
+      await page.keyboard.type('12.3')
+      await page.keyboard.press('Escape')
+      await select.click()
+      await page.waitForTimeout(150)
+      await page.keyboard.type('12.9')
+      await page.waitForTimeout(450)
+      assert.deepEqual(await options.locator('.select-option-label__main').allTextContents(), ['npu-node-c'], `${path}: the new text must not be replaced by the old one`)
+      await page.keyboard.press('Escape')
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('workload dropdowns show how many workloads each node and device would list', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  await mockLocalSearchLists(page)
+  let counts = { nodeCounts: { 'gpu-node-a': 3, 'gpu-node-b': 1 }, deviceCounts: { 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525': 2 } }
+  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [], total: 0, ...counts }))
+  const options = page.locator('.t-select__dropdown:visible .t-select-option')
+  const countOf = async(name) => {
+    // Match the main label only; another popup may still be fading out with the name as a hint.
+    const option = options.filter({ has: page.locator('.select-option-label__main', { hasText: name }) })
+    return { text: (await option.locator('.select-option-label__count').textContent())?.trim(), title: await option.locator('.select-option-label__count').getAttribute('title') }
+  }
+  try {
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
+    const nodeSelect = page.locator('.workload-filters .t-select').nth(0)
+    const deviceSelect = page.locator('.workload-filters .t-select').nth(1)
+    await nodeSelect.click()
+    await waitUntil(async() => await options.count() === 4, 'All node options must load')
+    assert.deepEqual(await countOf('gpu-node-a'), { text: '3', title: '3 workloads' })
+    assert.deepEqual(await countOf('gpu-node-b'), { text: '1', title: '1 workload' })
+    assert.deepEqual(await countOf('npu-node-c'), { text: '0', title: '0 workloads' }, 'A node missing from the counts has no workloads')
+    await page.keyboard.press('Escape')
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() === 4, 'All device options must load')
+    assert.deepEqual(await countOf('GPU-f95362fb'), { text: '2', title: '2 workloads' })
+    assert.deepEqual(await countOf('GPU-0b1c2d3e'), { text: '0', title: '0 workloads' })
+    await page.keyboard.press('Escape')
+
+    // Counts follow the latest list response, for example after the status changes.
+    counts = { nodeCounts: { 'gpu-node-a': 1 }, deviceCounts: {} }
+    await page.getByRole('group', { name: 'Status', exact: true }).getByRole('button', { name: /Abnormal/ }).click()
+    await waitUntil(async() => {
+      await nodeSelect.click()
+      const text = (await countOf('gpu-node-a')).text
+      await page.keyboard.press('Escape')
+      return text === '1'
+    }, 'Node counts must follow the new status')
+
+    // Older backends send no counts, and then the options show none.
+    counts = {}
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await nodeSelect.click()
+    await waitUntil(async() => await options.count() === 4, 'All node options must load')
+    assert.equal(await options.locator('.select-option-label__count').count(), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('node and accelerator dropdowns show how many rows each option would list', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  await mockLocalSearchLists(page)
+  const options = page.locator('.t-select__dropdown:visible .t-select-option')
+  const shown = () => page.evaluate(() => {
+    const popup = [...document.querySelectorAll('.t-select__dropdown')].find((element) => element.getBoundingClientRect().height > 0)
+    return [...popup.querySelectorAll('.select-option-label')].map((label) => {
+      const main = label.querySelector('.select-option-label__main')
+      const text = document.createRange()
+      text.selectNodeContents(main)
+      return { label: main.textContent, count: Number(label.querySelector('.select-option-label__count').textContent), cut: text.getBoundingClientRect().width > main.getBoundingClientRect().width }
+    })
+  })
+  const countsOf = async() => Object.fromEntries((await shown()).map(({ label, count }) => [label, count]))
+  const popupClosed = () => waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The popup must close')
+  try {
+    await page.goto(`${target}${basePath}nodes?q=gpu`, { waitUntil: 'domcontentloaded' })
+    await waitUntil(async() => await page.locator('.node-table tbody tr').count() === 2, 'The keyword must leave two nodes')
+    const nodeSelects = page.locator('.table-toolbar .t-select')
+    await nodeSelects.nth(0).click()
+    await waitUntil(async() => await options.count() === 3, 'Status options must show')
+    assert.deepEqual(await countsOf(), { Schedulable: 2, 'Temporarily Unschedulable': 0 })
+    assert.deepEqual((await shown()).filter(({ cut }) => cut), [], 'Counts must not cut the widest label')
+    await page.keyboard.press('Escape')
+    await popupClosed()
+    await nodeSelects.nth(1).click()
+    await waitUntil(async() => await options.count() === 4, 'Model options must show')
+    assert.deepEqual(await countsOf(), { 'NVIDIA-A100-SXM4-80GB': 1, 'NVIDIA-H100-SXM5-80GB': 1, Ascend910B4: 0 })
+    await page.keyboard.press('Escape')
+    await popupClosed()
+
+    // Picking a model drops a node that does not carry it, so that model counts every node.
+    await page.goto(`${target}${basePath}accelerators?nodeName=gpu-node-b`, { waitUntil: 'domcontentloaded' })
+    await waitUntil(async() => await page.locator('.accelerator-table tbody tr').count() === 1, 'The node must leave one card')
+    const cardSelects = page.locator('.table-toolbar .t-select')
+    await cardSelects.nth(0).click()
+    await waitUntil(async() => await options.count() === 4, 'Model options must show')
+    assert.deepEqual(await countsOf(), { 'NVIDIA-A100-SXM4-80GB': 1, 'NVIDIA-H100-SXM5-80GB': 1, Ascend910B4: 1 })
+    await page.keyboard.press('Escape')
+    await popupClosed()
+    await page.locator('.list-keyword-search input').fill('gpu')
+    await cardSelects.nth(1).click()
+    await waitUntil(async() => await options.count() === 4, 'Node options must show')
+    assert.deepEqual(await countsOf(), { 'gpu-node-a': 1, 'gpu-node-b': 1, 'npu-node-c': 0 })
+  } finally {
+    await page.close()
+  }
+})
+
+test('node and accelerator dropdown counts wait for a loaded list and fit their labels', { timeout: 90_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const zeros = (counts) => Object.fromEntries(Object.keys(counts).map((key) => [key, 0]))
+  for (const config of [
+    { route: 'nodes', endpoint: 'nodes', select: 0, widest: 0, loaded: { Schedulable: 2, 'Temporarily Unschedulable': 1 } },
+    { route: 'accelerators', endpoint: 'gpus', select: 1, widest: 0, loaded: { 'gpu-node-a': 1, 'gpu-node-b': 1, 'npu-node-c': 1 } },
+  ]) {
+    const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+    await mockLocalSearchLists(page)
+    let answer = 'hold'
+    const held = []
+    await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
+      if (answer === 'hold') held.push(route)
+      else if (answer === 'fail') route.fulfill({ status: 500, json: { message: 'unavailable' } })
+      else route.fulfill({ json: { list: answer === 'empty' ? [] : localSearchRows[config.endpoint] } })
+    })
+    const selects = page.locator('.table-toolbar .t-select')
+    const options = page.locator('.t-select__dropdown:visible .t-select-option')
+    const shownLabels = () => page.locator('.t-select__dropdown:visible .select-option-label').evaluateAll((labels) => labels.map((label) => {
+      const main = label.querySelector('.select-option-label__main')
+      const text = document.createRange()
+      text.selectNodeContents(main)
+      const count = label.querySelector('.select-option-label__count')
+      return { label: main.textContent, count: count ? Number(count.textContent) : null, cut: text.getBoundingClientRect().width > main.getBoundingClientRect().width + 0.01 }
+    }))
+    const open = async(index) => {
+      await selects.nth(index).click()
+      await waitUntil(async() => await options.count() > 1, `${config.route}: options must show`)
+    }
+    const close = async() => {
+      await page.keyboard.press('Escape')
+      await waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The popup must close')
+    }
+    const countsShown = async() => {
+      await open(config.select)
+      const labels = await shownLabels()
+      await close()
+      assert.deepEqual(labels.filter(({ cut }) => cut), [], `${config.route}: counts must not cut a label`)
+      return Object.fromEntries(labels.filter(({ count }) => count !== null).map(({ label, count }) => [label, count]))
+    }
+    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: { list } } : { status: 500, json: { message: 'unavailable' } })))
+    try {
+      await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
+      await waitUntil(() => held.length > 0, `${config.route}: the list must be requested`)
+      assert.deepEqual(await countsShown(), {}, `${config.route}: a loading list has no counts yet`)
+      answer = 'fail'
+      await release()
+      await page.locator('[data-testid="stateful-table-retry"]').waitFor()
+      assert.deepEqual(await countsShown(), {}, `${config.route}: a list that failed to load has no counts`)
+      answer = 'empty'
+      await page.locator('[data-testid="stateful-table-retry"]').click()
+      await waitUntil(async() => (await countsShown())[Object.keys(config.loaded)[0]] === 0, `${config.route}: a loaded empty list must count 0`)
+      assert.deepEqual(await countsShown(), zeros(config.loaded))
+      answer = 'rows'
+      await page.locator('.table-toolbar-right').getByRole('button', { name: 'Refresh', exact: true }).click()
+      await waitUntil(async() => JSON.stringify(await countsShown()) === JSON.stringify(config.loaded), `${config.route}: loaded rows must be counted`)
+      answer = 'fail'
+      await page.locator('.table-toolbar-right').getByRole('button', { name: 'Refresh', exact: true }).click()
+      await page.locator('[data-testid="stateful-table-refresh-error"]').waitFor()
+      assert.deepEqual(await countsShown(), config.loaded, `${config.route}: a failed refresh keeps the counts of the rows still shown`)
+
+      // Counts that arrive while the widest dropdown is open widen it instead of cutting its labels.
+      answer = 'hold'
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await waitUntil(() => held.length > 0, `${config.route}: the list must be requested again`)
+      await open(config.widest)
+      await release(localSearchRows[config.endpoint])
+      await waitUntil(async() => (await shownLabels()).some(({ count }) => count !== null), `${config.route}: counts must arrive in the open popup`)
+      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], `${config.route}: arriving counts must not cut a label`)
+      await close()
+      await open(config.widest)
+      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], `${config.route}: a reopened popup must fit its labels`)
+      await close()
+    } finally {
+      await page.close()
+    }
+  }
+})
+
+test('model and node dropdowns filter their options while typing', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
+  await mockLocalSearchLists(page)
+  const options = page.locator('.t-select__dropdown:visible .t-select-option')
+  try {
+    await page.goto(`${target}${basePath}accelerators`, { waitUntil: 'domcontentloaded' })
+    const rows = page.locator('.accelerator-table tbody tr')
+    await waitUntil(async() => await rows.count() === 3, 'Accelerators must load')
+    const nodeSelect = page.locator('.table-toolbar .t-select').nth(1)
+    // With nothing picked, "All" is only a placeholder, so early keystrokes cannot append to its label.
+    assert.equal(await nodeSelect.locator('input').inputValue(), '')
+    assert.equal(await nodeSelect.locator('input').getAttribute('placeholder'), 'All Nodes')
+    await nodeSelect.click()
+    // Users see the loaded options before typing; the option request is separate from the table.
+    await waitUntil(async() => await options.count() === 4, 'All node options must load')
+    await page.keyboard.type('56.7')
+    await waitUntil(async() => await options.count() === 1, 'Typing an IP fragment must leave one node')
+    assert.match(await options.first().textContent(), /gpu-node-b.*10\.0\.56\.78/)
+    await options.first().click()
+    await waitUntil(async() => await rows.count() === 1 && new URL(page.url()).searchParams.get('nodeName') === 'gpu-node-b', 'Picking the node must filter and update the URL')
+
+    await page.goto(`${target}${basePath}nodes`, { waitUntil: 'domcontentloaded' })
+    const nodeRows = page.locator('.node-table tbody tr')
+    await waitUntil(async() => await nodeRows.count() === 3, 'Nodes must load')
+    await page.locator('.table-toolbar .t-select').nth(1).click()
+    await waitUntil(async() => await options.count() === 4, 'All model options must load')
+    await page.keyboard.type('H100')
+    await waitUntil(async() => await options.count() === 1, 'Typing a model fragment must leave one model')
+    await options.first().click()
+    await waitUntil(async() => await nodeRows.count() === 1 && new URL(page.url()).searchParams.get('type') === 'NVIDIA-H100-SXM5-80GB', 'Picking the model must filter and update the URL')
+
+    await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
+    const deviceSelect = page.locator('.workload-filters .t-select').nth(1)
+    await deviceSelect.click()
+    await waitUntil(async() => await options.count() === 4, 'All device options must load')
+    await page.keyboard.type('h100')
+    await waitUntil(async() => await options.count() === 1, 'Typing a model fragment must leave one device')
+    assert.match(await options.first().textContent(), /GPU-0b1c2d3e.*NVIDIA-H100-SXM5-80GB.*gpu-node-b/)
+    // Closing the page while the picked list is still loading would abort that request at the backend.
+    const listed = page.waitForResponse((response) => workloadListPattern.test(new URL(response.url()).pathname) &&
+      response.request().postDataJSON()?.filters?.deviceId === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0')
+    await options.first().click()
+    await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', 'Picking the device must update the URL')
+    await listed
+  } finally {
+    await page.close()
   }
 })
