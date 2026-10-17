@@ -23,6 +23,7 @@ const (
 	AscendGPUDevice    = "Ascend"
 	HygonGPUDevice     = "DCU"
 	HygonHCUDevice     = "HCU"
+	AMDGPUDevice       = "AMD"
 	CambriconGPUDevice = "MLU"
 	MetaxGPUDevice     = "Metax-GPU"
 	MetaxSGPUDevice    = "Metax-SGPU"
@@ -301,7 +302,7 @@ func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
 				continue
 			}
 			pd[devType] = append(pd[devType], cd)
-		case NvidiaGPUDevice, HygonHCUDevice:
+		case NvidiaGPUDevice, HygonHCUDevice, AMDGPUDevice:
 			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
 				if i >= podContainerCount(pod) {
 					break
