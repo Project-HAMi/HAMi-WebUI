@@ -8,6 +8,8 @@ import (
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 
+	"google.golang.org/protobuf/proto"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -38,15 +40,27 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, req *pb.ListWorkloa
 	if err != nil {
 		return nil, err
 	}
+	// The device filter also narrows each row's allocation to that GPU, so device counts,
+	// which ignore that filter, need the unfiltered allocations.
+	unscoped := allocated
+	if filters.DeviceId != "" {
+		if unscoped, err = s.containers.GetAllContainers(ctx, &pb.GetAllContainersReq{}); err != nil {
+			return nil, err
+		}
+	}
 	// Read Pods after allocations so a newer pending snapshot wins.
 	pods, err := s.scheduling.ListSchedulingPods(ctx)
 	if err != nil {
 		return nil, err
 	}
 	items := mergeWorkloads(allocated.Items, pods)
+	deviceItems := items
+	if filters.DeviceId != "" {
+		deviceItems = mergeWorkloads(unscoped.Items, pods)
+	}
 	// Request-only bound rows get their node UID from the node cache.
 	needsNodeUID := false
-	for _, item := range items {
+	for _, item := range append(items, deviceItems...) {
 		if item.Request != nil && item.NodeName != "" {
 			needsNodeUID = true
 			break
@@ -60,7 +74,7 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, req *pb.ListWorkloa
 			for _, node := range nodes {
 				uids[node.Name] = node.Uid
 			}
-			for _, row := range items {
+			for _, row := range append(items, deviceItems...) {
 				if row.Request != nil {
 					row.NodeUid = uids[row.NodeName]
 				}
@@ -89,8 +103,16 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, req *pb.ListWorkloa
 			filtered = append(filtered, item)
 		}
 	}
+	var deviceNodes map[string]bool
+	if filters.DeviceId != "" {
+		deviceNodes = s.nodesHoldingDevice(ctx, filters.DeviceId, deviceItems)
+	}
+	nodeCounts, deviceCounts, err := workloadOptionCounts(ctx, items, deviceItems, filters, deviceNodes)
+	if err != nil {
+		return nil, err
+	}
 	sort.Slice(filtered, func(i, j int) bool { return workloadLess(filtered[i], filtered[j]) })
-	result := &pb.WorkloadsReply{Items: []*pb.ContainerReply{}, Total: int32(len(filtered)), StatusCounts: counts}
+	result := &pb.WorkloadsReply{Items: []*pb.ContainerReply{}, Total: int32(len(filtered)), StatusCounts: counts, NodeCounts: nodeCounts, DeviceCounts: deviceCounts}
 	page, pageSize := req.GetPage(), req.GetPageSize()
 	if page < 1 {
 		page = 1
@@ -183,9 +205,78 @@ func hasPositiveSchedulingRequest(request *pb.SchedulingContainerRequest) bool {
 	return false
 }
 
+// nodesHoldingDevice returns the nodes whose inventory has the device, as the device
+// dropdown offers it; rows stand in when the node cache fails.
+func (s *WorkloadService) nodesHoldingDevice(ctx context.Context, deviceID string, rows []*pb.ContainerReply) map[string]bool {
+	holders := map[string]bool{}
+	if nodes, err := s.containers.node.ListAllNodes(ctx); err == nil {
+		for _, node := range nodes {
+			for _, device := range node.Devices {
+				if device.Id == deviceID {
+					holders[node.Name] = true
+				}
+			}
+		}
+		return holders
+	}
+	for _, row := range rows {
+		for _, device := range row.DeviceIds {
+			if device == deviceID && row.NodeName != "" {
+				holders[row.NodeName] = true
+			}
+		}
+	}
+	return holders
+}
+
+// workloadOptionCounts counts what picking each node or device would list. Every filter,
+// including status, applies except the one the dropdown sets. Picking another node drops a
+// device that it does not hold, so only nodes in deviceNodes keep the device filter.
+func workloadOptionCounts(ctx context.Context, items, deviceItems []*pb.ContainerReply, filters *pb.ListWorkloadsRequest_Filters, deviceNodes map[string]bool) (map[string]int32, map[string]int32, error) {
+	nodeScope := proto.Clone(filters).(*pb.ListWorkloadsRequest_Filters)
+	nodeScope.NodeName, nodeScope.NodeUid = "", ""
+	nodeWithoutDevice := proto.Clone(nodeScope).(*pb.ListWorkloadsRequest_Filters)
+	nodeWithoutDevice.DeviceId = ""
+	deviceScope := proto.Clone(filters).(*pb.ListWorkloadsRequest_Filters)
+	deviceScope.DeviceId = ""
+	nodeCounts, deviceCounts := map[string]int32{}, map[string]int32{}
+	for _, item := range deviceItems {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if item.NodeName != "" && !deviceNodes[item.NodeName] && matchesWorkloadStatus(item.Status, filters.Status) && matchesUnifiedWorkloadScope(item, nodeWithoutDevice) {
+			nodeCounts[item.NodeName]++
+		}
+	}
+	if filters.DeviceId != "" {
+		for _, item := range items {
+			if deviceNodes[item.NodeName] && matchesWorkloadStatus(item.Status, filters.Status) && matchesUnifiedWorkloadScope(item, nodeScope) {
+				nodeCounts[item.NodeName]++
+			}
+		}
+	}
+	for _, item := range deviceItems {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if !matchesWorkloadStatus(item.Status, filters.Status) || !matchesUnifiedWorkloadScope(item, deviceScope) {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, device := range item.DeviceIds {
+			if device != "" && !seen[device] {
+				seen[device] = true
+				deviceCounts[device]++
+			}
+		}
+	}
+	return nodeCounts, deviceCounts, nil
+}
+
 // matchesUnifiedWorkloadScope applies every filter except status.
 func matchesUnifiedWorkloadScope(item *pb.ContainerReply, filters *pb.ListWorkloadsRequest_Filters) bool {
 	if !matchesWorkloadName(item.AppName, item.Name, strings.TrimSpace(filters.Name)) ||
+		!matchesKeyword(filters.Keyword, item.AppName, item.Name, item.Namespace) ||
 		(filters.Namespace != "" && filters.Namespace != item.Namespace) ||
 		(filters.NodeName != "" && filters.NodeName != item.NodeName) ||
 		(filters.NodeUid != "" && filters.NodeUid != item.NodeUid) {

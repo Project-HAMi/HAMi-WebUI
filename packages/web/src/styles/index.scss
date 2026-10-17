@@ -269,3 +269,35 @@ aside {
     animation: none;
   }
 }
+
+// Options with a line of details grow to fit it; "All" and options without details stay one line.
+.select-option-label-popup .t-select-option {
+  height: auto;
+  min-height: var(--td-comp-size-s);
+  padding-top: 3px;
+  padding-bottom: 3px;
+
+  & + .t-select-option {
+    margin-top: 4px;
+  }
+
+  // TDesign wraps custom content in a span that does not stretch; let counts sit at the right edge.
+  > span {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+// The list above already ends with 6px of padding; the left edge lines up with option text.
+.select-more-hint {
+  padding: 0 14px 6px;
+  color: var(--td-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+// Keyword boxes match several fields, so their placeholders need more room than a single-field input.
+.list-keyword-search {
+  width: 260px;
+  max-width: 100%;
+}

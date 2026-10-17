@@ -121,5 +121,5 @@ test('node list and detail share one combined scheduling eligibility status', ()
   assert.doesNotMatch(detail, /getNodeSchedulingStatus/);
   assert.doesNotMatch(detail, /label: t\('node\.schedulingStatus'\)/);
   assert.match(list, /filters\.schedulingEligibility/);
-  assert.match(list, /route\.query\.schedulingEligibility/);
+  assert.match(list, /ROUTE_KEYS = \[[^\]]*'schedulingEligibility'/);
 });

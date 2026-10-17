@@ -99,6 +99,11 @@ func TestWorkloadFiltersAndPaginationApplyToWholeJoinedList(t *testing.T) {
 		{"node uid", &pb.ListWorkloadsRequest_Filters{NodeUid: "node-a-uid"}, 2},
 		{"gpu", &pb.ListWorkloadsRequest_Filters{DeviceId: "gpu-a"}, 2},
 		{"gpu priority", &pb.ListWorkloadsRequest_Filters{Priority: "1"}, 1},
+		{"keyword matches a pending pod", &pb.ListWorkloadsRequest_Filters{Keyword: "PEND"}, 1},
+		{"keyword matches the namespace", &pb.ListWorkloadsRequest_Filters{Keyword: "dev"}, 3},
+		{"keyword words match different fields", &pb.ListWorkloadsRequest_Filters{Keyword: "dev worker"}, 1},
+		{"keyword words do not span fields", &pb.ListWorkloadsRequest_Filters{Keyword: "devworker"}, 0},
+		{"keyword separators are literal", &pb.ListWorkloadsRequest_Filters{Keyword: "run-ning"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := svc.ListWorkloads(context.Background(), &pb.ListWorkloadsRequest{Filters: tc.filters, PageSize: 1})
@@ -281,6 +286,50 @@ func TestWorkloadOmitsCompletedContainersWithoutAllocation(t *testing.T) {
 	}
 }
 
+func TestWorkloadOptionCountsIgnoreOnlyTheirOwnFilter(t *testing.T) {
+	abnormal := workloadTestContainer("failed", biz.ContainerStatusError)
+	bound := workloadTestContainer("running", biz.ContainerStatusSuccess)
+	bound.ContainerDevices = append(bound.ContainerDevices, biz.ContainerDevice{UUID: "gpu-b", Usedcores: 7, Usedmem: 512})
+	other := workloadTestContainer("other-node", biz.ContainerStatusSuccess)
+	other.NodeName, other.NodeUID = "node-b", "node-b-uid"
+	other.ContainerDevices = biz.ContainerDevices{{UUID: "gpu-c", Usedcores: 5, Usedmem: 256}}
+	pending := workloadTestPending("pending", workloadTestRequest("worker", "regular", "1"))
+	svc := workloadTestService([]*biz.Container{bound, abnormal, other}, pending)
+	svc.containers.node = biz.NewNodeUsecase(&containerTestNodeRepo{nodes: []*biz.Node{
+		{Name: "node-a", Uid: "node-a-uid", Devices: []*biz.DeviceInfo{{Id: "gpu-a"}, {Id: "gpu-b"}}},
+		{Name: "node-b", Uid: "node-b-uid", Devices: []*biz.DeviceInfo{{Id: "gpu-c"}, {Id: "gpu-idle"}}},
+	}}, log.DefaultLogger)
+	for _, tc := range []struct {
+		name    string
+		filters *pb.ListWorkloadsRequest_Filters
+		nodes   map[string]int32
+		devices map[string]int32
+	}{
+		{"unscoped rows without a node or device are not counted", nil, map[string]int32{"node-a": 2, "node-b": 1}, map[string]int32{"gpu-a": 2, "gpu-b": 1, "gpu-c": 1}},
+		{"status applies to both", &pb.ListWorkloadsRequest_Filters{Status: "abnormal"}, map[string]int32{"node-a": 1}, map[string]int32{"gpu-a": 1}},
+		{"node counts ignore the node", &pb.ListWorkloadsRequest_Filters{NodeName: "node-b"}, map[string]int32{"node-a": 2, "node-b": 1}, map[string]int32{"gpu-c": 1}},
+		// Picking node-b drops gpu-b, which it does not hold; node-a keeps it.
+		{"device counts ignore the device", &pb.ListWorkloadsRequest_Filters{DeviceId: "gpu-b"}, map[string]int32{"node-a": 1, "node-b": 1}, map[string]int32{"gpu-a": 2, "gpu-b": 1, "gpu-c": 1}},
+		{"an idle device keeps its node at zero", &pb.ListWorkloadsRequest_Filters{DeviceId: "gpu-idle"}, map[string]int32{"node-a": 2}, map[string]int32{"gpu-a": 2, "gpu-b": 1, "gpu-c": 1}},
+		{"a node and its device", &pb.ListWorkloadsRequest_Filters{NodeName: "node-a", DeviceId: "gpu-b"}, map[string]int32{"node-a": 1, "node-b": 1}, map[string]int32{"gpu-a": 2, "gpu-b": 1}},
+		{"keyword applies to both", &pb.ListWorkloadsRequest_Filters{Keyword: "fail"}, map[string]int32{"node-a": 1}, map[string]int32{"gpu-a": 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, err := svc.ListWorkloads(context.Background(), &pb.ListWorkloadsRequest{Filters: tc.filters})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(reply.NodeCounts, tc.nodes) || !reflect.DeepEqual(reply.DeviceCounts, tc.devices) {
+				t.Fatalf("node counts = %v, device counts = %v; want %v, %v", reply.NodeCounts, reply.DeviceCounts, tc.nodes, tc.devices)
+			}
+		})
+	}
+	reply, err := svc.ListWorkloads(context.Background(), &pb.ListWorkloadsRequest{Filters: &pb.ListWorkloadsRequest_Filters{DeviceId: "gpu-b"}})
+	if err != nil || len(reply.Items) != 1 || reply.Items[0].AllocatedMem != 512 {
+		t.Fatalf("the device filter must still narrow the listed allocation: %v %v", reply, err)
+	}
+}
+
 func TestWorkloadStatusCountsApplyEveryFilterExceptStatus(t *testing.T) {
 	running := workloadTestContainer("running", biz.ContainerStatusSuccess)
 	starting := workloadTestContainer("starting", biz.ContainerStatusWaiting)
@@ -301,6 +350,7 @@ func TestWorkloadStatusCountsApplyEveryFilterExceptStatus(t *testing.T) {
 		{"status filter keeps every count", &pb.ListWorkloadsRequest_Filters{Status: "abnormal"}, 2, map[string]int32{"all": 7, "pending": 1, "waiting": 1, "success": 2, "abnormal": 2}},
 		{"node scope excludes unbound requests", &pb.ListWorkloadsRequest_Filters{NodeName: "node-a"}, 5, map[string]int32{"all": 5, "waiting": 1, "success": 1, "abnormal": 2}},
 		{"name scope", &pb.ListWorkloadsRequest_Filters{Name: "pending", Status: "success"}, 0, map[string]int32{"all": 1, "pending": 1}},
+		{"keyword scope", &pb.ListWorkloadsRequest_Filters{Keyword: "PEND", Status: "success"}, 0, map[string]int32{"all": 1, "pending": 1}},
 		{"all is the unfiltered count key", &pb.ListWorkloadsRequest_Filters{Status: "all"}, 7, map[string]int32{"all": 7, "pending": 1, "waiting": 1, "success": 2, "abnormal": 2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

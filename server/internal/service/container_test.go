@@ -118,10 +118,10 @@ func (r *containerTestPodRepo) FindOne(context.Context, string, string) (*biz.Co
 	return nil, nil
 }
 
-type containerTestNodeRepo struct{}
+type containerTestNodeRepo struct{ nodes []*biz.Node }
 
 func (r *containerTestNodeRepo) ListAll(context.Context) ([]*biz.Node, error) {
-	return nil, nil
+	return r.nodes, nil
 }
 
 func (r *containerTestNodeRepo) GetNode(context.Context, string) (*biz.Node, error) {
