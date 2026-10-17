@@ -19,6 +19,7 @@ import (
 	"vgpu/internal/provider/hygon"
 	"vgpu/internal/provider/metax"
 	"vgpu/internal/provider/mlu"
+	"vgpu/internal/provider/mthreads"
 	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/provider/util"
 )
@@ -47,6 +48,7 @@ func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger,
 			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
 			hygon.NewHCU(log.NewHelper(logger), nodeSelectors[biz.HygonHCUDevice]),
 			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
+			mthreads.NewMthreads(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MthreadsGPUDevice]),
 		},
 	}
 	// Subscribe first: the initial node sync must not miss a catalog change.
