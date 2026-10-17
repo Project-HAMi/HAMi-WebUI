@@ -31,7 +31,7 @@
         value-type="Date"
         :placeholder="[t('common.startTime'), t('common.endTime')]"
         :separator="t('common.to')"
-        :disable-date="{ after: dayjs().format('YYYY-MM-DD') }"
+        :disable-date="disableCustomDate"
         :time-picker-props="timePickerProps"
         :presets="renderTimezone"
         :popup-props="{
@@ -43,9 +43,11 @@
         enable-time-picker
         allow-input
         need-confirm
+        cancel-range-select-limit
         :clearable="false"
         class="trend-time-filter-custom"
         @change="onCustomRangeChange"
+        @focus="syncEndMinDay"
         @blur="onCustomBlur"
         @keydown.capture="onCustomKeydown"
       >
@@ -139,6 +141,15 @@ onMounted(() => {
 onBeforeUnmount(() => selectorObserver?.disconnect());
 // Reuse the panel so deferred scroll events cannot outlive it when switching inputs.
 const timePickerProps = { key: 'trend-range-time' };
+// While the end is edited, days before the start day are disabled too; times are checked on submit.
+const endMinDay = ref(NaN);
+const syncEndMinDay = async () => {
+  await nextTick();
+  const [start, end] = customRangePicker.value?.$el.querySelectorAll('input') ?? [];
+  endMinDay.value = end && end === document.activeElement ? dayjs(start.value).valueOf() : NaN;
+};
+// Unlike its .d.ts, TDesign 1.18.5 calls a function disable-date once per side and uses the returned day predicate.
+const disableCustomDate = () => (day) => dayjs(day).isAfter(dayjs(), 'day') || dayjs(day).isBefore(endMinDay.value, 'day');
 const pickerPopperOptions = {
   modifiers: [{ name: 'preventOverflow', options: { altAxis: true, tether: false, padding: 12 } }],
 };
@@ -276,7 +287,8 @@ const onCustomEnter = () => {
 const onPickerVisibleChange = (visible, context) => {
   // Switching between inputs keeps TDesign's panel open despite a false toggle.
   pickerVisible.value = context.trigger === 'trigger-element-click' || visible;
-  if (!pickerVisible.value) resetCustomRange();
+  if (pickerVisible.value) syncEndMinDay();
+  else resetCustomRange();
 };
 const onCustomBlur = ({ e }) => {
   if (!pickerVisible.value && !e.relatedTarget?.closest('.trend-time-filter-custom')) resetCustomRange();
@@ -413,6 +425,12 @@ const onCustomBlur = ({ e }) => {
   // Resizing the panel must not turn scroll anchoring into a time selection.
   .t-time-picker__panel-body-scroll {
     overflow-anchor: none;
+  }
+
+  // Tabler's global scrollbar-color makes Chromium ignore TDesign's ::-webkit-scrollbar rules.
+  .t-time-picker__panel-body-scroll,
+  .t-select__dropdown .t-popup__content {
+    scrollbar-width: none;
   }
 
   > .t-popup__content {
