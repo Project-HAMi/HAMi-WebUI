@@ -53,9 +53,9 @@ func TestHCURegistrationPreservesPhysicalSerialAndAllocationIdentity(t *testing.
 			Containers:     []corev1.Container{{Name: "worker"}},
 		},
 	}
-	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
-	if err != nil {
-		t.Fatal(err)
+	allocations, failures := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
+	if len(failures) != 0 {
+		t.Fatal(failures)
 	}
 	slots := allocations[HygonHCUDevice]
 	if len(slots) != 2 || len(slots[0]) != 0 || len(slots[1]) != 1 {
@@ -146,9 +146,9 @@ func TestLegacyDCUInventoryAndAllocationStillUseMinorNumberAlias(t *testing.T) {
 		}},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}},
 	}
-	allocations, err := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
-	if err != nil || len(allocations[HygonDCUDevice]) != 1 || len(allocations[HygonDCUDevice][0]) != 1 {
-		t.Fatalf("legacy DCU allocations = %v, %v", allocations, err)
+	allocations, failures := util.DecodePodDevices(pod, log.NewHelper(log.DefaultLogger))
+	if len(failures) != 0 || len(allocations[HygonDCUDevice]) != 1 || len(allocations[HygonDCUDevice][0]) != 1 {
+		t.Fatalf("legacy DCU allocations = %v, %v", allocations, failures)
 	}
 	if allocations[HygonDCUDevice][0][0].UUID != devices[0].AliasId {
 		t.Fatalf("legacy DCU allocation no longer joins inventory: %+v", allocations)

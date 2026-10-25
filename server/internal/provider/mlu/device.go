@@ -15,12 +15,10 @@ const (
 	// MLUUseUUID is user can use specify MLU device for set MLU UUID.
 	MLUUseUUID = "cambricon.com/use-gpuuuid"
 	// MLUNoUseUUID is user can not use specify MLU device for set MLU UUID.
-	MLUNoUseUUID            = "cambricon.com/nouse-gpuuuid"
-	DsmluLockTime           = "cambricon.com/dsmlu.lock"
-	DsmluProfile            = "CAMBRICON_DSMLU_PROFILE"
-	DsmluResourceAssigned   = "CAMBRICON_DSMLU_ASSIGHED"
-	retry                   = 5
-	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
+	MLUNoUseUUID          = "cambricon.com/nouse-gpuuuid"
+	DsmluLockTime         = "cambricon.com/dsmlu.lock"
+	DsmluResourceAssigned = "CAMBRICON_DSMLU_ASSIGHED"
+	retry                 = 5
 
 	CambriconDeviceAnnosOnNode = "cambricon.com/mlu"
 	CambriconDeviceAnnosOnPod  = "cambricon.com/smlu"
@@ -31,5 +29,5 @@ const (
 )
 
 func init() {
-	util.SupportDevices[CambriconMLUDevice] = DsmluProfile
+	util.SupportDevices[CambriconMLUDevice] = "hami.io/cambricon-mlu-devices-allocated"
 }

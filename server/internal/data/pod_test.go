@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -164,6 +165,44 @@ func TestMixedContainersKeepTheirGPUPriority(t *testing.T) {
 	}
 }
 
+func TestCambriconAllocationsStayOnTheirContainer(t *testing.T) {
+	sidecar, worker := corev1.Container{Name: "sidecar"}, corev1.Container{Name: "worker"}
+	for name, spec := range map[string]corev1.PodSpec{
+		"only container":       {Containers: []corev1.Container{worker}},
+		"after a sidecar":      {Containers: []corev1.Container{sidecar, worker}},
+		"after an initialiser": {InitContainers: []corev1.Container{sidecar}, Containers: []corev1.Container{worker}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			slots := len(spec.InitContainers) + len(spec.Containers)
+			repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+			spec.NodeName = "node-1"
+			// No device plugin has run: the pod carries only what HAMi writes when it schedules.
+			repo.onAddPod(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
+					util.AssignedNodeAnnotations:              "node-1",
+					"CAMBRICON_DSMLU_PROFILE":                 "2_50_8",
+					"hami.io/cambricon-mlu-devices-allocated": strings.Repeat(";", slots-1) + "node-1-cambricon-mlu-2,MLU,2048,50:;",
+				}},
+				Spec: spec,
+			})
+
+			containers, _ := repo.ListAll(context.Background())
+			for _, c := range containers {
+				want := 0
+				if c.Name == "worker" {
+					want = 1
+				}
+				if len(c.ContainerDevices) != want {
+					t.Fatalf("%s holds %+v, want %d devices", c.Name, c.ContainerDevices, want)
+				}
+				if want == 1 && (c.ContainerDevices[0].UUID != "node-1-cambricon-mlu-2" || c.ContainerDevices[0].Usedmem != 2048 || c.ContainerDevices[0].Usedcores != 50) {
+					t.Fatalf("worker holds %+v", c.ContainerDevices[0])
+				}
+			}
+		})
+	}
+}
+
 func TestAscendAllocationsFollowTheCurrentConfigurationWithoutRedecoding(t *testing.T) {
 	catalog := &mutableCatalog{current: &devicecatalog.Snapshot{State: devicecatalog.StateForbidden}}
 	repo := ascendTestRepo(t, catalog)
@@ -313,9 +352,9 @@ func TestMigReservationsStayOnNVIDIAGPUs(t *testing.T) {
 
 func mustDecodePodDevices(t *testing.T, pod *corev1.Pod) util.PodDevices {
 	t.Helper()
-	decoded, err := util.DecodePodDevices(pod, log.NewHelper(log.NewStdLogger(io.Discard)))
-	if err != nil {
-		t.Fatal(err)
+	decoded, failures := util.DecodePodDevices(pod, log.NewHelper(log.NewStdLogger(io.Discard)))
+	if len(failures) != 0 {
+		t.Fatal(failures)
 	}
 	return decoded
 }

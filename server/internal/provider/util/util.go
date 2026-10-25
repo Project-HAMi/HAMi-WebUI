@@ -27,8 +27,6 @@ const (
 	MetaxGPUDevice     = "Metax-GPU"
 	MetaxSGPUDevice    = "Metax-SGPU"
 
-	DsmluProfileAndInstance = "CAMBRICON_DSMLU_PROFILE_INSTANCE"
-
 	NVIDIAPriority = "nvidia.com/priority"
 )
 
@@ -109,135 +107,94 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 	return retval, nil
 }
 
-// DecodeContainerDevices decodes the container devices from a string.
-func DecodeContainerDevices(str, priority string) (ContainerDevices, error) {
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
+// deviceSegment is one "id,type,memory,cores" allocation; HAMi may append optional fields after these.
+type deviceSegment struct {
+	id, devType string
+	mem, cores  int32
+}
+
+func parseDeviceSegment(val string) (deviceSegment, error) {
+	fields := strings.Split(val, ",")
+	if len(fields) < 4 {
+		return deviceSegment{}, fmt.Errorf("allocation %q has fewer than 4 fields", val)
 	}
-	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
+	if fields[0] == "" || fields[1] == "" {
+		return deviceSegment{}, fmt.Errorf("allocation %q has no device id or type", val)
+	}
+	mem, err := parseNonNegativeInt32(fields[2])
+	if err != nil {
+		return deviceSegment{}, fmt.Errorf("allocation %q memory: %w", val, err)
+	}
+	cores, err := parseNonNegativeInt32(fields[3])
+	if err != nil {
+		return deviceSegment{}, fmt.Errorf("allocation %q cores: %w", val, err)
+	}
+	return deviceSegment{id: fields[0], devType: fields[1], mem: mem, cores: cores}, nil
+}
+
+func parseNonNegativeInt32(s string) (int32, error) {
+	v, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("negative value %d", v)
+	}
+	return int32(v), nil
+}
+
+// coresOrWholeCard keeps the current reading of a zero core request as the whole card.
+func coresOrWholeCard(cores int32) int32 {
+	if cores == 0 {
+		return 100
+	}
+	return cores
+}
+
+// decodeSegments reads one container's allocations; only the empty segment after a trailing separator is skipped.
+func decodeSegments(str string, build func(i int, seg deviceSegment) (ContainerDevice, error)) (ContainerDevices, error) {
 	contdev := ContainerDevices{}
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
-	}
-	for i, val := range cd {
-		if strings.Contains(val, ",") {
-			tmpstr := strings.Split(val, ",")
-			if len(tmpstr) < 4 {
-				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
-			}
-			tmpdev := ContainerDevice{}
-			tmpdev.Idx = i
-			tmpdev.UUID = tmpstr[0]
-			tmpdev.Type = tmpstr[1]
-			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
-			tmpdev.Usedmem = int32(devmem)
-			devcores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
-			if devcores == 0 {
-				tmpdev.Usedcores = 100
-			} else {
-				tmpdev.Usedcores = int32(devcores)
-			}
-			tmpdev.Priority = priority
-			contdev = append(contdev, tmpdev)
+	for i, val := range strings.Split(str, OneContainerMultiDeviceSplitSymbol) {
+		if val == "" {
+			continue
 		}
+		seg, err := parseDeviceSegment(val)
+		if err != nil {
+			return ContainerDevices{}, err
+		}
+		dev, err := build(i, seg)
+		if err != nil {
+			return ContainerDevices{}, err
+		}
+		contdev = append(contdev, dev)
 	}
 	return contdev, nil
+}
+
+// DecodeContainerDevices decodes the container devices from a string.
+func DecodeContainerDevices(str, priority string) (ContainerDevices, error) {
+	return decodeSegments(str, func(i int, seg deviceSegment) (ContainerDevice, error) {
+		return ContainerDevice{Idx: i, UUID: seg.id, Type: seg.devType, Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores), Priority: priority}, nil
+	})
 }
 
 func DecodeDCUContainerDevices(str, priority, nodeName string) (ContainerDevices, error) {
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
-	}
-	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
-	contdev := ContainerDevices{}
-	tmpdev := ContainerDevice{}
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
-	}
-	for i, val := range cd {
-		if strings.Contains(val, ",") {
-			tmpstr := strings.Split(val, ",")
-			if len(tmpstr) < 4 {
-				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
-			}
-			cardIdx := strings.Split(tmpstr[0], "-")
-			tmpdev.Idx = i
-			tmpdev.UUID = fmt.Sprintf("%s-dcu-%s", nodeName, cardIdx[1])
-			tmpdev.Type = tmpstr[1]
-			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
-			tmpdev.Usedmem = int32(devmem)
-			devcores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
-			if devcores == 0 {
-				tmpdev.Usedcores = 100
-			} else {
-				tmpdev.Usedcores = int32(devcores)
-			}
-			tmpdev.Priority = priority
-			contdev = append(contdev, tmpdev)
+	return decodeSegments(str, func(i int, seg deviceSegment) (ContainerDevice, error) {
+		parts := strings.Split(seg.id, "-")
+		if len(parts) < 2 || parts[1] == "" {
+			return ContainerDevice{}, fmt.Errorf("invalid DCU device id %q", seg.id)
 		}
-	}
-	return contdev, nil
-}
-
-// DecodeMLUContainerDevices decodes the mlu container devices from a string.
-func DecodeMLUContainerDevices(str, nodeName string) (ContainerDevices, error) {
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
-	}
-	contdev := ContainerDevices{}
-	tmpdev := ContainerDevice{}
-	if strings.Contains(str, "_") {
-		//fmt.Println("cd is ", val)
-		tmpstr := strings.Split(str, "_")
-		if len(tmpstr) < 3 {
-			return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
-		}
-		tmpdev.Type = "MLU"
-		devcores, _ := strconv.ParseInt(tmpstr[1], 10, 32)
-		devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
-		tmpdev.Usedmem = int32(devmem) * 1024
-		index, _ := strconv.ParseInt(tmpstr[5], 10, 32)
-		tmpdev.Idx = int(index)
-		tmpdev.UUID = fmt.Sprintf("%s-cambricon-mlu-%d", nodeName, index)
-		if devcores == 0 {
-			tmpdev.Usedcores = 100
-		} else {
-			tmpdev.Usedcores = int32(devcores)
-		}
-		contdev = append(contdev, tmpdev)
-	}
-	return contdev, nil
+		return ContainerDevice{
+			Idx: i, UUID: fmt.Sprintf("%s-dcu-%s", nodeName, parts[1]), Type: seg.devType,
+			Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores), Priority: priority,
+		}, nil
+	})
 }
 
 func DecodeMetaxContainerDevices(str string) (ContainerDevices, error) {
-	if len(str) == 0 {
-		return ContainerDevices{}, nil
-	}
-	cd := strings.Split(str, OneContainerMultiDeviceSplitSymbol)
-	contdev := ContainerDevices{}
-
-	for i, val := range cd {
-		if strings.Contains(val, ",") {
-			tmpstr := strings.Split(val, ",")
-			if len(tmpstr) < 4 {
-				return ContainerDevices{}, fmt.Errorf("pod annotation format error; information missing, please do not use nodeName field in task")
-			}
-			tmpdev := ContainerDevice{}
-			tmpdev.Idx = i
-			tmpdev.UUID = tmpstr[0]
-			tmpdev.Type = tmpstr[1]
-			devmem, _ := strconv.ParseInt(tmpstr[2], 10, 32)
-			tmpdev.Usedmem = int32(devmem)
-			devcores, _ := strconv.ParseInt(tmpstr[3], 10, 32)
-			if devcores == 0 {
-				tmpdev.Usedcores = 100
-			} else {
-				tmpdev.Usedcores = int32(devcores)
-			}
-			contdev = append(contdev, tmpdev)
-		}
-	}
-	return contdev, nil
+	return decodeSegments(str, func(i int, seg deviceSegment) (ContainerDevice, error) {
+		return ContainerDevice{Idx: i, UUID: seg.id, Type: seg.devType, Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores)}, nil
+	})
 }
 
 func getContainerPriority(ctr corev1.Container) string {
@@ -266,90 +223,80 @@ func podContainerCount(pod *corev1.Pod) int {
 	return len(pod.Spec.InitContainers) + len(pod.Spec.Containers)
 }
 
+// DecodeError reports one device type whose allocation annotation could not be read.
+type DecodeError struct {
+	DeviceType string
+	Err        error
+}
+
+func (e *DecodeError) Error() string { return e.DeviceType + ": " + e.Err.Error() }
+
+func (e *DecodeError) Unwrap() error { return e.Err }
+
 // DecodePodDevices skips Ascend, which the ascend provider decodes against the device configuration.
-func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, error) {
+// A device type that fails to decode is left out and reported, so the pod's other allocations still count.
+func DecodePodDevices(pod *corev1.Pod, log *log.Helper) (PodDevices, []*DecodeError) {
 	checklist := supportDevicesForPod(pod.Annotations)
-
-	priorities := GetContainerPriorities(pod)
-
 	annos := pod.Annotations
 	if len(annos) == 0 {
 		return PodDevices{}, nil
 	}
-	nodeName := annos[AssignedNodeAnnotations]
 	pd := make(PodDevices)
+	var failures []*DecodeError
 	deviceTypes := make([]string, 0, len(checklist))
 	for devType := range checklist {
 		deviceTypes = append(deviceTypes, devType)
 	}
 	sort.Strings(deviceTypes)
 	for _, devType := range deviceTypes {
-		devs := checklist[devType]
-		str, ok := annos[devs]
+		str, ok := annos[checklist[devType]]
 		if !ok {
 			continue
 		}
-		pd[devType] = make(PodSingleDevice, 0)
-		switch VendorOf(devType) {
-		case CambriconGPUDevice:
-			instance := annos[DsmluProfileAndInstance]
-			cd, err := DecodeMLUContainerDevices(fmt.Sprintf("%s_%s", str, instance), nodeName)
-			if err != nil {
-				return PodDevices{}, nil
-			}
-			if len(cd) == 0 {
-				continue
-			}
-			pd[devType] = append(pd[devType], cd)
-		case NvidiaGPUDevice, HygonHCUDevice:
-			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				if i >= podContainerCount(pod) {
-					break
-				}
-				if s == "" {
-					pd[devType] = append(pd[devType], ContainerDevices{})
-					continue
-				}
-				cd, err := DecodeContainerDevices(s, priorities[i])
-				if err != nil {
-					return PodDevices{}, nil
-				}
-				pd[devType] = append(pd[devType], cd)
-			}
-		case HygonGPUDevice:
-			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				if i >= podContainerCount(pod) {
-					break
-				}
-				if s == "" {
-					pd[devType] = append(pd[devType], ContainerDevices{})
-					continue
-				}
-				cd, err := DecodeDCUContainerDevices(s, priorities[i], nodeName)
-				if err != nil {
-					return PodDevices{}, nil
-				}
-				pd[devType] = append(pd[devType], cd)
-			}
-		case MetaxGPUDevice, MetaxSGPUDevice:
-			for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
-				if i >= podContainerCount(pod) {
-					break
-				}
-				if s == "" {
-					pd[devType] = append(pd[devType], ContainerDevices{})
-					continue
-				}
-				cd, err := DecodeMetaxContainerDevices(s)
-				if err != nil {
-					return PodDevices{}, nil
-				}
-				pd[devType] = append(pd[devType], cd)
-			}
+		devices, err := decodeDeviceType(pod, devType, str)
+		if err != nil {
+			failures = append(failures, &DecodeError{DeviceType: devType, Err: err})
+			continue
 		}
+		pd[devType] = devices
 	}
 	log.Infof("Decoded pod annos: poddevices %v", pd)
-	return pd, nil
+	return pd, failures
+}
+
+func decodeDeviceType(pod *corev1.Pod, devType, str string) (PodSingleDevice, error) {
+	annos := pod.Annotations
+	nodeName := annos[AssignedNodeAnnotations]
+	devices := make(PodSingleDevice, 0)
+	var decode func(s, priority string) (ContainerDevices, error)
+	switch VendorOf(devType) {
+	case NvidiaGPUDevice, HygonHCUDevice, CambriconGPUDevice:
+		decode = DecodeContainerDevices
+	case HygonGPUDevice:
+		decode = func(s, priority string) (ContainerDevices, error) {
+			return DecodeDCUContainerDevices(s, priority, nodeName)
+		}
+	case MetaxGPUDevice, MetaxSGPUDevice:
+		decode = func(s, _ string) (ContainerDevices, error) { return DecodeMetaxContainerDevices(s) }
+	default:
+		return devices, nil
+	}
+	priorities := GetContainerPriorities(pod)
+	for i, s := range strings.Split(str, OnePodMultiContainerSplitSymbol) {
+		if i >= podContainerCount(pod) {
+			break
+		}
+		if s == "" {
+			devices = append(devices, ContainerDevices{})
+			continue
+		}
+		cd, err := decode(s, priorities[i])
+		if err != nil {
+			return nil, err
+		}
+		devices = append(devices, cd)
+	}
+	return devices, nil
 }
 
 func supportDevicesForPod(map[string]string) map[string]string {
