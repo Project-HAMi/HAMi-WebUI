@@ -39,7 +39,7 @@
     "vue-clipboard3": "2.0.0",
     "vue-count-to": "1.0.13",
     "vue-echarts": "8.2.0",
-    "vue-i18n": "9",
+    "vue-i18n": "11",
     "vue-router": "^4.0.3",
     "vuedraggable": "^4.1.0",
     "vuex": "^4.0.0",
