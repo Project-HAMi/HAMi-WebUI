@@ -691,7 +691,7 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	case biz.NvidiaGPUDevice:
 		query = nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container)
 	case biz.CambriconGPUDevice:
-		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vcore\"})", namespace, pod, container)
+		query = fmt.Sprintf("avg(mlu_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=~\".+[.]smlu[.]vcore\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
 		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:
@@ -795,7 +795,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("avg(hami_vgpu_memory_used_bytes{device_uuid=\"%s\", namespace=\"%s\", pod=\"%s\", container=\"%s\"})", deviceUUID, namespace, pod, container)
 	case biz.CambriconGPUDevice:
-		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=\"mlu370.smlu.vmemory\"})", namespace, pod, container)
+		query = fmt.Sprintf("avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace=\"%s\",pod=\"%s\",container=\"%s\",type=~\".+[.]smlu[.]vmemory\"})", namespace, pod, container)
 	case biz.AscendGPUDevice:
 		return 0, errWorkloadTelemetryUnsupported
 	case biz.HygonGPUDevice:

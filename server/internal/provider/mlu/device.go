@@ -22,8 +22,9 @@ const (
 
 	CambriconDeviceAnnosOnNode = "cambricon.com/mlu"
 	CambriconDeviceAnnosOnPod  = "cambricon.com/smlu"
-	CambriconDeviceCoreAnnos   = "cambricon.com/mlu370.smlu.vcore"
-	CambriconDeviceMemAnnos    = "cambricon.com/mlu370.smlu.vmemory"
+	CambriconResourcePrefix    = "cambricon.com/"
+	CambriconCoreResource      = ".smlu.vcore"
+	CambriconMemResource       = ".smlu.vmemory"
 	CambriconDeviceRealCount   = "cambricon.com/real-mlu-counts"
 	// CambriconMemoryFactor is the MiB in one vmemory unit of node capacity, as HAMi counts it.
 	CambriconMemoryFactor = 256

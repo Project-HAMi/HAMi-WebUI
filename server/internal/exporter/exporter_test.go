@@ -137,6 +137,21 @@ func TestTaskUsageQueriesDistinguishMissingFailureAndIdle(t *testing.T) {
 	}
 }
 
+func TestCambriconTaskQueriesMatchAnyModel(t *testing.T) {
+	querier := &fakeInstantQuerier{responses: []*pb.InstantResponse{{}, {}}}
+	generator := &MetricsGenerator{monitorService: querier}
+	_, _ = generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+	_, _ = generator.taskMemoryUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+
+	want := []string{
+		`avg(mlu_utilization * on(uuid) group_right mlu_container{namespace="research",pod="train",container="worker",type=~".+[.]smlu[.]vcore"})`,
+		`avg(mlu_memory_utilization * on(uuid) group_right mlu_container{namespace="research",pod="train",container="worker",type=~".+[.]smlu[.]vmemory"})`,
+	}
+	if got := strings.Join(querier.queries, "\n"); got != strings.Join(want, "\n") {
+		t.Fatalf("queries:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+}
+
 func TestAscendTaskUsageIsUnsupported(t *testing.T) {
 	readers := []struct {
 		name string
