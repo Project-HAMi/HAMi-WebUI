@@ -91,7 +91,7 @@ func (r *podRepo) init(catalog devicecatalog.Source) error {
 
 var allocationDecodeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "hami_webui_allocation_decode_errors_total",
-	Help: "Pod allocation annotations that could not be decoded, by device type.",
+	Help: "Failed attempts to decode a Pod allocation annotation, by device type.",
 }, []string{"device_type"})
 
 func init() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -180,17 +182,21 @@ func TestCambriconAllocationsStayOnTheirContainer(t *testing.T) {
 			repo.onAddPod(&corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
 					util.AssignedNodeAnnotations:              "node-1",
-					"CAMBRICON_DSMLU_PROFILE":                 "2_50_8",
 					"hami.io/cambricon-mlu-devices-allocated": strings.Repeat(";", slots-1) + "node-1-cambricon-mlu-2,MLU,2048,50:;",
 				}},
 				Spec: spec,
 			})
 
 			containers, _ := repo.ListAll(context.Background())
+			if len(containers) != len(spec.Containers) {
+				t.Fatalf("containers = %+v, want %d", containers, len(spec.Containers))
+			}
+			sawWorker := false
 			for _, c := range containers {
 				want := 0
 				if c.Name == "worker" {
 					want = 1
+					sawWorker = true
 				}
 				if len(c.ContainerDevices) != want {
 					t.Fatalf("%s holds %+v, want %d devices", c.Name, c.ContainerDevices, want)
@@ -199,8 +205,112 @@ func TestCambriconAllocationsStayOnTheirContainer(t *testing.T) {
 					t.Fatalf("worker holds %+v", c.ContainerDevices[0])
 				}
 			}
+			if !sawWorker {
+				t.Fatalf("containers = %+v, want worker", containers)
+			}
 		})
 	}
+}
+
+func TestUnreadableAllocationCostsOnlyItsDeviceType(t *testing.T) {
+	const cambricon = "hami.io/cambricon-mlu-devices-allocated"
+	repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+	pod := func(allocation string) *corev1.Pod {
+		annotations := map[string]string{util.AssignedNodeAnnotations: "node-1", "hami.io/vgpu-devices-allocated": "GPU-0,NVIDIA,1024,10:"}
+		if allocation != "" {
+			annotations[cambricon] = allocation
+		}
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: annotations},
+			Spec:       corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker"}}},
+		}
+	}
+	mluErrors, nvidiaErrors := decodeErrorCount(t, "MLU"), decodeErrorCount(t, "NVIDIA")
+	assert := func(step string, wantErrors int, wantDevices ...string) {
+		t.Helper()
+		containers, _ := repo.ListAll(context.Background())
+		if len(containers) != 1 {
+			t.Fatalf("%s: containers = %+v, want one", step, containers)
+		}
+		var devices []string
+		for _, device := range containers[0].ContainerDevices {
+			devices = append(devices, device.UUID)
+		}
+		slices.Sort(devices)
+		if !slices.Equal(devices, wantDevices) {
+			t.Fatalf("%s: devices = %v, want %v", step, devices, wantDevices)
+		}
+		if got := decodeErrorCount(t, "MLU") - mluErrors; got != float64(wantErrors) {
+			t.Fatalf("%s: MLU decode errors grew by %v, want %d", step, got, wantErrors)
+		}
+		if decodeErrorCount(t, "NVIDIA") != nvidiaErrors {
+			t.Fatalf("%s: NVIDIA decode errors changed", step)
+		}
+	}
+
+	repo.onAddPod(pod("node-1-cambricon-mlu-2,MLU,2048,50:;"))
+	assert("valid", 0, "GPU-0", "node-1-cambricon-mlu-2")
+	repo.onUpdatePod(nil, pod("not-an-allocation"))
+	assert("unreadable", 1, "GPU-0")
+	repo.onUpdatePod(nil, pod("not-an-allocation"))
+	assert("unreadable again", 2, "GPU-0")
+	repo.onUpdatePod(nil, pod("node-1-cambricon-mlu-2,MLU,2048,50:;"))
+	assert("recovered", 2, "GPU-0", "node-1-cambricon-mlu-2")
+	repo.onUpdatePod(nil, pod(""))
+	assert("annotation removed", 2, "GPU-0")
+
+	repo.onDeletedPod(pod(""))
+	if containers, _ := repo.ListAll(context.Background()); len(containers) != 0 {
+		t.Fatalf("after delete: containers = %+v, want none", containers)
+	}
+}
+
+func TestPodHandlersSurvivePanics(t *testing.T) {
+	repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+	lister := repo.nodeLister
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1", Annotations: map[string]string{
+			util.AssignedNodeAnnotations:     "node-1",
+			"hami.io/vgpu-devices-allocated": "GPU-0,NVIDIA,1024,10:",
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker"}}},
+	}
+
+	repo.nodeLister = nil
+	repo.onAddPod(pod)
+	repo.onUpdatePod(nil, pod)
+	repo.onDeletedPod((*corev1.Pod)(nil))
+
+	repo.nodeLister = lister
+	repo.onAddPod(pod)
+	if containers, _ := repo.ListAll(context.Background()); len(containers) != 1 {
+		t.Fatalf("after recovery: containers = %+v, want the pod", containers)
+	}
+	repo.onDeletedPod(pod)
+	if containers, _ := repo.ListAll(context.Background()); len(containers) != 0 {
+		t.Fatalf("after delete: containers = %+v, want none", containers)
+	}
+}
+
+func decodeErrorCount(t *testing.T, deviceType string) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "hami_webui_allocation_decode_errors_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "device_type" && label.GetValue() == deviceType {
+					return metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func TestAscendAllocationsFollowTheCurrentConfigurationWithoutRedecoding(t *testing.T) {
