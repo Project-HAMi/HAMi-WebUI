@@ -292,6 +292,141 @@ func TestPodHandlersSurvivePanics(t *testing.T) {
 	}
 }
 
+func allocatedTestPod(uid k8stypes.UID) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "train", UID: uid, Annotations: map[string]string{
+			util.AssignedNodeAnnotations:     "node-1",
+			"hami.io/vgpu-devices-allocated": "GPU-0,NVIDIA,1024,10:",
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "worker"}}},
+	}
+}
+
+// The object client-go hands the delete handler when a relist no longer lists a known Pod.
+func relistTombstone(t *testing.T, known *corev1.Pod) cache.DeletedFinalStateUnknown {
+	t.Helper()
+	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+	if err := store.Add(known); err != nil {
+		t.Fatal(err)
+	}
+	fifo := cache.NewDeltaFIFOWithOptions(cache.DeltaFIFOOptions{KeyFunction: cache.MetaNamespaceKeyFunc, KnownObjects: store})
+	if err := fifo.Replace(nil, "2"); err != nil {
+		t.Fatal(err)
+	}
+	fifo.Close()
+	var tombstone cache.DeletedFinalStateUnknown
+	if _, err := fifo.Pop(func(item interface{}, _ bool) error {
+		var ok bool
+		tombstone, ok = item.(cache.Deltas).Newest().Object.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			t.Fatalf("relist queued %#v, want a tombstone", item)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return tombstone
+}
+
+func TestMissedDeleteClearsTheAllocation(t *testing.T) {
+	repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+	pod := allocatedTestPod("pod-1")
+	repo.onAddPod(pod)
+	if containers, _ := repo.ListAll(context.Background()); len(containers) != 1 {
+		t.Fatalf("before delete: containers = %+v, want the pod", containers)
+	}
+
+	tombstone := relistTombstone(t, pod)
+	// Repeating the delete is harmless.
+	for range 2 {
+		repo.onDeletedPod(tombstone)
+		if containers, _ := repo.ListAll(context.Background()); len(containers) != 0 {
+			t.Fatalf("after missed delete: containers = %+v, want none", containers)
+		}
+	}
+}
+
+func TestMissedDeleteKeepsAReplacementWithTheSameName(t *testing.T) {
+	repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+	previous, replacement := allocatedTestPod("pod-1"), allocatedTestPod("pod-2")
+	repo.onAddPod(previous)
+	repo.onAddPod(replacement)
+
+	repo.onDeletedPod(relistTombstone(t, previous))
+	containers, _ := repo.ListAll(context.Background())
+	if len(containers) != 1 || containers[0].PodUID != "pod-2" {
+		t.Fatalf("after missed delete: containers = %+v, want only pod-2", containers)
+	}
+}
+
+func TestMissedRecreateClearsTheOldAllocation(t *testing.T) {
+	previous := allocatedTestPod("pod-1")
+	unscheduled := allocatedTestPod("pod-2")
+	delete(unscheduled.Annotations, util.AssignedNodeAnnotations)
+	for name, tt := range map[string]struct {
+		current *corev1.Pod
+		want    []string
+	}{
+		"scheduled replacement":   {allocatedTestPod("pod-2"), []string{"pod-2"}},
+		"unscheduled replacement": {unscheduled, nil},
+		"same pod":                {previous, []string{"pod-1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+			repo.onAddPod(previous)
+
+			repo.onUpdatePod(previous, tt.current)
+			containers, _ := repo.ListAll(context.Background())
+			var got []string
+			for _, container := range containers {
+				got = append(got, container.PodUID)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("pods in the ledger = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeleteClearsAPodThatLostItsAnnotation(t *testing.T) {
+	unannotated := allocatedTestPod("pod-1")
+	delete(unannotated.Annotations, util.AssignedNodeAnnotations)
+	for name, event := range map[string]interface{}{
+		"watched": unannotated,
+		"missed":  relistTombstone(t, unannotated),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+			repo.onAddPod(allocatedTestPod("pod-1"))
+			repo.onUpdatePod(nil, unannotated)
+
+			repo.onDeletedPod(event)
+			if containers, _ := repo.ListAll(context.Background()); len(containers) != 0 {
+				t.Fatalf("after delete: containers = %+v, want none", containers)
+			}
+		})
+	}
+}
+
+func TestTombstoneWithoutAPodChangesNothing(t *testing.T) {
+	for name, obj := range map[string]interface{}{
+		"no object":    nil,
+		"another kind": &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "train", UID: "pod-1"}},
+		"nil pod":      (*corev1.Pod)(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := ascendTestRepo(t, &mutableCatalog{current: loadedTestCatalog(t)})
+			repo.onAddPod(allocatedTestPod("pod-1"))
+
+			repo.onDeletedPod(cache.DeletedFinalStateUnknown{Key: "default/train", Obj: obj})
+			containers, _ := repo.ListAll(context.Background())
+			if len(containers) != 1 || containers[0].PodUID != "pod-1" {
+				t.Fatalf("containers = %+v, want pod-1 untouched", containers)
+			}
+		})
+	}
+}
+
 func decodeErrorCount(t *testing.T, deviceType string) float64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()
