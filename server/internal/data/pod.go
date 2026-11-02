@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,7 +89,28 @@ func (r *podRepo) init(catalog devicecatalog.Source) error {
 	return nil
 }
 
+var allocationDecodeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "hami_webui_allocation_decode_errors_total",
+	Help: "Failed attempts to decode a Pod allocation annotation, by device type.",
+}, []string{"device_type"})
+
+func init() {
+	prometheus.MustRegister(allocationDecodeErrors)
+}
+
+// client-go re-panics a handler panic, so one malformed object would otherwise restart the process.
+func (r *podRepo) recoverEvent(event string, obj interface{}) {
+	if p := recover(); p != nil {
+		name := "unknown object"
+		if pod, ok := obj.(*corev1.Pod); ok && pod != nil {
+			name = pod.Namespace + "/" + pod.Name
+		}
+		r.log.Errorf("pod %s handler panicked for %s: %v\n%s", event, name, p, debug.Stack())
+	}
+}
+
 func (r *podRepo) onAddPod(obj interface{}) {
+	defer r.recoverEvent("add", obj)
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		r.log.Error("unknown add object type")
@@ -106,10 +129,10 @@ func (r *podRepo) onAddPod(obj interface{}) {
 	if node != nil {
 		nodeUID = string(node.UID)
 	}
-	podDev, err := util.DecodePodDevices(pod, r.log)
-	if err != nil {
-		r.log.Errorf("cannot decode device allocations for pod %s/%s: %v", pod.Namespace, pod.Name, err)
-		return
+	podDev, failures := util.DecodePodDevices(pod, r.log)
+	for _, failure := range failures {
+		allocationDecodeErrors.WithLabelValues(failure.DeviceType).Inc()
+		r.log.Warnf("cannot decode %s allocation of pod %s/%s: %v", failure.DeviceType, pod.Namespace, pod.Name, failure.Err)
 	}
 	gpus := nvidia.ReadAllocations(pod, nvidia.RegisteredModes(node, r.log))
 	if err := gpus.Err(); err != nil {
@@ -262,6 +285,7 @@ func (r *podRepo) onUpdatePod(_ interface{}, new interface{}) {
 }
 
 func (r *podRepo) onDeletedPod(obj interface{}) {
+	defer r.recoverEvent("delete", obj)
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		r.log.Error("unknown add object type")

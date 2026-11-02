@@ -87,7 +87,7 @@ func (c *Cambricon) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) 
 			ID:      tmpDevice[index].ID,
 			AliasId: node.Name + "-cambricon-mlu-" + fmt.Sprint(i),
 			Count:   10,
-			Devmem:  int32(memoryTotal * CambriconMemUnit * 100 / cards),
+			Devmem:  int32(memoryTotal * CambriconMemoryFactor * 100 / cards),
 			Devcore: 100,
 			Type:    tmpDevice[index].Type,
 			Numa:    0,
