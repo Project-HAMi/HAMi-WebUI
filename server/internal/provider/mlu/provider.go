@@ -6,8 +6,8 @@ import (
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
+	"strings"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/util"
 )
@@ -70,11 +70,50 @@ func (c *Cambricon) GetDevicesFromPrometheus(node *corev1.Node) map[string]*util
 	return device
 }
 
+type smluResources struct {
+	cards, memoryTotal int64
+}
+
+// smluCapacity pairs vcore with vmemory per resource name, which --enable-device-type changes.
+// The plugin registers them separately, so a rename can leave a half-registered name on the node.
+func smluCapacity(node *corev1.Node) (smluResources, error) {
+	byName := map[string]smluResources{}
+	for name, quantity := range node.Status.Capacity {
+		resourceName, ok := strings.CutPrefix(string(name), CambriconResourcePrefix)
+		if !ok {
+			continue
+		}
+		if base, ok := strings.CutSuffix(resourceName, CambriconCoreResource); ok {
+			resources := byName[base]
+			resources.cards = quantity.Value()
+			byName[base] = resources
+		} else if base, ok := strings.CutSuffix(resourceName, CambriconMemResource); ok {
+			resources := byName[base]
+			resources.memoryTotal = quantity.Value()
+			byName[base] = resources
+		}
+	}
+	var found smluResources
+	for _, resources := range byName {
+		if resources.cards == 0 || resources.memoryTotal == 0 {
+			continue
+		}
+		if found != (smluResources{}) && found != resources {
+			return smluResources{}, fmt.Errorf("node %s has conflicting Cambricon capacity: %v", node.Name, byName)
+		}
+		found = resources
+	}
+	return found, nil
+}
+
 func (c *Cambricon) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 	nodedevices := []*util.DeviceInfo{}
 	i := 0
-	cards, _ := node.Status.Capacity.Name(corev1.ResourceName(CambriconDeviceCoreAnnos), resource.DecimalSI).AsInt64()
-	memoryTotal, _ := node.Status.Capacity.Name(corev1.ResourceName(CambriconDeviceMemAnnos), resource.DecimalSI).AsInt64()
+	capacity, err := smluCapacity(node)
+	if err != nil {
+		return nil, err
+	}
+	cards, memoryTotal := capacity.cards, capacity.memoryTotal
 	tmpDevice := c.GetDevicesFromPrometheus(node)
 	for int64(i)*100 < cards {
 		index := fmt.Sprintf("%d", i)
