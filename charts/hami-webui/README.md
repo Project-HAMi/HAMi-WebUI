@@ -116,7 +116,7 @@ The command removes all the Kubernetes components associated with the chart and 
 | image.pullPolicy | string | `"IfNotPresent"` | Pull policy for the application image. |
 | image.repository | string | `"projecthami/hami-webui"` | Unified HAMi-WebUI image repository. |
 | image.tag | string | `"v2.0.0"` | Used only when `image.digest` is empty; stable releases pin both fields to the same image. |
-| imagePullSecrets | list | `[]` | Image pull secrets used by the WebUI Pod. |
+| imagePullSecrets | list | `[]` | Image pull secrets for the WebUI image, as names (`["my-registry-secret"]`) or references (`[{"name": "my-registry-secret"}]`). Attached to the created ServiceAccount, or to the WebUI Pod when `serviceAccount.create` is false. |
 | ingress.annotations | object | `{}`                                                                               |  |
 | ingress.className | string | `""`                                                                               |  |
 | ingress.enabled | bool | `false`                                                                            |  |
