@@ -280,19 +280,26 @@ func (r *podRepo) onCatalogChange(previous, current *devicecatalog.Snapshot) {
 	}
 }
 
-func (r *podRepo) onUpdatePod(_ interface{}, new interface{}) {
+func (r *podRepo) onUpdatePod(old interface{}, new interface{}) {
+	defer r.recoverEvent("update", new)
+	previous, wasPod := old.(*corev1.Pod)
+	current, isPod := new.(*corev1.Pod)
+	// The informer keys by name, so a re-create the watch missed arrives as an update.
+	if wasPod && isPod && previous.UID != current.UID {
+		r.delPod(previous)
+	}
 	r.onAddPod(new)
 }
 
 func (r *podRepo) onDeletedPod(obj interface{}) {
 	defer r.recoverEvent("delete", obj)
+	// A delete the watch missed arrives wrapped once a relist finds the Pod gone.
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = tombstone.Obj
+	}
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
-		r.log.Error("unknown add object type")
-		return
-	}
-	_, ok = pod.Annotations[util.AssignedNodeAnnotations]
-	if !ok {
+		r.log.Error("unknown delete object type")
 		return
 	}
 	r.delPod(pod)
