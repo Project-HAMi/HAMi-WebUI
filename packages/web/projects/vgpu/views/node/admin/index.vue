@@ -87,6 +87,7 @@ import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import TextPlus from '@/components/TextPlus.vue';
+import { buildNodeDetailLocation } from '../detail-location.mjs';
 import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -197,9 +198,9 @@ const baseColumns = computed(() => [
     minWidth: 200,
     dataIndex: 'name',
     render: ({ uid, name }) => {
-      const to = `/nodes/${uid}?nodeName=${name}`;
+      const to = buildNodeDetailLocation({ uid, nodeName: name });
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+        <span class="vgpu-table-name-cell">
           <span class="vgpu-table-name-icon-card node-name-icon-card">
             <svg-icon icon="node-name" style={{ fontSize: '20px' }} />
           </span>

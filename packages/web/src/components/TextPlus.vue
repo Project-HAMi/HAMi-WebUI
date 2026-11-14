@@ -1,23 +1,27 @@
 <template>
   <div class="text-plus">
-    <span :class="{ link: !!to }" @click="handleClick">
+    <component
+      :is="to ? RouterLink : 'span'"
+      :to="to || undefined"
+      class="text-plus__value"
+      :class="{ 'vgpu-resource-link': to }"
+      :aria-label="to ? text : undefined"
+    >
       <EllipsisText
         :text="text"
         :mode="mode"
         :tooltip-class="tooltipClass"
         tooltip="always"
       />
-    </span>
+    </component>
   </div>
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router';
+import { RouterLink } from 'vue-router';
 import EllipsisText from './EllipsisText.vue';
 
-const router = useRouter();
-
-const props = defineProps({
+defineProps({
   text: String,
   to: null,
   mode: {
@@ -29,12 +33,6 @@ const props = defineProps({
     default: 'vgpu-long-text-tooltip',
   },
 });
-
-const handleClick = () => {
-  if (props.to) {
-    router.push(props.to);
-  }
-};
 </script>
 
 <style lang="scss">
@@ -43,27 +41,24 @@ const handleClick = () => {
   align-items: center;
   max-width: 100%;
   min-width: 0;
-  
-  > span {
+
+  &__value {
     flex: 1;
     min-width: 0;
-    color: #324558;
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     display: inline-flex;
-    align-items: center;
+    align-items: last baseline;
   }
-  
-  .link {
-    cursor: pointer;
-    &:hover {
-      color: var(--el-color-primary);
-      opacity: 0.8;
-      text-decoration: underline;
-      text-underline-offset: 4px;
-    }
+
+  .vgpu-resource-link .ellipsis-text {
+    text-decoration: underline;
+    text-decoration-color: var(--resource-link-underline);
+    text-underline-offset: 3px;
   }
+
+  span.text-plus__value { color: #324558; }
 }
 </style>

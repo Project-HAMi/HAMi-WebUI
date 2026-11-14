@@ -260,7 +260,7 @@ const baseColumns = computed(() => [
         <span class="workload-container-kind">{t(`scheduling.containerKind.${containerKind}`)}</span>
       ) : null;
       return (
-        <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <span class="vgpu-table-name-cell">
           <span class="task-name-icon-card vgpu-table-name-icon-card">
             <svg-icon icon="task-name" style={{ fontSize: '20px' }} />
           </span>
@@ -269,7 +269,7 @@ const baseColumns = computed(() => [
               {scheduling && resourceRequest ? (
                 <button
                   type="button"
-                  class="workload-identity-primary workload-identity-link workload-identity-button"
+                  class="workload-identity-primary vgpu-resource-link workload-identity-button"
                   aria-label={workloadName}
                   aria-haspopup="dialog"
                   onClick={() => { selectedSchedulingContainer.value = name; selectedSchedulingPod.value = scheduling; }}
@@ -278,7 +278,7 @@ const baseColumns = computed(() => [
                   {containerKindBadge}
                 </button>
               ) : to ? (
-                <RouterLink class="workload-identity-primary workload-identity-link" to={to} aria-label={workloadName}>
+                <RouterLink class="workload-identity-primary vgpu-resource-link" to={to} aria-label={workloadName}>
                   {identityLabel}
                   {containerKindBadge}
                 </RouterLink>
@@ -676,10 +676,11 @@ watch(() => route.query, (query) => {
   line-height: 20px;
 }
 
-:deep(.workload-identity-link) {
-  color: #324558;
+:deep(.workload-identity-primary.vgpu-resource-link) {
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
   font-weight: 500;
-  text-decoration: none;
 }
 
 .workload-filters {
@@ -722,11 +723,6 @@ watch(() => route.query, (query) => {
   cursor: pointer;
 }
 
-:deep(.workload-identity-link:hover),
-:deep(.workload-identity-link:focus-visible) {
-  color: var(--el-color-primary);
-}
-
 :deep(.workload-identity-label) {
   position: relative;
   display: inline-flex;
@@ -763,6 +759,7 @@ watch(() => route.query, (query) => {
 }
 
 :deep(.workload-container-kind) {
+  order: 1;
   flex: 0 0 auto;
   align-self: center;
   padding: 0 4px;
@@ -782,15 +779,9 @@ watch(() => route.query, (query) => {
   bottom: 0;
   left: 0;
   height: 1px;
-  background: currentcolor;
+  background: var(--resource-link-underline, transparent);
   content: '';
-  opacity: 0;
   pointer-events: none;
-}
-
-:deep(.workload-identity-link:hover .workload-identity-label::after),
-:deep(.workload-identity-link:focus-visible .workload-identity-label::after) {
-  opacity: 1;
 }
 
 :deep(.workload-namespace-line) {

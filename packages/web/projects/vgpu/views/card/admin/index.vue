@@ -255,10 +255,10 @@ const baseColumns = computed(() => [
     width: 250,
     hideTooltip: true,
     render: ({ uuid, type, vendor }) => {
-      const to = `/accelerators/${uuid}`;
+      const to = uuid ? { name: 'accelerator-detail', params: { uuid } } : null;
       const gpuModel = type || '';
       return (
-        <div class="card-id-cell">
+        <div class="card-id-cell vgpu-table-name-cell">
           <span class="card-id-cell-icon vgpu-table-name-icon-card">
             <svg-icon icon="vgpu-card" style={{ fontSize: '20px' }} />
           </span>
@@ -644,15 +644,9 @@ onMounted(() => {
   }
 }
 
-:deep(.card-id-cell) {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 0;
-}
-
 :deep(.card-id-cell-right) {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;

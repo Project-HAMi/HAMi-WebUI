@@ -1244,7 +1244,7 @@ test('workload and detail views keep dense identity content readable', async() =
       (await identities.nth(1).locator('.workload-container-name').textContent()).trim(),
       'worker-right'
     )
-    const sameNameLink = page.locator('.workload-identity-link[aria-label="torch-two-gpu"]')
+    const sameNameLink = identities.getByRole('link', { name: 'torch-two-gpu', exact: true })
     assert.equal(await sameNameLink.count(), 1)
     assert.equal(await sameNameLink.locator('.workload-pod-name').count(), 0)
     assert.equal(
@@ -1259,7 +1259,7 @@ test('workload and detail views keep dense identity content readable', async() =
       (await identities.first().locator('.task-namespace-text').textContent()).trim(),
       'research-space'
     )
-    const workloadLink = identities.first().locator('.workload-identity-link')
+    const workloadLink = identities.first().getByRole('link')
     assert.equal(await workloadLink.count(), 1)
     assert.equal(await identities.first().locator('a').count(), 1)
     assert.equal(await workloadLink.getAttribute('aria-label'), `${podName} / worker-left`)
@@ -1290,7 +1290,8 @@ test('workload and detail views keep dense identity content readable', async() =
       return {
         decorationBottom: decoration.bottom,
         decorationHeight: decoration.height,
-        decorationOpacity: decoration.opacity,
+        decorationColor: decoration.backgroundColor,
+        linkColor: getComputedStyle(element).color,
         labelLeft: label.left,
         labelRight: label.right,
         podLeft: pod.left,
@@ -1303,7 +1304,7 @@ test('workload and detail views keep dense identity content readable', async() =
     })
     assert.equal(workloadLinkDecoration.decorationBottom, '0px')
     assert.equal(workloadLinkDecoration.decorationHeight, '1px')
-    assert.equal(workloadLinkDecoration.decorationOpacity, '1')
+    assert.equal(workloadLinkDecoration.decorationColor, workloadLinkDecoration.linkColor)
     assert.ok(Math.abs(workloadLinkDecoration.labelLeft - workloadLinkDecoration.podLeft) <= 0.5)
     assert.ok(Math.abs(workloadLinkDecoration.labelRight - workloadLinkDecoration.containerRight) <= 0.5)
     assert.equal(workloadLinkDecoration.podHasSecondaryOverflow, false)
@@ -2122,12 +2123,12 @@ test('workload rankings show Pod and container names independently of list filte
     await search.fill('worker')
     await search.press('Enter')
     await waitUntil(() => filteredRequests > 0, 'Workload name filter did not issue a request')
-    await page.locator('.workload-table .workload-identity-link[aria-label="worker"]').waitFor()
+    await page.locator('.workload-table').getByRole('link', { name: 'worker', exact: true }).waitFor()
     await waitUntil(
-      async() => await page.locator('.workload-table .workload-identity-link').count() === 1,
+      async() => await page.locator('.workload-identity').getByRole('link').count() === 1,
       'Filtered workload rows did not replace the previous list'
     )
-    assert.equal(await page.locator('.workload-table .workload-identity-link').count(), 1)
+    assert.equal(await page.locator('.workload-identity').getByRole('link').count(), 1)
     assert.equal(await rankings.count(), 4)
     await rankings.first().getByRole('link', { name: `${podName} / main`, exact: true }).waitFor()
     const dimensions = await page.evaluate(() => ({
@@ -4104,26 +4105,28 @@ test('resource names navigate while decorative table icons do not', async() => {
       items: [{
         name: 'worker', appName: 'job-1', podUid: 'pod-icon', namespace: 'default', nodeName: 'node-1',
         status: 'success', deviceIds: ['gpu-1'], allocatedCores: 10, allocatedMem: 256,
+      }, {
+        name: 'unidentified', appName: 'unidentified', namespace: 'default', status: 'success',
       }],
-      total: 1,
+      total: 2,
   }))
   const cases = [
     {
       path: 'nodes',
       icon: '.node-table .node-name-icon-card',
-      name: '.node-table .text-plus .link',
+      name: 'node-1',
       detail: 'nodes/node-1?nodeName=node-1',
     },
     {
       path: 'accelerators',
       icon: '.accelerator-table .card-id-cell-icon',
-      name: '.accelerator-table .text-plus .link',
+      name: 'gpu-1',
       detail: 'accelerators/gpu-1',
     },
     {
       path: 'workloads',
       icon: '.workload-table .task-name-icon-card',
-      name: '.workload-table .workload-identity-link',
+      name: 'job-1 / worker',
       detail: 'workloads/pod-icon/containers/worker',
     },
   ]
@@ -4138,7 +4141,18 @@ test('resource names navigate while decorative table icons do not', async() => {
       await delay(100)
       assert.equal(page.url(), listURL, `${entry.path}: a decorative icon navigated`)
       assert.notEqual(await icon.evaluate((element) => getComputedStyle(element).cursor), 'pointer')
-      await page.locator(entry.name).first().click()
+      const cell = icon.locator('..')
+      assert.equal(await cell.evaluate((element) => getComputedStyle(element).columnGap), '10px')
+      const name = cell.getByRole('link', { name: entry.name, exact: true })
+      assert.equal(await name.getAttribute('href'), basePath + entry.detail)
+      assert.ok(await name.evaluate((element) => parseFloat(getComputedStyle(element, '::after').width) > 0))
+      if (entry.path === 'workloads') {
+        const plainName = page.locator('.workload-identity-primary').filter({ hasText: 'unidentified' })
+        assert.equal(await plainName.evaluate((element) => element.tagName), 'SPAN')
+        assert.equal(await plainName.evaluate((element) => getComputedStyle(element, '::after').content), 'none')
+      }
+      await name.focus()
+      await name.press('Enter')
       await page.waitForURL(`${target}${basePath}${entry.detail}`)
       await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
     }
@@ -6133,7 +6147,7 @@ test('node and accelerator keywords match fragments of several fields while typi
       await search.fill(config.linked.keyword)
       await page.reload({ waitUntil: 'domcontentloaded' })
       await waitUntil(async() => await search.inputValue() === config.linked.keyword && await rows.count() === 1, 'Reload must restore the keyword')
-      await rows.first().locator('.link').first().click()
+      await rows.first().getByRole('cell').first().getByRole('link').click()
       await waitUntil(() => new URL(page.url()).pathname.endsWith(config.linked.path), 'The row must open its detail page')
       await page.goBack({ waitUntil: 'domcontentloaded' })
       await waitUntil(async() => await search.inputValue() === config.linked.keyword && await rows.count() === 1, 'Back must return to the same filtered list')
@@ -6168,11 +6182,13 @@ test('node pagination keeps the detail return position and adjusts to filters an
     assert.equal(await rows.count(), count)
   }
   try {
-    await page.goto(`${target}${basePath}nodes?q=gpu`)
-    await expectPage('gpu-1', 10)
+    await page.goto(`${target}${basePath}nodes?q=gpu&page=2`)
+    await expectPage('gpu-11', 10)
+    await page.reload()
+    await expectPage('gpu-11', 10)
     await page.locator('.table-plus-pagination').getByText('3', { exact: true }).click()
     await expectPage('gpu-21', 5)
-    await rows.first().locator('.link').click()
+    await rows.first().getByRole('link', { name: 'gpu-21', exact: true }).click()
     await page.waitForURL('**/nodes/node-21?*')
     await page.goBack()
     await expectPage('gpu-21', 5)
