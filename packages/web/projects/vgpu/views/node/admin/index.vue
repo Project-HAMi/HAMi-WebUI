@@ -59,10 +59,19 @@
           :key="locale"
           row-key="uid"
           class="node-table vgpu-table-skin"
-          :data="visibleNodes"
+          :data="pagedNodes"
           :columns="visibleColumns"
           table-layout="auto"
         />
+        <template #footer>
+          <table-pagination
+            :total="pagination.total"
+            :current="pagination.current"
+            :page-size="pagination.pageSize"
+            :page-sizes="pagination.pageSizeOptions"
+            @change="handlePageChange"
+          />
+        </template>
       </stateful-table>
     </div>
   </div>
@@ -76,6 +85,7 @@ import PreviewBar from '~/vgpu/components/previewBar.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
+import TablePagination from '@/components/TablePlus/Pagination.vue';
 import TextPlus from '@/components/TextPlus.vue';
 import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
@@ -85,6 +95,7 @@ import { SearchIcon } from 'tdesign-icons-vue-next';
 import { computed, ref, reactive, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
+import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
 import { readQuery, sameQuery, writeQuery } from '~/vgpu/hooks/route-filters.mjs';
 import { createOptionFilter, matchesKeywords, parseKeywords } from '@/utils/keyword-search.mjs';
 import { fitPopupToOptions } from '@/utils/select-popup.mjs';
@@ -265,7 +276,7 @@ const baseColumns = computed(() => [
 ]);
 const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
 
-// The list is small enough to load once; every filter runs locally while typing.
+// Filter the full result before paginating so option counts cover every match.
 const tableState = useFetchList(() => request(nodeApi.getNodeList({ filters: {} })), { immediate: false });
 const {
   data: tableData,
@@ -281,6 +292,19 @@ const keywordNodes = computed(() => tableData.value.filter((node) =>
 const hasType = (node, type) => !type || (node.type ?? []).includes(type);
 const visibleNodes = computed(() => keywordNodes.value.filter((node) =>
   matchesNodeSchedulingEligibility(node, filters.schedulingEligibility) && hasType(node, filters.type)));
+const DEFAULT_PAGE_SIZE = 10;
+const { pagination, pagedTableData: pagedNodes, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(visibleNodes, {
+  pageSize: DEFAULT_PAGE_SIZE,
+  pageSizeOptions: [10, 20, 50, 100],
+});
+// A link can restore a later page before its node list has arrived.
+watch([() => visibleNodes.value.length, tableStatus, () => pagination.current, () => pagination.pageSize], () => {
+  if (tableStatus.value === REQUEST_STATUS.READY) syncTotalAndClamp();
+}, { immediate: true });
+const handlePageChange = ({ current, pageSize }) => {
+  pagination.current = pageSize === pagination.pageSize ? current : 1;
+  pagination.pageSize = pageSize;
+};
 // Options show how many nodes picking them would list under the other filters.
 const statusNodeCount = computed(() => {
   const nodes = keywordNodes.value.filter((node) => hasType(node, filters.type));
@@ -304,7 +328,10 @@ const clearFilters = () => {
 
 const parseSchedulingEligibility = (value) =>
   (value === 'schedulable' || value === 'temporarilyUnschedulable' ? value : undefined);
-const ROUTE_KEYS = ['q', 'schedulingEligibility', 'type'];
+const ROUTE_KEYS = ['q', 'schedulingEligibility', 'type', 'page', 'pageSize'];
+// Reset on meaningful edits. When a link supplies both filters and a page, restore the page last.
+watch([() => keywords.value.join(' '), () => filters.schedulingEligibility || '', () => filters.type || ''],
+  resetToFirstPage, { flush: 'sync' });
 watch(
   () => route.query,
   (query) => {
@@ -313,19 +340,26 @@ watch(
     if ((values.q ?? '') !== filters.keyword.trim()) filters.keyword = values.q ?? '';
     filters.schedulingEligibility = parseSchedulingEligibility(values.schedulingEligibility);
     filters.type = values.type;
+    const page = Number(values.page);
+    const size = Number(values.pageSize);
+    pagination.pageSize = pagination.pageSizeOptions.includes(size) ? size : DEFAULT_PAGE_SIZE;
+    pagination.current = Number.isSafeInteger(page) && page > 0 ? page : 1;
   },
   { immediate: true },
 );
 watch(
-  () => [filters.keyword, filters.schedulingEligibility, filters.type],
+  () => [filters.keyword, filters.schedulingEligibility, filters.type, pagination.current, pagination.pageSize],
   () => {
     const query = writeQuery(route.query, {
       q: filters.keyword.trim(),
       schedulingEligibility: filters.schedulingEligibility,
       type: filters.type,
+      page: pagination.current > 1 ? pagination.current : undefined,
+      pageSize: pagination.pageSize !== DEFAULT_PAGE_SIZE ? pagination.pageSize : undefined,
     });
     if (!sameQuery(query, route.query)) router.replace({ query });
   },
+  { immediate: true },
 );
 
 onMounted(() => {

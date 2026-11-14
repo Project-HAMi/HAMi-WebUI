@@ -6155,6 +6155,52 @@ test('node and accelerator keywords match fragments of several fields while typi
   }
 })
 
+test('node pagination keeps the detail return position and adjusts to filters and a shorter list', { timeout: 60_000 }, async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  let nodes = Array.from({ length: 25 }, (_, i) => ({
+    ...localSearchRows.nodes[0], name: `gpu-${i + 1}`, uid: `node-${i + 1}`,
+  }))
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  const rows = page.locator('.node-table tbody tr')
+  const expectPage = async(firstNode, count) => {
+    await rows.first().getByText(firstNode, { exact: true }).waitFor()
+    assert.equal(await rows.count(), count)
+  }
+  try {
+    await page.goto(`${target}${basePath}nodes?q=gpu`)
+    await expectPage('gpu-1', 10)
+    await page.locator('.table-plus-pagination').getByText('3', { exact: true }).click()
+    await expectPage('gpu-21', 5)
+    await rows.first().locator('.link').click()
+    await page.waitForURL('**/nodes/node-21?*')
+    await page.goBack()
+    await expectPage('gpu-21', 5)
+
+    nodes = nodes.slice(0, 12)
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await expectPage('gpu-11', 2)
+    const search = page.getByPlaceholder('Search name, IP or model', { exact: true })
+    await search.fill('GPU ')
+    await page.waitForURL((url) => url.searchParams.get('q') === 'GPU')
+    await expectPage('gpu-11', 2)
+    await search.fill('a100')
+    await expectPage('gpu-1', 10)
+    assert.equal(await page.locator('.table-plus-pagination-total').innerText(), '12 items')
+    const footer = page.locator('.table-plus-pagination')
+    await footer.getByText('2', { exact: true }).click()
+    await expectPage('gpu-11', 2)
+    await footer.getByRole('textbox').click()
+    await page.getByText('20 / page', { exact: true }).click()
+    await expectPage('gpu-1', 12)
+    await page.waitForURL((url) => url.searchParams.get('pageSize') === '20' && !url.searchParams.has('page'))
+    await page.reload()
+    await expectPage('gpu-1', 12)
+  } finally {
+    await page.close()
+  }
+})
+
 test('accelerators restore page and node filters from the URL when the data arrives late', { timeout: 60_000 }, async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
