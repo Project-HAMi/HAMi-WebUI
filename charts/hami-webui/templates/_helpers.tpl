@@ -419,6 +419,26 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Image pull secrets as Kubernetes references. Entries may be secret names
+("my-secret") or LocalObjectReferences ({name: my-secret}).
+*/}}
+{{- define "hami-webui.imagePullSecrets" -}}
+{{- $secrets := list -}}
+{{- range .Values.imagePullSecrets -}}
+{{- if and (kindIs "string" .) . -}}
+{{- $secrets = append $secrets (dict "name" .) -}}
+{{- else if and (kindIs "map" .) .name -}}
+{{- $secrets = append $secrets (dict "name" .name) -}}
+{{- else -}}
+{{- fail "imagePullSecrets entries must be secret names or objects with a name field" -}}
+{{- end -}}
+{{- end -}}
+{{- with $secrets -}}
+{{- toYaml . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 HAMi's device configuration reference. Releases upgraded with --reuse-values
 lack these values, so every field has a default.
 */}}
