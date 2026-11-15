@@ -8,6 +8,7 @@ import (
 	"vgpu/internal/biz"
 	"vgpu/internal/data/prom"
 
+	"github.com/go-kratos/kratos/v2/errors"
 	"github.com/jinzhu/copier"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
@@ -114,7 +115,15 @@ func getSamplePointStartTime(startTime time.Time, step time.Duration, values []*
 }
 
 func (s *MonitorService) QueryInstant(ctx context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
-	value, err := s.promClient.Query(ctx, req.GetQuery())
+	at := time.Now()
+	if requested := req.GetTime(); requested != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, requested)
+		if err != nil {
+			return nil, errors.BadRequest("INVALID_ARGUMENT", "time must be an RFC3339 timestamp")
+		}
+		at = parsed
+	}
+	value, err := s.promClient.QueryAt(ctx, req.GetQuery(), at)
 	if err != nil {
 		return nil, pb.ErrorVgpuDomainError("%s", err)
 	}

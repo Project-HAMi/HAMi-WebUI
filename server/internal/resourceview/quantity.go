@@ -1,6 +1,8 @@
 package resourceview
 
 import (
+	"math"
+
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -24,4 +26,13 @@ func (q Quantity) DeepCopy() Quantity {
 		q.State = proto.Clone(q.State).(*viewv1.FieldState)
 	}
 	return q
+}
+
+// KnownValue returns nonnegative finite measurements or allocations.
+func (q Quantity) KnownValue() (float64, bool) {
+	if q.Value == nil || q.State.GetState() != Known {
+		return 0, false
+	}
+	value := q.Value.AsApproximateFloat64()
+	return value, !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
 }

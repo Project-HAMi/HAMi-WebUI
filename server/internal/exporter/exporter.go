@@ -14,6 +14,7 @@ import (
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider/metax"
 	providerutil "vgpu/internal/provider/util"
+	"vgpu/internal/resourceview"
 	"vgpu/internal/service"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -23,6 +24,8 @@ import (
 // ProviderSet is service providers.
 var ProviderSet = wire.NewSet(
 	NewMetricsGenerator,
+	NewMetricsGatherer,
+	NewObservedSnapshotSource,
 )
 
 const (
@@ -108,6 +111,12 @@ type MetricsGenerator struct {
 	fatalErr      error
 
 	now func() time.Time
+
+	resourceSource   resourceview.SnapshotSource
+	observationsMu   sync.RWMutex
+	resourceSnapshot *resourceview.Snapshot
+	physicalGroups   []resourceview.PhysicalGroup
+	observations     resourceview.DeviceObservations
 }
 
 func (s *MetricsGenerator) clockNow() time.Time {
@@ -134,9 +143,11 @@ func NewMetricsGenerator(
 	podUsecase *biz.PodUseCase,
 	monitorService *service.MonitorService,
 	logger log.Logger,
+	resourceSource resourceview.SnapshotSource,
 ) *MetricsGenerator {
 	interval, timeout := resolveCollectorIntervals(bc)
 	return &MetricsGenerator{
+		resourceSource: resourceSource,
 		promClient:     promClient,
 		nodeUsecase:    nodeUsecase,
 		podUsecase:     podUsecase,
@@ -213,7 +224,19 @@ func (s *MetricsGenerator) Start(_ context.Context) error {
 		s.cancel = cancel
 		s.done = make(chan struct{})
 		s.log.Infow("msg", "starting metrics collector", "interval", s.interval, "timeout", s.timeout)
-		go s.loop(ctx)
+		go func() {
+			defer close(s.done)
+			var wg sync.WaitGroup
+			if s.resourceSource != nil {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					s.loop(ctx, s.refreshResources)
+				}()
+			}
+			s.loop(ctx, s.runOnce)
+			wg.Wait()
+		}()
 	})
 	return nil
 }
@@ -236,9 +259,8 @@ func (s *MetricsGenerator) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (s *MetricsGenerator) loop(ctx context.Context) {
-	defer close(s.done)
-	s.runOnce(ctx)
+func (s *MetricsGenerator) loop(ctx context.Context, refresh func(context.Context)) {
+	refresh(ctx)
 	t := time.NewTicker(s.interval)
 	defer t.Stop()
 	for {
@@ -246,7 +268,7 @@ func (s *MetricsGenerator) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.runOnce(ctx)
+			refresh(ctx)
 		}
 	}
 }

@@ -22,6 +22,36 @@ import (
 	"github.com/prometheus/common/model"
 )
 
+func TestQueryAtUsesCallerInstant(t *testing.T) {
+	got := make(chan url.Values, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if err := req.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		got <- req.Form
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient(server.URL, time.Second, HTTPConfig{}, log.DefaultLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := client.QueryAt(context.Background(), "vector(0)", time.Unix(1700000000, 123000000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vector, ok := value.(model.Vector); !ok || len(vector) != 0 {
+		t.Fatalf("response = %#v, want successful empty vector", value)
+	}
+	form := <-got
+	if form.Get("time") != "1700000000.123" || form.Get("query") != "vector(0)" {
+		t.Fatalf("query instant changed: %v", form)
+	}
+}
+
 func TestTLSVerificationDefaultsToEnabled(t *testing.T) {
 	server := newTLSTestServer(t)
 	client := newTestClient(t, server.URL, TLSConfig{})
@@ -507,6 +537,44 @@ func TestQueryPreservesTransportErrors(t *testing.T) {
 
 	if _, err := client.Query(context.Background(), "up"); err == nil {
 		t.Fatal("Query with an unavailable Prometheus endpoint succeeded")
+	}
+}
+
+func TestQueryTimesOutWhenPrometheusNeverResponds(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		select {
+		case <-release:
+		case <-req.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+	client, err := NewClient(server.URL, 100*time.Millisecond, HTTPConfig{}, log.DefaultLogger)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	for name, query := range map[string]func() error{
+		"instant": func() error {
+			_, err := client.Query(context.Background(), "up")
+			return err
+		},
+		"range": func() error {
+			_, err := client.QueryRange(context.Background(), "up", v1.Range{Start: time.Unix(0, 0), End: time.Unix(60, 0), Step: time.Minute})
+			return err
+		},
+	} {
+		done := make(chan error, 1)
+		go func() { done <- query() }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatalf("%s query against a silent Prometheus succeeded", name)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s query was not bounded by the client timeout", name)
+		}
 	}
 }
 

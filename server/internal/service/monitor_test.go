@@ -1,13 +1,22 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	pb "vgpu/api/v1"
+	"vgpu/internal/data/prom"
 
 	kratosjson "github.com/go-kratos/kratos/v2/encoding/json"
+	"github.com/go-kratos/kratos/v2/errors"
+	"github.com/go-kratos/kratos/v2/log"
 )
 
 func TestSamplePairJSONKeepsZeroDistinctFromMissing(t *testing.T) {
@@ -108,5 +117,37 @@ func assertSamplePairs(t *testing.T, got, want []*pb.SamplePair) {
 				want[i].GetValue(), want[i].GetTimestamp(), want[i].GetMissing(),
 			)
 		}
+	}
+}
+
+func TestInstantQuerySendsRequestedTime(t *testing.T) {
+	seen := make(chan string, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.FormValue("time")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
+	defer ts.Close()
+	client, err := prom.NewClient(ts.URL, time.Second, prom.HTTPConfig{}, log.NewStdLogger(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewMonitorService(client, nil, nil)
+	if _, err := s.QueryInstant(context.Background(), &pb.QueryInstantRequest{Query: "up", Time: "2026-11-14T21:00:00.125+08:00"}); err != nil {
+		t.Fatal(err)
+	}
+	expected, _ := time.Parse(time.RFC3339Nano, "2026-11-14T13:00:00.125Z")
+	if actual := <-seen; actual != strconv.FormatFloat(float64(expected.UnixMilli())/1000, 'f', 3, 64) {
+		t.Fatalf("unexpected evaluation time %q", actual)
+	}
+	if _, err := s.QueryInstant(context.Background(), &pb.QueryInstantRequest{Query: "up", Time: "yesterday"}); !errors.IsBadRequest(err) {
+		t.Fatalf("invalid time returned %v, want HTTP 400", err)
+	}
+	if _, err := s.QueryInstant(context.Background(), &pb.QueryInstantRequest{Query: "up"}); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := strconv.ParseFloat(<-seen, 64)
+	if err != nil || math.Abs(float64(time.Now().Unix())-actual) > 5 {
+		t.Fatalf("legacy request time %v, err %v", actual, err)
 	}
 }
