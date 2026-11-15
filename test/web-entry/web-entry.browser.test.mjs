@@ -1600,7 +1600,7 @@ test('workload and detail views keep dense identity content readable', async() =
     assert.deepEqual(
       (await page.locator('.resource-card-footer-label').allTextContents())
         .map((value) => value.trim()),
-      ['Alloc Rate', 'Usage Rate', 'Alloc Rate', 'Usage Rate']
+      ['Alloc Rate', 'Utilization', 'Alloc Rate', 'Usage Rate']
     )
     // The resource cards follow their panel's width: compact beside the sidebar at 1280 px, full size with more room.
     const resourcePanelWidth = () => page.locator('.node-workload-panel').evaluate((element) => element.clientWidth)

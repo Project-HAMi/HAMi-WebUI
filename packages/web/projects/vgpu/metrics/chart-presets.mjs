@@ -41,6 +41,7 @@ export const buildTimeSeriesOptions = ({
   const timestamps = normalized.flatMap((item) => item.data.map((point) => point.timestamp)).filter((timestamp) => timestamp !== null);
   const extent = timestamps.reduce((range, timestamp) => [Math.min(range[0], timestamp), Math.max(range[1], timestamp)], [Infinity, -Infinity]);
   const showLegend = normalized.length > 1;
+  const states = new Map(normalized.filter((item) => item.legendLabel).map((item) => [item.name, item.legendLabel]));
   // A lone report has no duration; keep a small window around that instant.
   if (timestamps.length && extent[0] === extent[1]) {
     extent[0] -= 30_000;
@@ -50,7 +51,20 @@ export const buildTimeSeriesOptions = ({
   return layoutTimeSeriesOptions({
     animation,
     // The legend sits at the bottom edge, right under the axis labels.
-    legend: showLegend ? { bottom: 0, left: 'center' } : { show: false },
+    legend: showLegend ? {
+      bottom: 0, left: 'center',
+      ...(states.size ? {
+        formatter: (name) => states.get(name) ?? name,
+        data: normalized.map((item) => ({
+          name: item.name,
+          ...(item.legendLabel ? {
+            textStyle: { color: '#697886' },
+            itemStyle: { color: '#aab5c0', borderColor: '#aab5c0' },
+            lineStyle: { color: '#aab5c0' },
+          } : {}),
+        })),
+      } : {}),
+    } : { show: false },
     tooltip: {
       trigger: 'axis',
       axisPointer: AXIS_POINTER,

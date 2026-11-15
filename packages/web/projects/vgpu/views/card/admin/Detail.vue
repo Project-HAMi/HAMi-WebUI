@@ -47,9 +47,8 @@
         </block-box>
         <TrendTimeFilter :model-value="times" loading class="card-trend-filter" />
         <div class="line-box">
-          <block-box v-for="section in trendSections" :key="section.key" :title="section.title">
-            <MetricChart :option="section.option" />
-          </block-box>
+          <ResourceTrend kind="compute" />
+          <ResourceTrend kind="memory" />
           <block-box v-for="item in lineToolsView" :key="item.titleKey" :title="item.title">
             <MetricChart :option="item.option" />
           </block-box>
@@ -316,20 +315,8 @@
 
     <TrendTimeFilter v-model="times" :loading="trendLoading" class="card-trend-filter" />
     <div class="line-box">
-      <block-box
-        v-for="section in trendSections"
-        :key="section.key"
-        :title="section.title"
-      >
-        <MetricChart
-          :status="section.status"
-          :option="section.option"
-          :note="section.note"
-          :state-text="section.stateText"
-          :refreshing="section.refreshing"
-          :refresh-error="Boolean(section.refreshError)"
-        />
-      </block-box>
+      <ResourceTrend kind="compute" :series="computeTrend" :allocation-label="computeAllocLegend" :vendor="detail.vendor" />
+      <ResourceTrend kind="memory" :series="memoryTrend" :vendor="detail.vendor" />
 
       <block-box
         v-for="item in lineToolsView"
@@ -377,9 +364,10 @@ import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
 import nodeApi from '~/vgpu/api/node';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
+import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
-import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
+import { stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import {
   buildComputeAllocationQueries,
@@ -768,25 +756,6 @@ const lineToolsView = computed(() =>
     };
   }),
 );
-
-const trendSection = (key, title, [allocation, usage], allocationName) => {
-  const series = [
-    { ...allocation, name: allocationName, color: CHART_COLORS.allocation },
-    { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
-  ];
-  const summary = summarizeRangeSeries(series, t);
-  return {
-    key,
-    title,
-    ...summary,
-    stateText: t(stateTextKey(summary.status)),
-    option: buildTimeSeriesOptions({ series }),
-  };
-};
-const trendSections = computed(() => [
-  trendSection('compute', dt('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value, computeAllocLegend.value),
-  trendSection('memory', dt('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value, t('dashboard.allocRateLegend')),
-]);
 
 let nodeEnrichmentGeneration = 0;
 watch(

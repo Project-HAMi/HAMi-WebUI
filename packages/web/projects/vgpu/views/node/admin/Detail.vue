@@ -47,7 +47,7 @@
                     </div>
                   </div>
                   <div class="resource-card-footer">
-                    <div v-for="label in [$t('dashboard.allocRateLegend'), $t('dashboard.usageRateLegend')]" :key="label" class="resource-card-rate-wrap">
+                    <div v-for="label in [$t('dashboard.allocRateLegend'), $t(index === 0 ? 'dashboard.utilizationRateLegend' : 'dashboard.overviewMemoryOccupancyLegend')]" :key="label" class="resource-card-rate-wrap">
                       <div class="resource-card-footer-item">
                         <div class="resource-card-footer-title">{{ label }}</div>
                         <div class="resource-card-footer-value"><LoadingValue :height="24" width="64px" /></div>
@@ -61,9 +61,8 @@
         </section>
         <TrendTimeFilter :model-value="times" class="node-trend-filter" loading />
         <div class="line-box">
-          <block-box v-for="section in trendSections" :key="section.key" :title="section.title">
-            <MetricChart :option="section.option" />
-          </block-box>
+          <ResourceTrend kind="compute" />
+          <ResourceTrend kind="memory" />
         </div>
       </template>
     <section class="node-overview-wrap">
@@ -134,7 +133,7 @@
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
                     <div class="resource-card-footer-title">
-                      <span class="resource-card-footer-label">{{ $t('dashboard.usageRateLegend') }}</span>
+                      <span class="resource-card-footer-label">{{ $t('dashboard.utilizationRateLegend') }}</span>
                     </div>
                     <div class="resource-card-footer-value">
                       <span class="resource-card-footer-percent">{{ computeUsagePercentText }}</span>
@@ -196,7 +195,7 @@
                 <div class="resource-card-rate-wrap">
                   <div class="resource-card-footer-item">
                     <div class="resource-card-footer-title">
-                      <span class="resource-card-footer-label">{{ $t('dashboard.usageRateLegend') }}</span>
+                      <span class="resource-card-footer-label">{{ $t('dashboard.overviewMemoryOccupancyLegend') }}</span>
                       <metric-help
                         :description="$t('dashboard.memUsageRateDescription')"
                         :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
@@ -227,20 +226,8 @@
     <TrendTimeFilter v-model="times" class="node-trend-filter" :loading="trendLoading" />
 
     <div class="line-box">
-      <block-box
-        v-for="section in trendSections"
-        :key="section.key"
-        :title="section.title"
-      >
-        <MetricChart
-          :status="section.status"
-          :option="section.option"
-          :note="section.note"
-          :state-text="section.stateText"
-          :refreshing="section.refreshing"
-          :refresh-error="Boolean(section.refreshError)"
-        />
-      </block-box>
+      <ResourceTrend kind="compute" :series="computeTrend" />
+      <ResourceTrend kind="memory" :series="memoryTrend" />
     </div>
     </detail-page-state>
   </div>
@@ -265,10 +252,7 @@ import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import nodeApi from '~/vgpu/api/node';
-import MetricChart from '~/vgpu/components/MetricChart.vue';
-import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
-import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
-import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
+import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
@@ -334,25 +318,6 @@ const computeAllocPercentRaw = computed(() => detail.value.coreAllocationPercent
 const memoryAllocPercentRaw = computed(() => detail.value.memoryAllocationPercent);
 const computeUsagePercentRaw = computed(() => readReadyMetricField(usageGauges.value[0], 'percent'));
 const memoryUsagePercentRaw = computed(() => readReadyMetricField(usageGauges.value[1], 'percent'));
-
-const trendSection = (key, title, [allocation, usage]) => {
-  const series = [
-    { ...allocation, name: t('dashboard.allocRateLegend'), color: CHART_COLORS.allocation },
-    { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
-  ];
-  const summary = summarizeRangeSeries(series, t);
-  return {
-    key,
-    title,
-    ...summary,
-    stateText: t(stateTextKey(summary.status)),
-    option: buildTimeSeriesOptions({ series }),
-  };
-};
-const trendSections = computed(() => [
-  trendSection('compute', t('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value),
-  trendSection('memory', t('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value),
-]);
 
 const buildPercentViews = (raw) => {
   const progress = computed(() => Number.isFinite(raw.value) ? Math.max(0, Math.min(100, raw.value)) : undefined);

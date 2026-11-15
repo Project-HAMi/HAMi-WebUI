@@ -1,12 +1,14 @@
 <template>
   <div class="metric-chart" :aria-busy="isLoading || refreshing">
     <!-- One live region for both, so a missing line and a failed refresh are announced once each. -->
-    <div v-if="note || refreshError" class="metric-chart__status" role="status">
-      <span v-if="note" class="metric-chart__note">{{ note }}</span>
+    <div v-if="(note && notePlacement === 'above') || refreshError" class="metric-chart__status" role="status">
+      <span v-if="note && notePlacement === 'above'" class="metric-chart__note">{{ note }}</span>
       <span v-if="refreshError" class="metric-chart__refresh metric-chart__refresh--error">
         {{ $t('common.refreshFailedShowingPreviousResult') }}
       </span>
     </div>
+
+    <span v-if="note && notePlacement === 'legend'" class="metric-chart__sr-only" role="status">{{ note }}</span>
 
     <div ref="bodyRef" class="metric-chart__body" :style="{ height: `${height}px` }">
       <template v-if="isLoading">
@@ -66,6 +68,7 @@ const props = defineProps({
   // Why the chart is empty, or what its values leave out. Kept above the
   // chart: a badge floating over the plot hid data and matched nothing else.
   note: { type: String, default: '' },
+  notePlacement: { type: String, default: 'above', validator: value => ['above', 'legend'].includes(value) },
   stateText: { type: String, default: '' },
   refreshing: { type: Boolean, default: false },
   refreshError: { type: [Boolean, Object], default: false },

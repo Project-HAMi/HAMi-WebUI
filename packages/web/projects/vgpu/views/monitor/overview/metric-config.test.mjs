@@ -11,6 +11,9 @@ test('the four header gauges and their trend lines use the same metric definitio
   const metrics = buildPhysicalResourceQueries();
   assert.equal(gauges.length, 4);
   assert.equal(trends.length, 4);
+  // Compute shares may be fractional. Only memory cards show a capacity pair.
+  assert.deepEqual(gauges.filter(gauge => gauge.detailMode === 'ratio').map(gauge => gauge.id),
+    ['memory-allocation', 'memory-utilization']);
 
   for (const [id, seriesKey, resource] of [
     ['compute-allocation', 'compute-allocation', 'computeAllocation'],

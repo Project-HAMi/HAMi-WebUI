@@ -24,16 +24,7 @@
           v-for="section in rangeConfig"
           :key="section.key"
         >
-          <Block :title="section.title">
-            <MetricChart
-              :status="section.status"
-              :option="section.option"
-              :note="section.note"
-              :state-text="getStateText(section.status)"
-              :refreshing="section.refreshing"
-              :refresh-error="Boolean(section.refreshError)"
-            />
-          </Block>
+          <ResourceTrend :kind="section.key" :series="section.series" />
         </div>
       </div>
 
@@ -103,7 +94,7 @@ import { useI18n } from 'vue-i18n';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
-import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
+import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
 import Block from './Block.vue';
 import './style.scss';
@@ -132,7 +123,7 @@ import {
 } from '@/hooks/request-state.mjs';
 import OverviewInventory from './OverviewInventory.vue';
 import { readContainerSummary, readResourceInventory } from './resource-summary.mjs';
-import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
+import { stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 
 const router = useRouter();
 const { t } = useI18n();
@@ -278,7 +269,6 @@ const cardGaugeConfig = computed(() => _cardGaugeConfig.value.map((item) => ({
   ...item,
   title: t(item.titleKey),
   description: t(item.descriptionKey),
-  detailLabel: t(item.detailLabelKey),
   unit: item.unitKey ? t(item.unitKey) : item.unit,
   metricHelpLabel: t('dashboard.metricHelpLabel', {
     metric: t(item.titleKey),
@@ -320,39 +310,16 @@ function openWorkloadNode(name) {
   else MessagePlugin.error(t('node.nodeNotFound'));
 }
 
-const rangeDefinitions = getRangeConfigInit(t);
-const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) =>
-  section.dataSource.map((series, seriesIndex) => ({ ...series, sectionIndex, seriesIndex })),
-);
+const rangeDefinitions = getRangeConfigInit();
 const { data: rangeSeries } = useRangeVector(
-  rangeSeriesDefinitions,
-  (query) => query,
+  rangeDefinitions.flatMap(section => section.dataSource.map(series => ({ ...series, sectionIndex: section.key }))),
+  query => query,
   times,
 );
-const trendLoading = computed(() => rangeSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
-
-const rangeConfig = computed(() => {
-  const translated = getRangeConfigInit(t);
-  return translated.map((section, sectionIndex) => {
-    const dataSource = section.dataSource.map((series, seriesIndex) => {
-      const state = rangeSeries.value.find(
-        (item) => item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
-      );
-      return {
-        ...series,
-        data: state?.data || [],
-        status: state?.status || REQUEST_STATUS.LOADING,
-        refreshing: state?.refreshing || false,
-        refreshError: state?.refreshError || null,
-      };
-    });
-    return {
-      ...section,
-      ...summarizeRangeSeries(dataSource, t),
-      option: buildTimeSeriesOptions({ series: dataSource }),
-    };
-  });
-});
+const trendLoading = computed(() => rangeSeries.value.some(item => item.refreshing || item.status === REQUEST_STATUS.LOADING));
+const rangeConfig = computed(() => rangeDefinitions.map(({ key }) => ({
+  key, series: rangeSeries.value.filter(item => item.sectionIndex === key),
+})));
 
 const getStateText = (status, metric = true) =>
   t(stateTextKey(status, { metric }));

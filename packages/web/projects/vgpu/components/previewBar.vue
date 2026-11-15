@@ -95,7 +95,7 @@ const nodeComputeTop5 = computed(() => ({
       query: resourceTopQueries.value.computeAllocation,
     },
     {
-      tab: t('dashboard.usageRateLegend'),
+      tab: t('dashboard.utilizationRateLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
@@ -115,7 +115,7 @@ const nodeMemoryTop5 = computed(() => ({
       query: resourceTopQueries.value.memoryAllocation,
     },
     {
-      tab: t('dashboard.usageRateLegend'),
+      tab: t('dashboard.overviewMemoryOccupancyLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
@@ -136,7 +136,7 @@ const gpuComputeTop5 = computed(() => ({
       uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: props.type }),
     },
     {
-      tab: t('dashboard.usageRateLegend'),
+      tab: t('dashboard.utilizationRateLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
@@ -156,7 +156,7 @@ const gpuMemoryTop5 = computed(() => ({
       query: resourceTopQueries.value.memoryAllocation,
     },
     {
-      tab: t('dashboard.usageRateLegend'),
+      tab: t('dashboard.overviewMemoryOccupancyLegend'),
       key: 'usage',
       nameKey: props.type,
       data: [],
