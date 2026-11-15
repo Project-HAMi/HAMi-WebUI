@@ -64,10 +64,10 @@ func TestUnconfiguredDevicesAddNoSchedulableCapacity(t *testing.T) {
 	}}}}
 	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
-	nodes := NewNodeService(nodeUsecase, podUsecase, biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger))
+	nodes := NewNodeService(nodeUsecase, podUsecase, biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger), nil)
 
 	node, err := nodes.GetNode(context.Background(), &pb.GetNodeReq{Uid: "node-uid-a"})
-	if err != nil || node.VgpuTotal != 4 || node.MemoryTotal != 65536 || node.VgpuUsed != 1 || node.MemoryUsed != 16384 {
+	if err != nil || node.GetVgpuTotal() != 4 || node.GetMemoryTotal() != 65536 || node.GetVgpuUsed() != 1 || node.GetMemoryUsed() != 16384 {
 		t.Fatalf("node totals = %+v, %v", node, err)
 	}
 	summary, err := nodes.GetSummary(context.Background(), &pb.GetSummaryReq{})

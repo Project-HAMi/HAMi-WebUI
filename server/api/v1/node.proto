@@ -3,6 +3,7 @@ syntax = "proto3";
 package api.v1;
 
 import "google/api/annotations.proto";
+import "api/observability/v1/common.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
 option go_package = "vgpu/api/v1;v1";
@@ -66,26 +67,29 @@ message GetAllNodesReq {
     string is_schedulable = 3;
   }
   Filters filters = 1;
+  // Limit membership to the physical inventory and known accelerator resources.
+  bool use_resource_inventory = 2;
 }
 
 message GetNodeReq {
   string uid = 1;
+  bool use_resource_inventory = 2;
 }
 
 message NodeReply {
   string ip = 1;
-  bool is_schedulable = 2;
-  bool is_ready = 3;
+  optional bool is_schedulable = 2;
+  optional bool is_ready = 3;
   repeated string type = 4;
-  int32 vgpu_used = 5;
-  int32 vgpu_total = 6;
-  int32 core_used = 7;
-  int32 core_total = 8;
-  int32 memory_used = 9;
-  int32 memory_total = 10;
+  optional int32 vgpu_used = 5;
+  optional int32 vgpu_total = 6;
+  optional int32 core_used = 7;
+  optional int32 core_total = 8;
+  optional int32 memory_used = 9;
+  optional int32 memory_total = 10;
   string uid = 11;
   string name = 12;
-  int32 card_cnt = 13;
+  optional int32 card_cnt = 13;
   string os_image = 14;
   string operating_system = 15;
   string kernel_version = 16;
@@ -95,8 +99,15 @@ message NodeReply {
   string architecture = 20;
   string creation_timestamp = 21;
   optional bool core_used_known = 22;
+  // Physical cards observed on this node, only in resource inventory mode.
+  observability.v1.Coverage inventory_coverage = 23;
+  // Percentages over physical cards with both known allocation and capacity.
+  optional double core_allocation_percent = 24;
+  optional double memory_allocation_percent = 25;
 }
 
 message NodesReply {
   repeated NodeReply list = 1;
+  // Membership coverage for this result, only in resource inventory mode.
+  observability.v1.Coverage inventory_coverage = 2;
 }

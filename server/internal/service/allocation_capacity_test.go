@@ -36,7 +36,7 @@ func TestAllocationCapacityUsesDeterministicPhysicalCoreBaseline(t *testing.T) {
 	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
 	summaryUsecase := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
-	nodeService := NewNodeService(nodeUsecase, podUsecase, summaryUsecase)
+	nodeService := NewNodeService(nodeUsecase, podUsecase, summaryUsecase, nil)
 	cardService := NewCardService(nodeUsecase, podUsecase)
 
 	nodes, err := nodeService.GetAllNodes(
@@ -49,13 +49,13 @@ func TestAllocationCapacityUsesDeterministicPhysicalCoreBaseline(t *testing.T) {
 	if len(nodes.List) != 1 {
 		t.Fatalf("GetAllNodes returned %d nodes, want 1", len(nodes.List))
 	}
-	assertCapacity(t, "node list", nodes.List[0].CoreTotal, nodes.List[0].MemoryTotal, 200, 98304)
+	assertCapacity(t, "node list", nodes.List[0].GetCoreTotal(), nodes.List[0].GetMemoryTotal(), 200, 98304)
 
 	node, err := nodeService.GetNode(context.Background(), &pb.GetNodeReq{Uid: "node-uid-a"})
 	if err != nil {
 		t.Fatalf("GetNode: %v", err)
 	}
-	assertCapacity(t, "node detail", node.CoreTotal, node.MemoryTotal, 200, 98304)
+	assertCapacity(t, "node detail", node.GetCoreTotal(), node.GetMemoryTotal(), 200, 98304)
 
 	cards, err := cardService.GetAllGPUs(
 		context.Background(),
