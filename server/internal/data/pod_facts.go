@@ -5,7 +5,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 
 	"vgpu/internal/devicecatalog"
@@ -99,16 +98,14 @@ func (r *podRepo) onFactsPod(obj interface{}) {
 		node, _ = r.nodeLister.Get(nodeName)
 	}
 	evidence, options := r.hamiFactEvidence(pod, node, snapshot)
-	var nodeUID types.UID
-	if node != nil {
-		nodeUID = node.UID
-		if original := r.facts.AssignmentNodeUID(pod.UID); original != "" && original != nodeUID {
-			for i := range evidence.Allocations {
-				evidence.Allocations[i].Source.State, evidence.Allocations[i].Source.Reason = resourceview.Unknown, "identity_conflict"
-				evidence.Allocations[i].Source.Params = map[string]string{"identity": "node_uid_replaced"}
-				evidence.Allocations[i].Complete = false
-				evidence.Allocations[i].HasAllocationEvidence = evidence.Allocations[i].HasAllocationEvidence || len(evidence.Allocations[i].Records) > 0
-			}
+	assignment, conflict := r.facts.NodeAssignment(pod.UID).Observe(pod, node, evidence.Allocations)
+	if conflict {
+		for i := range evidence.Allocations {
+			source := &evidence.Allocations[i]
+			source.Source.State, source.Source.Reason = resourceview.Unknown, "identity_conflict"
+			source.Source.Params = map[string]string{"identity": "node_uid_replaced"}
+			source.Complete = false
+			source.HasAllocationEvidence = source.HasAllocationEvidence || len(source.Records) > 0
 		}
 	}
 	facts, err := podfacts.Extract(pod, evidence, options)
@@ -130,7 +127,7 @@ func (r *podRepo) onFactsPod(obj interface{}) {
 			}
 		}
 		return true
-	}, factInputRevision(snapshot, node), nodeUID)
+	}, factInputRevision(snapshot, node), assignment)
 }
 
 func factInputRevision(catalog *devicecatalog.Snapshot, node *corev1.Node) string {

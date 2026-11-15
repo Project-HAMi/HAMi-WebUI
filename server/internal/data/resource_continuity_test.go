@@ -3,11 +3,11 @@ package data
 import (
 	"context"
 	"io"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,58 +20,59 @@ import (
 	"vgpu/internal/resourceview"
 )
 
+// A real API server supplies a resource version on every LIST. The client-go
+// tracker leaves it empty by default, so its WATCH cannot prove continuity.
+func newResourceTestClient(objects ...runtime.Object) *fake.Clientset {
+	client := fake.NewSimpleClientset(objects...)
+	client.PrependReactor("list", "*", func(a kt.Action) (bool, runtime.Object, error) {
+		action := a.(kt.ListActionImpl)
+		list, err := client.Tracker().List(action.GetResource(), action.GetKind(), action.GetNamespace())
+		if err != nil {
+			return true, nil, err
+		}
+		metadata, err := meta.ListAccessor(list)
+		if err != nil {
+			return true, nil, err
+		}
+		metadata.SetResourceVersion("100")
+		return true, list, nil
+	})
+	return client
+}
+
+func startResourceTestSource(t *testing.T, client *fake.Clientset, catalog *mutableCatalog, selectors map[string]string) (*podRepo, resourceview.SnapshotSource) {
+	t.Helper()
+	factory, continuity := newTrackedInformerFactory(client, 0)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	data := &Data{k8sCl: client, informers: factory, continuity: continuity, stopCh: stop}
+	logger := log.NewStdLogger(io.Discard)
+	repo, err := NewPodRepo(data, logger, &conf.Bootstrap{}, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewResourceSnapshotSource(data, selectors, logger, catalog, repo.facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, source
+}
+
 func TestProductionContinuityZeroRecoveryAndNodeUIDReplacement(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-old", ResourceVersion: "1", Annotations: map[string]string{"hami.io/node-nvidia-register": "GPU-a,10,16384,100,T4,0,true:"}}, Status: corev1.NodeStatus{Capacity: corev1.ResourceList{"nvidia.com/gpu": resource.MustParse("10")}}}
 	other := node.DeepCopy()
 	other.Name, other.UID = "node-b", "other-uid"
 	other.Annotations["hami.io/node-nvidia-register"] = "GPU-b,10,16384,100,T4,0,true:"
-	client := fake.NewSimpleClientset(node, other)
-	var podLists, nodeLists atomic.Int32
-	client.PrependReactor("list", "*", func(a kt.Action) (bool, runtime.Object, error) {
-		name := a.GetResource().Resource
-		kind := ""
-		switch name {
-		case "pods":
-			kind = "Pod"
-			podLists.Add(1)
-		case "nodes":
-			kind = "Node"
-			nodeLists.Add(1)
-		default:
-			return false, nil, nil
-		}
-		obj, err := client.Tracker().List(a.GetResource(), corev1.SchemeGroupVersion.WithKind(kind), a.GetNamespace())
-		if err == nil {
-			switch v := obj.(type) {
-			case *corev1.PodList:
-				v.ResourceVersion = "100"
-			case *corev1.NodeList:
-				v.ResourceVersion = "100"
-			}
-		}
-		return true, obj, err
-	})
+	client := newResourceTestClient(node, other)
 	streams := make(chan watch.Interface, 5)
 	client.PrependWatchReactor("pods", func(a kt.Action) (bool, watch.Interface, error) {
 		w, err := client.Tracker().Watch(a.GetResource(), a.GetNamespace())
 		streams <- w
 		return true, w, err
 	})
-	factory, continuity := newTrackedInformerFactory(client, 0)
-	stop := make(chan struct{})
-	defer close(stop)
-	data := &Data{k8sCl: client, informers: factory, continuity: continuity, stopCh: stop}
 	catalog := &mutableCatalog{current: loadedTestCatalog(t)}
 	catalog.current.ResourceNames = map[string]devicecatalog.DeviceResourceNames{"NVIDIA": {Count: "nvidia.com/gpu"}}
-	logger := log.NewStdLogger(io.Discard)
-	repo, err := NewPodRepo(data, logger, &conf.Bootstrap{}, catalog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source, err := NewResourceSnapshotSource(data, map[string]string{"NVIDIA": ""}, logger, catalog, repo.facts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo, source := startResourceTestSource(t, client, catalog, map[string]string{"NVIDIA": ""})
 	snapshot := func() resourceview.Snapshot {
 		v, e := source.Snapshot(context.Background())
 		if e != nil {
@@ -123,7 +124,7 @@ func TestProductionContinuityZeroRecoveryAndNodeUIDReplacement(t *testing.T) {
 	})
 	// A dependent Node/catalog replay is not proved by matching Pod RV alone.
 	entry, _ := repo.facts.Get(p.UID)
-	repo.facts.PutWithRevision(entry.Facts, func() bool { return true }, "pending-dependent-replay", entry.AssignmentNodeUID)
+	repo.facts.PutWithRevision(entry.Facts, func() bool { return true }, "pending-dependent-replay", entry.Assignment)
 	pending := snapshot()
 	if pending.Devices[0].AllocationCoverage.Complete {
 		t.Fatal("old dependency revision accepted as complete")
@@ -136,7 +137,7 @@ func TestProductionContinuityZeroRecoveryAndNodeUIDReplacement(t *testing.T) {
 	for _, binding := range []struct{ bound, assigned string }{{"node-a", "node-b"}, {"", ""}} {
 		entry.Facts.NodeName = binding.bound
 		entry.Facts.Metadata.Annotations["hami.io/vgpu-node"] = binding.assigned
-		repo.facts.PutWithRevision(entry.Facts, func() bool { return true }, "pending-dependent-replay", entry.AssignmentNodeUID)
+		repo.facts.PutWithRevision(entry.Facts, func() bool { return true }, "pending-dependent-replay", entry.Assignment)
 		s := snapshot()
 		if s.Devices[0].AllocationCoverage.Complete || s.Devices[1].AllocationCoverage.Complete {
 			t.Fatalf("replay with bindings %+v must leave both nodes incomplete", binding)
@@ -154,8 +155,14 @@ func TestProductionContinuityZeroRecoveryAndNodeUIDReplacement(t *testing.T) {
 		t.Fatal("Pod watch interruption invalidated independent physical device inventory")
 	}
 	awaitContinuity(t, func() bool { return snapshot().Devices[0].AllocationCoverage.Complete })
-	if podLists.Load() != 2 || nodeLists.Load() != 1 {
-		t.Fatalf("unexpected request budget pods=%d nodes=%d", podLists.Load(), nodeLists.Load())
+	lists := map[string]int{}
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "list" {
+			lists[action.GetResource().Resource]++
+		}
+	}
+	if lists["pods"] != 2 || lists["nodes"] != 1 {
+		t.Fatalf("unexpected LIST counts: %v", lists)
 	}
 	node.UID = "node-new"
 	node.ResourceVersion = "3"
@@ -174,7 +181,7 @@ func TestProductionContinuityZeroRecoveryAndNodeUIDReplacement(t *testing.T) {
 		entry, ok := repo.facts.Get(p.UID)
 		return ok && entry.Facts.Metadata.ResourceVersion == "4"
 	})
-	if len(snapshot().Devices[0].EffectiveOccupancies) != 0 || repo.facts.AssignmentNodeUID(p.UID) != "node-old" {
+	if len(snapshot().Devices[0].EffectiveOccupancies) != 0 || repo.facts.NodeAssignment(p.UID).UID != "node-old" {
 		t.Fatal("later replay forgot the replaced assignment Node UID")
 	}
 	if err := client.CoreV1().Pods(p.Namespace).Delete(context.Background(), p.Name, metav1.DeleteOptions{}); err != nil {

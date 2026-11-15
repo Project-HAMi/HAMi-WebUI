@@ -12,10 +12,10 @@ import (
 )
 
 type Entry struct {
-	AssignmentNodeUID types.UID `json:"-"`
-	InputRevision     string    `json:"-"` // producer evidence identity, not a public resource version
-	Facts             *Facts
-	Occupancies       []Occupancy
+	Assignment    NodeAssignment `json:"-"`
+	InputRevision string         `json:"-"` // producer evidence identity, not a public resource version
+	Facts         *Facts
+	Occupancies   []Occupancy
 }
 type Inventory struct {
 	Entries  []Entry
@@ -24,15 +24,15 @@ type Inventory struct {
 
 // Ledger owns immutable per-Pod facts. Only the informer can establish coverage.
 type Ledger struct {
-	mu        sync.RWMutex
-	pods      map[types.UID]*Facts
-	names     map[string]types.UID
-	revisions map[types.UID]string
-	nodeUIDs  map[types.UID]types.UID
+	mu          sync.RWMutex
+	pods        map[types.UID]*Facts
+	names       map[string]types.UID
+	revisions   map[types.UID]string
+	assignments map[types.UID]NodeAssignment
 }
 
 func NewLedger() *Ledger {
-	return &Ledger{pods: map[types.UID]*Facts{}, names: map[string]types.UID{}, revisions: map[types.UID]string{}, nodeUIDs: map[types.UID]types.UID{}}
+	return &Ledger{pods: map[types.UID]*Facts{}, names: map[string]types.UID{}, revisions: map[types.UID]string{}, assignments: map[types.UID]NodeAssignment{}}
 }
 
 // Put runs the cache-current predicate inside the commit lock. Use the same
@@ -41,7 +41,7 @@ func (l *Ledger) Put(f *Facts, current func() bool) bool { return l.PutWithRevis
 
 // PutWithRevision binds facts to the producer's exact dependency snapshot.
 // Readers may use this opaque local token to detect pending dependent replays.
-func (l *Ledger) PutWithRevision(f *Facts, current func() bool, revision string, nodeUID ...types.UID) bool {
+func (l *Ledger) PutWithRevision(f *Facts, current func() bool, revision string, assignment ...NodeAssignment) bool {
 	if f == nil || f.Metadata.UID == "" || current == nil {
 		return false
 	}
@@ -55,7 +55,7 @@ func (l *Ledger) PutWithRevision(f *Facts, current func() bool, revision string,
 	if previous := l.names[key]; previous != "" && previous != f.Metadata.UID {
 		delete(l.pods, previous)
 		delete(l.revisions, previous)
-		delete(l.nodeUIDs, previous)
+		delete(l.assignments, previous)
 	}
 	l.names[key] = f.Metadata.UID
 	// The scheduler keeps a release once observed for this UID. While
@@ -68,8 +68,8 @@ func (l *Ledger) PutWithRevision(f *Facts, current func() bool, revision string,
 	}
 	l.pods[f.Metadata.UID] = copy
 	l.revisions[f.Metadata.UID] = revision
-	if len(nodeUID) > 0 && l.nodeUIDs[f.Metadata.UID] == "" {
-		l.nodeUIDs[f.Metadata.UID] = nodeUID[0]
+	if len(assignment) > 0 {
+		l.assignments[f.Metadata.UID] = assignment[0]
 	}
 	return true
 }
@@ -83,19 +83,19 @@ func (l *Ledger) Delete(uid types.UID) {
 		}
 		delete(l.pods, uid)
 		delete(l.revisions, uid)
-		delete(l.nodeUIDs, uid)
+		delete(l.assignments, uid)
 	}
 }
 func (l *Ledger) Get(uid types.UID) (Entry, bool) {
 	l.mu.RLock()
 	f := Clone(l.pods[uid])
 	revision := l.revisions[uid]
-	nodeUID := l.nodeUIDs[uid]
+	assignment := l.assignments[uid]
 	l.mu.RUnlock()
 	if f == nil {
 		return Entry{}, false
 	}
-	return Entry{AssignmentNodeUID: nodeUID, InputRevision: revision, Facts: f, Occupancies: EffectiveOccupancies(f)}, true
+	return Entry{Assignment: assignment, InputRevision: revision, Facts: f, Occupancies: EffectiveOccupancies(f)}, true
 }
 
 func (l *Ledger) Snapshot() Inventory { return l.snapshot(Clone) }
@@ -118,7 +118,7 @@ func (l *Ledger) snapshot(clone func(*Facts) *Facts) Inventory {
 	l.mu.RLock()
 	entries := make([]Entry, 0, len(l.pods))
 	for uid, f := range l.pods {
-		entries = append(entries, Entry{Facts: f, InputRevision: l.revisions[uid], AssignmentNodeUID: l.nodeUIDs[uid]})
+		entries = append(entries, Entry{Facts: f, InputRevision: l.revisions[uid], Assignment: l.assignments[uid]})
 	}
 	l.mu.RUnlock()
 	// Put replaces immutable records; detach them outside the lock so readers
@@ -187,10 +187,8 @@ func copyRequests(requests []Request) []Request {
 	return out
 }
 
-// AssignmentNodeUID remains fixed for a Pod UID even when dependent Node facts
-// replay. A same-name replacement Node must not inherit that Pod's allocation.
-func (l *Ledger) AssignmentNodeUID(uid types.UID) types.UID {
+func (l *Ledger) NodeAssignment(uid types.UID) NodeAssignment {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.nodeUIDs[uid]
+	return l.assignments[uid]
 }
