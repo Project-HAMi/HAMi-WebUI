@@ -7,10 +7,14 @@ import test from 'node:test';
 
 import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries } from '../projects/vgpu/metrics/physical-resource-queries.mjs';
 
+import { nodeResourceQueries } from '../projects/vgpu/views/node/admin/metric-config.mjs';
+import { renderPromQLTemplate } from '../projects/vgpu/metrics/promql-template.mjs';
+
 const promtool = process.env.PROMTOOL || 'promtool';
 const queries = buildPhysicalResourceQueries();
 const nodeQueries = buildPhysicalResourceQueries({ byNode: true });
 const scopedNode = buildPhysicalAllocationQueries({ selector: 'node="node-a"' });
+const nodeDetail = buildPhysicalResourceQueries({ byNode: true, selector: 'node="node-a"' });
 const metricNames = {
   info: 'hami_webui_device_info',
   capacity: 'hami_webui_device_compute_capacity_ratio',
@@ -47,7 +51,21 @@ const fixture = (name, inputSeries, expressionTests) => ({
   name, interval: '1m', input_series: inputSeries, promql_expr_test: expressionTests,
 });
 
+const currentNode = query => renderPromQLTemplate(query, { node: 'node-a', uid: 'new-uid' });
+
 const fixtures = [
+  fixture('a replacement node only owns readings explicitly labeled with its UID', [
+    ...[['old-uid', '0.8 stale _'], ['new-uid', '_ 0.1 0.1'], ['', '0.7 0.7 0.7']].flatMap(([uid, values]) => {
+      const labels = uid ? { node_uid: uid } : {};
+      return [series('usage', values, labels), series('allocated', values, labels),
+        series('info', '1 1 1', labels), series('unknown', '0 0 0', labels), series('capacity', '1 1 1', labels)];
+    }),
+  ], [
+    check(currentNode(nodeResourceQueries.computeUsage.percentQuery), undefined),
+    check(currentNode(nodeResourceQueries.computeUsage.percentQuery), [sample(10, { node: 'node-a' })], '1m'),
+    check(currentNode(nodeResourceQueries.computeAllocation.percentQuery), undefined),
+    check(currentNode(nodeResourceQueries.computeAllocation.percentQuery), 10, '1m'),
+  ]),
   fixture('fractional Ascend shares stay on the requested node for both allocation trends', [
     series('info', 1), series('capacity', 1), series('allocated', 0.296875), series('unknown', 0),
     series('memoryAllocated', 0), series('memoryCapacity', 1024),
@@ -236,6 +254,35 @@ const fixtures = [
     series('memoryPhysical', 20, { device_id: 'second-source', instance: 'partial', source: 'other' }),
   ], [
     check(queries.memoryUsage.query, 0), check(queries.memoryUsage.totalQuery, 1), check(queries.memoryUsage.percentQuery, 0),
+  ]),
+  fixture('node detail and rank measure both vendors once and drop conflicting replicas', [
+    series('usage', 0.8), series('memoryUsed', 10), series('memoryPhysical', 40),
+    ...['replica-a', 'replica-b'].flatMap(instance => {
+      const ascend = { device_id: 'npu-1', provider: 'hami-ascend', model: '910B', source: 'npu-exporter', instance };
+      return [series('usage', 0.2, ascend), series('memoryUsed', 50, ascend), series('memoryPhysical', 60, ascend)];
+    }),
+    ...['replica-a', 'replica-b'].flatMap((instance, index) => {
+      const conflict = { device_id: 'conflict', instance };
+      return [series('usage', index, conflict), series('memoryUsed', index, conflict), series('memoryPhysical', 100, conflict)];
+    }),
+    series('usage', 0.9, { node: 'node-b' }),
+    series('memoryUsed', 5, { node: 'node-b' }), series('memoryPhysical', 50, { node: 'node-b' }),
+  ], [
+    check(nodeQueries.computeUsage.percentQuery, [sample(50, { node: 'node-a' }), sample(90, { node: 'node-b' })]),
+    check(nodeQueries.memoryUsage.percentQuery, [sample(60, { node: 'node-a' }), sample(10, { node: 'node-b' })]),
+    check(nodeDetail.computeUsage.query, [sample(50, { node: 'node-a' })]),
+    check(nodeDetail.memoryUsage.percentQuery, [sample(60, { node: 'node-a' })]),
+  ]),
+  fixture('impossible physical occupancy drops that whole card while schedulable allocation can exceed capacity', [
+    series('memoryUsed', 90), series('memoryPhysical', 80),
+    series('memoryAllocated', 90), series('memoryCapacity', 80),
+    series('info', 1), series('unknown', 0), series('allocated', 1.5), series('capacity', 1),
+    series('memoryUsed', 10, { device_id: 'valid' }), series('memoryPhysical', 40, { device_id: 'valid' }),
+  ], [
+    check(queries.memoryUsage.percentQuery, 25),
+    check(queries.memoryUsage.query, 10 / 2 ** 30), check(queries.memoryUsage.totalQuery, 40 / 2 ** 30),
+    check(nodeDetail.memoryUsage.percentQuery, [sample(25, { node: 'node-a' })]),
+    check(queries.memoryAllocation.percentQuery, 112.5), check(queries.computeAllocation.percentQuery, 150),
   ]),
   fixture('only fleet compute usage is smoothed; allocations, memory use and node usage are current', [
     series('info', '1 1'), series('capacity', '1 1'), series('allocated', '0 1'), series('unknown', '0 0'),

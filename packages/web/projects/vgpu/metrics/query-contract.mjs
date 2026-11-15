@@ -1,4 +1,4 @@
-import { buildPhysicalAllocationQueries } from './physical-resource-queries.mjs';
+import { buildPhysicalResourceQueries } from './physical-resource-queries.mjs';
 
 const METRICS = Object.freeze({
   vgpuAllocated: 'hami_container_vgpu_allocated',
@@ -219,13 +219,6 @@ export const buildTaskMonitoringQueries = ({
   };
 };
 
-export const buildClusterAllocatableQueries = () => ({
-  cpu:
-    'sum(max by (node) (kube_node_status_allocatable{resource="cpu",unit="core"}))',
-  memory:
-    'sum(max by (node) (kube_node_status_allocatable{resource="memory",unit="byte"}))',
-});
-
 export const buildTaskContainerResourceQueries = () => {
   const identity =
     'namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid';
@@ -285,18 +278,19 @@ export const buildGroupedResourceTopQueries = (groupLabel) => {
     throw new TypeError('A Prometheus group label is required');
   }
 
-  const { computeAllocation, memoryAllocation } = groupLabel === 'node'
-    ? buildPhysicalAllocationQueries({ byNode: true })
+  const metrics = groupLabel === 'node'
+    ? buildPhysicalResourceQueries({ byNode: true })
     : {
       computeAllocation: buildComputeAllocationQueries({ groupLabel }),
+      computeUsage: { percentQuery: `avg by (${groupLabel}) (${METRICS.computeUsageAverage})` },
       memoryAllocation: buildMemoryAllocationQueries({ groupLabel }),
+      memoryUsage: buildMemoryUsageQueries({ groupLabel }),
     };
-  const memoryUsage = buildMemoryUsageQueries({ groupLabel });
-
+  const top5 = ({ percentQuery }) => `topk(5, ${percentQuery})`;
   return {
-    computeAllocation: `topk(5, ${computeAllocation.percentQuery})`,
-    computeUsage: `topk(5, avg by (${groupLabel}) (${METRICS.computeUsageAverage}))`,
-    memoryAllocation: `topk(5, ${memoryAllocation.percentQuery})`,
-    memoryUsage: `topk(5, ${memoryUsage.percentQuery})`,
+    computeAllocation: top5(metrics.computeAllocation),
+    computeUsage: top5(metrics.computeUsage),
+    memoryAllocation: top5(metrics.memoryAllocation),
+    memoryUsage: top5(metrics.memoryUsage),
   };
 };

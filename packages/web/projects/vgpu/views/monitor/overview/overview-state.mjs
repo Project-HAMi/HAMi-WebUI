@@ -2,5 +2,5 @@
 // malformed one never reads as zero workloads.
 export const readWorkloadTotal = (reply) => {
   const total = reply?.total;
-  return Array.isArray(reply?.items) && Number.isInteger(total) && total >= 0 ? total : undefined;
+  return Array.isArray(reply?.items) && Number.isSafeInteger(total) && total >= reply.items.length ? total : undefined;
 };

@@ -3,7 +3,9 @@
     <div class="home-block-header" v-if="title">
       <div class="title">{{ title }}</div>
       <div class="extra">
-        <slot name="extra" />
+        <slot name="extra">
+          <OverviewAllLink v-if="allTo" :to="allTo" :label="allLabel" />
+        </slot>
       </div>
     </div>
     <div class="home-block-content"><slot /></div>
@@ -11,7 +13,9 @@
 </template>
 
 <script setup>
-defineProps(['title']);
+import OverviewAllLink from './OverviewAllLink.vue';
+
+defineProps(['title', 'allTo', 'allLabel']);
 </script>
 
 <style scoped lang="scss">

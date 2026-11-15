@@ -4,185 +4,15 @@
 
     <DeviceConfigAlert />
 
-    <div class="home-top">
-      <div class="home-top-left">
-        <Block :title="$t('dashboard.cardResource')">
-          <template #extra>
-            <RouterLink
-              class="all-btn"
-              to="/accelerators"
-              :aria-label="$t('dashboard.viewAllGpuResources')"
-            >
-              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </RouterLink>
-          </template>
-          <div class="card-overview">
-            <div v-for="item in cardGaugeConfig" :key="item.id">
-              <Gauge v-bind="item" />
-            </div>
-          </div>
-        </Block>
-
-        <Block :title="$t('dashboard.resourceOverview')">
-          <ul class="resourceOverview">
-            <li
-              v-for="{ title, count, icon, to, unit, status, metric } in resourceOverview"
-              :key="title"
-            >
-              <component
-                :is="to ? RouterLink : 'div'"
-                :to="to || undefined"
-                class="resource-overview-item"
-                :class="{ 'is-clickable': !!to }"
-                :aria-busy="status === 'loading'"
-              >
-                <div class="avatar vgpu-table-name-icon-card">
-                  <svg-icon :icon="icon" />
-                </div>
-                <div class="main">
-                  <div v-if="status === 'loading'" class="resource-count-skeleton">
-                    <t-skeleton
-                      animation="gradient"
-                      :row-col="[{ width: '56%', height: '22px' }]"
-                      aria-hidden="true"
-                    />
-                    <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-                  </div>
-                  <div v-else-if="status === 'ready'" class="count">
-                    {{ count }}<span v-if="unit" class="count-unit">{{ unit }}</span>
-                  </div>
-                  <div v-else class="resource-state-text">
-                    {{ getStateText(status, metric) }}
-                  </div>
-                  <div class="title">
-                    {{ title }}
-                  </div>
-                </div>
-                <svg-icon
-                  v-if="to"
-                  icon="jump"
-                  class="resource-overview-nav-icon"
-                  aria-hidden="true"
-                />
-              </component>
-            </li>
-          </ul>
-        </Block>
+    <Block class="home-gpu-metrics" :title="$t('dashboard.cardResource')" all-to="/accelerators" :all-label="$t('dashboard.viewAllGpuResources')">
+      <div class="card-overview">
+        <div v-for="item in cardGaugeConfig" :key="item.id">
+          <Gauge v-bind="item" />
+        </div>
       </div>
+    </Block>
 
-      <div class="home-top-right">
-        <Block :title="$t('dashboard.nodeOverview')" class="home-top-right-card">
-          <template #extra>
-            <RouterLink
-              class="all-btn"
-              to="/nodes"
-              :aria-label="$t('dashboard.viewAllNodes')"
-            >
-              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </RouterLink>
-          </template>
-          <div v-if="nodeListState.status.value === 'loading'" aria-busy="true">
-            <ul class="node-all node-overview-skeleton" aria-hidden="true" inert>
-              <li v-for="{ title, status, description } in nodes" :key="status" class="node-overview-card">
-                <div class="node-overview-title-wrap">
-                  <span class="node-overview-title-link">{{ title }}</span>
-                  <MetricHelp
-                    v-if="status === 'temporarilyUnschedulable'"
-                    :description="description"
-                    :help-label="$t('node.schedulingStatusHelpLabel')"
-                  />
-                </div>
-                <div class="node-overview-value-link">
-                  <div class="node-overview-value">
-                    <div class="count"><LoadingValue :height="24" width="1ch" /></div>
-                    <svg-icon icon="jump" class="node-overview-nav-icon" />
-                  </div>
-                </div>
-              </li>
-            </ul>
-            <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-          </div>
-          <div
-            v-else-if="nodeListState.status.value !== 'ready'"
-            class="overview-state"
-          >
-            {{ getStateText(nodeListState.status.value, false) }}
-          </div>
-          <ul v-else class="node-all">
-            <li
-              v-for="{ title, status, count, color, showHelp, description } in nodes"
-              :key="title"
-              class="node-overview-card"
-            >
-              <div class="node-overview-title-wrap">
-                <RouterLink
-                  class="node-overview-title-link"
-                  :to="{ path: '/nodes', query: { schedulingEligibility: status } }"
-                >
-                  {{ title }}
-                </RouterLink>
-                <MetricHelp
-                  v-if="showHelp"
-                  :description="description"
-                  :help-label="$t('node.schedulingStatusHelpLabel')"
-                />
-              </div>
-              <RouterLink
-                class="node-overview-value-link"
-                :to="{ path: '/nodes', query: { schedulingEligibility: status } }"
-                :aria-label="`${title}: ${count}`"
-              >
-                <div class="node-overview-value">
-                  <div class="count" :style="{ color }">
-                    {{ count }}
-                  </div>
-                  <svg-icon icon="jump" class="node-overview-nav-icon" aria-hidden="true" />
-                </div>
-              </RouterLink>
-            </li>
-          </ul>
-        </Block>
-        <Block :title="$t('dashboard.cardTypeDist')" class="home-top-right-card">
-          <template #extra>
-            <RouterLink
-              class="all-btn"
-              to="/accelerators"
-              :aria-label="$t('dashboard.viewAllGpuTypes')"
-            >
-              {{ $t('dashboard.viewAll') }}<svg-icon icon="more" style="margin-left: 4px" />
-            </RouterLink>
-          </template>
-          <div
-            v-if="cardListState.status.value === 'loading'"
-            class="card-type-skeleton"
-            aria-busy="true"
-          >
-            <t-skeleton
-              animation="gradient"
-              :row-col="[{ type: 'circle', size: '132px' }]"
-              aria-hidden="true"
-            />
-            <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-          </div>
-          <div
-            v-else-if="cardListState.status.value !== 'ready'"
-            class="overview-state"
-          >
-            {{ getStateText(cardListState.status.value, false) }}
-          </div>
-          <div v-else-if="!cardData.length" class="overview-state">
-            {{ $t('common.noData') }}
-          </div>
-          <div v-else class="card-type-chart">
-            <VChart
-              :option="getCardOptions(cardData, chartWidth)"
-              :autoresize="true"
-              @click="handlePieClick"
-            />
-          </div>
-        </Block>
-      </div>
-    </div>
+    <OverviewInventory :inventory="inventoryState" :workloads="workloadState" />
 
     <div class="home-bottom">
       <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
@@ -207,19 +37,7 @@
         </div>
       </div>
 
-      <div class="home-bottom-row home-bottom-top5-row">
-        <div class="home-bottom-col">
-          <TabTop
-            v-bind="nodeComputeTop5"
-            :onClick="openRankedNode"
-          />
-        </div>
-        <div class="home-bottom-col">
-          <TabTop
-            v-bind="nodeMemoryTop5"
-            :onClick="openRankedNode"
-          />
-        </div>
+      <div class="home-bottom-row home-bottom-workload-row">
         <div class="home-bottom-col">
           <Block :title="t('dashboard.nodeWorkloadTop5')">
             <div
@@ -280,10 +98,8 @@
 
 <script setup>
 import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
-import { ref, computed, reactive, onMounted, onUnmounted, h, resolveComponent } from 'vue';
+import { ref, shallowRef, computed, reactive, onMounted, onUnmounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
-import VChart from 'vue-echarts';
-import { getCardOptions } from './getOptions';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
@@ -291,26 +107,21 @@ import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
 import Block from './Block.vue';
 import './style.scss';
-import { RouterLink, useRouter } from 'vue-router';
-import nodeApi from '~/vgpu/api/node';
+import { useRouter } from 'vue-router';
+import resourcesApi from '~/vgpu/api/resources';
 import cardApi from '~/vgpu/api/card';
 import taskApi from '~/vgpu/api/task';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
-import useFetchList from '@/hooks/useFetchList';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
-import TabTop from '~/vgpu/components/TabTop.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
 import LoadingValue from '~/vgpu/components/LoadingValue.vue';
-import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { LONG_TEXT_TOOLTIP_STYLE } from '~/vgpu/components/tooltip-policy.mjs';
 import { getRangeConfigInit } from './config';
 import {
-  createNodeTopQueries,
   createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
-import { buildClusterAllocatableQueries } from '~/vgpu/metrics/query-contract.mjs';
 import { startVisibleSnapshots } from './visible-snapshots.mjs';
 import {
   createRequestState,
@@ -319,9 +130,9 @@ import {
   resolveRequest,
   startRequest,
 } from '@/hooks/request-state.mjs';
-import { readWorkloadTotal } from './overview-state.mjs';
+import OverviewInventory from './OverviewInventory.vue';
+import { readContainerSummary, readResourceInventory } from './resource-summary.mjs';
 import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
-import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
 const router = useRouter();
 const { t } = useI18n();
@@ -331,15 +142,6 @@ const start = new Date(end.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
 const nodeWorkloadSkeletonData = Array.from({ length: 5 }, (_, index) => ({ name: `loading-${index}` }));
-
-const handlePieClick = (params) => {
-  router.push({
-    path: '/accelerators',
-    query: { type: params.data.name },
-  });
-};
-
-const chartWidth = ref(200);
 
 const nodeWorkloadTop5State = reactive(createRequestState([]));
 const nodeWorkloadDistributionState = reactive(createRequestState([]));
@@ -368,7 +170,7 @@ const nodeWorkloadColumns = computed(() => [
           class: 'node-workload-name-link',
           onClick: (e) => {
             e.stopPropagation();
-            openRankedNode({ data: row });
+            openWorkloadNode(row.name);
           },
         },
         row.name,
@@ -472,20 +274,6 @@ let snapshots;
 const refreshCurrentSnapshot = (at) => snapshots?.refresh(at);
 const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs(), undefined, undefined, { subscribe });
 
-const clusterAllocatableQueries = buildClusterAllocatableQueries();
-const clusterResourceConfig = useInstantVector([
-  {
-    query: clusterAllocatableQueries.cpu,
-    total: 0,
-    used: 0,
-  },
-  {
-    query: clusterAllocatableQueries.memory,
-    total: 0,
-    used: 0,
-  },
-]);
-
 const cardGaugeConfig = computed(() => _cardGaugeConfig.value.map((item) => ({
   ...item,
   title: t(item.titleKey),
@@ -497,178 +285,40 @@ const cardGaugeConfig = computed(() => _cardGaugeConfig.value.map((item) => ({
   }),
 })));
 
-const nodeListState = useFetchList(() => nodeApi.getInventoryNodes());
-const cardListState = useFetchList(() =>
-  cardApi.getCardListReq({ filters: {} }),
-);
-// Counted by the workload list itself, so this number matches the list's "All" total.
-const workloadTotalState = reactive(createRequestState(undefined));
-const fetchWorkloadTotal = async () => {
-  const requestId = startRequest(workloadTotalState, { hasResolved: false });
-  try {
-    const total = readWorkloadTotal(await taskApi.getWorkloads({ filters: {}, page: 1, pageSize: 1 }));
-    if (total === undefined) {
-      rejectRequest(workloadTotalState, new TypeError('Expected workload items and a nonnegative total'), {
-        requestId,
-        status: REQUEST_STATUS.INVALID,
-      });
+// Keep the previous successful response visible while refreshing. Once a request
+// fails, clear that source instead of presenting old counts as current.
+function useInventorySource(load, project) {
+  const result = shallowRef({ status: REQUEST_STATUS.LOADING, data: null });
+  subscribe(async (_time, signal) => {
+    let reply;
+    try {
+      reply = await load(signal);
+    } catch {
+      if (!signal.aborted) result.value = { status: REQUEST_STATUS.ERROR, data: null };
       return;
     }
-    resolveRequest(workloadTotalState, { data: total, requestId });
-  } catch (error) {
-    rejectRequest(workloadTotalState, error, { requestId });
-  }
-};
+    if (signal.aborted) return;
+    try {
+      result.value = { status: REQUEST_STATUS.READY, data: project(reply) };
+    } catch {
+      result.value = { status: REQUEST_STATUS.INVALID, data: null };
+    }
+  });
+  return result;
+}
 
-const nodeData = nodeListState.data;
-const cardData = cardListState.data;
+const inventoryState = useInventorySource(resourcesApi.overviewInventory, readResourceInventory);
+const workloadState = useInventorySource(
+  signal => taskApi.getWorkloads({ filters: {}, page: 1, pageSize: 1 }, signal),
+  readContainerSummary,
+);
 
-function openRankedNode({ data: { name } }) {
-  const node = nodeData.value.find((row) => row.name === name);
+function openWorkloadNode(name) {
+  const node = inventoryState.value.data?.nodes.find((row) => row.name === name);
   const to = buildNodeDetailLocation({ uid: node?.uid, nodeName: name });
   if (to) router.push(to);
   else MessagePlugin.error(t('node.nodeNotFound'));
 }
-
-const readyMetricValue = (metric, field, format) => {
-  if (metric?.status !== REQUEST_STATUS.READY) return undefined;
-  const value = Number(metric?.[field]);
-  return Number.isFinite(value) ? format(value) : undefined;
-};
-
-const resourceOverview = computed(() => [
-  {
-    title: t('dashboard.nodeTotal'),
-    count: nodeData.value.length,
-    status: nodeListState.status.value,
-    metric: false,
-    icon: 'vgpu-node',
-    unit: '',
-    to: '/nodes',
-  },
-  {
-    title: t('dashboard.gpuCardCount'),
-    count: cardData.value.length,
-    status: cardListState.status.value,
-    metric: false,
-    icon: 'vgpu-card',
-    unit: '',
-    to: '/accelerators',
-  },
-  {
-    title: t('dashboard.clusterAllocatableCpu'),
-    count: readyMetricValue(
-      clusterResourceConfig.value[0],
-      'used',
-      (value) => value.toFixed(0),
-    ),
-    status: clusterResourceConfig.value[0]?.status,
-    metric: true,
-    icon: 'node-cpu-total',
-    unit: t('dashboard.cpuCoreUnit'),
-  },
-  {
-    title: t('dashboard.workloadCount'),
-    count: workloadTotalState.data,
-    status: workloadTotalState.status,
-    metric: false,
-    icon: 'vgpu-workload',
-    unit: '',
-    to: '/workloads',
-  },
-  {
-    title: t('dashboard.memoryTotal'),
-    count: readyMetricValue(
-      _cardGaugeConfig.value[2],
-      'total',
-      (value) => value.toFixed(0),
-    ),
-    status: _cardGaugeConfig.value[2]?.status,
-    metric: true,
-    icon: 'node-memory-total',
-    unit: 'GiB',
-  },
-  {
-    title: t('dashboard.clusterAllocatableMemory'),
-    count: readyMetricValue(
-      clusterResourceConfig.value[1],
-      'used',
-      (value) => (value / 1024 / 1024 / 1024).toFixed(0),
-    ),
-    status: clusterResourceConfig.value[1]?.status,
-    metric: true,
-    icon: 'node-memory-total',
-    unit: 'GiB',
-  },
-]);
-
-const nodes = computed(() => {
-  const schedulableCount = nodeData.value.filter(isNodeSchedulingEligible).length;
-  const temporarilyUnschedulableCount = nodeData.value.length - schedulableCount;
-  return [
-    {
-      title: t('node.schedulable'),
-      count: schedulableCount,
-      status: 'schedulable',
-      color: '#16A34A',
-      showHelp: false,
-      description: '',
-    },
-    {
-      title: t('node.temporarilyUnschedulable'),
-      count: temporarilyUnschedulableCount,
-      status: 'temporarilyUnschedulable',
-      color: '#1D2B3A',
-      showHelp: temporarilyUnschedulableCount > 0,
-      description: t('node.temporarilyUnschedulableOverviewDescription'),
-    },
-  ];
-});
-
-const nodeTopQueries = createNodeTopQueries();
-
-const nodeComputeTop5 = computed(() => ({
-  title: t('dashboard.nodeComputeTop5'),
-  key: 'compute',
-  config: [
-    {
-      tab: t('dashboard.allocRate'),
-      key: 'alloc',
-      nameKey: 'node',
-      data: [],
-      query: nodeTopQueries.computeAllocation,
-    },
-    {
-      tab: t('dashboard.usageRateLegend'),
-      key: 'usage',
-      data: [],
-      nameKey: 'node',
-      query: nodeTopQueries.computeUsage,
-    },
-  ],
-}));
-
-const nodeMemoryTop5 = computed(() => ({
-  title: t('dashboard.nodeMemoryTop5'),
-  key: 'memory',
-  config: [
-    {
-      tab: t('dashboard.allocRate'),
-      key: 'alloc',
-      nameKey: 'node',
-      data: [],
-      query: nodeTopQueries.memoryAllocation,
-    },
-    {
-      tab: t('dashboard.usageRateLegend'),
-      key: 'usage',
-      nameKey: 'node',
-      data: [],
-      query: nodeTopQueries.memoryUsage,
-    },
-  ],
-}));
-
 
 const rangeDefinitions = getRangeConfigInit(t);
 const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) =>
@@ -710,19 +360,8 @@ const getStateText = (status, metric = true) =>
 onUnmounted(() => snapshots?.stop());
 onMounted(() => {
   snapshots = startVisibleSnapshots(snapshotReaders, end);
-  fetchWorkloadTotal();
   fetchNodeWorkloadTop5();
   fetchNodeWorkloadDistribution();
 });
 
 </script>
-
-<style>
-.card-overview {
-  padding-bottom: 10px;
-  min-height: 140px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-</style>

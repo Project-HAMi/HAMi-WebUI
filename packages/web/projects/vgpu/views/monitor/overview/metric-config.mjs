@@ -22,7 +22,7 @@ export const createOverviewGaugeConfigs = () => {
       id: 'memory-allocation',
       kind: 'allocation',
       titleKey: 'dashboard.memAllocRate',
-      descriptionKey: 'dashboard.memAllocRateDescription',
+      descriptionKey: 'dashboard.overviewMemAllocRateDescription',
       detailLabelKey: 'dashboard.allocated',
       detailMode: 'ratio',
       totalPrecision: 1,
@@ -50,7 +50,7 @@ export const createOverviewGaugeConfigs = () => {
       id: 'memory-utilization',
       kind: 'utilization',
       titleKey: 'dashboard.memUsageRate',
-      descriptionKey: 'dashboard.memUsageRateDescription',
+      descriptionKey: 'dashboard.overviewMemUsageRateDescription',
       detailLabelKey: 'dashboard.used',
       detailMode: 'ratio',
       totalPrecision: 1,
@@ -63,11 +63,6 @@ export const createOverviewGaugeConfigs = () => {
     },
   ];
 };
-
-export const createNodeTopQueries = () => Object.fromEntries(
-  Object.entries(buildPhysicalResourceQueries({ byNode: true }))
-    .map(([key, metric]) => [key, `topk(5, ${metric.percentQuery})`]),
-);
 
 export const createNodeWorkloadDistributionQuery = () =>
   'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated)) by (node) or on (node) (count by (node) (hami_vgpu_count) * 0)';

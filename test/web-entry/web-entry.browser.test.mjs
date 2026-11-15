@@ -9,8 +9,7 @@ import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
 import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
-import { createNodeTopQueries } from '../../packages/web/projects/vgpu/views/monitor/overview/metric-config.mjs'
-import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
+import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries, buildPhysicalUsageQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -247,10 +246,10 @@ async function loadAllowedFrame(parentURL, expectedFrameURL, { checkAPI = false 
     const renderedUse = Array.from(document.querySelectorAll('use')).find(
       (use) =>
         (use.getAttribute('href') || use.getAttribute('xlink:href')) ===
-        '#icon-more'
+        '#icon-dashboard'
     )
     const renderedBox = renderedUse?.getBBox()
-    const referencedSymbol = document.getElementById('icon-more')
+    const referencedSymbol = document.getElementById('icon-dashboard')
     return {
       present: Boolean(root),
       referencedSymbolTag: referencedSymbol?.tagName.toLowerCase(),
@@ -309,10 +308,15 @@ async function assertChartRuntime(target) {
   await page.clock.install()
   const runtimeErrors = []
   let rangeRequests = 0
+  const nodeRankQueries = new Set(Object.values(buildGroupedResourceTopQueries('node')))
+  const requestedNodeRanks = []
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
   page.on('request', (request) => {
     if (request.url().includes('/v1/monitor/query/range-vector')) {
       rangeRequests += 1
+    } else if (request.url().endsWith('/v1/monitor/query/instant-vector')) {
+      const query = request.postDataJSON()?.query
+      if (nodeRankQueries.has(query)) requestedNodeRanks.push(query)
     }
   })
   page.on('console', (message) => {
@@ -326,12 +330,11 @@ async function assertChartRuntime(target) {
 
   await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(
-    () => document.querySelectorAll('.echarts canvas').length >= 4
+    () => document.querySelectorAll('.home-bottom-trend-row .echarts canvas').length === 2
   )
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('.tab-top-value')]
-      .some((element) => element.textContent?.trim() === '0.4 %')
-  )
+  await page.getByRole('button', { name: 'node-1', exact: true }).waitFor()
+  assert.equal(await page.locator('.tab-top-switch').count(), 0, 'The overview must not show the node resource rankings')
+  assert.deepEqual(requestedNodeRanks, [], 'The overview must not fetch the four node ranking series')
 
   const gaugeHelp = page.locator('.gauge-card__help').first()
   await gaugeHelp.hover()
@@ -371,17 +374,14 @@ async function assertChartRuntime(target) {
 
   await assertTrendRefreshState(page)
 
-  const pie = page.locator('.card-type-chart canvas').first()
-  const pieBox = await pie.boundingBox()
-  assert.ok(pieBox?.width > 0, 'Overview card-type chart has no width')
-  assert.ok(pieBox?.height > 0, 'Overview card-type chart has no height')
-  await pie.click({
-    position: { x: pieBox.width * 0.75, y: pieBox.height * 0.5 }
-  })
+  await page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true }).click()
   await page.waitForURL((url) =>
     url.pathname.endsWith('/accelerators') &&
     url.searchParams.get('type') === 'NVIDIA'
   )
+
+  assert.equal(new URL(page.url()).searchParams.has('scope'), false)
+  await page.locator('.accelerator-table tbody').getByText('gpu-1').waitFor()
 
   const previewChart = page.locator('.pie .echarts canvas').first()
   await previewChart.waitFor()
@@ -655,7 +655,7 @@ async function waitForChartPaint(scope) {
   await waitUntil(async() => {
     const frame = await scope.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
       const bounds = canvas.getBoundingClientRect()
-      const body = canvas.closest('.metric-chart__body, .card-type-chart')?.getBoundingClientRect()
+      const body = canvas.closest('.metric-chart__body')?.getBoundingClientRect()
       return {
         fits: !body || (Math.abs(bounds.width - body.width) < 1 && Math.abs(bounds.height - body.height) < 1),
         image: canvas.toDataURL(),
@@ -891,6 +891,17 @@ before(async() => {
         ],
         total: 3
       }
+    } else if (pathname === '/api/v1/overview/inventory') {
+      payload = {
+        nodes: [
+          { name: 'node-1', uid: 'node-1', ready: true, schedulable: true },
+          { name: 'node-readability', uid: 'node-readability', ready: false, schedulable: true },
+          { name: 'node-cordoned', uid: 'node-cordoned', ready: true, schedulable: false },
+        ],
+        nodeCoverage: coverageFixture('node', 3),
+        devices: [{ node: 'node-1', provider: 'NVIDIA', deviceId: 'gpu-1', model: 'NVIDIA', healthy: true }],
+        deviceCoverage: coverageFixture('device', 1),
+      }
     } else if (pathname === '/v1/gpus') {
       payload = {
         code: 0,
@@ -898,7 +909,7 @@ before(async() => {
         total: 1
       }
     } else if (pathname === '/v1/containers' || pathname === '/v1/workloads') {
-      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1 }
+      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1, statusCounts: { all: 1, success: 1 } }
     } else if (pathname === '/v1/monitor/query/instant-vector') {
       if (body?.query?.includes('gpu-metric-new')) {
         const requestKey = 'monitor:gpu-metric-new'
@@ -1981,7 +1992,6 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
     fixtures.set(query, { nameKey, data })
     return query
   })
-  const overviewQueries = fixtureQueries('node', createNodeTopQueries())
   const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
   const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
   const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
@@ -1993,7 +2003,6 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
   })
   try {
     for (const [path, queries] of [
-      ['overview', [overviewQueries.slice(0, 2), overviewQueries.slice(2)]],
       ['nodes', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
       ['accelerators', [deviceQueries.slice(0, 2), deviceQueries.slice(2)]],
       ['workloads', [countQueries, workloadQueries]]
@@ -2049,7 +2058,7 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
             assert.equal(header.height, 30)
             assert.ok(header.fontSizes.every((size) => size === '13px'))
           }
-          if (path === 'overview' || path === 'workloads') {
+          if (path === 'nodes' || path === 'workloads') {
             await cards.first().scrollIntoViewIfNeeded()
             await captureTrendScreenshot(page, `p7-${path}-${language}-${width}-compact-top5`)
           }
@@ -2951,11 +2960,19 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
     const selected = trendRangeButton(page, '1h')
+    const presets = filter.getByRole('group', { name: 'Time range', exact: true })
+    for (const [name, label] of [
+      ['1 Hour', '1h'], ['3 Hours', '3h'], ['6 Hours', '6h'], ['24 Hours', '24h'],
+      ['7 Days', '7d'], ['30 Days', '30d'], ['Custom', 'Custom']
+    ]) {
+      assert.equal((await presets.getByRole('button', { name, exact: true }).innerText()).trim(), label)
+    }
     await selected.focus()
     await filter.evaluate((element) => { element.style.width = '600px' })
     const narrow = filter.locator('.trend-time-filter-select')
     const input = narrow.getByRole('textbox', { name: 'Time range', exact: true })
     await narrow.waitFor()
+    assert.equal(await input.getAttribute('aria-description'), '1 Hour')
     await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Narrow mode must retain focus on the visible preset entry')
     assert.equal(requests.length, overviewTrendCount)
     await filter.evaluate((element) => { element.style.width = '900px' })
@@ -4052,6 +4069,45 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
   }
 })
 
+test('overview links GPU sections to the default accelerator list and model rows to a filtered list', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  try {
+    await page.goto(target + deepRoute)
+    for (const [section, label] of [
+      ['.home-gpu-metrics', 'View all GPU resources'],
+      ['.model-summary', 'View all GPUs across models'],
+    ]) {
+      const header = page.locator(section + ' .home-block-header')
+      const all = header.getByRole('link', { name: label, exact: true })
+      assert.equal(await all.innerText(), 'All')
+      assert.equal(await all.getAttribute('href'), basePath + 'accelerators')
+      await all.click()
+      await page.waitForURL(url => url.pathname + url.search === basePath + 'accelerators')
+      await page.goBack()
+    }
+    for (const [resource, suffix, label] of [
+      ['nodes', 'nodes', 'View all nodes'],
+      ['gpus', 'accelerators', 'View all GPUs'],
+      ['workloads', 'workloads', 'View all workloads'],
+    ]) {
+      await page.locator(`[role="tab"][id$="-${resource}"]`).click()
+      const all = page.getByRole('tabpanel').getByRole('link', { name: label, exact: true })
+      assert.equal(await all.innerText(), 'All')
+      assert.equal(await all.getAttribute('href'), basePath + suffix)
+      await all.click()
+      await page.waitForURL(url => url.pathname + url.search === basePath + suffix)
+      await page.goBack()
+    }
+    const model = page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true })
+    await model.click()
+    await page.waitForURL(url => url.pathname === basePath + 'accelerators' &&
+      !url.searchParams.has('scope') && url.searchParams.get('type') === 'NVIDIA')
+  } finally {
+    await page.close()
+  }
+})
+
 test('overview workload count matches the workload list total', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
@@ -4075,12 +4131,8 @@ test('overview workload count matches the workload list total', async() => {
       json: { code: 0, items: [row], total: 68, statusCounts: { all: 68, pending: 6, success: 60, abnormal: 2 } },
     })
   })
-  const workloadCard = page.locator('.resource-overview-item', { hasText: 'Workloads' })
-  const cardCount = async() => {
-    await workloadCard.locator('.count, .resource-state-text').first().waitFor()
-    const shown = await workloadCard.locator('.count').count()
-    return shown ? (await workloadCard.locator('.count').textContent()).trim() : null
-  }
+  const workloadTab = page.locator('[role="tab"][id$="-workloads"]')
+  const cardCount = () => workloadTab.locator('.resource-tab__count').innerText()
 
   try {
     await page.goto(`${target}${basePath}overview`, { waitUntil: 'domcontentloaded' })
@@ -4088,17 +4140,20 @@ test('overview workload count matches the workload list total', async() => {
 
     reply = 'no total'
     await page.reload({ waitUntil: 'domcontentloaded' })
-    assert.equal(await cardCount(), null, 'A reply without a total must not read as a number')
+    assert.equal(await cardCount(), '—', 'A reply without a total must not read as a number')
 
     reply = 'counted'
     workloadRequests.length = 0
     containerRequests = 0
     await page.reload({ waitUntil: 'domcontentloaded' })
     assert.equal(await cardCount(), '68')
-    assert.deepEqual(workloadRequests[0], { filters: {}, page: 1, pageSize: 1 })
+    assert.deepEqual(workloadRequests, [{ filters: {}, page: 1, pageSize: 1 }])
     assert.equal(containerRequests, 0, 'The overview still read the container list')
 
-    await workloadCard.click()
+    await workloadTab.click()
+    const panel = page.getByRole('tabpanel')
+    assert.deepEqual(await panel.locator('.resource-status__count').allTextContents(), ['60', '2', '6'])
+    await panel.getByRole('link', { name: 'View all workloads', exact: true }).click()
     await page.waitForURL((url) => url.pathname.endsWith('/workloads'))
     const listTotal = page.locator('.table-plus-pagination-total')
     await listTotal.waitFor()
@@ -4107,7 +4162,7 @@ test('overview workload count matches the workload list total', async() => {
     reply = 'failed'
     await page.goBack({ waitUntil: 'domcontentloaded' })
     await page.waitForURL((url) => url.pathname.endsWith('/overview'))
-    assert.equal(await cardCount(), null, 'A failed total must not read as a number')
+    assert.equal(await cardCount(), '—', 'A failed total must not read as a number')
   } finally {
     await page.close()
   }
@@ -5637,39 +5692,29 @@ test('overview loading regions keep page containers while data arrives', { timeo
       const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
       let release
       const gate = new Promise((resolve) => { release = resolve })
-      await page.route(/\/v1\/(?:nodes|gpus|monitor\/query\/instant-vector)$/, async(route) => {
+      await page.route(/\/v1\/(?:overview\/inventory|workloads|monitor\/query\/instant-vector)$/, async(route) => {
         const response = await route.fetch()
         const query = route.request().method() === 'POST' ? route.request().postDataJSON()?.query : ''
-        const ranking = query?.includes('topk(')
+        const workloadCount = query?.startsWith('topk(5, count(count by (node, container_pod_uuid)')
         await gate
-        await route.fulfill(ranking ? { json: { data: Array.from({ length: 5 }, (_, index) => ({
-          metric: { node: `node-${index + 1}`, device_uuid: `gpu-${index + 1}` }, value: 5 - index,
+        await route.fulfill(workloadCount ? { json: { data: Array.from({ length: 5 }, (_, index) => ({
+          metric: { node: `node-${index + 1}` }, value: 5 - index,
         })) } } : { response })
       })
       const measure = () => page.evaluate(() => {
         const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height
         return {
-          node: height('.node-overview-skeleton') ?? height('.node-all'),
-          nodeBlock: height('.home-top-right-card'),
-          type: height('.card-type-skeleton') ?? height('.card-type-chart'),
-          top5: [...document.querySelectorAll('.tab-top-list')].map((element) => element.getBoundingClientRect().height),
+          resources: height('.resource-tabs'),
           workload: height('.workload-table-skeleton') ?? height('.top5-item-list-table'),
           chart: [...document.querySelectorAll('.metric-chart__body')].map((element) => element.getBoundingClientRect().height),
         }
       })
       try {
         await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
-        await page.locator('.node-overview-skeleton').waitFor()
-        const countFonts = await page.locator('.node-overview-skeleton .count').evaluateAll((counts) => counts.map((count) => {
-          const font = (element) => {
-            const style = getComputedStyle(element)
-            return { size: style.fontSize, family: style.fontFamily, weight: style.fontWeight }
-          }
-          return { count: font(count), placeholder: font(count.querySelector('.loading-value')) }
-        }))
-        for (const fonts of countFonts) {
-          assert.deepEqual(fonts.placeholder, fonts.count, 'Character-width placeholders must use the count font, not the skeleton library font')
-        }
+        await page.locator('.card-type-skeleton').waitFor()
+        const modelCard = await page.locator('.model-summary').elementHandle()
+        assert.equal(await page.locator('[role="tab"][aria-busy="true"]').count(), 3)
+        await page.getByRole('tabpanel').locator('.resource-statuses--loading').waitFor()
         const pending = []
         for (const width of [1280, 1366, 1440, 1920, 600]) {
           await page.setViewportSize({ width, height: 1000 })
@@ -5679,8 +5724,9 @@ test('overview loading regions keep page containers while data arrives', { timeo
           if (width === 1280) await captureTrendScreenshot(page, `skeleton-overview-${locale}-1280`)
         }
         release()
-        await page.locator('.node-all').waitFor()
-        await page.locator('.tab-top-skeleton').first().waitFor({ state: 'detached' })
+        await page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true }).waitFor()
+        assert.ok(await modelCard.evaluate(card => card.isConnected), 'The model card container must survive its loading state')
+        await page.locator('.node-workload-name-link').nth(4).waitFor()
         const ready = []
         for (const width of [1280, 1366, 1440, 1920, 600]) {
           await page.setViewportSize({ width, height: 1000 })
@@ -5692,10 +5738,8 @@ test('overview loading regions keep page containers while data arrives', { timeo
         t.diagnostic(JSON.stringify({ locale, pending, ready }))
         assert.ok(ready.every((state) => state.chart.every((height) => height === 250)))
         for (const [index, state] of ready.entries()) {
-          assert.equal(state.node, pending[index].node, 'Known node status labels must reserve their wrapped height')
+          assert.equal(state.resources, pending[index].resources, 'Resource tabs must reserve their height while loading')
           assert.equal(state.workload, pending[index].workload, 'Five loading rows must match five result rows in the count table')
-          assert.ok(state.top5.every((height, rank) => Math.abs(height - pending[index].top5[rank]) < 4),
-            'Five ranking placeholders must retain the five-item row rhythm')
         }
       } finally {
         release()
@@ -6296,10 +6340,13 @@ test('Ascend node rates and capacity come from one inventory snapshot, with per-
   await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', [node]) }))
   await page.route('**/v1/node?**', (route) => route.fulfill({ json: { ...node, inventoryCoverage: coverageFixture('device', 8) } }))
   const grouped = buildGroupedResourceTopQueries('node')
+  const usage = buildPhysicalUsageQueries({ byNode: true, selector: `node="${node.name}",node_uid="${node.uid}"` })
+  const instantValues = new Map([
+    [grouped.computeAllocation, node.coreAllocationPercent], [grouped.memoryAllocation, node.memoryAllocationPercent],
+    [usage.computeUsage.query, 25], [usage.memoryUsage.query, 2], [usage.memoryUsage.totalQuery, 4]
+  ])
   await page.route('**/v1/monitor/query/instant-vector', (route) => {
-    const query = route.request().postDataJSON()?.query
-    const value = query === grouped.computeAllocation ? node.coreAllocationPercent
-      : query === grouped.memoryAllocation ? node.memoryAllocationPercent : undefined
+    const value = instantValues.get(route.request().postDataJSON()?.query)
     return value === undefined ? route.continue() : route.fulfill({ json: { data: [{ metric: { node: node.name }, value }] } })
   })
   const ranges = []
@@ -6325,9 +6372,13 @@ test('Ascend node rates and capacity come from one inventory snapshot, with per-
     await cards.last().getByText('0.00%', { exact: true }).waitFor()
     assert.equal(await cards.first().locator('.resource-card-value').innerText(), '8')
     assert.equal(await cards.last().locator('.resource-card-value').innerText(), '8.00 GiB')
-    const scoped = buildPhysicalAllocationQueries({ selector: `node="${node.name}"` })
+    const scoped = buildPhysicalAllocationQueries({ selector: `node="${node.name}",node_uid="${node.uid}"` })
     await waitUntil(() => [scoped.computeAllocation, scoped.memoryAllocation].every((metric) => ranges.includes(metric.percentQuery)),
       'Both allocation trends must scope the physical formula to the opened node')
+    await cards.first().getByText('25.00%', { exact: true }).waitFor()
+    await cards.last().getByText('50.00%', { exact: true }).waitFor()
+    await waitUntil(() => [usage.computeUsage, usage.memoryUsage].every((metric) => ranges.includes(metric.percentQuery)),
+      'Both usage trends must measure the same physical devices as the node ranking')
     assert.equal(instant.some((query) => query.includes('allocated')), false, 'Current allocation must use the same snapshot as its capacity')
   } finally {
     await page.close()
@@ -6877,6 +6928,18 @@ test('overview gauges share the initial trend time and advance together on a vis
   const trendQueries = new Set(metrics.map(({ percentQuery }) => percentQuery))
   const rounds = new Map()
   const trendEnds = new Map()
+  const inventoryReads = []
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname
+    if (/\/v1\/(?:overview\/inventory|nodes|gpus|summary|device-models|containers|workloads)$/.test(path)) {
+      inventoryReads.push(path.replace(basePath, '/'))
+    }
+  })
+  const snapshotInventoryReads = ['/api/v1/overview/inventory', '/api/vgpu/v1/workloads'].sort()
+  const assertInventoryRounds = count => assert.deepEqual(
+    inventoryReads.slice().sort(), Array.from({ length: count }, () => snapshotInventoryReads).flat().sort(),
+    'Each live snapshot must read compact inventory once and the container total once',
+  )
   const readRound = async(index) => {
     await waitUntil(() => [...rounds.values()][index]?.size === 7, 'Missing overview gauge query')
     return [...rounds.keys()][index]
@@ -6900,6 +6963,7 @@ test('overview gauges share the initial trend time and advance together on a vis
     await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
     await page.goto(target + deepRoute, { waitUntil: 'networkidle' })
     const first = await readRound(0)
+    assertInventoryRounds(1)
     await waitUntil(() => trendEnds.size === 4, 'Missing initial overview trends')
     assert.ok(Number.isFinite(Date.parse(first)))
     assert.deepEqual(new Set(trendEnds.values()), new Set([first]))
@@ -6907,6 +6971,7 @@ test('overview gauges share the initial trend time and advance together on a vis
     const next = await readRound(1)
     assert.ok(Date.parse(next) > Date.parse(first))
     await page.waitForLoadState('networkidle')
+    assertInventoryRounds(2)
     await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
     const manual = await readRound(2)
     assert.ok(Date.parse(manual) > Date.parse(next))
@@ -6926,6 +6991,69 @@ test('overview gauges share the initial trend time and advance together on a vis
     await page.waitForLoadState('networkidle')
     assert.deepEqual(new Set(trendEnds.values()), new Set(['2026-10-06T11:23:45Z']))
     assert.equal(rounds.size, 3, 'Browsing or refreshing history must not rewind the live gauges')
+    assertInventoryRounds(3)
+  } finally {
+    await page.close()
+  }
+})
+
+test('physical overview counts and accelerator management retain their own inventories', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const die = uuid => ({ uuid, nodeName: 'ascend', type: 'Ascend910C', vendor: 'Ascend', health: true })
+  const nvidia = { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', vendor: 'NVIDIA', health: true }
+  const registrations = [nvidia, die('910C-die-0'), die('910C-die-1')]
+  await page.route('**/api/vgpu/v1/gpus', route => route.fulfill({ json: { list: registrations } }))
+  const rows = page.locator('.accelerator-table tbody tr')
+  const readManagement = async() => {
+    await rows.getByText('910C-die-1', { exact: true }).waitFor()
+    await page.locator('.card-admin-top-wrap .pie canvas').waitFor()
+    await page.locator('.card-admin-top-wrap .tab-top-switch').first().waitFor()
+    assert.equal(await rows.count(), registrations.length)
+    return {
+      columns: await page.locator('.accelerator-table thead th').allTextContents(),
+      destinations: await rows.locator('.card-id-cell a').evaluateAll(links => links.map(link => link.getAttribute('href'))),
+    }
+  }
+  try {
+    await page.goto(target + deepRoute)
+    const gpuTab = page.locator('[role="tab"][id$="-gpus"]')
+    assert.equal(await gpuTab.locator('.resource-tab__count').innerText(), '1')
+    await gpuTab.click()
+    await page.getByRole('tabpanel').getByRole('link', { name: 'Accelerators', exact: true }).click()
+    await page.waitForURL(url => url.pathname + url.search === basePath + 'accelerators')
+    const fromOverview = await readManagement()
+    assert.deepEqual(fromOverview.columns, ['GPU UUID', 'Status', 'Split', 'Hosting Node',
+      'Compute Remaining/Total', 'Compute Allocation', 'Memory Remaining/Total', 'Memory Allocation'])
+    assert.deepEqual(fromOverview.destinations.slice().sort(), registrations.map(row => basePath + 'accelerators/' + row.uuid).sort())
+    await rows.getByRole('link', { name: 'gpu-1', exact: true }).click()
+    await page.waitForURL('**/accelerators/gpu-1')
+    await page.goBack()
+    await page.goto(target + deepRoute)
+    await page.getByRole('link', { name: 'Accelerators', exact: true }).click()
+    assert.deepEqual(await readManagement(), fromOverview)
+  } finally {
+    await page.close()
+  }
+})
+
+test('old physical bookmarks are replaced by the standard accelerator list and keep their filters', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const compactRequests = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/overview/inventory')) compactRequests.push(request.url())
+  })
+  try {
+    await page.goto(target + basePath + 'nodes')
+    await page.goto(target + basePath + 'accelerators?scope=physical&type=NVIDIA&q=gpu')
+    await page.waitForURL(url => url.pathname === basePath + 'accelerators' && !url.searchParams.has('scope'))
+    assert.deepEqual(Object.fromEntries(new URL(page.url()).searchParams), { type: 'NVIDIA', q: 'gpu' })
+    await page.locator('.accelerator-table tbody').getByRole('link', { name: 'gpu-1', exact: true }).waitFor()
+    await page.locator('.card-admin-top-wrap .pie canvas').waitFor()
+    assert.deepEqual(compactRequests, [])
+    await page.goBack()
+    await page.waitForURL(target + basePath + 'nodes')
   } finally {
     await page.close()
   }

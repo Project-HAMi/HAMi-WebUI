@@ -271,10 +271,8 @@ import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
 import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
-import { buildPhysicalAllocationQueries } from '~/vgpu/metrics/physical-resource-queries.mjs';
-import { buildMemoryUsageQueries } from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
-import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
+import { nodeResourceQueries, nodeUsageGaugeConfigs } from './metric-config.mjs';
 import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
 import NodeDeviceAllocation from './NodeDeviceAllocation.vue';
 
@@ -313,23 +311,15 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const nodeMetricSelector = 'node=$node';
-const { computeAllocation, memoryAllocation } = buildPhysicalAllocationQueries({ selector: nodeMetricSelector });
-const computeUsage = createNodeComputeUsageGaugeConfig({ selector: nodeMetricSelector });
-const memoryUsage = buildMemoryUsageQueries({ selector: nodeMetricSelector });
+const { computeAllocation, computeUsage, memoryAllocation, memoryUsage } = nodeResourceQueries;
 
-const renderNodeQuery = (query) =>
-  renderPromQLTemplate(query, {
-    node: detailStatus.value === REQUEST_STATUS.READY
-      ? detail.value.name
-      : 'undefined',
-  });
+const renderNodeQuery = (query) => renderPromQLTemplate(query, {
+  node: allocationNode.value?.name ?? 'undefined',
+  uid: allocationNode.value?.uid ?? 'undefined',
+});
 
 // Current allocation and its capacity come from the same inventory response as the list.
-const usageGauges = useInstantVector([
-  { query: computeUsage.query, total: computeUsage.total, percent: 0 },
-  { query: memoryUsage.query, totalQuery: memoryUsage.totalQuery, percent: 0 },
-], renderNodeQuery);
+const usageGauges = useInstantVector(nodeUsageGaugeConfigs, renderNodeQuery);
 const { data: computeTrend } = useRangeVector(
   [{ query: computeAllocation.percentQuery }, { query: computeUsage.percentQuery }],
   renderNodeQuery, times,

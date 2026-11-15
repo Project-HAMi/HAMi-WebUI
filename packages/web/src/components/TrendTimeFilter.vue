@@ -11,7 +11,7 @@
         @keydown.capture="onPresetKeydown"
       />
       <t-select
-        v-range-labels="[t('timeRange.label')]"
+        v-range-labels="{ labels: [t('timeRange.label')], description: selectedRangeDescription }"
         :value="currentDateRange"
         :options="dateRangeOptions"
         :clearable="false"
@@ -26,7 +26,7 @@
       <t-date-range-picker
         :key="pickerKey"
         ref="customRangePicker"
-        v-range-labels="[t('common.startTime'), t('common.endTime')]"
+        v-range-labels="{ labels: [t('common.startTime'), t('common.endTime')] }"
         :value="customDateRange"
         value-type="Date"
         :placeholder="[t('common.startTime'), t('common.endTime')]"
@@ -154,21 +154,37 @@ const pickerPopperOptions = {
   modifiers: [{ name: 'preventOverflow', options: { altAxis: true, tether: false, padding: 12 } }],
 };
 // TDesign forwards inputProps ARIA attributes to wrappers, not native inputs.
-const setRangeLabels = (element, { value }) => {
+const setRangeLabels = (element, { value: { labels, description } }) => {
   element.querySelectorAll('input').forEach((input, index) => {
-    if (value[index]) input.setAttribute('aria-label', value[index]);
+    if (labels[index]) input.setAttribute('aria-label', labels[index]);
+    if (description) input.setAttribute('aria-description', description);
+    else input.removeAttribute('aria-description');
   });
 };
 const vRangeLabels = { mounted: setRangeLabels, updated: setRangeLabels };
+const presetOption = (key, hours) => {
+  const inDays = hours > 24;
+  const count = inDays ? hours / 24 : hours;
+  const ariaLabel = t(`dashboard.timeRange_${key}`);
+  return {
+    value: `${hours}h`,
+    label: t(inDays ? 'timeRange.shortDays' : 'timeRange.shortHours', { count }),
+    ariaLabel,
+    title: ariaLabel,
+  };
+};
 const dateRangeOptions = computed(() => [
-  { label: t('dashboard.timeRange_1h'), value: '1h' },
-  { label: t('dashboard.timeRange_3h'), value: '3h' },
-  { label: t('dashboard.timeRange_6h'), value: '6h' },
-  { label: t('dashboard.timeRange_1d'), value: '24h' },
-  { label: t('dashboard.timeRange_7d'), value: '168h' },
-  { label: t('dashboard.timeRange_30d'), value: '720h' },
+  presetOption('1h', 1),
+  presetOption('3h', 3),
+  presetOption('6h', 6),
+  presetOption('1d', 24),
+  presetOption('7d', 168),
+  presetOption('30d', 720),
   { label: t('dashboard.timeRange_custom'), value: 'custom' },
 ]);
+
+const selectedRangeDescription = computed(() =>
+  dateRangeOptions.value.find(option => option.value === currentDateRange.value)?.ariaLabel);
 
 const feedback = ref('');
 let warningMessage;

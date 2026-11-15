@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNodeTopQueries, createNodeWorkloadDistributionQuery, createOverviewGaugeConfigs } from './metric-config.mjs';
+import { createNodeWorkloadDistributionQuery, createOverviewGaugeConfigs } from './metric-config.mjs';
 import { getRangeConfigInit } from './config.js';
 import { buildPhysicalResourceQueries } from '../../../metrics/physical-resource-queries.mjs';
 
-test('the four header gauges, trend lines and rankings use the same metric definitions', () => {
+test('the four header gauges and their trend lines use the same metric definitions', () => {
   const gauges = createOverviewGaugeConfigs();
   const trends = getRangeConfigInit(key => key).flatMap(section => section.dataSource);
   const metrics = buildPhysicalResourceQueries();
-  const perNode = buildPhysicalResourceQueries({ byNode: true });
-  const rankings = createNodeTopQueries();
   assert.equal(gauges.length, 4);
   assert.equal(trends.length, 4);
 
@@ -24,7 +22,6 @@ test('the four header gauges, trend lines and rankings use the same metric defin
     assert.equal(gauge.query, metrics[resource].query);
     assert.equal(gauge.totalQuery, metrics[resource].totalQuery);
     assert.equal(trends.find(item => item.key === seriesKey).query, metrics[resource].percentQuery);
-    assert.equal(rankings[resource], `topk(5, ${perNode[resource].percentQuery})`);
   }
 });
 

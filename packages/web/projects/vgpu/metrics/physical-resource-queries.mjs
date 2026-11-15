@@ -51,10 +51,9 @@ export function buildPhysicalAllocationQueries({ byNode = false, selector = '' }
   };
 }
 
-export function buildPhysicalResourceQueries({ byNode = false } = {}) {
+export function buildPhysicalUsageQueries({ byNode = false, selector = '' } = {}) {
   const sum = (values) => sumResources(values, byNode);
-  const { computeAllocation, memoryAllocation } = buildPhysicalAllocationQueries({ byNode });
-  const usage = physical('utilization_ratio');
+  const usage = physical('utilization_ratio', selector);
   const observed = `(${agreed(usage)} and ${singleSource(usage)})`;
   const count = `count(${observed})`;
   // One vote per measured card at each 30-second tick. Missing ticks are
@@ -63,18 +62,26 @@ export function buildPhysicalResourceQueries({ byNode = false } = {}) {
     ? `100 * avg by (node) (${observed})`
     : `100 * sum_over_time(sum(${observed})[5m:30s]) / sum_over_time(${count}[5m:30s]) and on () ${count}`;
 
-  const memoryUsed = physical('memory_used_bytes');
-  const memoryPhysical = physical('memory_physical_bytes');
+  const memoryUsed = physical('memory_used_bytes', selector);
+  const memoryPhysical = physical('memory_physical_bytes', selector);
   // Count sources before discarding unpaired or conflicting samples. A second
   // source on either field is enough to make the card's authority ambiguous.
+  // A physical card cannot occupy more memory than it has, even if its
+  // schedulable allocation is oversubscribed.
+  const validOccupancy = `(${memoryUsed} <= ${memoryPhysical})`;
   const memorySource = singleSource(`${memoryUsed} or ${memoryPhysical}`);
 
   return {
-    computeAllocation,
     computeUsage: { query: computeUsage, percentQuery: computeUsage },
-    memoryAllocation,
     memoryUsage: pairedAmounts(memoryUsed, memoryPhysical, sum, {
-      divisor: bytesPerGiB, eligibility: `${deviceMatch} ${memorySource}`,
+      divisor: bytesPerGiB, eligibility: `${validOccupancy} and ${deviceMatch} ${memorySource}`,
     }),
+  };
+}
+
+export function buildPhysicalResourceQueries(scope) {
+  return {
+    ...buildPhysicalAllocationQueries(scope),
+    ...buildPhysicalUsageQueries(scope),
   };
 }
