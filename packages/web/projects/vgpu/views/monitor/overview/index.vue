@@ -1,86 +1,43 @@
 <template>
-  <div class="home">
-    <div class="home-page-title">{{ $t('dashboard.overview') }}</div>
+  <div class="home-layout">
+    <header class="home-page-title" tabindex="-1" :aria-label="$t('dashboard.overview')">
+      <span>{{ $t('dashboard.overview') }}</span>
+      <OverviewIssuesPopover
+        :issues="deviceInsights.issues"
+        :status="issueStatus"
+        :coverage-gap="inventoryState.data?.issueCoverageGap"
+        @details-visible="issueDetailsOpen = $event"
+      />
+    </header>
+    <div class="home">
+      <DeviceConfigAlert />
 
-    <DeviceConfigAlert />
-
-    <Block class="home-gpu-metrics" :title="$t('dashboard.cardResource')" all-to="/accelerators" :all-label="$t('dashboard.viewAllGpuResources')">
-      <div class="card-overview">
-        <div v-for="item in cardGaugeConfig" :key="item.id">
-          <Gauge v-bind="item" />
+      <Block class="home-gpu-metrics" :title="$t('dashboard.cardResource')" all-to="/accelerators" :all-label="$t('dashboard.viewAllGpuResources')">
+        <div class="card-overview">
+          <div v-for="item in cardGaugeConfig" :key="item.id">
+            <Gauge v-bind="item" />
+          </div>
         </div>
-      </div>
-    </Block>
+      </Block>
 
-    <OverviewInventory :inventory="inventoryState" :workloads="workloadState" />
+      <OverviewInventory :inventory="inventoryState" :workloads="workloadState" />
 
-    <div class="home-bottom">
-      <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
-        <TrendTimeFilter v-model="times" :loading="trendLoading" @refresh-current="refreshCurrentSnapshot" />
-      </div>
-      <div class="home-bottom-row home-bottom-trend-row" v-if="rangeConfig[0] || rangeConfig[1]">
-        <div
-          class="home-bottom-col"
-          v-for="section in rangeConfig"
-          :key="section.key"
-        >
-          <ResourceTrend :kind="section.key" :series="section.series" />
+      <div class="home-bottom">
+        <div class="home-bottom-trend-filter">
+          <TrendTimeFilter v-model="times" :loading="trendLoading" @refresh-current="refreshCurrentSnapshot" />
         </div>
-      </div>
-
-      <div class="home-bottom-row home-bottom-workload-row">
-        <div class="home-bottom-col">
-          <Block :title="t('dashboard.nodeWorkloadTop5')">
-            <div
-              v-if="nodeWorkloadTop5State.status === 'loading'"
-              class="workload-table-skeleton"
-              aria-busy="true"
-            >
-              <t-table
-                :columns="nodeWorkloadSkeletonColumns"
-                :data="nodeWorkloadSkeletonData"
-                row-key="name"
-                row-class-name="top5-item-list-table-row"
-                class="top5-item-list-table"
-                :bordered="false"
-                aria-hidden="true"
-                inert
-              />
-              <span class="overview-sr-only" role="status">{{ $t('common.loading') }}</span>
-            </div>
-            <t-table
-              v-else-if="nodeWorkloadTop5State.status === 'ready'"
-              :columns="nodeWorkloadColumns"
-              :data="nodeWorkloadTop5TableData"
-              row-key="name"
-              row-class-name="top5-item-list-table-row"
-              class="top5-item-list-table"
-              :bordered="false"
-            />
-            <div v-else class="overview-state overview-state--chart">
-              {{ getStateText(nodeWorkloadTop5State.status) }}
-            </div>
-          </Block>
+        <div class="home-bottom-row home-bottom-trend-row">
+          <div
+            class="home-bottom-col"
+            v-for="section in rangeConfig"
+            :key="section.key"
+          >
+            <ResourceTrend :kind="section.key" :series="section.series" />
+          </div>
         </div>
-        <div class="home-bottom-col">
-          <Block :title="t('dashboard.nodeWorkloadDistribution')" class="workload-distribution-block">
-            <template #extra>
-              <t-tooltip :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE">
-                <template #content>
-                  <div class="workload-distribution-tooltip">
-                    <div>{{ t('dashboard.nodeWorkloadDistributionDesc1') }}</div>
-                    <div>{{ t('dashboard.nodeWorkloadDistributionDesc2') }}</div>
-                  </div>
-                </template>
-                <svg-icon icon="help-circle" class="workload-distribution-tip-icon" />
-              </t-tooltip>
-            </template>
-            <MetricChart
-              :status="nodeWorkloadDistributionState.status"
-              :option="nodeWorkloadDistributionOptions"
-              :state-text="getStateText(nodeWorkloadDistributionState.status)"
-            />
-          </Block>
+
+        <div id="device-insights" class="home-device-insights">
+          <DeviceUsageDistribution :devices="deviceInsights.devices" :status="usageStatus" @details-visible="usageDetailsOpen = $event" />
         </div>
       </div>
     </div>
@@ -89,173 +46,35 @@
 
 <script setup>
 import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
-import { ref, shallowRef, computed, reactive, onMounted, onUnmounted, h, resolveComponent } from 'vue';
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MessagePlugin } from 'tdesign-vue-next';
-import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
-import MetricChart from '~/vgpu/components/MetricChart.vue';
 import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
-import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
 import Block from './Block.vue';
 import './style.scss';
-import { useRouter } from 'vue-router';
 import resourcesApi from '~/vgpu/api/resources';
 import cardApi from '~/vgpu/api/card';
+import request from '@/utils/request';
+import DeviceUsageDistribution from './DeviceUsageDistribution.vue';
+import OverviewIssuesPopover from './OverviewIssuesPopover.vue';
+import { attachLegacyDeviceLinks } from './device-detail-links.mjs';
 import taskApi from '~/vgpu/api/task';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
-import LoadingValue from '~/vgpu/components/LoadingValue.vue';
-import { LONG_TEXT_TOOLTIP_STYLE } from '~/vgpu/components/tooltip-policy.mjs';
 import { getRangeConfigInit } from './config';
-import {
-  createNodeWorkloadDistributionQuery,
-  createOverviewGaugeConfigs,
-} from './metric-config.mjs';
+import { createOverviewGaugeConfigs } from './metric-config.mjs';
 import { startVisibleSnapshots } from './visible-snapshots.mjs';
-import {
-  createRequestState,
-  rejectRequest,
-  REQUEST_STATUS,
-  resolveRequest,
-  startRequest,
-} from '@/hooks/request-state.mjs';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import OverviewInventory from './OverviewInventory.vue';
 import { readContainerSummary, readResourceInventory } from './resource-summary.mjs';
-import { stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 
-const router = useRouter();
 const { t } = useI18n();
 
 const end = new Date();
 const start = new Date(end.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const nodeWorkloadSkeletonData = Array.from({ length: 5 }, (_, index) => ({ name: `loading-${index}` }));
-
-const nodeWorkloadTop5State = reactive(createRequestState([]));
-const nodeWorkloadDistributionState = reactive(createRequestState([]));
-const nodeWorkloadColumns = computed(() => [
-  {
-    colKey: 'index',
-    title: '',
-    width: 56,
-    cell: (_h, { row }) => {
-      const Tag = resolveComponent('t-tag');
-      return h(Tag, { class: 'row-tag' }, () => row.index);
-    },
-  },
-  {
-    colKey: 'name',
-    title: t('dashboard.node'),
-    ellipsis: {
-      props: { theme: 'default' },
-      content: (_h, cellParams) => cellParams.row.name,
-    },
-    cell: (_h, { row }) =>
-      h(
-        'button',
-        {
-          type: 'button',
-          class: 'node-workload-name-link',
-          onClick: (e) => {
-            e.stopPropagation();
-            openWorkloadNode(row.name);
-          },
-        },
-        row.name,
-      ),
-  },
-  {
-    colKey: 'value',
-    title: t('dashboard.workloadCount'),
-  },
-]);
-const nodeWorkloadSkeletonColumns = computed(() => nodeWorkloadColumns.value.map(({ colKey, title, width }) => ({
-  colKey,
-  title,
-  width,
-  cell: () => h(LoadingValue, { height: 24, width: colKey === 'index' ? '24px' : '70%' }),
-})));
-const nodeWorkloadTop5TableData = computed(() =>
-  nodeWorkloadTop5State.data.map((item, idx) => ({
-    ...item,
-    index: idx + 1,
-  })),
-);
-
-const nodeWorkloadDistributionOptions = computed(() => {
-  return createWorkloadDistributionOptions({
-    rows: nodeWorkloadDistributionState.data,
-    translate: t,
-  });
-});
-
-// These page-specific vectors share request-state mechanics without introducing
-// a universal query component for two one-off presentations.
-const fetchVectorRows = async (state, query, transform) => {
-  const hasResolved = state.hasResolved;
-  const requestId = startRequest(state, { hasResolved });
-  try {
-    const res = await cardApi.getInstantVector({ query });
-    if (!Array.isArray(res?.data)) {
-      resolveRequest(state, {
-        data: [],
-        status: REQUEST_STATUS.INVALID,
-        requestId,
-      });
-      return;
-    }
-    const rows = res.data
-      .map(transform)
-      .filter((row) => Number.isFinite(row?.value));
-    resolveRequest(state, {
-      data: rows,
-      status: rows.length
-        ? REQUEST_STATUS.READY
-        : res.data.length
-          ? REQUEST_STATUS.INVALID
-          : REQUEST_STATUS.MISSING,
-      requestId,
-    });
-  } catch (error) {
-    rejectRequest(state, error, { hasResolved, requestId });
-  }
-};
-
-const fetchNodeWorkloadTop5 = () =>
-  fetchVectorRows(
-    nodeWorkloadTop5State,
-    'topk(5, count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated{})) by (node))',
-    (item) => ({
-      name: item?.metric?.node || '-',
-      value: Number(item?.value),
-    }),
-  ).then(() => {
-    if (nodeWorkloadTop5State.status === REQUEST_STATUS.READY) {
-      nodeWorkloadTop5State.data = nodeWorkloadTop5State.data
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5);
-    }
-  });
-
-const fetchNodeWorkloadDistribution = () =>
-  fetchVectorRows(
-    nodeWorkloadDistributionState,
-    createNodeWorkloadDistributionQuery(),
-    (item) => ({
-      name: item?.metric?.node || '-',
-      value: Number(item?.value),
-    }),
-  ).then(() => {
-    if (nodeWorkloadDistributionState.status === REQUEST_STATUS.READY) {
-      nodeWorkloadDistributionState.data = nodeWorkloadDistributionState.data.sort(
-        (a, b) => b.value - a.value,
-      );
-    }
-  });
-
 const snapshotReaders = new Set();
 const subscribe = (reader) => {
   snapshotReaders.add(reader);
@@ -303,12 +122,31 @@ const workloadState = useInventorySource(
   readContainerSummary,
 );
 
-function openWorkloadNode(name) {
-  const node = inventoryState.value.data?.nodes.find((row) => row.name === name);
-  const to = buildNodeDetailLocation({ uid: node?.uid, nodeName: name });
-  if (to) router.push(to);
-  else MessagePlugin.error(t('node.nodeNotFound'));
-}
+// Only detail links need the legacy GPU list. Inventory totals and graphs can render on their own.
+const issueDetailsOpen = ref(false);
+const usageDetailsOpen = ref(false);
+const legacyRows = shallowRef([]);
+const detailsOpen = computed(() => issueDetailsOpen.value || usageDetailsOpen.value);
+watch([detailsOpen, () => inventoryState.value.data], async ([open, inventory], _previous, onCleanup) => {
+  if (!open || !inventory) {
+    legacyRows.value = [];
+    return;
+  }
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
+  try {
+    const reply = await request({ ...cardApi.getCardList(), errorFeedback: 'inline', signal: controller.signal });
+    if (!controller.signal.aborted) legacyRows.value = Array.isArray(reply?.list) ? reply.list : [];
+  } catch {
+    if (!controller.signal.aborted) legacyRows.value = [];
+  }
+});
+const deviceInsights = computed(() => inventoryState.value.data
+  ? attachLegacyDeviceLinks(inventoryState.value.data, legacyRows.value)
+  : { devices: [], issues: [] });
+const issueStatus = computed(() => inventoryState.value.data?.issueStatus
+  ?? (inventoryState.value.status === REQUEST_STATUS.LOADING ? 'loading' : 'error'));
+const usageStatus = computed(() => inventoryState.value.data?.usageStatus ?? inventoryState.value.status);
 
 const rangeDefinitions = getRangeConfigInit();
 const { data: rangeSeries } = useRangeVector(
@@ -321,14 +159,9 @@ const rangeConfig = computed(() => rangeDefinitions.map(({ key }) => ({
   key, series: rangeSeries.value.filter(item => item.sectionIndex === key),
 })));
 
-const getStateText = (status, metric = true) =>
-  t(stateTextKey(status, { metric }));
-
 onUnmounted(() => snapshots?.stop());
 onMounted(() => {
   snapshots = startVisibleSnapshots(snapshotReaders, end);
-  fetchNodeWorkloadTop5();
-  fetchNodeWorkloadDistribution();
 });
 
 </script>

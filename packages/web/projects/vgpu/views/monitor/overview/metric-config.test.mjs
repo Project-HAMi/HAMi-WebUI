@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNodeWorkloadDistributionQuery, createOverviewGaugeConfigs } from './metric-config.mjs';
+import { createOverviewGaugeConfigs } from './metric-config.mjs';
 import { getRangeConfigInit } from './config.js';
 import { buildPhysicalResourceQueries } from '../../../metrics/physical-resource-queries.mjs';
 
@@ -26,14 +26,4 @@ test('the four header gauges and their trend lines use the same metric definitio
     assert.equal(gauge.totalQuery, metrics[resource].totalQuery);
     assert.equal(trends.find(item => item.key === seriesKey).query, metrics[resource].percentQuery);
   }
-});
-
-test('node workload distribution includes idle accelerator inventory nodes', () => {
-  const query = createNodeWorkloadDistributionQuery();
-
-  assert.equal(
-    query,
-    'count(count by (node, container_pod_uuid) (hami_container_vgpu_allocated)) by (node) or on (node) (count by (node) (hami_vgpu_count) * 0)',
-  );
-  assert.doesNotMatch(query, /vector\(0\)/);
 });

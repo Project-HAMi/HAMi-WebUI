@@ -69,3 +69,32 @@ test('missing or contradictory status counts preserve the total without presenti
     assert.throws(() => readContainerSummary(malformed), TypeError);
   }
 });
+
+test('zero, missing readings and positive incidents survive incomplete coverage', () => {
+  const reply = inventory([{ ...node, ready: false, schedulable: false }], [
+    { ...device, healthy: false, utilizationRatio: 0, memoryUsageRatio: 0.75 },
+    { ...device, deviceId: 'other', healthy: null, utilizationRatio: null, memoryUsageRatio: 0 },
+  ], true, false);
+  const result = readResourceInventory(reply);
+  assert.equal(result.issueStatus, 'partial');
+  assert.equal(result.issueCoverageGap, 'deviceInventory');
+  assert.equal(result.usageStatus, 'ready');
+  assert.deepEqual(result.issues.map(issue => issue.kind), ['nodeNotReady', 'nodeCordoned', 'deviceUnhealthy']);
+  assert.deepEqual(result.devices.map(d => [d.nodeUid, d.compute, d.memory]), [[node.uid, 0, 75], [node.uid, null, 0]]);
+  assert.equal(readResourceInventory(inventory([], [], true, false)).usageStatus, 'error');
+});
+
+test('issue coverage describes node and device health independently of usage readings', () => {
+  const healthy = readResourceInventory(inventory([node], [device]));
+  assert.equal(healthy.issueStatus, 'ready');
+  assert.deepEqual(healthy.issues, []);
+  assert.deepEqual(healthy.devices.map(({ compute, memory }) => [compute, memory]), [[null, null]]);
+
+  const unknown = readResourceInventory(inventory([node], [{ ...device, healthy: null, utilizationRatio: 0 }]));
+  assert.equal(unknown.issueStatus, 'partial');
+  assert.equal(unknown.issueCoverageGap, 'partial');
+  assert.equal(unknown.devices[0].compute, 0);
+  assert.equal(readResourceInventory(inventory([], [])).issueStatus, 'empty');
+  assert.equal(readResourceInventory(inventory([], [], true, false)).issueStatus, 'partial');
+  assert.equal(readResourceInventory(inventory([node], [])).issueStatus, 'ready');
+});

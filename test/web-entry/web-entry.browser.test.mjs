@@ -332,7 +332,7 @@ async function assertChartRuntime(target) {
   await page.waitForFunction(
     () => document.querySelectorAll('.home-bottom-trend-row .echarts canvas').length === 2
   )
-  await page.getByRole('button', { name: 'node-1', exact: true }).waitFor()
+  await page.locator('.gpu-distribution .distribution-group').first().waitFor()
   assert.equal(await page.locator('.tab-top-switch').count(), 0, 'The overview must not show the node resource rankings')
   assert.deepEqual(requestedNodeRanks, [], 'The overview must not fetch the four node ranking series')
 
@@ -348,7 +348,7 @@ async function assertChartRuntime(target) {
   )
   await page.mouse.move(0, 0)
 
-  const distributionHelp = page.locator('.workload-distribution-tip-icon')
+  const distributionHelp = page.locator('.usage-block .metric-help')
   await distributionHelp.scrollIntoViewIfNeeded()
   await distributionHelp.hover()
   const distributionTooltip = page.locator('.t-tooltip .t-popup__content').last()
@@ -744,7 +744,13 @@ async function assertMissingDetail(target, route) {
 
 before(async() => {
   backend = http.createServer(async(req, res) => {
-    const body = await readJSONBody(req)
+    let body
+    try {
+      body = await readJSONBody(req)
+    } catch (error) {
+      if (req.aborted) return
+      throw error
+    }
     const requestURL = new URL(req.url, 'http://backend.local')
     const { pathname } = requestURL
     const now = Math.floor(Date.now() / 1000)
@@ -2796,6 +2802,8 @@ test('explicit trend refresh advances relative ranges once and blocks repeat req
             await page.keyboard.up(key)
           } else {
             await refresh.press(key)
+            // A page that was already idle can report networkidle before this key's requests start.
+            await waitUntil(() => requests.length >= seriesCount * (3 + index), 'Keyboard refresh did not start every series')
           }
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * (3 + index), `${key} must refresh exactly once, including a held key after the response`)
@@ -4104,6 +4112,237 @@ test('overview links GPU sections to the default accelerator list and model rows
     await page.waitForURL(url => url.pathname === basePath + 'accelerators' &&
       !url.searchParams.has('scope') && url.searchParams.get('type') === 'NVIDIA')
   } finally {
+    await page.close()
+  }
+})
+
+test('overview details fetch verified device links on demand and keep missing readings separate', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  let lists = 0
+  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true, physicalDevices: 8 }
+  const devices = Array.from({ length: 8 }, (_, i) => ({
+    node: node.name, provider: 'NVIDIA', deviceId: `gpu-${i}`, model: 'A100', healthy: i > 0,
+    utilizationRatio: 0, memoryUsageRatio: i === 0 ? null : 0.5
+  }))
+  await page.route('**/api/v1/overview/inventory', route => route.fulfill({ json: {
+    nodes: [node], devices, nodeCoverage: coverageFixture('node', 1), deviceCoverage: coverageFixture('device', 8)
+  } }))
+  await page.route('**/v1/gpus', route => {
+    lists++
+    return route.fulfill({ json: { list: devices.map(d => ({
+      nodeName: node.name, nodeUid: node.uid, uuid: d.deviceId, vendor: d.provider
+    })) } })
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const distribution = page.locator('.gpu-distribution')
+    const compute = distribution.locator('.metric-cell').first()
+    const memory = distribution.locator('.metric-cell').nth(1)
+    assert.equal(await compute.locator('.dot-chart button').count(), 1)
+    assert.match(await compute.innerText(), /8 GPUs/)
+    assert.match(await memory.innerText(), /1 GPU without data/)
+    assert.equal(lists, 0, 'Aggregates must not read the legacy list to paint')
+    await compute.locator('.dot-chart button').click()
+    const details = distribution.locator('.device-list')
+    await details.getByRole('link', { name: 'gpu-0', exact: true }).waitFor()
+    assert.equal(await details.getByRole('link', { name: 'worker', exact: true }).count(), 1)
+    assert.equal(await details.getByRole('link', { name: /^gpu-/ }).count(), 8)
+    assert.equal(lists, 1)
+    await page.locator('.home-page-title > span').click()
+    await details.waitFor({ state: 'detached' })
+    await page.locator('.issues-trigger').click()
+    const issues = page.getByRole('dialog')
+    await issues.getByRole('link', { name: 'worker', exact: true }).waitFor()
+    assert.match(await issues.innerText(), /1.*GPU/i)
+    await page.keyboard.press('Escape')
+    await issues.waitFor({ state: 'hidden' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview retains keyboard focus when a refresh removes a reading or an incident', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const nodes = ['worker-a', 'worker-b'].map(name => ({ name, uid: name + '-uid', ready: true, schedulable: true }))
+  const devices = nodes.map((node, i) => ({
+    node: node.name, provider: 'NVIDIA', deviceId: 'gpu-' + i, model: 'A100',
+    healthy: false, utilizationRatio: i === 0 ? 0.25 : 0.75, memoryUsageRatio: 0.42,
+  }))
+  const inventoryPath = '**/api/v1/overview/inventory'
+  await page.route(inventoryPath, route => route.fulfill({ json: {
+    nodes, devices, nodeCoverage: coverageFixture('node', 2), deviceCoverage: coverageFixture('device', 2),
+  } }))
+  async function refresh() {
+    await Promise.all([
+      page.waitForResponse(inventoryPath),
+      page.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))),
+    ])
+  }
+  const focused = locator => locator.evaluate(el => el === document.activeElement)
+  try {
+    await page.goto(target + deepRoute)
+    const compute = page.locator('.metric-cell').first()
+    const reading = percent => compute.getByRole('button', { name: new RegExp(percent + '%') })
+    const details = page.locator('.device-list')
+    await reading(25).press('Enter')
+    assert.ok(await focused(details.getByRole('heading')))
+    devices[0].utilizationRatio = 0.26
+    await refresh()
+    await details.waitFor({ state: 'detached' })
+    assert.ok(await focused(reading(26)), 'Continue in the same model and metric')
+
+    // A refresh with the keyboard already elsewhere must leave it there.
+    await reading(26).press('Enter')
+    const trigger = page.locator('.issues-trigger')
+    await trigger.focus()
+    devices[0].utilizationRatio = 0.27
+    await refresh()
+    await details.waitFor({ state: 'detached' })
+    assert.ok(await focused(trigger))
+
+    await trigger.press('Enter')
+    const dialog = page.getByRole('dialog')
+    const nodeLink = name => dialog.getByRole('link', { name, exact: true })
+    await nodeLink('worker-a').focus()
+    devices[0].healthy = true
+    await refresh()
+    await nodeLink('worker-a').waitFor({ state: 'detached' })
+    assert.ok(await focused(nodeLink('worker-b')), 'Continue at the remaining incident')
+    await page.keyboard.press('Escape')
+    assert.ok(await focused(trigger))
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview issue status opens details only for affected or paused nodes', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const header = page.locator('.home-page-title')
+  const trigger = header.getByRole('button')
+  const healthy = header.locator('.issues-healthy')
+  const dialog = page.getByRole('dialog')
+  const inventoryPath = '**/api/v1/overview/inventory'
+  const initialResponse = Promise.withResolvers()
+  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true }
+  const gpu = { node: node.name, provider: 'NVIDIA', deviceId: 'gpu-1', model: 'A100', healthy: true }
+  const snapshot = (nodes, devices, nodeComplete = true, deviceComplete = true) => ({
+    nodes, devices,
+    nodeCoverage: { ...coverageFixture('node', nodes.length), complete: nodeComplete },
+    deviceCoverage: { ...coverageFixture('device', devices.length), complete: deviceComplete },
+  })
+  let reply = null
+  let legacyReads = 0
+  let pendingLookup
+  await page.route(inventoryPath, async(route) => {
+    await initialResponse.promise
+    await route.fulfill(reply ? { json: reply } : { status: 503, json: {} })
+  })
+  await page.route('**/v1/gpus', async route => {
+    legacyReads++
+    if (pendingLookup) await pendingLookup.promise
+    await route.fulfill({ json: { code: 0, list: [{ uuid: gpu.deviceId, vendor: gpu.provider, nodeName: node.name, nodeUid: node.uid }] } })
+  })
+  async function nextSnapshot(next) {
+    reply = next
+    await Promise.all([page.waitForResponse(inventoryPath), page.clock.fastForward(30_000)])
+    await page.waitForLoadState('networkidle')
+  }
+  async function checkStatic(text) {
+    await header.getByText(text, { exact: true }).waitFor()
+    assert.equal(await trigger.count(), 0)
+    assert.equal(await healthy.count(), 0)
+    assert.equal(await dialog.count(), 0)
+  }
+  const isFocused = locator => locator.evaluate(el => el === document.activeElement)
+  async function checkHealthy(label) {
+    await healthy.waitFor()
+    assert.equal(await header.getByRole('img', { name: label, exact: true }).count(), 1)
+    assert.equal(await trigger.count(), 0)
+    const priorReads = legacyReads
+    await healthy.focus()
+    assert.ok(await isFocused(healthy))
+    await healthy.press('Enter')
+    await healthy.click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(await dialog.count(), 0)
+    assert.equal(legacyReads, priorReads, 'Checking healthy status must not fetch device details')
+  }
+
+  try {
+    await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+    await page.goto(target + deepRoute, { waitUntil: 'domcontentloaded' })
+    await checkStatic('Loading status')
+    initialResponse.resolve()
+    await checkStatic('Status unavailable')
+    await page.waitForLoadState('networkidle')
+
+    for (const [nodeComplete, deviceComplete, text] of [
+      [false, false, 'Inventory incomplete'],
+      [false, true, 'Node inventory incomplete'],
+      [true, false, 'Device inventory incomplete'],
+    ]) {
+      await nextSnapshot(snapshot([node], [gpu], nodeComplete, deviceComplete))
+      await checkStatic(text)
+    }
+    await nextSnapshot(snapshot([node], [{ ...gpu, healthy: null }]))
+    await checkStatic('Status incomplete')
+    await nextSnapshot(snapshot([node], [{ ...gpu, healthy: false }]))
+    await trigger.getByText('1 node with issues', { exact: true }).waitFor()
+    assert.equal(await dialog.count(), 0)
+    await nextSnapshot(snapshot([], []))
+    assert.equal(await header.innerText(), await header.locator(':scope > span').first().innerText())
+    assert.equal(await header.locator('[tabindex="0"], button').count(), 0)
+
+    await nextSnapshot(snapshot([node], [gpu]))
+    await checkHealthy('No node or device issues')
+    // Both cards and their unready node constitute a single affected node.
+    await nextSnapshot(snapshot([{ ...node, ready: false, schedulable: false }], [
+      { ...gpu, healthy: false }, { ...gpu, deviceId: 'gpu-2', healthy: false },
+    ], true, false))
+    assert.equal(legacyReads, 0)
+    assert.ok(await isFocused(trigger), 'Transfer focus from the healthy indicator to the incident trigger')
+    await trigger.getByText('1 node with issues', { exact: true }).click()
+    await dialog.getByText('Device inventory incomplete', { exact: true }).waitFor()
+    assert.equal(await dialog.getByRole('link', { name: 'worker', exact: true }).count(), 1)
+    assert.match(await dialog.innerText(), /2 unhealthy GPUs/)
+    await waitUntil(() => legacyReads > 0, 'Opening issue details should resolve device links')
+
+    await dialog.locator('.issue-disclosure').click()
+    const deviceLink = dialog.getByRole('link', { name: gpu.deviceId, exact: true })
+    await deviceLink.waitFor()
+    pendingLookup = Promise.withResolvers()
+    const refreshing = page.waitForRequest('**/v1/gpus')
+    await page.clock.fastForward(30_000)
+    await refreshing
+    assert.ok(await deviceLink.isVisible(), 'A pending lookup must preserve the link for the same device')
+    pendingLookup.resolve()
+    await page.waitForLoadState('networkidle')
+
+    // Poll while the dialog is still open; recovery closes the obsolete details.
+    await nextSnapshot(snapshot([node], [gpu]))
+    await dialog.waitFor({ state: 'hidden' })
+    assert.ok(await isFocused(healthy), 'Return focus from the recovered incident to the healthy indicator')
+    await checkHealthy('No node or device issues')
+    await page.locator('.gpu-distribution').getByText('1 GPU without data').first().waitFor()
+    await nextSnapshot(snapshot([{ ...node, schedulable: false }], [gpu]))
+    await trigger.getByText('Scheduling paused', { exact: true }).click()
+    await dialog.getByRole('link', { name: 'worker', exact: true }).waitFor()
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden' })
+    assert.ok(await isFocused(trigger))
+    await nextSnapshot(snapshot([], []))
+    assert.ok(await header.evaluate(el => el.contains(document.activeElement)), 'Retain focus at the title when the trigger disappears')
+
+    reply = snapshot([node], [gpu])
+    await page.context().addCookies([{ name: 'language', value: 'zh', url: target }])
+    await page.reload({ waitUntil: 'networkidle' })
+    await checkHealthy('节点与设备暂无异常')
+  } finally {
+    pendingLookup?.resolve()
+    initialResponse.resolve()
     await page.close()
   }
 })
@@ -5694,18 +5933,13 @@ test('overview loading regions keep page containers while data arrives', { timeo
       const gate = new Promise((resolve) => { release = resolve })
       await page.route(/\/v1\/(?:overview\/inventory|workloads|monitor\/query\/instant-vector)$/, async(route) => {
         const response = await route.fetch()
-        const query = route.request().method() === 'POST' ? route.request().postDataJSON()?.query : ''
-        const workloadCount = query?.startsWith('topk(5, count(count by (node, container_pod_uuid)')
         await gate
-        await route.fulfill(workloadCount ? { json: { data: Array.from({ length: 5 }, (_, index) => ({
-          metric: { node: `node-${index + 1}` }, value: 5 - index,
-        })) } } : { response })
+        await route.fulfill({ response })
       })
       const measure = () => page.evaluate(() => {
         const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height
         return {
           resources: height('.resource-tabs'),
-          workload: height('.workload-table-skeleton') ?? height('.top5-item-list-table'),
           chart: [...document.querySelectorAll('.metric-chart__body')].map((element) => element.getBoundingClientRect().height),
         }
       })
@@ -5726,7 +5960,7 @@ test('overview loading regions keep page containers while data arrives', { timeo
         release()
         await page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true }).waitFor()
         assert.ok(await modelCard.evaluate(card => card.isConnected), 'The model card container must survive its loading state')
-        await page.locator('.node-workload-name-link').nth(4).waitFor()
+        await page.locator('.gpu-distribution .distribution-group').first().waitFor()
         const ready = []
         for (const width of [1280, 1366, 1440, 1920, 600]) {
           await page.setViewportSize({ width, height: 1000 })
@@ -5739,7 +5973,6 @@ test('overview loading regions keep page containers while data arrives', { timeo
         assert.ok(ready.every((state) => state.chart.every((height) => height === 250)))
         for (const [index, state] of ready.entries()) {
           assert.equal(state.resources, pending[index].resources, 'Resource tabs must reserve their height while loading')
-          assert.equal(state.workload, pending[index].workload, 'Five loading rows must match five result rows in the count table')
         }
       } finally {
         release()

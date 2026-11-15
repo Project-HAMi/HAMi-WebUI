@@ -1,23 +1,46 @@
+.page:has(.home-layout),
+.content-body:has(> .home-layout) {
+  overflow: clip;
+}
+
+.home-layout {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-width: 0;
+}
+
 .home {
   --inventory-columns: minmax(420px, 2fr) minmax(0, 3fr);
   --inventory-gap: 16px;
-  container: homepage / inline-size;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: 100%;
+  min-height: 0;
   min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--app-scrollbar-thumb, #cbd5e1) transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  padding: 12px 4px 4px 2px;
   font-size: 12px;
 
   &-page-title {
-    width: 100%;
-    flex-shrink: 0;
-    padding-top: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+    padding-right: 12px;
+    background: #fff;
     font-size: 18px;
     font-weight: 500;
     color: #1d2b3a;
     line-height: 24px;
   }
+
+  container: homepage / inline-size;
 
   .home-gpu-metrics,
   .home-inventory {
@@ -64,6 +87,7 @@
       min-height: 0;
       height: auto;
     }
+
   }
 
   .card-type-skeleton {
@@ -137,6 +161,23 @@
     margin-bottom: 0;
   }
 
+  @container homepage (width > 900px) {
+    .home-bottom-trend-filter .trend-time-filter {
+      grid-template-columns: minmax(min(420px, 55%), 2fr) minmax(0, 3fr);
+      column-gap: var(--inventory-gap);
+
+      .trend-time-filter-presets { flex: 1 1 auto; min-width: 0; }
+      .segmented-control__option { flex: 1 1 auto; padding-inline: 4px; }
+      .trend-time-filter-refresh { grid-column: 2; justify-self: end; }
+    }
+  }
+
+  @container homepage (min-width: 1024px) {
+    .home-bottom-trend-filter .trend-time-filter-custom-group {
+      max-width: calc(100% - 44px);
+    }
+  }
+
   &-bottom-row {
     display: flex;
     gap: 16px;
@@ -154,22 +195,9 @@
     }
   }
 
-  &-bottom-workload-row {
-    border-top: 1px dashed #d1d9e0;
-    padding-top: 16px;
-    flex-wrap: wrap;
-
-    .home-bottom-col {
-      flex: 1 0 48%;
-      width: 48%;
-      min-width: 0;
-      display: flex;
-
-      > .home-block {
-        width: 100%;
-        height: 100%;
-      }
-    }
+  .home-device-insights {
+    min-width: 0;
+    scroll-margin-top: 4px;
   }
 
   &-bottom-col {
@@ -191,10 +219,6 @@
 
   .home-block {
     margin-bottom: 0;
-  }
-
-  .home-inventory .home-block,
-  .home-gpu-metrics.home-block {
     padding-top: 12px;
 
     > .home-block-header {
@@ -211,104 +235,11 @@
     padding-bottom: 4px;
   }
 
-  .workload-table-skeleton {
-    min-height: 250px;
+  // Keep framed controls equally inset from the top and inline end.
+  // The header starts at 12px; a 28px control centered in 32px sits at 14px.
+  .usage-block > .home-block-header {
+    margin-inline-end: -6px; // 20px card gutter minus the 14px control inset
+    > .extra { margin-inline-start: auto; }
   }
 
-  .workload-distribution-tip-icon {
-    width: 16px;
-    height: 16px;
-    color: #939ea9;
-    cursor: pointer;
-  }
-
-  .workload-distribution-block .home-block-header {
-    justify-content: flex-start;
-    gap: 6px;
-  }
-
-  .workload-trend-radio.t-radio-group__outline .t-radio-button {
-    padding: 12px;
-    height: 32px;
-    font-size: 12px;
-    box-sizing: border-box;
-  }
-
-  .top5-item-list-table .t-table {
-    border: none;
-    border-radius: 8px;
-    overflow: hidden;
-    margin-top: 8px;
-  }
-
-  .top5-item-list-table .t-table__header th {
-    padding: 10px 16px;
-    background: #f5f7fa;
-    color: #697886;
-    border-bottom: none;
-  }
-
-  .top5-item-list-table-row td {
-    padding: 12px 16px;
-    border-bottom: none;
-    background: transparent;
-  }
-
-  .top5-item-list-table .t-table__body tr:nth-child(even) td {
-    background: #f5f7fa;
-  }
-
-  .top5-item-list-table .t-table__body tr:nth-child(odd) td {
-    background: #fff;
-  }
-
-  .top5-item-list-table .t-table__header th:first-child,
-  .top5-item-list-table .t-table__body td:first-child {
-    border-top-left-radius: 8px;
-    border-bottom-left-radius: 8px;
-  }
-
-  .top5-item-list-table .t-table__header th:last-child,
-  .top5-item-list-table .t-table__body td:last-child {
-    border-top-right-radius: 8px;
-    border-bottom-right-radius: 8px;
-  }
-
-  .top5-item-list-table-row .row-tag.t-tag {
-    font-size: 12px;
-    justify-content: center;
-    border-radius: 4px;
-    background: #e4ebf1;
-    color: #324558;
-    width: 24px;
-    min-width: 24px;
-    height: 24px;
-    line-height: 24px;
-    text-align: center;
-    padding: 0;
-  }
-
-  .node-workload-name-link {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    padding: 0;
-    font: inherit;
-    text-align: left;
-    color: #324558;
-    cursor: pointer;
-
-    &:focus-visible {
-      border-radius: 4px;
-      outline: 2px solid var(--el-color-primary);
-      outline-offset: 2px;
-    }
-
-    &:hover {
-      color: #2563eb;
-      text-decoration: underline;
-      text-decoration-skip-ink: none;
-      text-underline-offset: 4px;
-    }
-  }
 }

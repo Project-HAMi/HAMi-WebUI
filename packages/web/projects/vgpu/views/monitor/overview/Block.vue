@@ -1,7 +1,7 @@
 <template>
   <div class="home-block">
     <div class="home-block-header" v-if="title">
-      <div class="title">{{ title }}</div>
+      <div class="title">{{ title }}<slot name="title-suffix" /></div>
       <div class="extra">
         <slot name="extra">
           <OverviewAllLink v-if="allTo" :to="allTo" :label="allLabel" />
@@ -30,6 +30,9 @@ defineProps(['title', 'allTo', 'allLabel']);
     justify-content: space-between;
     padding-bottom: 15px;
     .title {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       color: #1d2b3a;
       font-family: 'PingFang SC';
       font-size: 16px;

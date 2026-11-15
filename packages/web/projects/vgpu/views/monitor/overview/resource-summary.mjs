@@ -1,5 +1,5 @@
 import { readModelDistribution } from '../../../api/model-distribution.mjs';
-import { readCoverageCount, readOverviewInventory } from '../../../api/overview-inventory.mjs';
+import { physicalDeviceKey, readCoverageCount, readOverviewInventory } from '../../../api/overview-inventory.mjs';
 import { isNodeSchedulingEligible } from '../../node/node-status.mjs';
 import { optionCountOf, readOptionCounts } from '../../task/admin/option-counts.mjs';
 import { readWorkloadTotal } from './overview-state.mjs';
@@ -14,6 +14,19 @@ export function readResourceInventory(reply) {
 
   const health = { healthy: 0, unhealthy: 0, unknown: 0 };
   const modelCounts = new Map();
+  const nodeByName = new Map(nodes.map(node => [node.name, node]));
+  const readings = [];
+  const issues = [];
+  let issueCoverageGap = '';
+  if (!nodeCoverage.complete) issueCoverageGap = deviceCoverage.complete ? 'nodeInventory' : 'inventory';
+  else if (!deviceCoverage.complete) issueCoverageGap = 'deviceInventory';
+  for (const node of nodes) {
+    const identity = { node: node.name, nodeUid: node.uid, deviceCount: node.physicalDevices,
+      model: node.models?.length === 1 ? node.models[0] : '' };
+    if (node.ready === false) issues.push({ ...identity, kind: 'nodeNotReady' });
+    if (node.schedulable === false) issues.push({ ...identity, kind: 'nodeCordoned' });
+    if (node.ready == null || node.schedulable == null) issueCoverageGap ||= 'partial';
+  }
   for (const device of devices) {
     if (device.healthy === true) health.healthy++;
     else if (device.healthy === false) health.unhealthy++;
@@ -21,12 +34,22 @@ export function readResourceInventory(reply) {
     // Keep exact, nonblank model names so drill-downs use the list's own filter.
     const model = device.model?.trim() ? device.model : '';
     modelCounts.set(model, (modelCounts.get(model) ?? 0) + 1);
+    const identity = { key: physicalDeviceKey(device), model, provider: device.provider,
+      node: device.node, nodeUid: nodeByName.get(device.node)?.uid };
+    if (device.healthy === false) issues.push({ ...identity, kind: 'deviceUnhealthy', deviceId: device.deviceId });
+    else if (device.healthy == null) issueCoverageGap ||= 'partial';
+    readings.push({ ...identity, id: device.deviceId,
+      compute: device.utilizationRatio == null ? null : device.utilizationRatio * 100,
+      memory: device.memoryUsageRatio == null ? null : device.memoryUsageRatio * 100 });
   }
   const models = readModelDistribution({ coverage: deviceCoverage,
     items: Array.from(modelCounts, ([model, physicalDevices]) => ({ model, physicalDevices })),
   });
   return {
-    nodes, models,
+    nodes, models, devices: readings, issues,
+    issueStatus: issueCoverageGap ? 'partial' : nodes.length || devices.length ? 'ready' : 'empty',
+    issueCoverageGap,
+    usageStatus: deviceCoverage.complete || devices.length ? 'ready' : 'error',
     summary: {
       nodes: { ...nodeInventory, schedulable: nodeInventory.count === undefined ? undefined : schedulable,
         unavailable: nodeInventory.count === undefined ? undefined : nodeInventory.count - schedulable },
