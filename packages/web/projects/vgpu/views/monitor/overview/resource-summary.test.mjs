@@ -28,7 +28,7 @@ test('health totals and model shares use every observed physical identity, inclu
   input.deviceCoverage.total = 8;
   const { summary, models } = readResourceInventory(input);
   assert.deepEqual(summary.devices, { count: 4, observed: 4, partial: true, counts: { healthy: 2, unhealthy: 1, unknown: 1 } });
-  assert.deepEqual(models.rows, [{ type: named, count: 2, share: 0.5 }, { type: null, count: 2, share: 0.5 }]);
+  assert.deepEqual(models.rows, [{ type: named, vendor: 'NVIDIA', count: 2, share: 0.5 }, { type: null, count: 2, share: 0.5 }]);
   assert.equal(models.inventory.count, summary.devices.count);
 });
 
@@ -97,4 +97,14 @@ test('issue coverage describes node and device health independently of usage rea
   assert.equal(readResourceInventory(inventory([], [])).issueStatus, 'empty');
   assert.equal(readResourceInventory(inventory([], [], true, false)).issueStatus, 'partial');
   assert.equal(readResourceInventory(inventory([node], [])).issueStatus, 'ready');
+});
+
+test('model marks follow the reported vendor, even for shared or ambiguous model names', () => {
+  const devices = ['HCU', 'DCU', 'Metax', 'MLU'].map((provider, i) => ({
+    ...device, provider, deviceId: String(i), model: i < 2 ? 'K100' : 'Shared',
+  }));
+  const { models } = readResourceInventory(inventory([node], devices));
+  assert.deepEqual(models.rows.map(({ type, vendor, count }) => [type, vendor, count]), [
+    ['K100', 'Hygon', 2], ['Shared', undefined, 2],
+  ]);
 });

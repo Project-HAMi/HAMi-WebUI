@@ -272,6 +272,11 @@ export const buildMemoryUsageQueries = ({
   };
 };
 
+// Count a node once per vendor, including nodes that report both Hygon device families.
+export const nodeVendorDistributionQuery = 'count by (provider) ('
+  + 'group by (node, provider) (hami_vgpu_count{provider!~"DCU|HCU|Hygon"}) or '
+  + 'label_replace(group by (node) (hami_vgpu_count{provider=~"DCU|HCU|Hygon"}), "provider", "Hygon", "node", ".*"))';
+
 export const buildGroupedResourceTopQueries = (groupLabel) => {
   validateGroupLabel(groupLabel);
   if (!groupLabel) {

@@ -8,7 +8,7 @@
         <div class="pie">
           <VChart
             ref="pieChartRef"
-            :option="getPreviewBarPie(pieData)"
+            :option="getPreviewBarPie(pieData, t(isNodeType ? 'common.unitNode' : 'common.unitSheet'))"
             :autoresize="true"
             @click="onPieClick"
           />
@@ -47,13 +47,14 @@
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
-import { categoricalColor } from '~/vgpu/metrics/chart-colors.mjs';
+import { donutSliceColors } from '~/vgpu/metrics/vendor-colors.mjs';
 import { getPreviewBarPie } from '~/vgpu/components/preview-pie.mjs';
 import { onMounted, ref, computed } from 'vue';
 import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import {
+  nodeVendorDistributionQuery,
   buildGroupedResourceTopQueries,
   buildUnknownComputeShareQuery,
 } from '~/vgpu/metrics/query-contract.mjs';
@@ -66,6 +67,7 @@ const props = defineProps({
     default: 'node',
   },
   hidePie: Boolean,
+  modelVendors: Map,
   handleClick: Function,
   handlePieClick: Function,
   currentName: String,
@@ -172,12 +174,20 @@ const pieConfig = {
     key: 'device_type',
   },
   node: {
-    query: 'count by (provider) (sum by (node,provider) (hami_vgpu_count))',
+    query: nodeVendorDistributionQuery,
     key: 'provider',
   },
 };
 
-const pieData = ref([]);
+const pieRows = ref([]);
+const pieData = computed(() => {
+  const rows = pieRows.value.map(row => ({
+    ...row,
+    vendor: isNodeType.value ? row.name : props.modelVendors?.get(row.name),
+  }));
+  const colors = donutSliceColors(rows);
+  return rows.map(row => ({ ...row, color: colors.get(row.name) }));
+});
 
 const totalCount = computed(() =>
   pieData.value.reduce((sum, item) => sum + Number(item.value || 0), 0),
@@ -208,10 +218,9 @@ onMounted(async () => {
     query: thisPieConfig.query,
   });
 
-  pieData.value = data.map((item, index) => ({
+  pieRows.value = data.map(item => ({
     name: item.metric[thisPieConfig.key],
     value: Number(item.value),
-    color: categoricalColor(index),
   }));
 });
 </script>

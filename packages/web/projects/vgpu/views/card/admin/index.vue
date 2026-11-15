@@ -11,6 +11,7 @@
         :handle-click="handleClick"
         :handle-pie-click="handlePieClick"
         :currentName="currentType"
+        :model-vendors="modelVendors"
       />
     </div>
 
@@ -97,6 +98,8 @@
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import { useRouter, useRoute } from 'vue-router';
+import { gpuVendor } from '~/vgpu/metrics/vendor-colors.mjs';
+import VendorMark from '~/vgpu/components/VendorMark.vue';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
@@ -260,7 +263,7 @@ const baseColumns = computed(() => [
       return (
         <div class="card-id-cell vgpu-table-name-cell">
           <span class="card-id-cell-icon vgpu-table-name-icon-card">
-            <svg-icon icon="vgpu-card" style={{ fontSize: '20px' }} />
+            <VendorMark vendor={vendor} size={20}><svg-icon icon="vgpu-card" style={{ fontSize: '20px' }} /></VendorMark>
           </span>
           <div class="card-id-cell-right">
             <span class="card-id-cell-name vgpu-table-name-text-wrap">
@@ -481,6 +484,16 @@ const {
 const refreshTable = fetchList;
 const scopedNodeName = computed(() => (hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName));
 const keywords = computed(() => parseKeywords(filters.keyword));
+// Use the full inventory so filtering the table cannot recolour the chart.
+const modelVendors = computed(() => {
+  const vendors = new Map();
+  for (const card of tableData.value) {
+    const vendor = gpuVendor(card.vendor);
+    if (!vendors.has(card.type)) vendors.set(card.type, vendor);
+    else if (vendors.get(card.type) !== vendor) vendors.set(card.type, null);
+  }
+  return vendors;
+});
 const keywordCards = computed(() => tableData.value.filter((card) =>
   matchesKeywords(keywords.value, [card.uuid, card.type, card.nodeName, card.vendor])));
 const visibleCards = computed(() => keywordCards.value.filter((card) =>

@@ -10,11 +10,7 @@
     <span v-if="partial" :id="coverageNoteId" class="overview-sr-only">{{ labels.partial }}</span>
     <div v-if="rows.length === 1" class="model-distribution__single" :aria-label="labels.listLabel">
       <div class="model-distribution__name model-distribution__single-name">
-        <RouterLink
-          v-if="rows[0].type !== null"
-          :to="modelListLocation(rows[0].type)"
-        >{{ rows[0].type }}</RouterLink>
-        <span v-else>{{ labels.unknown }}</span>
+        <ModelName :row="rows[0]" :unknown="labels.unknown" />
       </div>
       <div class="model-distribution__single-values">
         <span class="model-distribution__single-count">
@@ -32,11 +28,7 @@
       <li v-for="row in rows" :key="row.type === null ? 'unknown-model' : `model:${row.type}`">
         <div class="model-distribution__compact-heading">
           <span class="model-distribution__name">
-            <RouterLink
-              v-if="row.type !== null"
-              :to="modelListLocation(row.type)"
-            >{{ row.type }}</RouterLink>
-            <span v-else>{{ labels.unknown }}</span>
+            <ModelName :row="row" :unknown="labels.unknown" />
           </span>
           <span class="model-distribution__compact-values">
             <span class="model-distribution__number">
@@ -78,11 +70,7 @@
         <tbody>
           <tr v-for="row in rows" :key="row.type === null ? 'unknown-model' : `model:${row.type}`">
             <th scope="row" class="model-distribution__name">
-              <RouterLink
-                v-if="row.type !== null"
-                :to="modelListLocation(row.type)"
-              >{{ row.type }}</RouterLink>
-              <span v-else>{{ labels.unknown }}</span>
+              <ModelName :row="row" :unknown="labels.unknown" />
             </th>
             <td class="model-distribution__number">
               {{ formatCount(row.count) }}<span v-if="labels.unit" class="model-distribution__unit">{{ labels.unit }}</span>
@@ -104,10 +92,8 @@
 
 <script setup>
 import { computed, useId } from 'vue';
-import { RouterLink } from 'vue-router';
+import ModelName from './ModelName.vue';
 import { useI18n } from 'vue-i18n';
-
-const modelListLocation = type => ({ name: 'accelerators', query: { type } });
 
 const props = defineProps({
   models: { type: Array, required: true },
@@ -312,22 +298,6 @@ const formatShare = (value) => Number.isFinite(value) ? shareFormat.value.format
     font-weight: 400;
     overflow-wrap: anywhere;
 
-    a {
-      color: inherit;
-      text-decoration: none;
-
-      &:hover {
-        color: var(--el-color-primary);
-        text-decoration: underline;
-        text-underline-offset: 3px;
-      }
-
-      &:focus-visible {
-        outline: 2px solid var(--el-color-primary);
-        outline-offset: 3px;
-        border-radius: 2px;
-      }
-    }
   }
 
   &__number {

@@ -114,6 +114,7 @@ export default {
     no: 'No',
     notLimited: 'Not limited',
     unitCount: '',
+    unitNode: '',
     unitSheet: '',
     paginationTotal: '{total} items',
     moreOptionsHidden: '{count} more not shown. Keep typing to narrow the list.',

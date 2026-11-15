@@ -76,7 +76,9 @@
             </div>
             <div class="basic-info-card">
               <div class="basic-info-title">
-                <svg-icon v-if="gpuTypeIcon && detail.type" :icon="gpuTypeIcon" class="gpu-type-icon" />
+                <VendorMark v-if="detail.type" :vendor="detail.vendor">
+                  <svg-icon :icon="fallbackModelIcon" class="gpu-type-icon" />
+                </VendorMark>
                 {{ detail.type || '--' }}
                 <UnconfiguredTag v-if="detail.unconfigured" />
               </div>
@@ -385,6 +387,7 @@ import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
+import VendorMark from '~/vgpu/components/VendorMark.vue';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import taskApi from '~/vgpu/api/task';
 
@@ -447,27 +450,9 @@ const nodeDetailLocation = computed(() =>
     nodeName: detail.value?.nodeName,
   }),
 );
-const CARD_TYPE_ICON_MAP = {
-  NVIDIA: 'gpu-nvidia',
-  MXC: 'gpu-nvidia',
-  ASCEND: 'gpu-ascend',
-  METAX: 'gpu-metax',
-  AWS: 'gpu-aws',
-  AWSNEURON: 'gpu-aws',
-};
+// Keep the legacy AWS model mark for entries without a recognised inventory provider.
+const fallbackModelIcon = computed(() => /^AWS(?:NEURON)?(?:[^a-z]|$)/i.test(detail.value?.type || '') ? 'gpu-aws' : 'vgpu-card');
 
-const extractLetters = (value) => {
-  if (typeof value === 'string') {
-    return value.match(/[a-z]+/gi) || [];
-  }
-  return [];
-};
-
-const gpuTypeIcon = computed(() => {
-  const vendor = extractLetters(detail.value?.type)?.[0]?.toUpperCase();
-  if (!vendor) return '';
-  return CARD_TYPE_ICON_MAP[vendor] || 'vgpu-card';
-});
 const getCardStatusDisplay = ({ health, isExternal }) => {
   if (isExternal || health === undefined || health === null) {
     return { icon: 'status-unmanaged', text: t('card.unknown') };

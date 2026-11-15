@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries } from '../projects/vgpu/metrics/physical-resource-queries.mjs';
 
+import { nodeVendorDistributionQuery } from '../projects/vgpu/metrics/query-contract.mjs';
 import { nodeResourceQueries } from '../projects/vgpu/views/node/admin/metric-config.mjs';
 import { renderPromQLTemplate } from '../projects/vgpu/metrics/promql-template.mjs';
 
@@ -54,6 +55,12 @@ const fixture = (name, inputSeries, expressionTests) => ({
 const currentNode = query => renderPromQLTemplate(query, { node: 'node-a', uid: 'new-uid' });
 
 const fixtures = [
+  fixture('a node with both HCU and DCU counts once for Hygon', [
+    { series: 'hami_vgpu_count{node="dual",provider="DCU"}', values: '4' },
+    { series: 'hami_vgpu_count{node="dual",provider="HCU"}', values: '4' },
+    { series: 'hami_vgpu_count{node="other",provider="HCU"}', values: '8' },
+    { series: 'hami_vgpu_count{node="dual",provider="NVIDIA"}', values: '1' },
+  ], [check(nodeVendorDistributionQuery, [sample(2, { provider: 'Hygon' }), sample(1, { provider: 'NVIDIA' })])]),
   fixture('a replacement node only owns readings explicitly labeled with its UID', [
     ...[['old-uid', '0.8 stale _'], ['new-uid', '_ 0.1 0.1'], ['', '0.7 0.7 0.7']].flatMap(([uid, values]) => {
       const labels = uid ? { node_uid: uid } : {};

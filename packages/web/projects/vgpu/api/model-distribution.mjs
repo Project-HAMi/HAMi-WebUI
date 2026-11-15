@@ -11,7 +11,7 @@ export const readModelDistribution = (reply) => {
       throw new TypeError('Invalid or duplicate model count');
     }
     seen.add(item.model);
-    return { type: item.model || null, count: item.physicalDevices, share: item.physicalDevices / inventory.observed };
+    return { type: item.model || null, ...(item.model && item.vendor ? { vendor: item.vendor } : {}), count: item.physicalDevices, share: item.physicalDevices / inventory.observed };
   });
   if (rows.reduce((sum, row) => sum + row.count, 0) !== inventory.observed) {
     throw new TypeError('Model counts do not match the physical inventory');

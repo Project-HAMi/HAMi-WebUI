@@ -390,22 +390,6 @@ async function assertChartRuntime(target) {
     const box = await previewChart.boundingBox()
     return box && box.width > 0 && box.height > 0
   }, 'Preview chart did not survive a resize')
-  await page.waitForFunction(() => {
-    const canvas = document.querySelector('.pie .echarts canvas')
-    const context = canvas?.getContext('2d')
-    if (!canvas?.width || !canvas.height || !context) return false
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-    for (let index = 0; index < pixels.length; index += 4) {
-      const red = pixels[index]
-      const green = pixels[index + 1]
-      const blue = pixels[index + 2]
-      const alpha = pixels[index + 3]
-      if (alpha > 0 && green > 100 && green > red * 1.2 && green > blue * 1.2) {
-        return true
-      }
-    }
-    return false
-  })
   await waitUntil(async() => previewChart.evaluate(async(canvas) => {
     const frame = canvas.toDataURL()
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -419,7 +403,10 @@ async function assertChartRuntime(target) {
   const previewBox = await previewChart.boundingBox()
   assert.ok(previewBox?.width > 0, 'Preview chart has no width after resize')
   assert.ok(previewBox?.height > 0, 'Preview chart has no height after resize')
-  const paintedSlice = await previewChart.evaluate((canvas) => {
+  const legendColor = await previewLegendItem.locator('.color-box').evaluate(
+    (item) => getComputedStyle(item).backgroundColor.match(/\d+/g).map(Number)
+  )
+  const paintedSlice = await previewChart.evaluate((canvas, [r, g, b]) => {
     const context = canvas.getContext('2d')
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
     let longestRun = 0
@@ -433,11 +420,11 @@ async function assertChartRuntime(target) {
         const green = pixels[index + 1]
         const blue = pixels[index + 2]
         const alpha = pixels[index + 3]
-        const isGreen = alpha > 0 && green > 100 && green > red * 1.2 && green > blue * 1.2
+        const inSlice = alpha === 255 && red === r && green === g && blue === b
 
-        if (isGreen && runStart === -1) runStart = x
-        if ((!isGreen || x === canvas.width - 1) && runStart !== -1) {
-          const runEnd = isGreen ? x : x - 1
+        if (inSlice && runStart === -1) runStart = x
+        if ((!inSlice || x === canvas.width - 1) && runStart !== -1) {
+          const runEnd = inSlice ? x : x - 1
           const runLength = runEnd - runStart + 1
           if (runLength > longestRun) {
             longestRun = runLength
@@ -451,7 +438,7 @@ async function assertChartRuntime(target) {
     return point
       ? { ...point, width: canvas.width, height: canvas.height }
       : null
-  })
+  }, legendColor)
   assert.ok(paintedSlice, 'Preview chart did not paint the active slice')
   await previewChart.click({
     position: {
@@ -911,7 +898,7 @@ before(async() => {
     } else if (pathname === '/v1/gpus') {
       payload = {
         code: 0,
-        list: [{ uuid: 'gpu-1', type: 'NVIDIA', node: 'node-1', health: true }],
+        list: [{ uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', node: 'node-1', health: true }],
         total: 1
       }
     } else if (pathname === '/v1/containers' || pathname === '/v1/workloads') {
@@ -3960,7 +3947,7 @@ test('distribution legends keep each name and its count on one line', async() =>
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 800 } })
   const legends = {
     'count by (device_type)': [['NVIDIA-A100-SXM4-80GB', 59], ['Ascend910B3', 42], ['NVIDIA-H100-SXM5-80GB', 24], ['DCU', 12345]],
-    'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['DCU', 1], ['HCU', 1]],
+    'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['Hygon', 2], ['Metax', 1]],
   }
   await page.route('**/monitor/query/instant-vector', async(route) => {
     const query = route.request().postDataJSON()?.query || ''
@@ -7253,7 +7240,7 @@ test('physical overview counts and accelerator management retain their own inven
     const gpuTab = page.locator('[role="tab"][id$="-gpus"]')
     assert.equal(await gpuTab.locator('.resource-tab__count').innerText(), '1')
     await gpuTab.click()
-    await page.getByRole('tabpanel').getByRole('link', { name: 'Accelerators', exact: true }).click()
+    await page.getByRole('tabpanel').getByRole('link', { name: 'View all GPUs', exact: true }).click()
     await page.waitForURL(url => url.pathname + url.search === basePath + 'accelerators')
     const fromOverview = await readManagement()
     assert.deepEqual(fromOverview.columns, ['GPU UUID', 'Status', 'Split', 'Hosting Node',

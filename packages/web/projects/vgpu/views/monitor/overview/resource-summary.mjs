@@ -1,3 +1,4 @@
+import { gpuVendor } from '../../../metrics/vendor-colors.mjs';
 import { readModelDistribution } from '../../../api/model-distribution.mjs';
 import { physicalDeviceKey, readCoverageCount, readOverviewInventory } from '../../../api/overview-inventory.mjs';
 import { isNodeSchedulingEligible } from '../../node/node-status.mjs';
@@ -13,7 +14,7 @@ export function readResourceInventory(reply) {
   })).length;
 
   const health = { healthy: 0, unhealthy: 0, unknown: 0 };
-  const modelCounts = new Map();
+  const modelGroups = new Map();
   const nodeByName = new Map(nodes.map(node => [node.name, node]));
   const readings = [];
   const issues = [];
@@ -33,7 +34,14 @@ export function readResourceInventory(reply) {
     else health.unknown++;
     // Keep exact, nonblank model names so drill-downs use the list's own filter.
     const model = device.model?.trim() ? device.model : '';
-    modelCounts.set(model, (modelCounts.get(model) ?? 0) + 1);
+    const vendor = gpuVendor(device.provider);
+    let group = modelGroups.get(model);
+    if (!group) {
+      group = { model, physicalDevices: 0, vendor };
+      modelGroups.set(model, group);
+    }
+    group.physicalDevices++;
+    if (group.vendor !== vendor) group.vendor = null;
     const identity = { key: physicalDeviceKey(device), model, provider: device.provider,
       node: device.node, nodeUid: nodeByName.get(device.node)?.uid };
     if (device.healthy === false) issues.push({ ...identity, kind: 'deviceUnhealthy', deviceId: device.deviceId });
@@ -43,7 +51,7 @@ export function readResourceInventory(reply) {
       memory: device.memoryUsageRatio == null ? null : device.memoryUsageRatio * 100 });
   }
   const models = readModelDistribution({ coverage: deviceCoverage,
-    items: Array.from(modelCounts, ([model, physicalDevices]) => ({ model, physicalDevices })),
+    items: Array.from(modelGroups.values()),
   });
   return {
     nodes, models, devices: readings, issues,

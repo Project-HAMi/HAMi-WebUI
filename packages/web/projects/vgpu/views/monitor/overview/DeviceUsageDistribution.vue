@@ -39,7 +39,7 @@
         <div v-for="group in visibleGroups" :key="group.model" class="distribution-group">
           <div class="distribution-grid distribution-row">
             <div class="model-label">
-              <span>{{ group.model || t('unknown') }}</span>
+              <span class="model-identity"><VendorMark v-if="group.model" :vendor="group.vendor" /><span>{{ group.model || t('unknown') }}</span></span>
               <span class="gpu-count">{{ t('gpus', { n: group.count }, group.count) }}</span>
             </div>
             <div v-for="metric in metrics" :key="metric" class="metric-cell">
@@ -143,6 +143,8 @@
 </template>
 
 <script setup>
+import VendorMark from '../../../components/VendorMark.vue';
+import { gpuVendor } from '../../../metrics/vendor-colors.mjs';
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
@@ -173,8 +175,10 @@ const groups = computed(() => {
     byModel.get(model).push(device);
   }
   return Array.from(byModel, ([model, devices]) => {
+    const vendor = gpuVendor(devices[0].provider);
     return {
       model, count: devices.length,
+      vendor: devices.every(device => gpuVendor(device.provider) === vendor) ? vendor : undefined,
       compute: makeUsageSeries(devices, 'compute', props.individualDeviceLimit),
       memory: makeUsageSeries(devices, 'memory', props.individualDeviceLimit),
     };
@@ -379,6 +383,7 @@ function closeList() {
 .distribution-axis span:nth-child(2) { position: absolute; left: 50%; transform: translateX(-50%); }
 .distribution-group { border-top: 1px solid #edf1f5; }
 .distribution-row { min-height: 58px; padding-block: 9px; box-sizing: border-box; }
+.model-identity { display: inline-flex; gap: 6px; align-items: center; min-width: 0; }
 .model-label { display: grid; gap: 2px; min-width: 0; }
 .model-label > :first-child { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .gpu-count { color: #697886; font-variant-numeric: tabular-nums; font-size: 11px; }

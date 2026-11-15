@@ -113,6 +113,7 @@ export default {
     no: '否',
     notLimited: '未限制',
     unitCount: '个',
+    unitNode: '台',
     unitSheet: '张',
     paginationTotal: '共 {total} 条数据',
     moreOptionsHidden: '还有 {count} 项未显示，继续输入以缩小范围',

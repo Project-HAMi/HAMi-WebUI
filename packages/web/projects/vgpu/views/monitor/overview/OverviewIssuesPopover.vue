@@ -45,7 +45,7 @@
       </section>
     </template>
   </t-popup>
-  <t-tooltip v-else-if="view === 'ready'" :content="t('healthy')" :visible="hintHovered || hintFocused" placement="bottom-right">
+  <t-tooltip v-else-if="view === 'ready'" overlay-class-name="overview-healthy-tooltip" :content="t('healthy')" :visible="hintHovered || hintFocused" placement="bottom-right">
     <span
       ref="staticStatus"
       class="issues-healthy"
@@ -180,6 +180,7 @@ function handleTab(event) {
   height: 32px;
   color: #697886;
 }
+:global(.overview-healthy-tooltip) { --td-comp-margin-l: 4px; }
 .issues-healthy .t-icon { font-size: 16px; }
 .issues-state { padding-inline: 6px; color: #697886; font-size: 13px; font-weight: 400; }
 .issues-trigger:hover,
