@@ -46,16 +46,54 @@ type AscendModel struct {
 	SuperPod           bool
 }
 
+// CambriconConfig contains the exact keys read by HAMi; absent fields stay absent.
+type CambriconConfig struct {
+	ResourceCountName  string `yaml:"resourceCountName"`
+	ResourceCoreName   string `yaml:"resourceCoreName"`
+	ResourceMemoryName string `yaml:"resourceMemoryName"`
+}
+
+// CambriconResources describes naming and capacity evidence, not scheduler runtime state.
+// The new API will project these facts; the legacy response has no corresponding fields.
+type CambriconResources struct {
+	ConfigState        State
+	ConfigRef          Ref
+	ConfigVersion      string
+	ConfigObservedAt   time.Time
+	Expected           CambriconConfig
+	ObservedKeys       []string
+	SelectedCoreName   string
+	SelectedMemoryName string
+	Source             string // device_config or node_registration
+	State              string // matched, mismatch, unknown or conflict
+	Reason             string
+	CoreKnown          bool
+	MemoryKnown        bool
+}
+
+// DeviceResourceNames keeps explicitly configured scheduling keys. Missing keys
+// are not filled from provider defaults: they cannot prove a node's live mapping.
+type DeviceResourceNames struct {
+	Count   string `yaml:"resourceCountName"`
+	Memory  string `yaml:"resourceMemoryName"`
+	Compute string `yaml:"resourceCoreName"`
+}
+
 // Snapshot is an immutable view of the catalog.
 type Snapshot struct {
+	ResourceNames   map[string]DeviceResourceNames
 	State           State
 	Reason          string
 	Ref             Ref
 	ResourceVersion string
 	ObservedAt      time.Time
 	HamiVnpuCore    bool
+	Cambricon       *CambriconConfig
 	Ascend          map[string]AscendModel
 	Issues          []string
+
+	// NodeResourceNames contains node capacity keys for providers without a registration decoder.
+	NodeResourceNames map[string]bool
 }
 
 type Source interface {

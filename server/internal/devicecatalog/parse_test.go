@@ -68,6 +68,35 @@ func TestV290ConfigurationHasNoTemplatesFor910C(t *testing.T) {
 	}
 }
 
+func TestNodeResourceNamesFromShippedConfig(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		keys []string
+	}{
+		{"hami-v2.10.0.yaml", []string{"iluvatar.ai/MR-V100-vgpu", "iluvatar.ai/BI-V100.vMem", "enflame.com/drs-gcu", "kunlunxin.com/vxpu-memory", "aws.amazon.com/neuroncore", "amd.com/gpumem", "vastaitech.com/va", "birentech.com/gpu"}},
+		{"hami-v2.9.0.yaml", []string{"iluvatar.ai/MR-V100.vCore", "enflame.com/vgcu-percentage", "kunlunxin.com/xpu"}},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			parsed := parseFixture(t, tc.file)
+			for _, key := range tc.keys {
+				if !parsed.NodeResourceNames[key] {
+					t.Errorf("missing declared node resource %s", key)
+				}
+			}
+		})
+	}
+	parsed, err := Parse([]byte(`
+iluvatars:
+- {resourceCountName: example.org/custom}
+unknown: {resourceCountName: storage.example/volume}
+awsneuron: {unrecognizedField: rdma/hca}
+biren: {resourceMemoryName: example.org/undeclared-field}
+`))
+	if err != nil || !reflect.DeepEqual(parsed.NodeResourceNames, map[string]bool{"example.org/custom": true}) {
+		t.Fatalf("node resources=%v, err=%v", parsed.NodeResourceNames, err)
+	}
+}
+
 func TestModelFieldsFollowHAMi(t *testing.T) {
 	model := parseFixture(t, "hami-v2.10.0.yaml").Ascend["Ascend310P"]
 	if model.ChipName != "310P3" || model.ResourceName != "huawei.com/Ascend310P" || model.ResourceMemoryName != "huawei.com/Ascend310P-memory" ||
@@ -162,5 +191,42 @@ func TestParseIsCaseSensitiveLikeHAMiAndRejectsMalformedYAML(t *testing.T) {
 	empty, err := Parse([]byte("nvidia:\n  resourceCountName: nvidia.com/gpu\n"))
 	if err != nil || len(empty.Ascend) != 0 {
 		t.Fatalf("configuration without vnpus = %+v, %v", empty, err)
+	}
+}
+
+func TestCambriconConfigPreservesExplicitAndMissingNames(t *testing.T) {
+	cases := []struct {
+		name, yaml string
+		want       *CambriconConfig
+	}{
+		{"absent", "vnpus: []", nil},
+		{"empty", "cambricon: {}", &CambriconConfig{}},
+		{"custom", "cambricon:\n  resourceCountName: example.com/count\n  resourceCoreName: compute.example.com/share\n  resourceMemoryName: memory.example.com/size", &CambriconConfig{ResourceCountName: "example.com/count", ResourceCoreName: "compute.example.com/share", ResourceMemoryName: "memory.example.com/size"}},
+		{"partial", "cambricon:\n  resourceCoreName: example.com/core", &CambriconConfig{ResourceCoreName: "example.com/core"}},
+		{"wrong case", "cambricon:\n  ResourceCoreName: example.com/core", &CambriconConfig{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(tc.yaml))
+			if err != nil || !reflect.DeepEqual(parsed.Cambricon, tc.want) {
+				t.Fatalf("Cambricon = %+v, %v; want %+v", parsed.Cambricon, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExplicitProviderResourceKeysStayMissingWithoutConfiguration(t *testing.T) {
+	parsed, err := Parse([]byte("nvidia:\n  resourceCountName: private.example/gpu\nmetax:\n  resourceVCountName: private.example/sgpu\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ResourceNames["NVIDIA"].Count != "private.example/gpu" || parsed.ResourceNames["NVIDIA"].Memory != "" {
+		t.Fatal("configured resource changed or missing memory defaulted")
+	}
+	if parsed.ResourceNames["Metax-SGPU"].Count != "private.example/sgpu" || parsed.ResourceNames["Metax-GPU"].Count != "" {
+		t.Fatal("whole and shared MetaX resources conflated")
+	}
+	if _, present := parsed.ResourceNames["DCU"]; present {
+		t.Fatal("absent provider configuration invented")
 	}
 }

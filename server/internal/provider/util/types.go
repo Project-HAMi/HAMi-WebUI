@@ -52,12 +52,14 @@ var (
 )
 
 type ContainerDevice struct {
-	Idx       int
-	UUID      string
-	Type      string
-	Usedmem   int32
-	Usedcores int32
-	Priority  string
+	// RecordedCores preserves an explicit zero before the legacy whole-card default.
+	RecordedCores int32
+	Idx           int
+	UUID          string
+	Type          string
+	Usedmem       int32
+	Usedcores     int32
+	Priority      string
 }
 
 type ContainerDeviceRequest struct {

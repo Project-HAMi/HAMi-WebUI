@@ -12,6 +12,7 @@ import (
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
 	"vgpu/internal/devicecatalog"
+	"vgpu/internal/podfacts"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/provider/util"
@@ -28,6 +29,8 @@ import (
 )
 
 type podRepo struct {
+	facts                   *podfacts.Ledger
+	factsCatalog            devicecatalog.Source
 	data                    *Data
 	podLister               listerscorev1.PodLister
 	nodeLister              listerscorev1.NodeLister
@@ -50,6 +53,7 @@ func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap, catalog d
 		eventsClient = data.k8sCl
 	}
 	repo := &podRepo{
+		facts: podfacts.NewLedger(), factsCatalog: catalog,
 		data:                    data,
 		pods:                    make(map[k8stypes.UID]*biz.PodInfo),
 		log:                     log.NewHelper(logger),
@@ -78,6 +82,9 @@ func (r *podRepo) init(catalog devicecatalog.Source) error {
 		return fmt.Errorf("index pods: %w", err)
 	}
 	r.podIndexer = informer.GetIndexer()
+	if err := r.initFacts(informer, catalog); err != nil {
+		return err
+	}
 	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddPod,
 		UpdateFunc: r.onUpdatePod,
@@ -462,4 +469,9 @@ func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.C
 	}
 
 	return nil, fmt.Errorf("not found")
+}
+
+func (r *podRepo) isCachedVersion(pod *corev1.Pod) bool {
+	current, err := r.podLister.Pods(pod.Namespace).Get(pod.Name)
+	return err == nil && current != nil && current.UID == pod.UID && current.ResourceVersion == pod.ResourceVersion
 }

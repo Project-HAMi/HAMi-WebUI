@@ -20,6 +20,8 @@ var ProviderSet = wire.NewSet(
 	NewDeviceCatalog,
 	NewNodeRepo,
 	NewPodRepo,
+	NewPodFactsLedger,
+	NewResourceSnapshotSource,
 	wire.Bind(new(biz.PodRepo), new(*podRepo)),
 	wire.Bind(new(biz.SchedulingRepo), new(*podRepo)),
 )
@@ -30,8 +32,9 @@ type Data struct {
 	eventsCl kubernetes.Interface
 	promCl   *prom.Client
 	// Shared by the repositories, so each resource has one cache.
-	informers informers.SharedInformerFactory
-	stopCh    chan struct{}
+	continuity *sharedContinuity
+	informers  informers.SharedInformerFactory
+	stopCh     chan struct{}
 }
 
 // NewData .
@@ -47,12 +50,14 @@ func NewData(logger log.Logger, promCl *prom.Client) (*Data, func(), error) {
 		return nil, nil, err
 	}
 	stopCh := make(chan struct{})
+	factory, continuity := newTrackedInformerFactory(k8sCl, informerResyncPeriod)
 	return &Data{
-			k8sCl:     k8sCl,
-			eventsCl:  eventsCl,
-			promCl:    promCl,
-			informers: informers.NewSharedInformerFactory(k8sCl, informerResyncPeriod),
-			stopCh:    stopCh,
+			k8sCl:      k8sCl,
+			eventsCl:   eventsCl,
+			promCl:     promCl,
+			informers:  factory,
+			continuity: continuity,
+			stopCh:     stopCh,
 		}, func() {
 			close(stopCh)
 			log.Info("message", "closing the data resources")

@@ -166,6 +166,7 @@ func decodeSegments(str string, build func(i int, seg deviceSegment) (ContainerD
 		if err != nil {
 			return ContainerDevices{}, err
 		}
+		dev.RecordedCores = seg.cores
 		contdev = append(contdev, dev)
 	}
 	return contdev, nil
