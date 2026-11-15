@@ -9,6 +9,8 @@ import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
 import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
+import { createNodeTopQueries } from '../../packages/web/projects/vgpu/views/monitor/overview/metric-config.mjs'
+import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -45,6 +47,11 @@ function createResponseGate(key) {
 async function waitForResponseGate(key) {
   await responseGates.get(key)?.promise
 }
+
+const coverageFixture = (entity, total) => ({ entity, observed: total, total, complete: true })
+const listFixture = (endpoint, list) => endpoint === 'nodes'
+  ? { list, inventoryCoverage: coverageFixture('node', list.length) }
+  : { list }
 
 async function readJSONBody(req) {
   const chunks = []
@@ -620,9 +627,10 @@ async function localRangeAsUTC(page, values) {
   }), values)
 }
 
+const overviewTrendCount = 4
 const trendPages = [
-  ['overview', 5],
-  ['nodes/node-1?nodeName=node-1', 5],
+  ['overview', overviewTrendCount],
+  ['nodes/node-1?nodeName=node-1', 4],
   ['accelerators/gpu-1', 7],
   ['workloads/pod-1/containers/worker', 2]
 ]
@@ -642,10 +650,10 @@ async function selectTrendRange(page, value) {
   await page.locator('.t-select-option:visible').getByText(label, { exact: true }).click()
 }
 
-async function waitForChartPaint(page) {
+async function waitForChartPaint(scope) {
   let previous
   await waitUntil(async() => {
-    const frame = await page.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
+    const frame = await scope.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
       const bounds = canvas.getBoundingClientRect()
       const body = canvas.closest('.metric-chart__body, .card-type-chart')?.getBoundingClientRect()
       return {
@@ -924,6 +932,10 @@ before(async() => {
       }
     }
 
+    if (pathname === '/v1/nodes' && body?.useResourceInventory) Object.assign(payload, listFixture('nodes', payload.list))
+    if (pathname === '/v1/node' && requestURL.searchParams.get('useResourceInventory') === 'true') {
+      payload.inventoryCoverage = coverageFixture('device', payload.cardCnt)
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify(payload))
   })
@@ -1969,6 +1981,7 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
     fixtures.set(query, { nameKey, data })
     return query
   })
+  const overviewQueries = fixtureQueries('node', createNodeTopQueries())
   const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
   const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
   const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
@@ -1980,7 +1993,7 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
   })
   try {
     for (const [path, queries] of [
-      ['overview', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
+      ['overview', [overviewQueries.slice(0, 2), overviewQueries.slice(2)]],
       ['nodes', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
       ['accelerators', [deviceQueries.slice(0, 2), deviceQueries.slice(2)]],
       ['workloads', [countQueries, workloadQueries]]
@@ -2808,14 +2821,14 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     await end.fill(applied[1])
     await end.press('Enter')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
     for (const width of [960, 1000, 1024]) {
       await filter.evaluate(async(element, width) => {
         element.style.width = `${width}px`
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       }, width)
       assert.ok(await customTimestampFieldsFit(filter), `Full timestamps must remain readable at the ${width}px container boundary`)
-      assert.equal(requests.length, 10, 'Resizing custom controls must not query')
+      assert.equal(requests.length, overviewTrendCount * 2, 'Resizing custom controls must not query')
     }
     await filter.evaluate((element) => { element.style.width = '' })
 
@@ -2825,11 +2838,11 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     await refresh.click()
     await page.locator('.trend-time-filter-popup:visible').waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 15, 'Refreshing a custom range must request once without applying the draft')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Refreshing a custom range must request once without applying the draft')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
     assert.equal(await trendRangeButton(page, 'custom').getAttribute('aria-pressed'), 'true')
     assert.equal(await page.locator('.t-message').count(), 0)
-    for (const request of requests.slice(10)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
+    for (const request of requests.slice(overviewTrendCount * 2)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
 
     let fail = true
     await page.route('**/v1/monitor/query/range-vector', (route) => fail
@@ -2838,16 +2851,16 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     await refresh.press('Enter')
     await page.locator('.metric-chart__refresh--error').first().waitFor()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 20)
+    assert.equal(requests.length, overviewTrendCount * 4)
     assert.equal(await refresh.isEnabled(), true, 'A failed refresh must allow another attempt')
     fail = false
     await refresh.press('Space')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 25, 'Retry must request exactly one batch')
+    assert.equal(requests.length, overviewTrendCount * 5, 'Retry must request exactly one batch')
     assert.equal(await page.locator('.metric-chart__refresh--error').count(), 0)
     await waitUntil(() => refresh.isEnabled(), 'A completed retry must enable refresh again')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-    for (const request of requests.slice(15)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
+    for (const request of requests.slice(overviewTrendCount * 3)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
     await captureTrendScreenshot(page, 'p7-custom-refresh-applied')
   } finally {
     await page.close()
@@ -2944,11 +2957,11 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     const input = narrow.getByRole('textbox', { name: 'Time range', exact: true })
     await narrow.waitFor()
     await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Narrow mode must retain focus on the visible preset entry')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
     await filter.evaluate((element) => { element.style.width = '900px' })
     await selected.waitFor()
     await waitUntil(async() => await selected.evaluate((element) => element === document.activeElement || element.contains(document.activeElement)), 'Wide mode must return focus to the selected preset')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
     await filter.evaluate((element) => { element.style.width = '360px' })
     await narrow.waitFor()
     await input.press('Enter')
@@ -2957,10 +2970,10 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await stablePopupBounds(page.locator('.t-popup:visible').filter({ has: page.locator('.t-select-option') }))
     await captureTrendScreenshot(page, 'p7-en-360-preset-menu')
     assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), (await filter.locator('.segmented-control__option').allTextContents()).map((label) => label.trim()))
-    assert.equal(requests.length, 5, 'Opening presets must not refresh')
+    assert.equal(requests.length, overviewTrendCount, 'Opening presets must not refresh')
     await input.press('Escape')
     await options.first().waitFor({ state: 'hidden' })
-    assert.equal(requests.length, 5, 'Escape must not refresh')
+    assert.equal(requests.length, overviewTrendCount, 'Escape must not refresh')
     assert.ok(await narrow.evaluate((element) => element.contains(document.activeElement)))
 
     await input.press('Space')
@@ -2968,14 +2981,14 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     for (let index = 0; index < 4; index += 1) await input.press('ArrowDown')
     await input.press('Enter')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 10, 'A keyboard selection must publish once')
+    assert.equal(requests.length, overviewTrendCount * 2, 'A keyboard selection must publish once')
     assert.equal(new Date(requests.at(-1).range.end) - new Date(requests.at(-1).range.start), 24 * 60 * 60 * 1000)
 
     const initialEnd = requests.at(-1).range.end
     await page.clock.setSystemTime(new Date('2026-10-07T12:01:01Z'))
     await selectTrendRange(page, '24h')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 15, 'Reselecting the current dropdown item must refresh once')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Reselecting the current dropdown item must refresh once')
     assert.notEqual(requests.at(-1).range.end, initialEnd)
     await filter.evaluate((element) => { element.style.width = '900px' })
     await trendRangeButton(page, '24h').waitFor()
@@ -2990,19 +3003,19 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await filter.evaluate((element) => { element.style.width = '900px' })
     await options.first().waitFor({ state: 'hidden' })
     assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Closing a hidden dropdown after Tab must not pull focus back')
-    assert.equal(requests.length, 15, 'Hiding an open dropdown must not select an option')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Hiding an open dropdown must not select an option')
     await filter.evaluate((element) => { element.style.width = '360px' })
     await narrow.waitFor()
     await narrow.click()
     await options.first().waitFor()
     await page.locator('.home-page-title').click()
     await options.first().waitFor({ state: 'hidden' })
-    assert.equal(requests.length, 15, 'Outside dismissal must not refresh')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Outside dismissal must not refresh')
     await filter.evaluate((element) => { element.style.width = '900px' })
     await trendRangeButton(page, '24h').waitFor()
     assert.equal(await trendRangeButton(page, '24h').getAttribute('aria-pressed'), 'true')
     assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Resizing after clicking the page title must not steal focus back')
-    assert.equal(requests.length, 15, 'Returning to wide mode must preserve the selected range')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Returning to wide mode must preserve the selected range')
     await captureTrendScreenshot(page, 'p7-preset-keyboard-wide')
     await filter.evaluate((element) => { element.style.width = '360px' })
     await narrow.waitFor()
@@ -3012,7 +3025,7 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await page.clock.setSystemTime(new Date('2026-10-07T12:02:02Z'))
     await refresh.click()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 20, 'Compact refresh must publish exactly once')
+    assert.equal(requests.length, overviewTrendCount * 4, 'Compact refresh must publish exactly once')
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-06T12:02:02Z', '2026-10-07T12:02:02Z'])
   } finally {
     await page.close()
@@ -3044,7 +3057,7 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
       assert.ok(await startElement.evaluate((element) => element.isConnected && element === document.activeElement), 'Resizing must keep the same focused date input')
       assert.equal(await start.inputValue(), rawDraft, 'Resizing must retain incomplete text exactly')
       assert.equal(await end.inputValue(), applied[1])
-      assert.equal(requests.length, 5)
+      assert.equal(requests.length, overviewTrendCount)
     }
     await page.getByRole('button', { name: 'Switch to 中文', exact: true }).click()
     await page.locator('html[lang="zh-CN"]').waitFor()
@@ -3052,7 +3065,7 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
     end = filter.getByRole('textbox', { name: '结束时间', exact: true })
     await waitUntil(async() => await start.inputValue() === applied[0], 'Clicking the language button must cancel an unconfirmed draft')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-    assert.equal(requests.length, 5, 'Changing language must not apply the canceled draft')
+    assert.equal(requests.length, overviewTrendCount, 'Changing language must not apply the canceled draft')
 
     await start.click()
     await start.fill(rawDraft)
@@ -3083,12 +3096,12 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
           element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
       }), `Calendar confirmation must be visible and unobstructed at ${width}x${height}`)
     }
-    assert.equal(requests.length, 5, 'Narrow calendar drafts must not submit early')
+    assert.equal(requests.length, overviewTrendCount, 'Narrow calendar drafts must not submit early')
     await confirm.click()
     await panel.waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
-    assert.equal(requests.length, 10, 'Narrow confirmation must apply exactly once')
+    assert.equal(requests.length, overviewTrendCount * 2, 'Narrow confirmation must apply exactly once')
     assert.ok(await end.evaluate((element) => element === document.activeElement))
     await waitUntil(async() => await end.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor) === 'rgb(242, 243, 255)', 'Narrow focused input must retain the accepted light-blue fill')
     assert.ok(await customTimestampFieldsFit(filter), 'Narrow fields must show complete timestamps without horizontal scrolling')
@@ -3102,9 +3115,9 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
     await waitUntil(async() => await end.inputValue() !== beforeWheel, 'Real mouse wheel must still edit the time')
     const afterWheel = await end.inputValue()
     assert.ok(Number.isFinite(new Date(afterWheel).getTime()))
-    assert.equal(requests.length, 10, 'Wheel editing must not submit before confirmation')
+    assert.equal(requests.length, overviewTrendCount * 2, 'Wheel editing must not submit before confirmation')
     await confirm.click()
-    await waitUntil(() => requests.length === 15, 'Confirming a wheel edit must fetch exactly once')
+    await waitUntil(() => requests.length === overviewTrendCount * 3, 'Confirming a wheel edit must fetch exactly once')
     assert.equal(requests.at(-1).range.end, (await localRangeAsUTC(page, [afterWheel]))[0])
   } finally {
     await page.close()
@@ -3159,7 +3172,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.equal(await end.getAttribute('aria-label'), 'End Time')
     assert.ok(await start.inputValue())
     assert.ok(await end.inputValue())
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
 
     const inputBackground = (input) => input.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor)
     const title = page.locator('.home-page-title')
@@ -3206,12 +3219,12 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.ok(await filter.getByRole('button', { name: 'Refresh trends', exact: true }).evaluate((element) => element === document.activeElement), 'Tab from the end input must go directly to refresh')
     await title.click()
     await waitUntil(async() => JSON.stringify(await Promise.all([inputBackground(start), inputBackground(end)])) === JSON.stringify(restingBackgrounds), 'Blurring the picker must restore both input backgrounds')
-    assert.equal(requests.length, 5, 'Hover, focus, selection, and unchanged typing must not request another range')
+    assert.equal(requests.length, overviewTrendCount, 'Hover, focus, selection, and unchanged typing must not request another range')
 
     await start.click()
     await end.press('Enter')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 5, 'Confirming unchanged visible seconds must not refetch')
+    assert.equal(requests.length, overviewTrendCount, 'Confirming unchanged visible seconds must not refetch')
 
     const selected = ['2025-09-01 10:12:34', '2025-09-01 11:23:45']
     await start.click()
@@ -3221,7 +3234,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
     await end.press('Enter')
     await page.waitForLoadState('networkidle')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
     assert.equal(await page.locator('.t-message').count(), 0, 'Valid Enter must not show a warning')
     assert.deepEqual(
       [requests.at(-1).range.start, requests.at(-1).range.end],
@@ -3233,24 +3246,24 @@ test('custom trend dates apply exact input and restore the applied range on canc
     await page.locator('.home-page-title').click()
     await waitUntil(async() => await start.inputValue() === selected[0], 'Cancel did not restore the applied start')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await start.fill('')
     await page.locator('.home-page-title').click()
     assert.equal(await start.inputValue(), selected[0])
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await end.fill('2999-01-01 00:00:00')
     await end.press('Enter')
     await page.locator('.t-message').filter({ hasText: 'End time cannot be in the future. The previous range has been restored.' }).waitFor()
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await start.fill('2025-10-01 00:00:00')
     await end.press('Enter')
     await page.locator('.t-message').filter({ hasText: 'End time must be after start time. The previous range has been restored.' }).waitFor()
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await selectTrendRange(page, '3h')
     await page.waitForLoadState('networkidle')
@@ -3261,7 +3274,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
       await localRangeAsUTC(page, [await start.inputValue(), await end.inputValue()]),
       [requests.at(-1).range.start, requests.at(-1).range.end]
     )
-    assert.equal(requests.length, 15)
+    assert.equal(requests.length, overviewTrendCount * 3)
 
     for (const locale of ['en', 'zh-CN']) {
       if (locale === 'zh-CN') {
@@ -3303,7 +3316,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
         const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
         const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
         const applied = [await start.inputValue(), await end.inputValue()]
-        assert.equal(requests.length, 5)
+        assert.equal(requests.length, overviewTrendCount)
         await page.clock.setSystemTime(new Date('2026-10-06T12:01:01.123Z'))
 
         const input = name === 'empty end' ? end : start
@@ -3315,7 +3328,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
         await panel.waitFor({ state: 'hidden' })
         await page.waitForLoadState('networkidle')
         assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-        assert.equal(requests.length, 5, 'Invalid Enter must not change the chart range')
+        assert.equal(requests.length, overviewTrendCount, 'Invalid Enter must not change the chart range')
         const warning = page.locator('.t-message')
         assert.equal(await warning.count(), 1, 'One Enter must show exactly one warning')
         assert.equal(await warning.textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
@@ -3330,7 +3343,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
           await waitUntil(async() => await start.inputValue() === applied[0], 'Tabbing away after malformed Enter must discard the next draft')
           assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
           assert.equal(await panel.count(), 0)
-          assert.equal(requests.length, 5)
+          assert.equal(requests.length, overviewTrendCount)
         }
       } finally {
         await page.close()
@@ -3404,7 +3417,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
           assert.equal(await warning.count(), 1)
           assert.equal(await filter.getByRole('status').textContent(), expected)
           assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-          assert.equal(requests.length, 5, 'Rejected edits must not fetch another range')
+          assert.equal(requests.length, overviewTrendCount, 'Rejected edits must not fetch another range')
           assert.equal(await filter.locator('.t-is-error, [aria-invalid="true"], .t-input__tips').count(), 0)
           const after = await geometry()
           assert.equal(after.filter.height, before.filter.height, `${locale} rejection changes filter height at ${width}`)
@@ -3415,7 +3428,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
           await end.press('Enter')
           await warning.waitFor({ state: 'detached' })
           assert.equal(await filter.getByRole('status').textContent(), '', 'Accepting the restored range clears feedback')
-          assert.equal(requests.length, 5, 'Accepting unchanged seconds must not refetch')
+          assert.equal(requests.length, overviewTrendCount, 'Accepting unchanged seconds must not refetch')
         }
       } finally {
         await page.close()
@@ -3445,11 +3458,13 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
     for (const options of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }]) {
       await start.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', ...options })
       assert.equal(await warning.count(), 0)
-      assert.equal(requests.length, 5, 'Composition and key repeats must not submit a draft')
+      assert.equal(requests.length, overviewTrendCount, 'Composition and key repeats must not submit a draft')
       assert.equal(await start.inputValue(), '2025-08-01 01:02:03')
     }
     await page.locator('.home-page-title').click()
     await waitUntil(async() => await start.inputValue() === applied[0], 'Cancel must restore the IME draft')
+    // The warning animates across the title and pauses its countdown under the pointer.
+    await page.mouse.move(0, 0)
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await start.fill('not-a-date')
@@ -3458,7 +3473,7 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
       assert.equal(await warning.count(), 1, 'Repeating the same rejected input must replace its own warning')
       assert.equal(await filter.getByRole('status').textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
       assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-      assert.equal(requests.length, 5)
+      assert.equal(requests.length, overviewTrendCount)
     }
     await page.clock.fastForward(5500)
     await warning.waitFor({ state: 'detached' })
@@ -3466,7 +3481,7 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
     await start.press('Enter')
     await warning.waitFor()
     assert.equal(await warning.count(), 1, 'The same error must be explained again after the earlier warning expires')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
 
     await page.getByRole('link', { name: 'Nodes', exact: true }).click()
     await warning.waitFor({ state: 'detached' })
@@ -3584,13 +3599,13 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await day('2').click()
     await panel.locator('.t-time-picker__panel-body-scroll').first().getByText('04', { exact: true }).click()
     await waitUntil(async() => (await end.inputValue()).includes(' 04:'), 'Time column selection did not update the draft')
-    assert.equal(requests.length, 5, 'Calendar drafts must not fetch before confirmation')
+    assert.equal(requests.length, overviewTrendCount, 'Calendar drafts must not fetch before confirmation')
     const selected = [await start.inputValue(), await end.inputValue()]
     assert.ok(selected[0].startsWith('2026-10-01 '), JSON.stringify(selected))
     assert.ok(selected[1].startsWith('2026-10-02 '), JSON.stringify(selected))
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
     assert.equal(await panel.count(), 0, 'Confirm must finish editing and close the calendar')
     assert.ok(await end.evaluate((element) => element === document.activeElement), 'Confirm must return keyboard focus to the date input')
@@ -3598,7 +3613,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await start.click()
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await waitUntil(async() => await panel.count() === 0, 'Confirming an unchanged range must also close the calendar')
-    assert.equal(requests.length, 10, 'Confirming the applied range must not fetch again')
+    assert.equal(requests.length, overviewTrendCount * 2, 'Confirming the applied range must not fetch again')
 
     await start.fill('2025-08-01 01:02:03')
     await start.press('Tab')
@@ -3606,7 +3621,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await waitUntil(async() => await start.inputValue() === selected[0], 'Tabbing away after Confirm must discard unconfirmed input')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
     assert.equal(await panel.count(), 0)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await start.click()
     await end.click()
@@ -3615,7 +3630,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     assert.ok(nextSelected[1].startsWith('2026-10-03 '), JSON.stringify(nextSelected))
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 15, 'A new calendar range after Confirm must apply once')
+    assert.equal(requests.length, overviewTrendCount * 3, 'A new calendar range after Confirm must apply once')
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, nextSelected))
     assert.equal(await panel.count(), 0)
 
@@ -3624,7 +3639,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await page.locator('.home-page-title').click()
     await waitUntil(async() => await start.inputValue() === nextSelected[0], 'Calendar cancellation did not restore the applied range')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], nextSelected)
-    assert.equal(requests.length, 15)
+    assert.equal(requests.length, overviewTrendCount * 3)
   } finally {
     await page.close()
   }
@@ -4431,6 +4446,7 @@ async function installNodeAllocationFixture(page, state) {
   })
   await page.route('**/v1/node?**', (route) => route.fulfill({ json: {
     ...allocationNode, ip: '192.0.2.30', isReady: true, isSchedulable: true,
+    inventoryCoverage: coverageFixture('device', state.devices.length),
     type: ['NVIDIA'], cardCnt: state.devices.length,
     vgpuUsed: state.devices.length * 2, vgpuTotal: state.devices.length * 10,
     coreUsed: state.devices.length * 30, coreTotal: state.devices.length * 100,
@@ -4466,7 +4482,7 @@ test('node device allocation uses two node-scoped batches and shows at most four
       await section.waitFor()
       const cards = section.locator('article[data-device-id]:visible')
       assert.equal(await cards.count(), Math.min(count, 4), `Node with ${count} devices has the wrong initial visible count`)
-      if (!count) await section.getByText('No devices on this node', { exact: true }).waitFor()
+      if (!count) await section.getByText('No device records for this node', { exact: true }).waitFor()
       assertNodeAllocationRequests(requests.slice(start))
       const expand = section.getByRole('button', { name: `Show ${count - 4} more ${count === 5 ? 'device' : 'devices'}`, exact: true })
       assert.equal(await expand.count(), count > 4 ? 1 : 0)
@@ -5115,7 +5131,11 @@ async function readTimeAxisTexts(page) {
 }
 
 async function assertTimeAxisLayout(page, context) {
-  const canvas = page.locator('.metric-chart canvas').first()
+  const chart = page.locator('.metric-chart').first()
+  const canvas = chart.locator('canvas').first()
+  // Resizing the viewport precedes ECharts' redraw. Two reads of the same old
+  // labels do not establish that the new canvas fits its container.
+  await waitForChartPaint(chart)
   let previousFrame
   const labels = await waitUntil(async() => {
     const current = await readTimeAxisLabels(page)
@@ -5193,7 +5213,6 @@ test('trend dates stay readable across all trend pages, languages and ordinary w
               // explicitly so this test checks chart layout in usable space.
               await setSidebarCollapsed(width < 600, language)
               await chart.scrollIntoViewIfNeeded()
-              await waitUntil(async() => chart.locator('canvas').evaluate((canvas) => Math.abs(canvas.getBoundingClientRect().width - canvas.closest('.metric-chart__body').getBoundingClientRect().width) < 2), 'Canvas did not resize')
               const texts = await assertTimeAxisLayout(page, `${route}/${language}/${range}/${width}`)
               assert.ok(texts.length <= 14, 'Time labels became an unreadable wall of text')
               const layout = await chart.evaluate((element) => {
@@ -5315,7 +5334,7 @@ async function withCalendarDraftProbe(run) {
     ]
     const panel = page.locator('.trend-time-filter-popup:visible')
     const applied = await Promise.all(inputs.map((input) => input.inputValue()))
-    assert.equal(requests.length, 5, 'Opening custom controls must not issue another range batch')
+    assert.equal(requests.length, overviewTrendCount, 'Opening custom controls must not issue another range batch')
     await run({ page, filter, inputs, panel, applied, requests })
   } finally {
     await page.close()
@@ -5363,7 +5382,7 @@ test('calendar hover preserves exact incomplete drafts before and after popup in
           assert.equal(await inputs[index].inputValue(), draft, 'Leaving a calendar preview must restore the exact unconfirmed draft')
           assert.equal(await inputs[1 - index].inputValue(), applied[1 - index], 'A draft must not alter the other endpoint')
           assert.ok(await inputs[index].evaluate((element) => element === document.activeElement), 'Calendar hover must retain input focus')
-          assert.equal(requests.length, 5, 'Opening, typing and hover must not submit a draft')
+          assert.equal(requests.length, overviewTrendCount, 'Opening, typing and hover must not submit a draft')
         })
       })
     }
@@ -5377,18 +5396,18 @@ test('canceling an invalid early calendar draft restores applied dates and canno
     await openCalendarDraftProbe(context, 1, draft, 'early')
     await hoverCalendarDraftProbe(context, 1)
     assert.equal(await inputs[1].inputValue(), draft, 'Unparseable text must survive hover while it is still being edited')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
 
     await page.locator('.home-page-title').click()
     await page.locator('.trend-time-filter-popup').waitFor({ state: 'hidden' })
     await waitUntil(async() => JSON.stringify(await Promise.all(inputs.map((input) => input.inputValue()))) === JSON.stringify(applied), 'Canceling must restore the applied range')
-    assert.equal(requests.length, 5, 'Canceling an invalid draft must not submit')
+    assert.equal(requests.length, overviewTrendCount, 'Canceling an invalid draft must not submit')
 
     await inputs[1].click()
     await stablePopupBounds(panel)
     await hoverCalendarDraftProbe(context, 1)
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied, 'A reopened picker must not restore a previously canceled draft')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
   })
 })
 
@@ -5403,14 +5422,14 @@ test('a complete early calendar draft submits its own values exactly once after 
     await inputs[1].fill(selected[1])
     await hoverCalendarDraftProbe(context, 1)
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
-    assert.equal(requests.length, 5, 'Hover must not apply the complete draft early')
+    assert.equal(requests.length, overviewTrendCount, 'Hover must not apply the complete draft early')
 
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await panel.waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
     const expected = await localRangeAsUTC(page, selected)
-    assert.equal(requests.length, 10, 'Confirmation must publish exactly one range-query batch')
-    for (const request of requests.slice(5)) {
+    assert.equal(requests.length, overviewTrendCount * 2, 'Confirmation must publish exactly one range-query batch')
+    for (const request of requests.slice(overviewTrendCount)) {
       assert.deepEqual([request.range.start, request.range.end], expected, 'Confirmed requests must use the typed range, not stale applied dates')
     }
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
@@ -5443,7 +5462,7 @@ test('typing over a calendar preview preserves invalid drafts without selecting 
     await inputs[1].hover()
     assert.equal(await inputs[0].inputValue(), 'not-a-date', 'Hovering the other endpoint must preserve the invalid draft without parsing it')
     assert.equal(await inputs[1].inputValue(), applied[1])
-    assert.equal(requests.length, 5, 'Neither a date pick nor invalid text may apply before confirmation')
+    assert.equal(requests.length, overviewTrendCount, 'Neither a date pick nor invalid text may apply before confirmation')
     assert.deepEqual(errors, [], 'Invalid text must not reach the calendar date parser')
     await page.locator('.home-page-title').click()
     await panel.waitFor({ state: 'hidden' })
@@ -5756,7 +5775,13 @@ test('node allocation loading follows identity and both allocation snapshots wit
       try {
         await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'domcontentloaded' })
         await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
-        if (width === 375) await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+        if (width === 375) {
+          await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+          // Compare allocation layouts at the same content width.
+          await page.locator('.page-aside').evaluate(async(aside) => {
+            await Promise.all(aside.getAnimations().map((animation) => animation.finished))
+          })
+        }
         assert.equal(await page.locator('.node-allocation').count(), 0, 'Unknown node identity must not imply four real devices or a split mode')
         assert.equal(requests.length, 0, 'Allocation requests need the resolved node identity')
         await captureTrendScreenshot(page, `skeleton-node-identity-${width}`)
@@ -6007,7 +6032,7 @@ test('list no-match recovery fits common screen widths in both languages', { tim
   for (const locale of ['en-US', 'zh-CN']) {
     for (const config of listSearchCases) {
       const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
-      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? { list: [] } : { items: [], total: 0 } }))
+      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } }))
       try {
         await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
         await page.getByTestId('stateful-table-empty').waitFor()
@@ -6046,7 +6071,7 @@ test('clearing list filters removes route filters while the input clear preserve
     const queries = []
     await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
       queries.push(route.request().postDataJSON())
-      return route.fulfill({ json: config.local ? { list: [] } : { items: [], total: 0 } })
+      return route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } })
     })
     try {
       await page.goto(`${target}${basePath}${config.route}?${config.query}`, { waitUntil: 'domcontentloaded' })
@@ -6116,7 +6141,7 @@ const mockLocalSearchLists = async(page, counts = {}) => {
   for (const endpoint of ['nodes', 'gpus']) {
     await page.route(`**/api/vgpu/v1/${endpoint}`, (route) => {
       counts[endpoint] = (counts[endpoint] ?? 0) + 1
-      return route.fulfill({ json: { list: localSearchRows[endpoint] } })
+      return route.fulfill({ json: listFixture(endpoint, localSearchRows[endpoint]) })
     })
   }
   const types = [...new Set(localSearchRows.gpus.map((gpu) => gpu.type))].map((type) => ({ type }))
@@ -6175,7 +6200,7 @@ test('node pagination keeps the detail return position and adjusts to filters an
   let nodes = Array.from({ length: 25 }, (_, i) => ({
     ...localSearchRows.nodes[0], name: `gpu-${i + 1}`, uid: `node-${i + 1}`,
   }))
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', nodes) }))
   const rows = page.locator('.node-table tbody tr')
   const expectPage = async(firstNode, count) => {
     await rows.first().getByText(firstNode, { exact: true }).waitFor()
@@ -6212,6 +6237,123 @@ test('node pagination keeps the detail return position and adjusts to filters an
     await page.waitForURL((url) => url.searchParams.get('pageSize') === '20' && !url.searchParams.has('page'))
     await page.reload()
     await expectPage('gpu-1', 12)
+  } finally {
+    await page.close()
+  }
+})
+
+test('node rankings open the same node UID as the current table after a node is replaced', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const name = 'gpu-worker'
+  let uid = 'old-node'
+  const reads = []
+  await page.route('**/api/vgpu/v1/nodes', (route) => {
+    reads.push(route.request().postDataJSON())
+    return route.fulfill({ json: listFixture('nodes', [
+      { name, uid, ip: '192.0.2.2', type: [], isReady: true, isSchedulable: true },
+      { name: 'registered', uid: 'registered-uid', ip: '192.0.2.3', type: ['A100'], isReady: true, isSchedulable: true,
+        coreTotal: 100, coreUsed: 0, coreAllocationPercent: 0, memoryTotal: 1024 },
+    ]) })
+  })
+  const query = buildGroupedResourceTopQueries('node').computeUsage
+  await page.route('**/v1/monitor/query/instant-vector', (route) =>
+    route.request().postDataJSON()?.query === query
+      ? route.fulfill({ json: { data: [{ metric: { node: name }, value: 80 }] } })
+      : route.continue())
+  try {
+    await page.goto(`${target}${basePath}nodes`, { waitUntil: 'networkidle' })
+    const row = page.locator('.node-table').getByRole('link', { name, exact: true })
+    assert.equal(await row.getAttribute('href'), `${basePath}nodes/${uid}?nodeName=${name}`)
+    const rows = page.locator('.node-table tbody tr')
+    assert.equal(await rows.filter({ has: page.getByRole('link', { name, exact: true }) }).getByText('--', { exact: true }).count(), 2)
+    const registered = rows.filter({ has: page.getByRole('link', { name: 'registered', exact: true }) })
+    await registered.getByText('0%', { exact: true }).waitFor()
+    assert.equal(await registered.getByText('--', { exact: true }).count(), 1, 'An unknown numerator must not become zero')
+    const chart = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') }).first()
+    await chart.locator('.tab-top-switch button').nth(1).click()
+    const ranking = chart.getByText(name, { exact: true })
+    await ranking.waitFor()
+    uid = 'replacement-node'
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await waitUntil(async() => (await row.getAttribute('href')).includes(uid), 'Refresh must show the replacement')
+    const detailRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/v1/node'))
+    await ranking.click()
+    await page.waitForURL(`**/nodes/${uid}?nodeName=${name}`)
+    assert.equal(new URL((await detailRequest).url()).searchParams.get('useResourceInventory'), 'true')
+    assert.deepEqual(reads, [{ useResourceInventory: true }, { useResourceInventory: true }],
+      'Both links must use the same accelerator roster per load or refresh')
+  } finally {
+    await page.close()
+  }
+})
+
+test('Ascend node rates and capacity come from one inventory snapshot, with per-node physical allocation history', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const node = { uid: 'ascend-uid', name: 'ascend-host', coreAllocationPercent: 29.6875, memoryAllocationPercent: 0,
+    coreTotal: 800, memoryTotal: 8192, isReady: true, isSchedulable: true }
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', [node]) }))
+  await page.route('**/v1/node?**', (route) => route.fulfill({ json: { ...node, inventoryCoverage: coverageFixture('device', 8) } }))
+  const grouped = buildGroupedResourceTopQueries('node')
+  await page.route('**/v1/monitor/query/instant-vector', (route) => {
+    const query = route.request().postDataJSON()?.query
+    const value = query === grouped.computeAllocation ? node.coreAllocationPercent
+      : query === grouped.memoryAllocation ? node.memoryAllocationPercent : undefined
+    return value === undefined ? route.continue() : route.fulfill({ json: { data: [{ metric: { node: node.name }, value }] } })
+  })
+  const ranges = []
+  const instant = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (path.endsWith('/range-vector')) ranges.push(request.postDataJSON().query)
+    if (path.endsWith('/instant-vector')) instant.push(request.postDataJSON().query)
+  })
+  try {
+    await page.goto(`${target}${basePath}nodes`, { waitUntil: 'networkidle' })
+    const row = page.locator('.node-table tbody tr').first()
+    await row.getByText('29.69%', { exact: true }).waitFor()
+    await row.getByText('0%', { exact: true }).waitFor()
+    const rankings = page.locator('.tab-top-list')
+    await rankings.nth(0).getByText('29.69 %', { exact: true }).waitFor()
+    await rankings.nth(1).getByText('0 %', { exact: true }).waitFor()
+    assert.equal(instant.some((query) => query.includes('hami_container_vcore_allocation_known')), false)
+    instant.length = 0
+    await row.getByRole('link', { name: node.name, exact: true }).click()
+    const cards = page.locator('.node-system-resource-cards .resource-card')
+    await cards.first().getByText('29.69%', { exact: true }).waitFor()
+    await cards.last().getByText('0.00%', { exact: true }).waitFor()
+    assert.equal(await cards.first().locator('.resource-card-value').innerText(), '8')
+    assert.equal(await cards.last().locator('.resource-card-value').innerText(), '8.00 GiB')
+    const scoped = buildPhysicalAllocationQueries({ selector: `node="${node.name}"` })
+    await waitUntil(() => [scoped.computeAllocation, scoped.memoryAllocation].every((metric) => ranges.includes(metric.percentQuery)),
+      'Both allocation trends must scope the physical formula to the opened node')
+    assert.equal(instant.some((query) => query.includes('allocated')), false, 'Current allocation must use the same snapshot as its capacity')
+  } finally {
+    await page.close()
+  }
+})
+
+test('node detail distinguishes a removed node from an incomplete inventory or a missing API route', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  let response
+  await page.route('**/v1/node?**', (route) => route.fulfill(response))
+  try {
+    for (const [status, json, state] of [
+      [404, { reason: 'RESOURCE_NODE_NOT_FOUND' }, 'missing'],
+      [503, { reason: 'NODE_INVENTORY_UNAVAILABLE' }, 'error'],
+      [404, { reason: 'ROUTE_NOT_FOUND' }, 'error'],
+      [200, { uid: 'removed-uid', name: 'old-server-node' }, 'error'],
+    ]) {
+      response = { status, json }
+      await page.goto(`${target}${basePath}nodes/removed-uid`)
+      await page.getByTestId(`detail-page-${state}`).waitFor()
+    }
+    await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: [] } }))
+    await page.goto(`${target}${basePath}nodes`)
+    await page.getByTestId('stateful-table-error').waitFor()
+    assert.equal(await page.getByTestId('stateful-table-empty').count(), 0, 'An older roster cannot confirm there are no nodes')
   } finally {
     await page.close()
   }
@@ -6612,7 +6754,7 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
     await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
       if (answer === 'hold') held.push(route)
       else if (answer === 'fail') route.fulfill({ status: 500, json: { message: 'unavailable' } })
-      else route.fulfill({ json: { list: answer === 'empty' ? [] : localSearchRows[config.endpoint] } })
+      else route.fulfill({ json: listFixture(config.endpoint, answer === 'empty' ? [] : localSearchRows[config.endpoint]) })
     })
     const selects = page.locator('.table-toolbar .t-select')
     const options = page.locator('.t-select__dropdown:visible .t-select-option')
@@ -6638,7 +6780,7 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
       assert.deepEqual(labels.filter(({ cut }) => cut), [], `${config.route}: counts must not cut a label`)
       return Object.fromEntries(labels.filter(({ count }) => count !== null).map(({ label, count }) => [label, count]))
     }
-    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: { list } } : { status: 500, json: { message: 'unavailable' } })))
+    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: listFixture(config.endpoint, list) } : { status: 500, json: { message: 'unavailable' } })))
     try {
       await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
       await waitUntil(() => held.length > 0, `${config.route}: the list must be requested`)
@@ -6722,6 +6864,68 @@ test('model and node dropdowns filter their options while typing', { timeout: 60
     await options.first().click()
     await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', 'Picking the device must update the URL')
     await listed
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview gauges share the initial trend time and advance together on a visible or manual refresh', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC' })
+  const metrics = Object.values(buildPhysicalResourceQueries())
+  const gaugeQueries = new Set(metrics.flatMap(({ query, totalQuery }) => [query, totalQuery].filter(Boolean)))
+  const trendQueries = new Set(metrics.map(({ percentQuery }) => percentQuery))
+  const rounds = new Map()
+  const trendEnds = new Map()
+  const readRound = async(index) => {
+    await waitUntil(() => [...rounds.values()][index]?.size === 7, 'Missing overview gauge query')
+    return [...rounds.keys()][index]
+  }
+
+  await page.route('**/monitor/query/range-vector', async(route) => {
+    const { query, range } = route.request().postDataJSON()
+    if (trendQueries.has(query)) trendEnds.set(query, range.end)
+    await route.continue()
+  })
+  await page.route('**/monitor/query/instant-vector', async(route) => {
+    const { query, time } = route.request().postDataJSON()
+    if (!gaugeQueries.has(query)) return route.continue()
+    if (!rounds.has(time)) rounds.set(time, new Set())
+    rounds.get(time).add(query)
+    // Move the clock forward between numerator and capacity requests.
+    if (query === metrics[0].query) await page.clock.fastForward(1200)
+    await route.fulfill({ json: { code: 0, data: [{ value: 1 }] } })
+  })
+  try {
+    await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+    await page.goto(target + deepRoute, { waitUntil: 'networkidle' })
+    const first = await readRound(0)
+    await waitUntil(() => trendEnds.size === 4, 'Missing initial overview trends')
+    assert.ok(Number.isFinite(Date.parse(first)))
+    assert.deepEqual(new Set(trendEnds.values()), new Set([first]))
+    await page.clock.fastForward(30_000)
+    const next = await readRound(1)
+    assert.ok(Date.parse(next) > Date.parse(first))
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+    const manual = await readRound(2)
+    assert.ok(Date.parse(manual) > Date.parse(next))
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual(new Set(trendEnds.values()), new Set([manual]))
+
+    await selectTrendRange(page, 'custom')
+    const start = page.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = page.getByRole('textbox', { name: 'End Time', exact: true })
+    await start.click()
+    await start.fill('2026-10-03 10:12:34')
+    await end.click()
+    await end.fill('2026-10-06 11:23:45')
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual(new Set(trendEnds.values()), new Set(['2026-10-06T11:23:45Z']))
+    assert.equal(rounds.size, 3, 'Browsing or refreshing history must not rewind the live gauges')
   } finally {
     await page.close()
   }

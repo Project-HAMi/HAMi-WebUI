@@ -93,7 +93,6 @@ const nodeComputeTop5 = computed(() => ({
       nameKey: props.type,
       data: [],
       query: resourceTopQueries.value.computeAllocation,
-      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: props.type }),
     },
     {
       tab: t('dashboard.usageRateLegend'),

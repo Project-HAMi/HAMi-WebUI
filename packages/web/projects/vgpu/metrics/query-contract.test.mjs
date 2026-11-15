@@ -1,10 +1,10 @@
+import { buildPhysicalAllocationQueries } from './physical-resource-queries.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   buildClusterAllocatableQueries,
-  buildClusterTrendQueries,
   buildComputeAllocationQueries,
   buildGroupedResourceTopQueries,
   buildMemoryAllocationQueries,
@@ -316,11 +316,14 @@ test('grouped rankings preserve idle allocation but not missing usage', () => {
   for (const groupLabel of ['node', 'device_uuid']) {
     const queries = buildGroupedResourceTopQueries(groupLabel);
 
-    assert.match(
-      queries.memoryAllocation,
-      new RegExp(`or on \\(${groupLabel}\\)`),
-    );
-    assert.match(queries.memoryAllocation, /hami_vmemory_size/);
+    if (groupLabel === 'node') {
+      const allocation = buildPhysicalAllocationQueries({ byNode: true });
+      assert.equal(queries.computeAllocation, `topk(5, ${allocation.computeAllocation.percentQuery})`);
+      assert.equal(queries.memoryAllocation, `topk(5, ${allocation.memoryAllocation.percentQuery})`);
+    } else {
+      assert.match(queries.memoryAllocation, /or on \(device_uuid\)/);
+      assert.match(queries.memoryAllocation, /hami_vmemory_size/);
+    }
     assert.match(
       queries.memoryUsage,
       /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
@@ -332,23 +335,6 @@ test('grouped rankings preserve idle allocation but not missing usage', () => {
     assert.doesNotMatch(queries.memoryUsage, / or /);
     assert.match(queries.memoryUsage, /sum by \([^)]*instance\)/);
   }
-});
-
-test('cluster trends share the allocation and reporting-device contracts', () => {
-  const queries = buildClusterTrendQueries();
-
-  assert.match(queries.computeAllocation, / or /);
-  assert.match(queries.memoryAllocation, /hami_vmemory_size/);
-  assert.match(queries.memoryAllocation, / or /);
-  assert.match(
-    queries.memoryUsage,
-    /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
-  );
-  assert.match(
-    queries.memoryUsage,
-    /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
-  );
-  assert.doesNotMatch(queries.memoryUsage, / or /);
 });
 
 test('grouped query labels reject malformed PromQL input', () => {

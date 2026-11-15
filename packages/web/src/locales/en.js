@@ -150,10 +150,10 @@ export default {
     vgpuAllocRateDescription:
       'Allocated vGPU slots divided by the schedulable slots registered by HAMi. Slot capacity comes from device splitting and is not the physical accelerator count.',
     computeAllocRateDescription:
-      'Allocated vCore divided by the physical compute baseline (100 per accelerator). Values above 100% indicate compute overcommit.',
+      'Allocated compute divided by configured compute capacity, counting physical devices with both values known.',
     memAllocRateDescription:
       'Accelerator memory allocated to workloads divided by the schedulable memory registered by HAMi. With memory overcommit, the denominator includes expanded virtual capacity.',
-    computeUsageRateDescription: 'Average compute-engine activity across reporting devices.',
+    computeUsageRateDescription: 'Average compute utilization over the past 5 minutes. Each sample counts only physical devices reporting a value.',
     memUsageRateDescription: 'Used physical memory divided by total physical memory.',
     metricHelpLabel: 'View metric definition for {metric}',
     metricNoData: 'No metric data',
@@ -276,7 +276,7 @@ export default {
       title: 'Device allocation',
       refresh: 'Refresh device allocation',
       loadFailed: 'Could not load devices',
-      empty: 'No devices on this node',
+      empty: 'No device records for this node',
       partial: 'Allocation details are incomplete',
       unavailable: 'Allocation data unavailable',
       unconfigured: 'Device not configured; allocation data unavailable',

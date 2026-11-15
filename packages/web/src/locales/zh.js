@@ -149,10 +149,10 @@ export default {
     vgpuAllocRateDescription:
       '已分配 vGPU 槽位 ÷ HAMi 注册的可调度槽位。槽位容量来自设备拆分配置，不等于物理加速卡数量。',
     computeAllocRateDescription:
-      '已分配给工作负载的 vCore ÷ 物理算力基准（每张加速卡按 100 计）。超过 100% 表示算力超配。',
+      '已分配算力 ÷ 已配置的可调度算力。只统计分配和容量均已确认的物理卡。',
     memAllocRateDescription:
       '已分配给工作负载的显存 ÷ HAMi 注册的可调度显存。启用显存超配时，分母包含扩展后的虚拟容量。',
-    computeUsageRateDescription: '已上报设备的算力使用率平均值。',
+    computeUsageRateDescription: '近 5 分钟物理卡的平均算力利用率。每次采样只计有读数的卡。',
     memUsageRateDescription: '已用物理显存 ÷ 物理显存总量。',
     metricHelpLabel: '查看{metric}指标说明',
     metricNoData: '暂无指标数据',
@@ -273,7 +273,7 @@ export default {
       title: '设备分配',
       refresh: '刷新设备分配',
       loadFailed: '设备列表加载失败',
-      empty: '此节点暂无设备',
+      empty: '暂无此节点的设备记录',
       partial: '分配明细不完整',
       unavailable: '分配数据不可用',
       unconfigured: '设备未配置，分配信息不可用',

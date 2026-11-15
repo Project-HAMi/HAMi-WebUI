@@ -100,7 +100,7 @@ const props = defineProps({
   loading: Boolean,
 });
 
-const emit = defineEmits(['update:modelValue']);
+const emit = defineEmits(['update:modelValue', 'refresh-current']);
 const { t } = useI18n();
 
 const {
@@ -203,7 +203,8 @@ const selectRange = (selection) => {
 const refreshCurrentRange = () => {
   if (props.loading) return;
   clearFeedback();
-  refreshRange();
+  const currentEnd = refreshRange();
+  if (currentEnd) emit('refresh-current', currentEnd);
 };
 const onPresetKeydown = (event) => {
   if (event.repeat && ['Enter', ' '].includes(event.key)) event.preventDefault();

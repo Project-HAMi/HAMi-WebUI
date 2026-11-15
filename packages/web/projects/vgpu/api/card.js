@@ -44,9 +44,11 @@ class cardApi {
     }).then(normalizeRangeVectorResponse);
   }
 
-  getInstantVector(data) {
+  getInstantVector(data, signal) {
     return request({
       url: apiPrefix + '/v1/monitor/query/instant-vector',
+      signal,
+      errorFeedback: signal ? 'inline' : undefined,
       method: 'post',
       data,
     });

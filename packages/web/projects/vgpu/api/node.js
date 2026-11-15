@@ -2,6 +2,11 @@ import request from '@/utils/request';
 
 const apiPrefix = '/api/vgpu';
 
+// Older servers can accept the inventory option without recognizing it.
+const requireInventoryCoverage = (reply, entity) => {
+  if (reply?.inventoryCoverage?.entity !== entity) throw new Error('Node inventory coverage is missing');
+  return reply;
+};
 
 class nodeApi {
   getNodeList(data) {
@@ -12,6 +17,11 @@ class nodeApi {
     };
   }
 
+  async getInventoryNodes() {
+    const reply = await request({ ...this.getNodeList({ useResourceInventory: true }), errorFeedback: 'inline' });
+    return requireInventoryCoverage(reply, 'node');
+  }
+
   getNodes(data) {
     return request({
       url: apiPrefix +  '/v1/nodes',
@@ -20,12 +30,21 @@ class nodeApi {
     });
   }
 
-  getNodeDetail(params) {
-    return request({
-      url: apiPrefix +  '/v1/node',
-      method: 'GET',
-      params,
-    });
+  async getInventoryNode(uid) {
+    try {
+      const reply = await request({
+        url: apiPrefix + '/v1/node',
+        method: 'GET',
+        params: { uid, useResourceInventory: true },
+        errorFeedback: 'inline',
+      });
+      return requireInventoryCoverage(reply, 'device');
+    } catch (error) {
+      if (error.response?.status === 404 && error.response.data?.reason === 'RESOURCE_NODE_NOT_FOUND') {
+        return {};
+      }
+      throw error;
+    }
   }
 
   getNodeListReq(data) {

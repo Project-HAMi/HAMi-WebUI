@@ -79,7 +79,6 @@
 
 <script setup lang="jsx">
 import nodeApi from '~/vgpu/api/node';
-import cardApi from '~/vgpu/api/card';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
@@ -91,9 +90,8 @@ import { buildNodeDetailLocation } from '../detail-location.mjs';
 import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
-import request from '@/utils/request';
 import { SearchIcon } from 'tdesign-icons-vue-next';
-import { computed, ref, reactive, onMounted, watch } from 'vue';
+import { computed, reactive, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
@@ -110,14 +108,23 @@ import {
 const router = useRouter();
 const route = useRoute();
 const { t, locale } = useI18n();
-const allNodeMap = ref(new Map());
 const filters = reactive({
   schedulingEligibility: undefined,
   type: undefined,
   keyword: '',
 });
+// Filter the full result before paginating so option counts cover every match.
+const tableState = useFetchList(() => nodeApi.getInventoryNodes(), { immediate: false });
+const {
+  data: tableData,
+  refresh: refreshTable,
+  refreshError: tableRefreshError,
+  refreshing: tableRefreshing,
+  status: tableStatus,
+} = tableState;
 const filterOption = createOptionFilter();
-const rawCardTypes = ref([]);
+const nodeModels = computed(() => [...new Set(tableData.value.flatMap((node) => node.type ?? []))]
+  .filter(Boolean).sort());
 const statusOption = (key, value) => ({
   label: t(key),
   value,
@@ -131,48 +138,18 @@ const statusOptions = computed(() => [
 const cardTypeOptions = computed(() => [
   // An empty value keeps "All" pickable without showing its label as typed text before a filter is chosen.
   { label: t('node.allTypes'), value: '' },
-  ...rawCardTypes.value.map((type) => ({
+  ...nodeModels.value.map((type) => ({
     label: type,
     value: type,
     content: () => <SelectOptionLabel label={type} {...nodeCount(typeNodeCounts.value.get(type))} />,
   })),
 ]);
 
-const fetchCardTypeOptions = async () => {
-  try {
-    const { list = [] } = await request(cardApi.getCardType());
-    rawCardTypes.value = list
-      .map((item) => item?.type)
-      .filter(Boolean);
-  } catch {
-    rawCardTypes.value = [];
-  }
-};
-
-const handleClick = (params) => {
-  const name = params.data.name;
-  const uid = allNodeMap.value.get(name);
-  if (uid) {
-    const uuid = uid;
-    router.push(`/nodes/${uuid}?nodeName=${name}`);
-  } else {
-    MessagePlugin.error(t('node.nodeNotFound'));
-  }
-};
-
-const fetchAllNodeMap = async () => {
-  try {
-    const { list = [] } = await request(nodeApi.getNodeList({ filters: {} }));
-    const nextMap = new Map();
-    list.forEach((item) => {
-      if (item?.name && item?.uid) {
-        nextMap.set(item.name, item.uid);
-      }
-    });
-    allNodeMap.value = nextMap;
-  } catch {
-    allNodeMap.value = new Map();
-  }
+const handleClick = ({ data: { name } }) => {
+  const node = tableData.value.find((row) => row.name === name);
+  const to = buildNodeDetailLocation({ uid: node?.uid, nodeName: name });
+  if (to) router.push(to);
+  else MessagePlugin.error(t('node.nodeNotFound'));
 };
 
 const renderNodeStatus = (row) => {
@@ -188,6 +165,25 @@ const renderNodeStatus = (row) => {
           helpLabel={t('node.schedulingStatusHelpLabel')}
         />
       )}
+    </span>
+  );
+};
+
+const renderAllocation = (percent) => {
+  if (!Number.isFinite(percent) || percent < 0) return <span>--</span>;
+  const progress = Math.min(100, percent);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+      <t-progress
+        class="node-admin-circle-progress"
+        theme="circle"
+        size={24}
+        strokeWidth={3}
+        percentage={roundToDecimal(progress, 2)}
+        color={getResourceColor(progress)}
+        label={false}
+      />
+      <span>{roundToDecimal(percent, 2)}%</span>
     </span>
   );
 };
@@ -227,65 +223,18 @@ const baseColumns = computed(() => [
     key: 'node-compute-allocation',
     minWidth: 280,
     dataIndex: 'used',
-    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal }) => {
-      if (isExternal || coreUsedKnown === false || !coreTotal) return <span>--</span>;
-      const rawPercent = (Number(coreUsed || 0) / Number(coreTotal)) * 100;
-      const percentForProgress = Math.max(0, Math.min(100, rawPercent));
-      const color = getResourceColor(percentForProgress);
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <t-progress
-            class="node-admin-circle-progress"
-            theme="circle"
-            size={24}
-            strokeWidth={3}
-            percentage={roundToDecimal(percentForProgress, 2)}
-            color={color}
-            label={false}
-          />
-          <span>{roundToDecimal(rawPercent, 2)}%</span>
-        </span>
-      );
-    },
+    render: ({ coreAllocationPercent }) => renderAllocation(coreAllocationPercent),
   },
   {
     title: t('node.memoryAllocTotal'),
     key: 'node-memory-allocation',
     minWidth: 280,
     dataIndex: 'used',
-    render: ({ memoryTotal, memoryUsed, isExternal }) => {
-      if (isExternal || !memoryTotal) return <span>--</span>;
-      const rawPercent = (Number(memoryUsed || 0) / Number(memoryTotal)) * 100;
-      const percentForProgress = Math.max(0, Math.min(100, rawPercent));
-      const color = getResourceColor(percentForProgress);
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <t-progress
-            class="node-admin-circle-progress"
-            theme="circle"
-            size={24}
-            strokeWidth={3}
-            percentage={roundToDecimal(percentForProgress, 2)}
-            color={color}
-            label={false}
-          />
-          <span>{roundToDecimal(rawPercent, 2)}%</span>
-        </span>
-      );
-    },
+    render: ({ memoryAllocationPercent }) => renderAllocation(memoryAllocationPercent),
   },
 ]);
 const { eyeColumnKeys, columnOptions, visibleColumns } = useTableColumnVisibility(baseColumns);
 
-// Filter the full result before paginating so option counts cover every match.
-const tableState = useFetchList(() => request(nodeApi.getNodeList({ filters: {} })), { immediate: false });
-const {
-  data: tableData,
-  refresh: refreshTable,
-  refreshError: tableRefreshError,
-  refreshing: tableRefreshing,
-  status: tableStatus,
-} = tableState;
 const keywords = computed(() => parseKeywords(filters.keyword));
 const filtered = computed(() => Boolean(filters.type || filters.schedulingEligibility || keywords.value.length));
 const keywordNodes = computed(() => tableData.value.filter((node) =>
@@ -363,11 +312,7 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => {
-  refreshTable();
-  fetchCardTypeOptions();
-  fetchAllNodeMap();
-});
+onMounted(refreshTable);
 </script>
 
 <style scoped lang="scss">

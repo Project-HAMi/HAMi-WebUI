@@ -94,23 +94,26 @@ test('memory and compute trend legends use the same compact labels', () => {
     );
     assert.match(helper, /name: t\('dashboard\.usageRateLegend'\)/);
     assert.match(helper, /buildTimeSeriesOptions/);
-    assert.match(sections, /gpuComputeAllocUsageTrend'\), computeTrend\.value, computeAllocLegend\.value\)/);
-    assert.match(sections, /gpuMemAllocUsageTrend'\), memoryTrend\.value, t\('dashboard\.allocRateLegend'\)\)/);
+    assert.match(sections, /gpuComputeAllocUsageTrend'\), computeTrend\.value/);
+    assert.match(sections, /gpuMemAllocUsageTrend'\), memoryTrend\.value/);
     assert.doesNotMatch(helper + sections, /dashboard\.mem(?:Alloc|Usage)Rate'/);
-    // The compute allocation legend switches to its lower-bound form.
-    assert.match(source, /'dashboard\.allocRateLowerBoundLegend'\s*:\s*'dashboard\.allocRateLegend'/);
   }
+  assert.match(nodeDetail, /name: t\('dashboard\.allocRateLegend'\)/);
+  assert.doesNotMatch(nodeDetail, /dashboard\.allocRateLowerBoundLegend/);
+  // The device detail still qualifies legacy allocations whose shares are unknown.
+  assert.match(cardDetail, /'dashboard\.allocRateLowerBoundLegend'\s*:\s*'dashboard\.allocRateLegend'/);
 });
 
 test('a detail trend chart draws its lines from one range group', () => {
   for (const source of [cardDetail, nodeDetail]) {
-    // Gauges read current values only, so no line comes from a separate request.
-    assert.match(source, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
     assert.doesNotMatch(source, /gaugeConfig\[\d\]\??\.data/);
-    assert.match(source, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
-    assert.match(source, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
     assert.match(source, /:refresh-error="Boolean\(section\.refreshError\)"/);
   }
+  assert.match(cardDetail, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
+  assert.match(cardDetail, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
+  assert.match(cardDetail, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
+  assert.match(nodeDetail, /\[\{ query: computeAllocation\.percentQuery \}, \{ query: computeUsage\.percentQuery \}\]/);
+  assert.match(nodeDetail, /\[\{ query: memoryAllocation\.percentQuery \}, \{ query: memoryUsage\.percentQuery \}\]/);
   assert.match(metricChart, /common\.refreshFailedShowingPreviousResult/);
 });
 

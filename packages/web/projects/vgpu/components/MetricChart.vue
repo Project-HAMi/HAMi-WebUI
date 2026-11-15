@@ -211,7 +211,8 @@ const skeletonLegendRows = computed(() => {
 
   &__skeleton-legend {
     position: absolute;
-    bottom: 0;
+    // ECharts places the contents of a bottom-aligned legend inside 5px padding.
+    bottom: 5px;
     left: 29%;
     width: 42%;
 

@@ -1,21 +1,6 @@
 import { buildDonutOptions } from '../../../metrics/chart-presets.mjs';
 import { categoricalColor } from '../../../metrics/chart-colors.mjs';
-import nodeApi from '~/vgpu/api/node';
-import { MessagePlugin } from 'tdesign-vue-next';
 import i18n from '@/locales';
-
-export const handleChartClick = async (params, router) => {
-  const name = params.data.name;
-  const { list } = await nodeApi.getNodes({ filters: {} });
-  const node = list.find((node) => node.name === name);
-
-  if (node) {
-    const uuid = node.uid;
-    router.push(`/nodes/${uuid}?nodeName=${name}`);
-  } else {
-    MessagePlugin.error(i18n.global.t('node.nodeNotFound'));
-  }
-};
 
 export const getCardOptions = (list, chartWidth) => {
   const counts = list.reduce((all, current) => {

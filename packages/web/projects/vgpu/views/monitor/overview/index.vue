@@ -186,7 +186,7 @@
 
     <div class="home-bottom">
       <div class="home-bottom-trend-filter" v-if="rangeConfig[0] || rangeConfig[1]">
-        <TrendTimeFilter v-model="times" :loading="trendLoading" />
+        <TrendTimeFilter v-model="times" :loading="trendLoading" @refresh-current="refreshCurrentSnapshot" />
       </div>
       <div class="home-bottom-row home-bottom-trend-row" v-if="rangeConfig[0] || rangeConfig[1]">
         <div
@@ -211,13 +211,13 @@
         <div class="home-bottom-col">
           <TabTop
             v-bind="nodeComputeTop5"
-            :onClick="(params) => handleChartClick(params, router)"
+            :onClick="openRankedNode"
           />
         </div>
         <div class="home-bottom-col">
           <TabTop
             v-bind="nodeMemoryTop5"
-            :onClick="(params) => handleChartClick(params, router)"
+            :onClick="openRankedNode"
           />
         </div>
         <div class="home-bottom-col">
@@ -280,10 +280,12 @@
 
 <script setup>
 import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
-import { ref, computed, reactive, onMounted, h, resolveComponent } from 'vue';
+import { ref, computed, reactive, onMounted, onUnmounted, h, resolveComponent } from 'vue';
 import { useI18n } from 'vue-i18n';
 import VChart from 'vue-echarts';
-import { getCardOptions, handleChartClick } from './getOptions';
+import { getCardOptions } from './getOptions';
+import { MessagePlugin } from 'tdesign-vue-next';
+import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
 import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { createWorkloadDistributionOptions } from './workload-distribution.mjs';
@@ -308,8 +310,8 @@ import {
   createNodeWorkloadDistributionQuery,
   createOverviewGaugeConfigs,
 } from './metric-config.mjs';
-import { buildClusterAllocatableQueries, buildUnknownComputeShareQuery } from '~/vgpu/metrics/query-contract.mjs';
-import { isLowerBound, readTrendUncounted, readUncountedMetric } from '~/vgpu/metrics/uncounted.mjs';
+import { buildClusterAllocatableQueries } from '~/vgpu/metrics/query-contract.mjs';
+import { startVisibleSnapshots } from './visible-snapshots.mjs';
 import {
   createRequestState,
   rejectRequest,
@@ -317,7 +319,7 @@ import {
   resolveRequest,
   startRequest,
 } from '@/hooks/request-state.mjs';
-import { applyUncountedShares, readWorkloadTotal } from './overview-state.mjs';
+import { readWorkloadTotal } from './overview-state.mjs';
 import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { isNodeSchedulingEligible } from '~/vgpu/views/node/node-status.mjs';
 
@@ -325,8 +327,7 @@ const router = useRouter();
 const { t } = useI18n();
 
 const end = new Date();
-const start = new Date();
-start.setTime(start.getTime() - 3600 * 1000);
+const start = new Date(end.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
 const nodeWorkloadSkeletonData = Array.from({ length: 5 }, (_, index) => ({ name: `loading-${index}` }));
@@ -367,7 +368,7 @@ const nodeWorkloadColumns = computed(() => [
           class: 'node-workload-name-link',
           onClick: (e) => {
             e.stopPropagation();
-            handleChartClick({ data: row }, router);
+            openRankedNode({ data: row });
           },
         },
         row.name,
@@ -462,7 +463,14 @@ const fetchNodeWorkloadDistribution = () =>
     }
   });
 
-const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs());
+const snapshotReaders = new Set();
+const subscribe = (reader) => {
+  snapshotReaders.add(reader);
+  return () => snapshotReaders.delete(reader);
+};
+let snapshots;
+const refreshCurrentSnapshot = (at) => snapshots?.refresh(at);
+const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs(), undefined, undefined, { subscribe });
 
 const clusterAllocatableQueries = buildClusterAllocatableQueries();
 const clusterResourceConfig = useInstantVector([
@@ -478,27 +486,18 @@ const clusterResourceConfig = useInstantVector([
   },
 ]);
 
-const uncountedMetric = useInstantVector([{ query: buildUnknownComputeShareQuery() }]);
-const uncountedShares = computed(() => readUncountedMetric(uncountedMetric.value[0]));
+const cardGaugeConfig = computed(() => _cardGaugeConfig.value.map((item) => ({
+  ...item,
+  title: t(item.titleKey),
+  description: t(item.descriptionKey),
+  detailLabel: t(item.detailLabelKey),
+  unit: item.unitKey ? t(item.unitKey) : item.unit,
+  metricHelpLabel: t('dashboard.metricHelpLabel', {
+    metric: t(item.titleKey),
+  }),
+})));
 
-const cardGaugeConfig = computed(() => {
-  return applyUncountedShares(_cardGaugeConfig.value, uncountedShares.value, {
-    pendingStatus: REQUEST_STATUS.LOADING,
-  }).map((item) => ({
-    ...item,
-    title: t(item.titleKey),
-    description: t(item.descriptionKey),
-    detailLabel: t(item.detailLabelKey),
-    unit: item.unitKey ? t(item.unitKey) : item.unit,
-    metricHelpLabel: t('dashboard.metricHelpLabel', {
-      metric: t(item.titleKey),
-    }),
-  }));
-});
-
-const nodeListState = useFetchList(() =>
-  nodeApi.getNodeListReq({ filters: {} }),
-);
+const nodeListState = useFetchList(() => nodeApi.getInventoryNodes());
 const cardListState = useFetchList(() =>
   cardApi.getCardListReq({ filters: {} }),
 );
@@ -523,6 +522,13 @@ const fetchWorkloadTotal = async () => {
 
 const nodeData = nodeListState.data;
 const cardData = cardListState.data;
+
+function openRankedNode({ data: { name } }) {
+  const node = nodeData.value.find((row) => row.name === name);
+  const to = buildNodeDetailLocation({ uid: node?.uid, nodeName: name });
+  if (to) router.push(to);
+  else MessagePlugin.error(t('node.nodeNotFound'));
+}
 
 const readyMetricValue = (metric, field, format) => {
   if (metric?.status !== REQUEST_STATUS.READY) return undefined;
@@ -631,7 +637,6 @@ const nodeComputeTop5 = computed(() => ({
       nameKey: 'node',
       data: [],
       query: nodeTopQueries.computeAllocation,
-      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: 'node' }),
     },
     {
       tab: t('dashboard.usageRateLegend'),
@@ -666,19 +671,9 @@ const nodeMemoryTop5 = computed(() => ({
 
 
 const rangeDefinitions = getRangeConfigInit(t);
-// The uncounted count joins the compute allocation line's group, so it always
-// describes the range the line shows; when it alone fails, the line is a bound.
-const UNCOUNTED_KEY = 'compute-uncounted';
-const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) => [
-  ...section.dataSource.map((series, seriesIndex) => ({
-    ...series,
-    sectionIndex,
-    seriesIndex,
-  })),
-  ...(section.dataSource.some((series) => series.key === 'compute-allocation')
-    ? [{ key: UNCOUNTED_KEY, query: buildUnknownComputeShareQuery(), optional: true, sectionIndex, seriesIndex: section.dataSource.length }]
-    : []),
-]);
+const rangeSeriesDefinitions = rangeDefinitions.flatMap((section, sectionIndex) =>
+  section.dataSource.map((series, seriesIndex) => ({ ...series, sectionIndex, seriesIndex })),
+);
 const { data: rangeSeries } = useRangeVector(
   rangeSeriesDefinitions,
   (query) => query,
@@ -689,27 +684,18 @@ const trendLoading = computed(() => rangeSeries.value.some((item) => item.refres
 const rangeConfig = computed(() => {
   const translated = getRangeConfigInit(t);
   return translated.map((section, sectionIndex) => {
-    const dataSource = applyUncountedShares(
-      section.dataSource.map((series, seriesIndex) => {
-        const state = rangeSeries.value.find(
-          (item) =>
-            item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
-        );
-        return {
-          ...series,
-          data: state?.data || [],
-          status: state?.status || REQUEST_STATUS.LOADING,
-          refreshing: state?.refreshing || false,
-          refreshError: state?.refreshError || null,
-        };
-      }),
-      readTrendUncounted(rangeSeries.value.find(
-        (item) => item.sectionIndex === sectionIndex && item.key === UNCOUNTED_KEY,
-      )),
-      // The line already draws the allocations it can measure; the legend says so.
-    ).map((series) => (isLowerBound(series.uncounted)
-      ? { ...series, name: t('dashboard.allocRateLowerBoundLegend') }
-      : series));
+    const dataSource = section.dataSource.map((series, seriesIndex) => {
+      const state = rangeSeries.value.find(
+        (item) => item.sectionIndex === sectionIndex && item.seriesIndex === seriesIndex,
+      );
+      return {
+        ...series,
+        data: state?.data || [],
+        status: state?.status || REQUEST_STATUS.LOADING,
+        refreshing: state?.refreshing || false,
+        refreshError: state?.refreshError || null,
+      };
+    });
     return {
       ...section,
       ...summarizeRangeSeries(dataSource, t),
@@ -721,7 +707,9 @@ const rangeConfig = computed(() => {
 const getStateText = (status, metric = true) =>
   t(stateTextKey(status, { metric }));
 
+onUnmounted(() => snapshots?.stop());
 onMounted(() => {
+  snapshots = startVisibleSnapshots(snapshotReaders, end);
   fetchWorkloadTotal();
   fetchNodeWorkloadTop5();
   fetchNodeWorkloadDistribution();
@@ -734,7 +722,7 @@ onMounted(() => {
   padding-bottom: 10px;
   min-height: 140px;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 </style>

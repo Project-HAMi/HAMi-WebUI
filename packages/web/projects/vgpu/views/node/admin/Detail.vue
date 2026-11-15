@@ -118,11 +118,7 @@
                       <span class="resource-card-footer-label">{{ $t('dashboard.allocRateLegend') }}</span>
                     </div>
                     <div class="resource-card-footer-value">
-                      <t-tooltip v-if="computeAllocNote" :content="computeAllocNote">
-                        <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
-                      </t-tooltip>
-                      <span v-else class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
-                      <span v-if="computeAllocNote" class="resource-card-sr-only">{{ computeAllocNote }}</span>
+                      <span class="resource-card-footer-percent">{{ computeAllocPercentText }}</span>
                       <t-progress
                         v-if="computeAllocPercentProgress !== undefined"
                         theme="circle"
@@ -268,14 +264,6 @@ import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
-import {
-  isLowerBound,
-  isNothingCounted,
-  lowerBoundMessage,
-  nothingCountedMessage,
-  readTrendUncounted,
-  readUncountedMetric,
-} from '~/vgpu/metrics/uncounted.mjs';
 import nodeApi from '~/vgpu/api/node';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
 import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
@@ -283,12 +271,8 @@ import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
 import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
-import {
-  buildComputeAllocationQueries,
-  buildMemoryAllocationQueries,
-  buildMemoryUsageQueries,
-  buildUnknownComputeShareQuery,
-} from '~/vgpu/metrics/query-contract.mjs';
+import { buildPhysicalAllocationQueries } from '~/vgpu/metrics/physical-resource-queries.mjs';
+import { buildMemoryUsageQueries } from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
 import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
@@ -308,7 +292,7 @@ const {
   retry: retryDetail,
 } = useDetailResource({
   source: nodeSource,
-  request: (uid) => nodeApi.getNodeDetail({ uid }),
+  request: (uid) => nodeApi.getInventoryNode(uid),
   classify: (payload, uid) =>
     classifyDetailPayload(payload, {
       identityKeys: ['uid', 'name'],
@@ -330,52 +314,9 @@ start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
 const nodeMetricSelector = 'node=$node';
-const computeAllocationQueries = buildComputeAllocationQueries({
-  selector: nodeMetricSelector,
-});
-const uncountedComputeShareQuery = buildUnknownComputeShareQuery({
-  selector: nodeMetricSelector,
-});
-const memoryAllocationQueries = buildMemoryAllocationQueries({
-  selector: nodeMetricSelector,
-});
-const memoryUsageQueries = buildMemoryUsageQueries({
-  selector: nodeMetricSelector,
-});
-
-const _gaugeConfigBase = [
-  {
-    titleKey: 'dashboard.computeAllocRate',
-    percent: 0,
-    query: computeAllocationQueries.query,
-    totalQuery: computeAllocationQueries.totalQuery,
-    percentQuery: computeAllocationQueries.percentQuery,
-    total: 0,
-    used: 0,
-    unit: ' ',
-  },
-  {
-    titleKey: 'dashboard.memAllocRate',
-    percent: 0,
-    query: memoryAllocationQueries.query,
-    totalQuery: memoryAllocationQueries.totalQuery,
-    percentQuery: memoryAllocationQueries.percentQuery,
-    total: 0,
-    used: 0,
-    unit: 'GiB',
-  },
-  createNodeComputeUsageGaugeConfig({ selector: nodeMetricSelector }),
-  {
-    titleKey: 'dashboard.memUsageRate',
-    percent: 0,
-    query: memoryUsageQueries.query,
-    totalQuery: memoryUsageQueries.totalQuery,
-    percentQuery: memoryUsageQueries.percentQuery,
-    total: 0,
-    used: 0,
-    unit: 'GiB',
-  },
-];
+const { computeAllocation, memoryAllocation } = buildPhysicalAllocationQueries({ selector: nodeMetricSelector });
+const computeUsage = createNodeComputeUsageGaugeConfig({ selector: nodeMetricSelector });
+const memoryUsage = buildMemoryUsageQueries({ selector: nodeMetricSelector });
 
 const renderNodeQuery = (query) =>
   renderPromQLTemplate(query, {
@@ -384,77 +325,29 @@ const renderNodeQuery = (query) =>
       : 'undefined',
   });
 
-// Current values only: each trend chart reads its lines from one range group below.
-const gaugeData = useInstantVector(
-  _gaugeConfigBase.map(({ percentQuery, ...item }) => ({ ...item, title: t(item.titleKey) })),
-  renderNodeQuery,
-  times,
-);
-
-// The node's allocation rate leaves out allocations whose share HAMi does not
-// state, so it reads as a lower bound unless none are confirmed.
-const uncountedMetric = useInstantVector(
-  [{ query: uncountedComputeShareQuery }],
-  renderNodeQuery,
-  times,
-);
-const computeAllocUncounted = computed(() => readUncountedMetric(uncountedMetric.value[0]));
-// A chart's lines, and the count that qualifies one, share a group: they settle
-// for one range together, or the chart keeps its last range and says so.
-const trendQuery = (index) => _gaugeConfigBase[index].percentQuery;
+// Current allocation and its capacity come from the same inventory response as the list.
+const usageGauges = useInstantVector([
+  { query: computeUsage.query, total: computeUsage.total, percent: 0 },
+  { query: memoryUsage.query, totalQuery: memoryUsage.totalQuery, percent: 0 },
+], renderNodeQuery);
 const { data: computeTrend } = useRangeVector(
-  [{ query: trendQuery(0) }, { query: trendQuery(2) }, { query: uncountedComputeShareQuery, optional: true }],
-  renderNodeQuery,
-  times,
+  [{ query: computeAllocation.percentQuery }, { query: computeUsage.percentQuery }],
+  renderNodeQuery, times,
 );
 const { data: memoryTrend } = useRangeVector(
-  [{ query: trendQuery(1) }, { query: trendQuery(3) }],
-  renderNodeQuery,
-  times,
+  [{ query: memoryAllocation.percentQuery }, { query: memoryUsage.percentQuery }],
+  renderNodeQuery, times,
 );
 const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value]
   .some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
-const computeAllocLegend = computed(() => t(isLowerBound(readTrendUncounted(computeTrend.value[2]))
-  ? 'dashboard.allocRateLowerBoundLegend'
-  : 'dashboard.allocRateLegend'));
+const computeAllocPercentRaw = computed(() => detail.value.coreAllocationPercent);
+const memoryAllocPercentRaw = computed(() => detail.value.memoryAllocationPercent);
+const computeUsagePercentRaw = computed(() => readReadyMetricField(usageGauges.value[0], 'percent'));
+const memoryUsagePercentRaw = computed(() => readReadyMetricField(usageGauges.value[1], 'percent'));
 
-const gaugeConfig = computed(() =>
-  gaugeData.value.map((item) => ({
-    ...item,
-    title: item.titleKey ? t(item.titleKey) : item.title,
-  })),
-);
-
-const readGaugeField = (index, field) =>
-  readReadyMetricField(gaugeConfig.value?.[index], field);
-
-const computePowerTotal = computed(() => {
-  const total = readGaugeField(0, 'total');
-  return total === undefined ? undefined : roundToDecimal(total, 1);
-});
-
-const gpuMemoryTotal = computed(() => {
-  const total = readGaugeField(1, 'total');
-  return total === undefined ? undefined : roundToDecimal(total, 1);
-});
-
-const computeAllocPercentRaw = computed(() => {
-  if (detail.value?.isExternal) return undefined;
-  return readGaugeField(0, 'percent');
-});
-
-const computeUsagePercentRaw = computed(() => readGaugeField(2, 'percent'));
-
-const memoryAllocPercentRaw = computed(() => {
-  if (detail.value?.isExternal) return undefined;
-  return readGaugeField(1, 'percent');
-});
-
-const memoryUsagePercentRaw = computed(() => readGaugeField(3, 'percent'));
-
-const trendSection = (key, title, [allocation, usage], allocationName) => {
+const trendSection = (key, title, [allocation, usage]) => {
   const series = [
-    { ...allocation, name: allocationName, color: CHART_COLORS.allocation },
+    { ...allocation, name: t('dashboard.allocRateLegend'), color: CHART_COLORS.allocation },
     { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
   ];
   const summary = summarizeRangeSeries(series, t);
@@ -467,37 +360,22 @@ const trendSection = (key, title, [allocation, usage], allocationName) => {
   };
 };
 const trendSections = computed(() => [
-  trendSection('compute', t('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value, computeAllocLegend.value),
-  trendSection('memory', t('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value, t('dashboard.allocRateLegend')),
+  trendSection('compute', t('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value),
+  trendSection('memory', t('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value),
 ]);
 
-const clampPercent = (v) => Math.max(0, Math.min(100, v));
-const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
-const buildPercentViews = (rawComputed, lowerBound, hidden) => {
-  const progress = computed(() => {
-    const p = rawComputed.value;
-    return p === undefined || hidden?.value ? undefined : clampPercent(p);
-  });
-  const progressRounded = computed(() => roundPercentForProgress(progress.value));
-  const text = computed(() => {
-    const p = rawComputed.value;
-    if (p === undefined || hidden?.value || (lowerBound && lowerBound.value === undefined)) return '--';
-    return `${lowerBound && isLowerBound(lowerBound.value) ? '≥' : ''}${Number(p).toFixed(2)}%`;
-  });
+const buildPercentViews = (raw) => {
+  const progress = computed(() => Number.isFinite(raw.value) ? Math.max(0, Math.min(100, raw.value)) : undefined);
+  const progressRounded = computed(() => progress.value === undefined ? undefined : roundToDecimal(progress.value, 2));
+  const text = computed(() => Number.isFinite(raw.value) ? `${roundToDecimal(raw.value, 2).toFixed(2)}%` : '--');
   return { progress, progressRounded, text };
 };
-
-const computeAllocNothingCounted = computed(() => isNothingCounted(readGaugeField(0, 'used'), computeAllocUncounted.value));
-const computeAllocNote = computed(() => {
-  if (computeAllocNothingCounted.value) return nothingCountedMessage(t, computeAllocUncounted.value);
-  return isLowerBound(computeAllocUncounted.value) ? lowerBoundMessage(t, computeAllocUncounted.value) : '';
-});
 
 const {
   progress: computeAllocPercentProgress,
   progressRounded: computeAllocPercentProgressRounded,
   text: computeAllocPercentText,
-} = buildPercentViews(computeAllocPercentRaw, computeAllocUncounted, computeAllocNothingCounted);
+} = buildPercentViews(computeAllocPercentRaw);
 const {
   progress: computeUsagePercentProgress,
   progressRounded: computeUsagePercentProgressRounded,
@@ -514,15 +392,10 @@ const {
   text: memoryUsagePercentText,
 } = buildPercentViews(memoryUsagePercentRaw);
 
-const computePowerTotalText = computed(() => {
-  const v = computePowerTotal.value;
-  return v === undefined ? '--' : `${roundToDecimal(v / 100, 1)}`;
-});
-
-const gpuMemoryTotalText = computed(() => {
-  const v = gpuMemoryTotal.value;
-  return v === undefined ? '--' : `${Number(v).toFixed(2)} GiB`;
-});
+const computePowerTotalText = computed(() => Number.isFinite(detail.value.coreTotal)
+  ? String(roundToDecimal(detail.value.coreTotal / 100, 1)) : '--');
+const gpuMemoryTotalText = computed(() => Number.isFinite(detail.value.memoryTotal)
+  ? `${(detail.value.memoryTotal / 1024).toFixed(2)} GiB` : '--');
 
 const headerStatusDisplay = computed(() => {
   if (detailStatus.value !== REQUEST_STATUS.READY) {
@@ -605,18 +478,6 @@ const detailColumnGroups = computed(() => {
 </script>
 
 <style scoped lang="scss">
-.resource-card-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 .node-overview-wrap {
   display: flex;
   margin-top: 16px;

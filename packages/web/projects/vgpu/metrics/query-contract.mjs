@@ -1,3 +1,5 @@
+import { buildPhysicalAllocationQueries } from './physical-resource-queries.mjs';
+
 const METRICS = Object.freeze({
   vgpuAllocated: 'hami_container_vgpu_allocated',
   computeAllocated: 'hami_container_vcore_allocated',
@@ -283,8 +285,12 @@ export const buildGroupedResourceTopQueries = (groupLabel) => {
     throw new TypeError('A Prometheus group label is required');
   }
 
-  const computeAllocation = buildComputeAllocationQueries({ groupLabel });
-  const memoryAllocation = buildMemoryAllocationQueries({ groupLabel });
+  const { computeAllocation, memoryAllocation } = groupLabel === 'node'
+    ? buildPhysicalAllocationQueries({ byNode: true })
+    : {
+      computeAllocation: buildComputeAllocationQueries({ groupLabel }),
+      memoryAllocation: buildMemoryAllocationQueries({ groupLabel }),
+    };
   const memoryUsage = buildMemoryUsageQueries({ groupLabel });
 
   return {
@@ -294,10 +300,3 @@ export const buildGroupedResourceTopQueries = (groupLabel) => {
     memoryUsage: `topk(5, ${memoryUsage.percentQuery})`,
   };
 };
-
-export const buildClusterTrendQueries = () => ({
-  computeAllocation: buildComputeAllocationQueries().percentQuery,
-  computeUsage: `avg(${METRICS.computeUsageAverage})`,
-  memoryAllocation: buildMemoryAllocationQueries().percentQuery,
-  memoryUsage: buildMemoryUsageQueries().percentQuery,
-});

@@ -78,7 +78,10 @@ export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now) 
   const refreshRange = () => {
     validationError.value = '';
     if (currentDateRange.value === 'custom') publishRange(appliedRange.value);
-    else selectRange(currentDateRange.value);
+    else {
+      selectRange(currentDateRange.value);
+      return appliedRange.value[1];
+    }
   };
 
   watch(modelValue, (range) => {
