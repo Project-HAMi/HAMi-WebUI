@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package observability.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "vgpu/api/observability/v1;observabilityv1";
+
+// Metadata belongs to the field named by its enclosing states map key.
+// Unknown, conflicting and inapplicable fields omit the numeric value.
+message FieldState {
+  // known, unknown, stale, conflict or not_applicable.
+  string state = 1;
+  string reason = 2;
+  map<string, string> params = 3;
+  string source = 4;
+  // device, instance, pod or container. This is the observation's actual scope.
+  string scope = 5;
+  // Sample time, never the view assembly or scrape request time. Unknown is null.
+  google.protobuf.Timestamp observed_at = 6;
+}
+
+message SourceState {
+  string source = 1;
+  string state = 2;
+  string reason = 3;
+  map<string, string> params = 4;
+}
+
+message FieldCoverage {
+  // Set when the counted entity differs from the enclosing coverage entity.
+  string entity = 1;
+  int32 known = 2;
+  int32 stale = 3;
+  int32 unknown = 4;
+  int32 conflict = 5;
+  int32 not_applicable = 6;
+  map<string, int32> reasons = 7;
+}
+
+message Coverage {
+  // device, node, occupancy, container, pod or workload.
+  string entity = 1;
+  // Distinct entities matching the filters, before pagination.
+  int32 observed = 2;
+  // Omitted unless a complete source confirms a comparable total.
+  optional int32 total = 3;
+  bool complete = 4;
+  repeated SourceState sources = 5;
+  map<string, FieldCoverage> fields = 6;
+}
