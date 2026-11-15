@@ -196,6 +196,8 @@ func (r *deviceCatalog) build(previous *devicecatalog.Snapshot) *devicecatalog.S
 				break
 			}
 			next.State, next.HamiVnpuCore, next.Ascend, next.Issues = devicecatalog.StateLoaded, parsed.HamiVnpuCore, parsed.Ascend, parsed.Issues
+			next.ResourceNames, next.Cambricon = parsed.ResourceNames, parsed.Cambricon
+			next.NodeResourceNames = parsed.NodeResourceNames
 		}
 	}
 	if next.State == previous.State && next.Reason == previous.Reason && next.ResourceVersion == previous.ResourceVersion && content == r.content {

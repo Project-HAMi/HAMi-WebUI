@@ -24,12 +24,13 @@ import (
 )
 
 const (
-	apiPrefix       = "/api/vgpu"
-	indexFile       = "index.html"
-	noCache         = "no-cache"
-	immutableCache  = "public, max-age=31536000, immutable"
-	healthCheckBody = "OK\n"
-	rootBasePath    = "/"
+	apiPrefix         = "/api/vgpu"
+	resourceAPIPrefix = "/api/v1"
+	indexFile         = "index.html"
+	noCache           = "no-cache"
+	immutableCache    = "public, max-age=31536000, immutable"
+	healthCheckBody   = "OK\n"
+	rootBasePath      = "/"
 )
 
 var (
@@ -42,7 +43,7 @@ var (
 
 // HandlerConfig contains the dependencies of the Web entry HTTP handler.
 // StaticFS must contain index.html at its root. APIHandler receives requests
-// after the /api/vgpu prefix has been removed.
+// with /api/v1 unchanged, or after the legacy /api/vgpu prefix has been removed.
 type HandlerConfig struct {
 	StaticFS   fs.FS
 	APIHandler http.Handler
@@ -96,6 +97,7 @@ func NewHandler(config HandlerConfig) (http.Handler, error) {
 	return &entryHandler{
 		staticFS:        config.StaticFS,
 		api:             http.StripPrefix(apiPrefix, apiHandler),
+		resourceAPI:     apiHandler,
 		basePath:        basePath,
 		indexBody:       indexBody,
 		compressedIndex: compressedIndex,
@@ -106,6 +108,7 @@ func NewHandler(config HandlerConfig) (http.Handler, error) {
 type entryHandler struct {
 	staticFS        fs.FS
 	api             http.Handler
+	resourceAPI     http.Handler
 	basePath        string
 	indexBody       []byte
 	compressedIndex []byte
@@ -156,6 +159,12 @@ func (h *entryHandler) serveApplication(w http.ResponseWriter, r *http.Request) 
 	case hasPathPrefix(r.URL.Path, "/health_check"):
 		// The liveness endpoint deliberately remains outside a configured base path.
 		writeNotFound(w, r)
+	case hasPathPrefix(r.URL.Path, resourceAPIPrefix):
+		if hasInvalidPathSegment(r.URL.Path) {
+			writeNotFound(w, r)
+			return
+		}
+		h.resourceAPI.ServeHTTP(w, r)
 	case hasPathPrefix(r.URL.Path, apiPrefix):
 		if hasInvalidPathSegment(r.URL.Path) {
 			writeNotFound(w, r)

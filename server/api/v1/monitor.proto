@@ -69,6 +69,8 @@ message RangeResponse {
 
 message QueryInstantRequest {
   string query = 1;
+  // Optional RFC3339 instant shared by related queries. Defaults to the current time.
+  string time = 2;
 }
 
 message InstantResponse {

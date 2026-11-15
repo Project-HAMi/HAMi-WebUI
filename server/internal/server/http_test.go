@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"vgpu/internal/conf"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestHTTPFallbackResponses(t *testing.T) {
@@ -99,6 +101,8 @@ func newTestHTTPHandler() nethttp.Handler {
 		nil,
 		nil,
 		nil,
+		nil,
+		prometheus.NewRegistry(),
 		nil,
 	)
 	return srv.Handler

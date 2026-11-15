@@ -49,9 +49,7 @@ func registeredDevices(encoded string, logger *log.Helper) ([]*util.DeviceInfo, 
 	}
 	for _, device := range devices {
 		// Registrations older than device modes only shared GPUs through HAMi-core.
-		if device.Mode == "" || device.Mode == modeMps {
-			device.Mode = ModeHamiCore
-		}
+		device.Mode = registrationMode(device.Mode)
 	}
 	return devices, nil
 }
@@ -75,4 +73,11 @@ func RegisteredModes(node *corev1.Node, logger *log.Helper) map[string]string {
 		modes[device.ID] = device.Mode
 	}
 	return modes
+}
+
+func registrationMode(mode string) string {
+	if mode == "" || mode == modeMps {
+		return ModeHamiCore
+	}
+	return mode
 }

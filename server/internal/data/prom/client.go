@@ -158,9 +158,10 @@ func NewClient(address string, timeout time.Duration, config HTTPConfig, logger 
 		roundTripper = &credentialOriginRoundTripper{origin: parsedAddress, next: roundTripper}
 	}
 
+	// WithTimeout only bounds evaluation on the server; this bounds the whole request.
 	client, err := api.NewClient(api.Config{
-		Address:      address,
-		RoundTripper: roundTripper,
+		Address: address,
+		Client:  &http.Client{Transport: roundTripper, Timeout: timeout},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create Prometheus client: %w", err)
@@ -178,8 +179,14 @@ func (c *Client) Conn() (api.Client, error) {
 
 // Query evaluates query at the current time.
 func (c *Client) Query(ctx context.Context, query string) (model.Value, error) {
+	return c.QueryAt(ctx, query, time.Now())
+}
+
+// QueryAt evaluates a query at a caller-selected instant. A collector cycle uses
+// one instant for all of its bounded batches.
+func (c *Client) QueryAt(ctx context.Context, query string, at time.Time) (model.Value, error) {
 	v1api := v1.NewAPI(c.client)
-	result, warnings, err := v1api.Query(ctx, query, time.Now(), v1.WithTimeout(c.timeout))
+	result, warnings, err := v1api.Query(ctx, query, at, v1.WithTimeout(c.timeout))
 	if err != nil {
 		return result, fmt.Errorf("query Prometheus: %w", err)
 	}

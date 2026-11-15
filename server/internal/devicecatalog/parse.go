@@ -54,20 +54,47 @@ func (v *rawVNPUs) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 type Parsed struct {
-	HamiVnpuCore bool
-	Ascend       map[string]AscendModel
-	Issues       []string
+	ResourceNames map[string]DeviceResourceNames
+	HamiVnpuCore  bool
+	Cambricon     *CambriconConfig
+	Ascend        map[string]AscendModel
+	Issues        []string
+
+	NodeResourceNames map[string]bool
 }
 
 // Parse skips invalid entries and reports them as issues; only malformed YAML is an error.
 func Parse(data []byte) (Parsed, error) {
 	var document struct {
-		VNPUs rawVNPUs `yaml:"vnpus"`
+		Mthreads *DeviceResourceNames `yaml:"mthreads"`
+		Nvidia   *DeviceResourceNames `yaml:"nvidia"`
+		Hygon    *DeviceResourceNames `yaml:"hygon"`
+		HCU      *DeviceResourceNames `yaml:"hcu"`
+		Metax    *struct {
+			Count    string `yaml:"resourceCountName"`
+			VCount   string `yaml:"resourceVCountName"`
+			VMemory  string `yaml:"resourceVMemoryName"`
+			VCompute string `yaml:"resourceVCoreName"`
+		} `yaml:"metax"`
+		VNPUs     rawVNPUs         `yaml:"vnpus"`
+		Cambricon *CambriconConfig `yaml:"cambricon"`
+		Other     map[string]any   `yaml:",inline"`
 	}
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		return Parsed{}, fmt.Errorf("parse device-config.yaml: %w", err)
 	}
-	parsed := Parsed{HamiVnpuCore: document.VNPUs.HamiVnpuCore, Ascend: map[string]AscendModel{}}
+	parsed := Parsed{Cambricon: document.Cambricon, HamiVnpuCore: document.VNPUs.HamiVnpuCore, Ascend: map[string]AscendModel{}}
+	parsed.NodeResourceNames = nodeResourceNames(document.Other)
+	parsed.ResourceNames = map[string]DeviceResourceNames{}
+	for kind, names := range map[string]*DeviceResourceNames{"NVIDIA": document.Nvidia, "DCU": document.Hygon, "HCU": document.HCU, "Mthreads": document.Mthreads} {
+		if names != nil {
+			parsed.ResourceNames[kind] = *names
+		}
+	}
+	if document.Metax != nil {
+		parsed.ResourceNames["Metax-GPU"] = DeviceResourceNames{Count: document.Metax.Count}
+		parsed.ResourceNames["Metax-SGPU"] = DeviceResourceNames{Count: document.Metax.VCount, Memory: document.Metax.VMemory, Compute: document.Metax.VCompute}
+	}
 	for i, raw := range document.VNPUs.Configs {
 		if raw.CommonWord == "" {
 			parsed.Issues = append(parsed.Issues, fmt.Sprintf("vnpus entry %d has no commonWord", i))
@@ -107,4 +134,29 @@ func Parse(data []byte) (Parsed, error) {
 		parsed.Ascend[raw.CommonWord] = model
 	}
 	return parsed, nil
+}
+
+// These HAMi config fields name accelerator resources but do not identify
+// devices. Keep them separate from the provider mappings used for Pod accounting.
+func nodeResourceNames(sections map[string]any) map[string]bool {
+	names := map[string]bool{}
+	add := func(section any, fields ...string) {
+		config, _ := section.(map[any]any)
+		for _, field := range fields {
+			if name, ok := config[field].(string); ok && name != "" {
+				names[name] = true
+			}
+		}
+	}
+	chips, _ := sections["iluvatars"].([]any)
+	for _, chip := range chips {
+		add(chip, "resourceCountName", "resourceMemoryName", "resourceCoreName")
+	}
+	add(sections["enflame"], "resourceNameGCU", "resourceNameDRSGCU", "resourceNameGCUMemory", "resourceNameGCUCore", "resourceNameVGCU", "resourceNameVGCUPercentage")
+	add(sections["kunlun"], "resourceCountName", "resourceVCountName", "resourceVMemoryName")
+	add(sections["awsneuron"], "resourceCountName", "resourceCoreName")
+	add(sections["amd"], "resourceCountName", "resourceCoreName", "resourceMemoryName", "resourceMemoryPercentageName")
+	add(sections["vastai"], "resourceCountName")
+	add(sections["biren"], "resourceCountName")
+	return names
 }

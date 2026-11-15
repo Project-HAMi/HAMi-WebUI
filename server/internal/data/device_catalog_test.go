@@ -72,6 +72,9 @@ func TestDeviceCatalogLoadsUpdatesAndNotifies(t *testing.T) {
 	if snapshot.State != devicecatalog.StateLoaded || len(snapshot.Ascend["Ascend910C"].Templates) != 0 || snapshot.ResourceVersion != "1" {
 		t.Fatalf("first read = %+v", snapshot)
 	}
+	if !snapshot.NodeResourceNames["enflame.com/vgcu-percentage"] || snapshot.NodeResourceNames["birentech.com/gpu"] {
+		t.Fatalf("wrong inventory keys for v2.9.0: %v", snapshot.NodeResourceNames)
+	}
 	var mu sync.Mutex
 	var changes [][2]*devicecatalog.Snapshot
 	source.Subscribe(func(previous, current *devicecatalog.Snapshot) {
@@ -93,6 +96,9 @@ func TestDeviceCatalogLoadsUpdatesAndNotifies(t *testing.T) {
 		}
 		mu.Unlock()
 		if last[1] != nil && len(last[1].Ascend["Ascend910C"].Templates) == 2 {
+			if last[1].NodeResourceNames["enflame.com/vgcu-percentage"] || !last[1].NodeResourceNames["birentech.com/gpu"] {
+				t.Fatalf("inventory keys did not follow catalog replacement: %v", last[1].NodeResourceNames)
+			}
 			if last[1] != source.Snapshot() {
 				t.Fatal("the last change is not the current snapshot")
 			}

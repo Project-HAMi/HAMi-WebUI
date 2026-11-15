@@ -2,6 +2,8 @@ package server
 
 import (
 	nethttp "net/http"
+
+	pb "vgpu/api/observability/v1"
 	v1 "vgpu/api/v1"
 	"vgpu/internal/conf"
 	"vgpu/internal/service"
@@ -12,6 +14,7 @@ import (
 	"github.com/go-kratos/kratos/v2/middleware/recovery"
 	"github.com/go-kratos/kratos/v2/transport/http"
 	"github.com/go-kratos/swagger-api/openapiv2"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -42,12 +45,15 @@ func NewHTTPServer(c *conf.Bootstrap,
 	scheduling *service.SchedulingService,
 	workload *service.WorkloadService,
 	deviceConfig *service.DeviceConfigService,
+	overview *service.OverviewService,
+	gatherer prometheus.Gatherer,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
 		http.Middleware(
 			recovery.Recovery(),
 			metrics.Server(),
 		),
+		http.RequestQueryDecoder(overviewQuery),
 		http.NotFoundHandler(httpErrorHandler(nethttp.StatusNotFound, httpReasonRouteNotFound)),
 		http.MethodNotAllowedHandler(httpErrorHandler(nethttp.StatusMethodNotAllowed, httpReasonMethodNotAllowed)),
 	}
@@ -68,8 +74,9 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterSchedulingHTTPServer(srv, scheduling)
 	v1.RegisterWorkloadHTTPServer(srv, workload)
 	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
+	pb.RegisterOverviewHTTPServer(srv, overview)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
-	srv.Handle("/metrics", promhttp.Handler())
+	srv.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})))
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		// Reaching this handler means the server is listening and the informer
 		// caches have already synced (the backend only starts serving after that).

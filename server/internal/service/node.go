@@ -4,13 +4,15 @@ import (
 	"context"
 	"sort"
 	"strconv"
-	"vgpu/internal/biz"
 
+	kratoserrors "github.com/go-kratos/kratos/v2/errors"
+	"github.com/gookit/goutil/arrutil"
 	"github.com/jinzhu/copier"
+	"google.golang.org/protobuf/proto"
 
 	pb "vgpu/api/v1"
-
-	"github.com/gookit/goutil/arrutil"
+	"vgpu/internal/biz"
+	"vgpu/internal/resourceview"
 )
 
 type NodeService struct {
@@ -19,10 +21,11 @@ type NodeService struct {
 	uc      *biz.NodeUsecase
 	pod     *biz.PodUseCase
 	summary *biz.SummaryUseCase
+	source  resourceview.SnapshotSource
 }
 
-func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.SummaryUseCase) *NodeService {
-	return &NodeService{uc: uc, pod: pod, summary: summary}
+func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.SummaryUseCase, source resourceview.SnapshotSource) *NodeService {
+	return &NodeService{uc: uc, pod: pod, summary: summary, source: source}
 }
 
 func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*pb.DeviceSummaryReply, error) {
@@ -38,10 +41,10 @@ func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*p
 }
 
 func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (*pb.NodesReply, error) {
-	filters := req.GetFilters()
-	if filters == nil {
-		filters = &pb.GetAllNodesReq_Filters{}
+	if req.GetUseResourceInventory() {
+		return s.inventoryNodeRows(ctx, "", req.GetFilters())
 	}
+	filters := req.GetFilters()
 	nodes, err := s.uc.ListAllNodes(ctx)
 	if err != nil {
 		return nil, err
@@ -60,20 +63,9 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 	for _, node := range nodes {
 		nodeReply := s.buildNodeReply(node, containers)
 
-		if filters.Ip != "" && filters.Ip != nodeReply.Ip {
+		if !matchesNodeFilters(nodeReply, filters) {
 			continue
 		}
-		if filters.Type != "" && !arrutil.InStrings(filters.Type, nodeReply.Type) {
-			continue
-		}
-
-		result, err := strconv.ParseBool(filters.IsSchedulable)
-		if err == nil {
-			if result != nodeReply.IsSchedulable {
-				continue
-			}
-		}
-
 		res.List = append(res.List, nodeReply)
 	}
 
@@ -84,7 +76,31 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 	return res, nil
 }
 
+func matchesNodeFilters(node *pb.NodeReply, filters *pb.GetAllNodesReq_Filters) bool {
+	if ip := filters.GetIp(); ip != "" && ip != node.Ip {
+		return false
+	}
+	if model := filters.GetType(); model != "" && !arrutil.InStrings(model, node.Type) {
+		return false
+	}
+	schedulable, err := strconv.ParseBool(filters.GetIsSchedulable())
+	return err != nil || (node.IsSchedulable != nil && *node.IsSchedulable == schedulable)
+}
+
 func (s *NodeService) GetNode(ctx context.Context, req *pb.GetNodeReq) (*pb.NodeReply, error) {
+	if req.GetUseResourceInventory() {
+		if req.GetUid() == "" {
+			return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Missing node UID").WithMetadata(map[string]string{"param": "uid"})
+		}
+		nodes, err := s.inventoryNodeRows(ctx, req.GetUid(), nil)
+		if err != nil {
+			return nil, err
+		}
+		if len(nodes.List) == 0 {
+			return nil, kratoserrors.NotFound("RESOURCE_NODE_NOT_FOUND", "Accelerator node was not found")
+		}
+		return nodes.List[0], nil
+	}
 	node, err := s.uc.GetNode(ctx, req.Uid)
 	if err != nil {
 		return nil, err
@@ -107,8 +123,8 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 		Name:                    node.Name,
 		Uid:                     node.Uid,
 		Ip:                      node.IP,
-		IsSchedulable:           node.IsSchedulable,
-		IsReady:                 node.IsReady,
+		IsSchedulable:           proto.Bool(node.IsSchedulable),
+		IsReady:                 proto.Bool(node.IsReady),
 		OsImage:                 node.OSImage,
 		OperatingSystem:         node.OperatingSystem,
 		KernelVersion:           node.KernelVersion,
@@ -119,25 +135,28 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 		CreationTimestamp:       node.CreationTimestamp,
 	}
 
+	var vgpuTotal, coreTotal, memoryTotal, vgpuUsed, coreUsed, memoryUsed int32
 	for _, device := range node.Devices {
 		nodeReply.Type = append(nodeReply.Type, device.Type)
 		if !device.Unconfigured {
-			nodeReply.VgpuTotal += device.Count
-			nodeReply.CoreTotal += biz.PhysicalCoreBaselinePerDevice
-			nodeReply.MemoryTotal += device.Devmem
+			vgpuTotal += device.Count
+			coreTotal += biz.PhysicalCoreBaselinePerDevice
+			memoryTotal += device.Devmem
 		}
 		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
-		nodeReply.VgpuUsed += vGPU
-		nodeReply.CoreUsed += core
+		vgpuUsed += vGPU
+		coreUsed += core
 		if !coreKnown {
 			coreUsedKnown = false
 		}
-		nodeReply.MemoryUsed += memory
+		memoryUsed += memory
 	}
 	nodeReply.CoreUsedKnown = &coreUsedKnown
 
 	nodeReply.Type = arrutil.Unique(nodeReply.Type)
-	nodeReply.CardCnt = int32(len(node.Devices))
+	nodeReply.CardCnt = proto.Int32(int32(len(node.Devices)))
+	nodeReply.VgpuTotal, nodeReply.CoreTotal, nodeReply.MemoryTotal = &vgpuTotal, &coreTotal, &memoryTotal
+	nodeReply.VgpuUsed, nodeReply.CoreUsed, nodeReply.MemoryUsed = &vgpuUsed, &coreUsed, &memoryUsed
 
 	return nodeReply
 }

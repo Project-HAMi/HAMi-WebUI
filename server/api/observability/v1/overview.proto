@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package observability.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "api/observability/v1/common.proto";
+
+option go_package = "vgpu/api/observability/v1;observabilityv1";
+
+service Overview {
+  rpc GetInventory (InventoryRequest) returns (InventoryReply) {
+    option (google.api.http) = { get: "/api/v1/overview/inventory" };
+  }
+}
+
+// Nodes and physical devices come from a single inventory read.
+message InventoryRequest {}
+message InventoryReply {
+  google.protobuf.Timestamp snapshot_at = 1;
+  repeated InventoryNode nodes = 2;
+  repeated InventoryDevice devices = 3;
+  Coverage node_coverage = 4;
+  Coverage device_coverage = 5;
+}
+message InventoryNode {
+  string name = 1;
+  string uid = 2;
+  optional bool ready = 3;
+  optional bool schedulable = 4;
+  repeated string models = 5;
+  optional int32 physical_devices = 6;
+}
+message InventoryDevice {
+  // The canonical provider registration on this node identifies one physical device.
+  string node = 1;
+  string provider = 2;
+  string device_id = 3;
+  string model = 4;
+  optional bool healthy = 5;
+  // Latest known device observations in [0, 1]. An absent value is not zero.
+  optional double utilization_ratio = 6;
+  optional double memory_usage_ratio = 7;
+}
