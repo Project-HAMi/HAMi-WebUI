@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"vgpu/internal/biz"
-	"vgpu/internal/provider"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -18,6 +17,38 @@ import (
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
+
+func TestNodeProvidersUseVendorSelectorsAndIsolateInvalidConfiguration(t *testing.T) {
+	for _, explicitHCU := range []bool{false, true} {
+		selectors := map[string]string{
+			"Ascend":       "accelerator in (npu, mixed)",
+			"MLU":          "broken (",
+			"FutureVendor": "broken (",
+		}
+		if explicitHCU {
+			selectors["HCU"] = ""
+		}
+		providers := NewNodeProviders(&Data{}, selectors, log.NewStdLogger(io.Discard), nil)
+		got := map[string]labels.Selector{}
+		for _, p := range providers {
+			got[p.GetProvider()] = p.selector
+		}
+		if len(got) != 5 || got["MLU"] != nil || got["FutureVendor"] != nil {
+			t.Fatalf("selected providers: %v", got)
+		}
+		for _, name := range []string{"NVIDIA", "DCU", "Metax"} {
+			if got[name] == nil || !got[name].Matches(labels.Set{}) {
+				t.Fatalf("omitted %s selector should accept unlabeled nodes", name)
+			}
+		}
+		if got["Ascend"] == nil || got["Ascend"].Matches(labels.Set{}) || !got["Ascend"].Matches(labels.Set{"accelerator": "mixed"}) {
+			t.Fatalf("Ascend selector lost its configured expression: %v", got["Ascend"])
+		}
+		if got["HCU"] == nil || got["HCU"].Matches(labels.Set{}) || !got["HCU"].Matches(labels.Set{"hcu": "on"}) {
+			t.Fatalf("empty or omitted HCU selector should match hcu=on, got %v", got["HCU"])
+		}
+	}
+}
 
 func TestNodeInventoryReadsANodeWithoutStatus(t *testing.T) {
 	repo := &nodeRepo{}
@@ -66,7 +97,7 @@ func TestNodeInventoryCarriesMIGProfiles(t *testing.T) {
 		nodes:      map[k8stypes.UID]*biz.Node{},
 		nodeLister: listerscorev1.NewNodeLister(indexer),
 		log:        log.NewHelper(log.NewStdLogger(io.Discard)),
-		providers:  []provider.Provider{staticProvider{devices: registered}},
+		providers:  []nodeProvider{{Provider: staticProvider{devices: registered}, selector: labels.Everything()}},
 	}
 	go repo.updateLocalNodes()
 	repo.nodeNotify <- struct{}{}

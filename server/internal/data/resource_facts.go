@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -28,21 +27,14 @@ type resourceSnapshotSource struct {
 
 // NewResourceSnapshotSource shares the Node informer already started by the
 // Pod ledger dependency. Snapshot has no remote reads or per-request discovery.
-func NewResourceSnapshotSource(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source, pods *podfacts.Ledger) (resourceview.SnapshotSource, error) {
-	selectors := map[string]labels.Selector{}
-	for provider, expression := range nodeSelectors {
-		selector, err := labels.Parse(expression)
-		if err != nil {
-			return nil, fmt.Errorf("resource facts selector %s: %w", provider, err)
-		}
-		selectors[provider] = selector
+func NewResourceSnapshotSource(data *Data, providers []nodeProvider, logger log.Logger, catalog devicecatalog.Source, pods *podfacts.Ledger) resourceview.SnapshotSource {
+	selectors := make(map[string]labels.Selector, len(providers))
+	for _, p := range providers {
+		selectors[p.GetProvider()] = p.selector
 	}
-	// Match the existing HCU provider's compatibility default for older configs.
-	if _, exists := selectors["HCU"]; !exists {
-		selectors["HCU"] = labels.SelectorFromSet(labels.Set{"hcu": "on"})
-	}
-	return &resourceSnapshotSource{continuity: data.continuity, nodes: data.informers.Core().V1().Nodes().Lister(), pods: pods, catalog: catalog, selectors: selectors, log: log.NewHelper(logger)}, nil
+	return &resourceSnapshotSource{continuity: data.continuity, nodes: data.informers.Core().V1().Nodes().Lister(), pods: pods, catalog: catalog, selectors: selectors, log: log.NewHelper(logger)}
 }
+
 func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return resourceview.Snapshot{}, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -30,24 +31,45 @@ type nodeRepo struct {
 	nodes      map[k8stypes.UID]*biz.Node
 	log        *log.Helper
 	mutex      sync.RWMutex
-	providers  []provider.Provider
+	providers  []nodeProvider
 }
 
-// NewNodeRepo .
-func NewNodeRepo(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source) (biz.NodeRepo, error) {
+type nodeProvider struct {
+	provider.Provider
+	selector labels.Selector
+}
+
+// NewNodeProviders resolves the same selectors for legacy and physical inventories.
+// Each provider owns the default used when its configuration is omitted.
+func NewNodeProviders(data *Data, nodeSelectors map[string]string, logger log.Logger, catalog devicecatalog.Source) []nodeProvider {
+	providerLog := log.NewHelper(logger)
+	registered := []provider.Provider{
+		nvidia.NewNvidia(data.promCl, providerLog, nodeSelectors[biz.NvidiaGPUDevice]),
+		mlu.NewCambricon(data.promCl, providerLog, nodeSelectors[biz.CambriconGPUDevice]),
+		ascend.NewAscend(data.promCl, providerLog, nodeSelectors[biz.AscendGPUDevice], catalog),
+		hygon.NewHygon(data.promCl, providerLog, nodeSelectors[biz.HygonGPUDevice]),
+		hygon.NewHCU(providerLog, nodeSelectors[biz.HygonHCUDevice]),
+		metax.NewMetax(data.promCl, providerLog, nodeSelectors[biz.MetaxGPUDevice]),
+	}
+	enabled := make([]nodeProvider, 0, len(registered))
+	for _, p := range registered {
+		selector, err := p.GetNodeDevicePluginLabels()
+		if err != nil {
+			providerLog.Warnw("msg", "ignoring provider with invalid node selector", "provider", p.GetProvider(), "err", err)
+			continue
+		}
+		enabled = append(enabled, nodeProvider{Provider: p, selector: selector})
+	}
+	return enabled
+}
+
+func NewNodeRepo(data *Data, providers []nodeProvider, logger log.Logger, catalog devicecatalog.Source) (biz.NodeRepo, error) {
 	nodeRepo := &nodeRepo{
 		data:       data,
 		nodeNotify: make(chan struct{}, 1),
 		nodes:      map[k8stypes.UID]*biz.Node{},
 		log:        log.NewHelper(logger),
-		providers: []provider.Provider{
-			nvidia.NewNvidia(data.promCl, log.NewHelper(logger), nodeSelectors[biz.NvidiaGPUDevice]),
-			mlu.NewCambricon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.CambriconGPUDevice]),
-			ascend.NewAscend(data.promCl, log.NewHelper(logger), nodeSelectors[biz.AscendGPUDevice], catalog),
-			hygon.NewHygon(data.promCl, log.NewHelper(logger), nodeSelectors[biz.HygonGPUDevice]),
-			hygon.NewHCU(log.NewHelper(logger), nodeSelectors[biz.HygonHCUDevice]),
-			metax.NewMetax(data.promCl, log.NewHelper(logger), nodeSelectors[biz.MetaxGPUDevice]),
-		},
+		providers:  providers,
 	}
 	// Subscribe first: the initial node sync must not miss a catalog change.
 	catalog.Subscribe(func(_, _ *devicecatalog.Snapshot) {
@@ -69,12 +91,7 @@ func (r *nodeRepo) updateLocalNodes() {
 		}
 		n := map[k8stypes.UID]*biz.Node{}
 		for _, p := range r.providers {
-			selector, err := p.GetNodeDevicePluginLabels()
-			if err != nil {
-				r.log.Warnf("create selector use labels failed :%s", err)
-				return
-			}
-			nodes, err := r.nodeLister.List(selector)
+			nodes, err := r.nodeLister.List(p.selector)
 			if err != nil {
 				r.log.Warnf("list node info error: %s", err)
 				continue

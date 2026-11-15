@@ -18,6 +18,7 @@ const informerResyncPeriod = time.Hour
 var ProviderSet = wire.NewSet(
 	NewData,
 	NewDeviceCatalog,
+	NewNodeProviders,
 	NewNodeRepo,
 	NewPodRepo,
 	NewPodFactsLedger,

@@ -31,10 +31,9 @@ func TestResourceFactsProductionSourceUsesLocalSharedCaches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := NewResourceSnapshotSource(data, map[string]string{"NVIDIA": ""}, logger, catalog, NewPodFactsLedger(repo))
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Older configs may omit NVIDIA and carry selectors for other providers.
+	providers := NewNodeProviders(data, map[string]string{"FutureVendor": "broken ("}, logger, catalog)
+	source := NewResourceSnapshotSource(data, providers, logger, catalog, NewPodFactsLedger(repo))
 	if err := wait.PollUntilContextTimeout(context.Background(), time.Millisecond*10, time.Second*3, true, func(context.Context) (bool, error) {
 		snapshot, err := source.Snapshot(context.Background())
 		return len(snapshot.Devices) == 1 && len(snapshot.Devices[0].EffectiveOccupancies) == 1, err

@@ -51,10 +51,8 @@ func startResourceTestSource(t *testing.T, client *fake.Clientset, catalog *muta
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := NewResourceSnapshotSource(data, selectors, logger, catalog, repo.facts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	providers := NewNodeProviders(data, selectors, logger, catalog)
+	source := NewResourceSnapshotSource(data, providers, logger, catalog, repo.facts)
 	return repo, source
 }
 
