@@ -1,3 +1,4 @@
+import { gpuVendor } from '../metrics/vendor-colors.mjs';
 import { readCoverageCount } from './overview-inventory.mjs';
 
 const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -20,3 +21,18 @@ export const readModelDistribution = (reply) => {
     : a.type.localeCompare(b.type, 'en', { numeric: true, sensitivity: 'base' })));
   return { rows, inventory };
 };
+
+// Preserve the exact model for list filters. A shared model name has a vendor
+// mark only when every physical device in that group agrees on the vendor.
+export function physicalModelDistribution(devices, coverage) {
+  const groups = new Map();
+  for (const device of devices) {
+    const model = device.model?.trim() ? device.model : '';
+    const vendor = gpuVendor(device.provider);
+    if (!groups.has(model)) groups.set(model, { model, physicalDevices: 0, vendor });
+    const group = groups.get(model);
+    group.physicalDevices++;
+    if (group.vendor !== vendor) group.vendor = null;
+  }
+  return readModelDistribution({ coverage, items: [...groups.values()] });
+}

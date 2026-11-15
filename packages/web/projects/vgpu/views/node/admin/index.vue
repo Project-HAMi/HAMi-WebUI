@@ -13,15 +13,14 @@
         :refreshing="tableRefreshing"
         @refresh="refreshTable"
       >
-        <t-space :size="8">
-          <t-select
+        <div class="inventory-list-filters">
+          <SegmentedControl
             v-model="filters.schedulingEligibility"
-            clearable
-            :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: fitPopupToOptions }"
-            :placeholder="$t('node.allSchedulingEligibilityStatuses')"
             :options="statusOptions"
+            :aria-label="$t('dashboard.nodeStatus')"
           />
           <t-select
+            class="inventory-filter-select"
             v-model="filters.type"
             clearable
             filterable
@@ -32,7 +31,7 @@
           />
           <t-input
             v-model="filters.keyword"
-            class="list-keyword-search"
+            class="list-keyword-search inventory-filter-search"
             clearable
             :placeholder="$t('node.searchKeyword')"
             :aria-label="$t('node.searchKeyword')"
@@ -41,7 +40,7 @@
               <search-icon aria-hidden="true" />
             </template>
           </t-input>
-        </t-space>
+        </div>
       </toolbar>
       <stateful-table
         :status="tableStatus"
@@ -82,6 +81,7 @@ import nodeApi from '~/vgpu/api/node';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
+import SegmentedControl from '@/components/SegmentedControl/index.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
@@ -109,7 +109,7 @@ const router = useRouter();
 const route = useRoute();
 const { t, locale } = useI18n();
 const filters = reactive({
-  schedulingEligibility: undefined,
+  schedulingEligibility: '',
   type: undefined,
   keyword: '',
 });
@@ -125,15 +125,10 @@ const {
 const filterOption = createOptionFilter();
 const nodeModels = computed(() => [...new Set(tableData.value.flatMap((node) => node.type ?? []))]
   .filter(Boolean).sort());
-const statusOption = (key, value) => ({
-  label: t(key),
-  value,
-  content: () => <SelectOptionLabel label={t(key)} {...nodeCount(statusNodeCount.value(value))} />,
-});
 const statusOptions = computed(() => [
-  { label: t('node.allSchedulingEligibilityStatuses'), value: undefined },
-  statusOption('node.schedulable', 'schedulable'),
-  statusOption('node.temporarilyUnschedulable', 'temporarilyUnschedulable'),
+  { value: '', label: t('task.statusAll'), count: statusNodeCount.value('') },
+  { value: 'schedulable', label: t('node.schedulable'), count: statusNodeCount.value('schedulable') },
+  { value: 'temporarilyUnschedulable', label: t('node.temporarilyUnschedulable'), count: statusNodeCount.value('temporarilyUnschedulable') },
 ]);
 const cardTypeOptions = computed(() => [
   // An empty value keeps "All" pickable without showing its label as typed text before a filter is chosen.
@@ -258,7 +253,8 @@ const handlePageChange = ({ current, pageSize }) => {
 // Options show how many nodes picking them would list under the other filters.
 const statusNodeCount = computed(() => {
   const nodes = keywordNodes.value.filter((node) => hasType(node, filters.type));
-  return (status) => nodes.filter((node) => matchesNodeSchedulingEligibility(node, status)).length;
+  return (status) => tableStatus.value === REQUEST_STATUS.READY
+    ? nodes.filter((node) => matchesNodeSchedulingEligibility(node, status)).length : undefined;
 });
 const typeNodeCounts = computed(() => {
   const counts = new Map();
@@ -273,11 +269,11 @@ const nodeCount = (count = 0) => (tableStatus.value === REQUEST_STATUS.READY ? {
 const clearFilters = () => {
   filters.keyword = '';
   filters.type = undefined;
-  filters.schedulingEligibility = undefined;
+  filters.schedulingEligibility = '';
 };
 
 const parseSchedulingEligibility = (value) =>
-  (value === 'schedulable' || value === 'temporarilyUnschedulable' ? value : undefined);
+  (value === 'schedulable' || value === 'temporarilyUnschedulable' ? value : '');
 const ROUTE_KEYS = ['q', 'schedulingEligibility', 'type', 'page', 'pageSize'];
 // Reset on meaningful edits. When a link supplies both filters and a page, restore the page last.
 watch([() => keywords.value.join(' '), () => filters.schedulingEligibility || '', () => filters.type || ''],
@@ -302,7 +298,7 @@ watch(
   () => {
     const query = writeQuery(route.query, {
       q: filters.keyword.trim(),
-      schedulingEligibility: filters.schedulingEligibility,
+      schedulingEligibility: filters.schedulingEligibility || undefined,
       type: filters.type,
       page: pagination.current > 1 ? pagination.current : undefined,
       pageSize: pagination.pageSize !== DEFAULT_PAGE_SIZE ? pagination.pageSize : undefined,

@@ -16,6 +16,7 @@ const useFetchList = (req, pathOrOptions = 'list') => {
     immediate = true,
     mapData = (data) => data,
     path = 'list',
+    onSuccess,
   } = options;
   const state = reactive(createRequestState([]));
 
@@ -44,11 +45,13 @@ const useFetchList = (req, pathOrOptions = 'list') => {
         });
         return;
       }
-      return resolveRequest(state, {
+      const accepted = resolveRequest(state, {
         data: mappedData,
         status: REQUEST_STATUS.READY,
         requestId,
       });
+      if (accepted) onSuccess?.(response);
+      return accepted;
     } catch (error) {
       rejectRequest(state, error, { hasResolved, requestId });
     }

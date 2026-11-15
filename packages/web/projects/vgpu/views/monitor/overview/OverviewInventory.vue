@@ -77,6 +77,8 @@ const resourceSummaries = computed(() => {
   const inventory = props.inventory.data?.summary;
   const nodes = inventory?.nodes;
   const devices = inventory?.devices;
+  const healthLocation = health => devices?.counts[health] == null ? undefined
+    : { name: 'accelerators', query: { health } };
   const workloads = props.workloads.data;
   const status = props.inventory.status;
   return [
@@ -98,9 +100,9 @@ const resourceSummaries = computed(() => {
       panelTitle: t('card.status'), allTo: '/accelerators', allLabel: t('dashboard.viewAllGpus'),
       description: t('dashboard.resourceSummary.gpuStatusHelp'),
       items: [
-        { id: 'healthy', label: t('card.normal'), count: devices?.counts.healthy, tone: 'success' },
-        { id: 'unhealthy', label: t('card.abnormal'), count: devices?.counts.unhealthy, tone: devices?.counts.unhealthy > 0 ? 'danger' : 'neutral' },
-        ...(devices?.counts.unknown > 0 ? [{ id: 'unknown', label: t('dashboard.resourceSummary.healthUnknown'), count: devices.counts.unknown, tone: 'neutral' }] : []),
+        { id: 'healthy', to: healthLocation('healthy'), label: t('card.normal'), count: devices?.counts.healthy, tone: 'success' },
+        { id: 'unhealthy', to: healthLocation('unhealthy'), label: t('card.abnormal'), count: devices?.counts.unhealthy, tone: devices?.counts.unhealthy > 0 ? 'danger' : 'neutral' },
+        ...(devices?.counts.unknown > 0 ? [{ id: 'unknown', to: healthLocation('unknown'), label: t('dashboard.resourceSummary.healthUnknown'), count: devices.counts.unknown, tone: 'neutral' }] : []),
       ],
     },
     {

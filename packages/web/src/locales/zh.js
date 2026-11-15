@@ -185,7 +185,7 @@ export default {
       chooseResource: '选择资源状态',
       missingStatus: '暂无状态统计',
       statusHelp: '查看状态说明',
-      gpuStatusHelp: '首页按物理卡统计健康状态。算力管理也列出单独登记的设备模块。',
+      gpuStatusHelp: '按物理卡统计最近上报的健康状态。',
       healthUnknown: '健康未知',
       workloadStatus: '工作负载状态',
       workloadStatusHelp: '按容器统计。其他包括待调度、启动中、已完成和终止中的容器。',

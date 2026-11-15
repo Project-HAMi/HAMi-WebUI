@@ -1,5 +1,4 @@
-import { gpuVendor } from '../../../metrics/vendor-colors.mjs';
-import { readModelDistribution } from '../../../api/model-distribution.mjs';
+import { physicalModelDistribution } from '../../../api/model-distribution.mjs';
 import { physicalDeviceKey, readCoverageCount, readOverviewInventory } from '../../../api/overview-inventory.mjs';
 import { isNodeSchedulingEligible } from '../../node/node-status.mjs';
 import { optionCountOf, readOptionCounts } from '../../task/admin/option-counts.mjs';
@@ -14,7 +13,6 @@ export function readResourceInventory(reply) {
   })).length;
 
   const health = { healthy: 0, unhealthy: 0, unknown: 0 };
-  const modelGroups = new Map();
   const nodeByName = new Map(nodes.map(node => [node.name, node]));
   const readings = [];
   const issues = [];
@@ -34,14 +32,6 @@ export function readResourceInventory(reply) {
     else health.unknown++;
     // Keep exact, nonblank model names so drill-downs use the list's own filter.
     const model = device.model?.trim() ? device.model : '';
-    const vendor = gpuVendor(device.provider);
-    let group = modelGroups.get(model);
-    if (!group) {
-      group = { model, physicalDevices: 0, vendor };
-      modelGroups.set(model, group);
-    }
-    group.physicalDevices++;
-    if (group.vendor !== vendor) group.vendor = null;
     const identity = { key: physicalDeviceKey(device), model, provider: device.provider,
       node: device.node, nodeUid: nodeByName.get(device.node)?.uid };
     if (device.healthy === false) issues.push({ ...identity, kind: 'deviceUnhealthy', deviceId: device.deviceId });
@@ -50,9 +40,7 @@ export function readResourceInventory(reply) {
       compute: device.utilizationRatio == null ? null : device.utilizationRatio * 100,
       memory: device.memoryUsageRatio == null ? null : device.memoryUsageRatio * 100 });
   }
-  const models = readModelDistribution({ coverage: deviceCoverage,
-    items: Array.from(modelGroups.values()),
-  });
+  const models = physicalModelDistribution(devices, deviceCoverage);
   return {
     nodes, models, devices: readings, issues,
     issueStatus: issueCoverageGap ? 'partial' : nodes.length || devices.length ? 'ready' : 'empty',

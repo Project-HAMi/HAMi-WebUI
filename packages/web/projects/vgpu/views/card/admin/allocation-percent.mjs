@@ -16,3 +16,11 @@ export const getAllocationPercent = (used, total) => {
     progress: Math.min(100, raw),
   };
 };
+
+export const computeAllocationPercent = card =>
+  card.isExternal || card.unconfigured || card.coreUsedKnown === false
+    ? undefined : getAllocationPercent(card.coreUsed, card.coreTotal);
+
+export const memoryAllocationPercent = card =>
+  card.isExternal || card.unconfigured
+    ? undefined : getAllocationPercent(card.memoryUsed, card.memoryTotal);

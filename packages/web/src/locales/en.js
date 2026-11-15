@@ -187,7 +187,7 @@ export default {
       chooseResource: 'Choose resource status',
       missingStatus: 'Status summary unavailable',
       statusHelp: 'View status details',
-      gpuStatusHelp: 'Health is counted per physical GPU. The Accelerators list also includes separately registered modules.',
+      gpuStatusHelp: 'Physical GPUs are grouped by their latest reported health.',
       healthUnknown: 'Health unknown',
       workloadStatus: 'Workload status',
       workloadStatusHelp: 'Counts containers. Other includes pending, starting, completed and terminating containers.',

@@ -387,6 +387,7 @@ import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
+import { cardHealthDisplay } from './card-health.mjs';
 import VendorMark from '~/vgpu/components/VendorMark.vue';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import taskApi from '~/vgpu/api/task';
@@ -453,18 +454,22 @@ const nodeDetailLocation = computed(() =>
 // Keep the legacy AWS model mark for entries without a recognised inventory provider.
 const fallbackModelIcon = computed(() => /^AWS(?:NEURON)?(?:[^a-z]|$)/i.test(detail.value?.type || '') ? 'gpu-aws' : 'vgpu-card');
 
-const getCardStatusDisplay = ({ health, isExternal }) => {
-  if (isExternal || health === undefined || health === null) {
-    return { icon: 'status-unmanaged', text: t('card.unknown') };
+const headerHealth = ref(null);
+watch(detail, async (card, _, onCleanup) => {
+  headerHealth.value = null;
+  if (!card?.uuid || card.uuid !== routeCardUuid.value) return;
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
+  try {
+    const health = await cardApi.getDetailHealth(card, controller.signal);
+    if (!controller.signal.aborted) headerHealth.value = health;
+  } catch {
+    if (!controller.signal.aborted) headerHealth.value = {};
   }
-  if (health) {
-    return { icon: 'status-schedulable', text: t('card.normal') };
-  }
-  return { icon: 'status-unschedulable', text: t('card.abnormal') };
-};
+});
 const headerStatusDisplay = computed(() =>
-  isDetailReady.value
-    ? getCardStatusDisplay(detail.value || {})
+  isDetailReady.value && headerHealth.value
+    ? cardHealthDisplay(headerHealth.value, t)
     : { icon: '', text: '' },
 );
 

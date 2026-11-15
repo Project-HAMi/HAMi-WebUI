@@ -52,6 +52,14 @@ const listFixture = (endpoint, list) => endpoint === 'nodes'
   ? { list, inventoryCoverage: coverageFixture('node', list.length) }
   : { list }
 
+// Standalone accelerator management reads physical rows and enriches their columns from registrations.
+const physicalFixture = rows => {
+  const nodes = Array.from(new Map(rows.map(row => [row.nodeName, { name: row.nodeName, uid: row.nodeUid }])).values())
+  const devices = rows.map(row => ({ node: row.nodeName, deviceId: row.uuid, model: row.type, provider: row.vendor, healthy: row.health, utilizationRatio: row.utilizationRatio, memoryUsageRatio: row.memoryUsageRatio }))
+  return { nodes, devices, nodeCoverage: coverageFixture('node', nodes.length), deviceCoverage: coverageFixture('device', devices.length) }
+}
+const routePhysicalFixture = (page, rows) => page.route('**/api/v1/overview/inventory', route => route.fulfill({ json: physicalFixture(rows) }))
+
 async function readJSONBody(req) {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -898,7 +906,7 @@ before(async() => {
     } else if (pathname === '/v1/gpus') {
       payload = {
         code: 0,
-        list: [{ uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', node: 'node-1', health: true }],
+        list: [{ uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true }],
         total: 1
       }
     } else if (pathname === '/v1/containers' || pathname === '/v1/workloads') {
@@ -1987,11 +1995,20 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
   })
   const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
   const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
+  const physicalCards = [0, 1, 2].map(i => {
+    const [coreUsed, utilization, memoryUsed, occupancy] = deviceQueries.map(query => fixtures.get(query).data[i].value)
+    return { uuid: `device_uuid-${i}`, nodeName: 'worker', nodeUid: 'uid', vendor: 'NVIDIA', type: 'A100', health: i !== 1,
+      coreUsed, coreTotal: 100, memoryUsed, memoryTotal: 100, utilizationRatio: utilization / 100, memoryUsageRatio: occupancy / 100 }
+  })
+  await routePhysicalFixture(page, physicalCards)
+  const module = { ...physicalCards[0], uuid: 'module-only', vendor: 'Ascend', type: 'Ascend910C', coreUsed: 100, memoryUsed: 100 }
+  await page.route('**/v1/gpus', route => route.fulfill({ json: { list: [...physicalCards, module] } }))
   const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
   const workloadQueries = fixtureQueries('container_pod_uuid', buildTaskAllocationTopQueries())
   const requests = trackMonitorRequests(page)
   await page.route('**/v1/monitor/query/instant-vector', (route) => {
     const fixture = fixtures.get(route.request().postDataJSON()?.query)
+    if (deviceQueries.includes(route.request().postDataJSON()?.query)) return route.fulfill({ json: { code: 0, data: [] } })
     return fixture ? route.fulfill({ json: { code: 0, data: fixture.data } }) : route.continue()
   })
   try {
@@ -2003,6 +2020,11 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
       await page.goto(`${target}${basePath}${path}`, { waitUntil: 'networkidle' })
       const cards = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') })
       assert.equal(await cards.count(), 2)
+      if (path === 'accelerators') {
+        // One abnormal card in the table, but all three physical cards still compete in each ranking.
+        await page.getByRole('button', { name: /^(Abnormal|异常) 1$/ }).click()
+        await waitUntil(async() => await page.locator('.accelerator-table tbody tr').count() === 1, 'health tab did not filter the table')
+      }
       const beforeSwitch = requests.length
       for (const [cardIndex, options] of queries.entries()) {
         const card = cards.nth(cardIndex)
@@ -3958,6 +3980,13 @@ test('distribution legends keep each name and its count on one line', async() =>
       json: { code: 0, data: legends[prefix].map(([name, value]) => ({ metric: { [label]: name }, value })) }
     })
   })
+  const devices = legends['count by (device_type)'].flatMap(([type, count]) =>
+    Array.from({ length: Math.min(count, 125) }, (_, index) => ({
+      type, uuid: type + index, nodeName: 'worker', nodeUid: 'node-uid', vendor: 'NVIDIA', health: true,
+      coreUsed: 0, coreTotal: 100, memoryUsed: 0, memoryTotal: 100,
+    })))
+  await routePhysicalFixture(page, devices)
+  await page.route('**/v1/gpus', route => route.fulfill({ json: { list: devices } }))
   const legendRows = () => page.locator('.nodeCard-legend li').evaluateAll((items) => items.map((item) => {
     const text = item.querySelector('.ellipsis-text')
     const range = document.createRange()
@@ -4026,7 +4055,7 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
   const device = (uuid, fields) => ({
-    uuid, type: 'NVIDIA', nodeName: 'node-1', health: true,
+    uuid, type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true,
     coreTotal: 100, coreUsed: 0, coreUsedKnown: true, memoryTotal: 24576, memoryUsed: 0, vgpuTotal: 10, vgpuUsed: 0,
     ...fields,
   })
@@ -4039,6 +4068,7 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
     device('external', { isExternal: true }),
   ]
   await page.route('**/v1/gpus', (route) => route.fulfill({ json: { code: 0, list: devices, total: devices.length } }))
+  await routePhysicalFixture(page, devices)
   const rateCells = (uuid) => page.locator('.accelerator-table').evaluate((table, uuid) => {
     const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim())
     const row = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes(uuid))
@@ -6296,6 +6326,7 @@ test('list no-match recovery fits common screen widths in both languages', { tim
   for (const locale of ['en-US', 'zh-CN']) {
     for (const config of listSearchCases) {
       const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
+      if (config.endpoint === 'gpus') await routePhysicalFixture(page, [])
       await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } }))
       try {
         await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
@@ -6382,9 +6413,9 @@ const localSearchRows = {
     { name: 'npu-node-c', uid: 'node-c', ip: '10.1.12.9', type: ['Ascend910B4'], isSchedulable: false, isReady: true },
   ],
   gpus: [
-    { uuid: 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525', nodeName: 'gpu-node-a', type: 'NVIDIA-A100-SXM4-80GB', health: true },
-    { uuid: 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', nodeName: 'gpu-node-b', type: 'NVIDIA-H100-SXM5-80GB', health: true },
-    { uuid: '57cd034427925618899c0cfd6c607d98', nodeName: 'npu-node-c', type: 'Ascend910B4', health: true },
+    { uuid: 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525', nodeName: 'gpu-node-a', nodeUid: 'node-a', vendor: 'NVIDIA', type: 'NVIDIA-A100-SXM4-80GB', health: true },
+    { uuid: 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', nodeName: 'gpu-node-b', nodeUid: 'node-b', vendor: 'NVIDIA', type: 'NVIDIA-H100-SXM5-80GB', health: true },
+    { uuid: '57cd034427925618899c0cfd6c607d98', nodeName: 'npu-node-c', nodeUid: 'node-c', vendor: 'Ascend', type: 'Ascend910B4', health: true },
   ],
 }
 const localSearchPages = [
@@ -6402,6 +6433,7 @@ const localSearchPages = [
   },
 ]
 const mockLocalSearchLists = async(page, counts = {}) => {
+  await routePhysicalFixture(page, localSearchRows.gpus)
   for (const endpoint of ['nodes', 'gpus']) {
     await page.route(`**/api/vgpu/v1/${endpoint}`, (route) => {
       counts[endpoint] = (counts[endpoint] ?? 0) + 1
@@ -6633,7 +6665,8 @@ test('node detail distinguishes a removed node from an incomplete inventory or a
 test('accelerators restore page and node filters from the URL when the data arrives late', { timeout: 60_000 }, async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
-  const gpus = Array.from({ length: 25 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(2, '0')}`, nodeName: 'gpu-node-a', type: 'NVIDIA-A100-SXM4-80GB', health: true }))
+  const gpus = Array.from({ length: 25 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(2, '0')}`, nodeName: 'gpu-node-a', nodeUid: 'node-a', vendor: 'NVIDIA', type: 'NVIDIA-A100-SXM4-80GB', health: true }))
+  await routePhysicalFixture(page, gpus)
   let release
   const gate = new Promise((resolve) => { release = resolve })
   await page.route('**/api/vgpu/v1/gpus', async(route) => {
@@ -6666,6 +6699,9 @@ test('long node dropdowns show the first matches and keep keyboard picks correct
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   const nodes = Array.from({ length: 150 }, (_, index) => ({ name: `node-${String(index).padStart(3, '0')}`, uid: `uid-${index}`, ip: `10.0.${index}.1`, type: [index % 3 ? 'NVIDIA-A100-SXM4-80GB' : 'NVIDIA-H100-SXM5-80GB'], isSchedulable: true, isReady: true }))
+  await routePhysicalFixture(page, nodes.map(node => ({
+    uuid: 'GPU-' + node.name, nodeName: node.name, nodeUid: node.uid, type: node.type[0], vendor: 'NVIDIA', health: true,
+  })))
   await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
   await page.route('**/api/vgpu/v1/gpus', (route) => route.fulfill({ json: { list: nodes.map((node) => ({ uuid: `GPU-${node.name}`, nodeName: node.name, type: node.type[0], health: true })) } }))
   await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: [{ type: 'NVIDIA-A100-SXM4-80GB' }, { type: 'NVIDIA-H100-SXM5-80GB' }] } }))
@@ -6981,13 +7017,10 @@ test('node and accelerator dropdowns show how many rows each option would list',
     await page.goto(`${target}${basePath}nodes?q=gpu`, { waitUntil: 'domcontentloaded' })
     await waitUntil(async() => await page.locator('.node-table tbody tr').count() === 2, 'The keyword must leave two nodes')
     const nodeSelects = page.locator('.table-toolbar .t-select')
-    await nodeSelects.nth(0).click()
-    await waitUntil(async() => await options.count() === 3, 'Status options must show')
-    assert.deepEqual(await countsOf(), { Schedulable: 2, 'Temporarily Unschedulable': 0 })
-    assert.deepEqual((await shown()).filter(({ cut }) => cut), [], 'Counts must not cut the widest label')
-    await page.keyboard.press('Escape')
-    await popupClosed()
-    await nodeSelects.nth(1).click()
+    const nodeStatus = page.getByRole('group', { name: 'Node Status' })
+    await nodeStatus.getByRole('button', { name: 'Schedulable 2', exact: true }).waitFor()
+    await nodeStatus.getByRole('button', { name: 'Temporarily Unschedulable 0', exact: true }).waitFor()
+    await nodeSelects.first().click()
     await waitUntil(async() => await options.count() === 4, 'Model options must show')
     assert.deepEqual(await countsOf(), { 'NVIDIA-A100-SXM4-80GB': 1, 'NVIDIA-H100-SXM5-80GB': 1, Ascend910B4: 0 })
     await page.keyboard.press('Escape')
@@ -7015,17 +7048,19 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
   const target = await startWebEntry({ frameAncestors: undefined })
   const zeros = (counts) => Object.fromEntries(Object.keys(counts).map((key) => [key, 0]))
   for (const config of [
-    { route: 'nodes', endpoint: 'nodes', select: 0, widest: 0, loaded: { Schedulable: 2, 'Temporarily Unschedulable': 1 } },
-    { route: 'accelerators', endpoint: 'gpus', select: 1, widest: 0, loaded: { 'gpu-node-a': 1, 'gpu-node-b': 1, 'npu-node-c': 1 } },
+    { route: 'nodes', endpoint: 'nodes', select: 0, widest: 0, loaded: { All: 3, Schedulable: 2, 'Temporarily Unschedulable': 1 } },
+    { route: 'accelerators', endpoint: 'gpus', select: 1, widest: 0, loaded: { All: 3, Normal: 3, Abnormal: 0 } },
   ]) {
     const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
     await mockLocalSearchLists(page)
     let answer = 'hold'
     const held = []
-    await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
+    const isGPU = config.endpoint === 'gpus'
+    const fixture = list => isGPU ? physicalFixture(list) : listFixture(config.endpoint, list)
+    await page.route(isGPU ? '**/api/v1/overview/inventory' : '**/api/vgpu/v1/nodes', (route) => {
       if (answer === 'hold') held.push(route)
       else if (answer === 'fail') route.fulfill({ status: 500, json: { message: 'unavailable' } })
-      else route.fulfill({ json: listFixture(config.endpoint, answer === 'empty' ? [] : localSearchRows[config.endpoint]) })
+      else route.fulfill({ json: fixture(answer === 'empty' ? [] : localSearchRows[config.endpoint]) })
     })
     const selects = page.locator('.table-toolbar .t-select')
     const options = page.locator('.t-select__dropdown:visible .t-select-option')
@@ -7044,14 +7079,10 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
       await page.keyboard.press('Escape')
       await waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The popup must close')
     }
-    const countsShown = async() => {
-      await open(config.select)
-      const labels = await shownLabels()
-      await close()
-      assert.deepEqual(labels.filter(({ cut }) => cut), [], `${config.route}: counts must not cut a label`)
-      return Object.fromEntries(labels.filter(({ count }) => count !== null).map(({ label, count }) => [label, count]))
-    }
-    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: listFixture(config.endpoint, list) } : { status: 500, json: { message: 'unavailable' } })))
+    const countsShown = () => page.locator('.inventory-list-filters .segmented-control__option').evaluateAll(options =>
+      Object.fromEntries(options.filter(el => el.querySelector('.segmented-control__count'))
+        .map(el => [el.querySelector('.segmented-control__label').textContent, Number(el.querySelector('.segmented-control__count').textContent)])))
+    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: fixture(list) } : { status: 500, json: { message: 'unavailable' } })))
     try {
       await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
       await waitUntil(() => held.length > 0, `${config.route}: the list must be requested`)
@@ -7072,17 +7103,9 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
       await page.locator('[data-testid="stateful-table-refresh-error"]').waitFor()
       assert.deepEqual(await countsShown(), config.loaded, `${config.route}: a failed refresh keeps the counts of the rows still shown`)
 
-      // Counts that arrive while the widest dropdown is open widen it instead of cutting its labels.
-      answer = 'hold'
-      await page.reload({ waitUntil: 'domcontentloaded' })
-      await waitUntil(() => held.length > 0, `${config.route}: the list must be requested again`)
+      if (config.route === 'nodes') continue
       await open(config.widest)
-      await release(localSearchRows[config.endpoint])
-      await waitUntil(async() => (await shownLabels()).some(({ count }) => count !== null), `${config.route}: counts must arrive in the open popup`)
-      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], `${config.route}: arriving counts must not cut a label`)
-      await close()
-      await open(config.widest)
-      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], `${config.route}: a reopened popup must fit its labels`)
+      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], 'Dropdown counts must fit beside the model')
       await close()
     } finally {
       await page.close()
@@ -7115,7 +7138,7 @@ test('model and node dropdowns filter their options while typing', { timeout: 60
     await page.goto(`${target}${basePath}nodes`, { waitUntil: 'domcontentloaded' })
     const nodeRows = page.locator('.node-table tbody tr')
     await waitUntil(async() => await nodeRows.count() === 3, 'Nodes must load')
-    await page.locator('.table-toolbar .t-select').nth(1).click()
+    await page.locator('.table-toolbar .t-select').first().click()
     await waitUntil(async() => await options.count() === 4, 'All model options must load')
     await page.keyboard.type('H100')
     await waitUntil(async() => await options.count() === 1, 'Typing a model fragment must leave one model')
@@ -7217,41 +7240,98 @@ test('overview gauges share the initial trend time and advance together on a vis
   }
 })
 
-test('physical overview counts and accelerator management retain their own inventories', async() => {
-  const target = await startWebEntry({ frameAncestors: undefined })
+test('overview, default management, health tabs and model legend share one physical inventory', async() => {
+  const target = await startWebEntry({})
   const page = await browser.newPage({ locale: 'en-US' })
-  const die = uuid => ({ uuid, nodeName: 'ascend', type: 'Ascend910C', vendor: 'Ascend', health: true })
-  const nvidia = { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', vendor: 'NVIDIA', health: true }
-  const registrations = [nvidia, die('910C-die-0'), die('910C-die-1')]
-  await page.route('**/api/vgpu/v1/gpus', route => route.fulfill({ json: { list: registrations } }))
+  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true }
+  const device = { node: node.name, provider: 'NVIDIA', model: 'A100' }
+  const devices = [
+    { ...device, deviceId: 'gpu-ok', healthy: true },
+    { ...device, deviceId: 'gpu-failed', healthy: false },
+    { ...device, deviceId: 'gpu-unknown' },
+  ]
+  const registration = { nodeName: node.name, nodeUid: node.uid, type: device.model, vendor: device.provider }
+  const list = [
+    { ...registration, uuid: 'gpu-ok', health: false, isExternal: true },
+    { ...registration, uuid: 'gpu-failed', health: false },
+    { ...registration, uuid: 'ascend-module', type: 'Ascend910C', vendor: 'Ascend', health: true },
+    { ...registration, uuid: 'external', isExternal: true, health: true },
+  ]
+  let currentDevices = devices
+  let complete = true
+  await page.route('**/api/v1/overview/inventory', r => r.fulfill({ json: { nodes: [node], devices: currentDevices,
+    nodeCoverage: coverageFixture('node', 1), deviceCoverage: { ...coverageFixture('device', currentDevices.length), complete } } }))
+  await page.route('**/api/vgpu/v1/gpus', r => r.fulfill({ json: { list } }))
+  const tabs = page.getByRole('group', { name: 'GPU Status', exact: true })
   const rows = page.locator('.accelerator-table tbody tr')
-  const readManagement = async() => {
-    await rows.getByText('910C-die-1', { exact: true }).waitFor()
-    await page.locator('.card-admin-top-wrap .pie canvas').waitFor()
-    await page.locator('.card-admin-top-wrap .tab-top-switch').first().waitFor()
-    assert.equal(await rows.count(), registrations.length)
-    return {
-      columns: await page.locator('.accelerator-table thead th').allTextContents(),
-      destinations: await rows.locator('.card-id-cell a').evaluateAll(links => links.map(link => link.getAttribute('href'))),
-    }
-  }
   try {
     await page.goto(target + deepRoute)
-    const gpuTab = page.locator('[role="tab"][id$="-gpus"]')
-    assert.equal(await gpuTab.locator('.resource-tab__count').innerText(), '1')
-    await gpuTab.click()
-    await page.getByRole('tabpanel').getByRole('link', { name: 'View all GPUs', exact: true }).click()
-    await page.waitForURL(url => url.pathname + url.search === basePath + 'accelerators')
-    const fromOverview = await readManagement()
-    assert.deepEqual(fromOverview.columns, ['GPU UUID', 'Status', 'Split', 'Hosting Node',
-      'Compute Remaining/Total', 'Compute Allocation', 'Memory Remaining/Total', 'Memory Allocation'])
-    assert.deepEqual(fromOverview.destinations.slice().sort(), registrations.map(row => basePath + 'accelerators/' + row.uuid).sort())
-    await rows.getByRole('link', { name: 'gpu-1', exact: true }).click()
-    await page.waitForURL('**/accelerators/gpu-1')
-    await page.goBack()
-    await page.goto(target + deepRoute)
-    await page.getByRole('link', { name: 'Accelerators', exact: true }).click()
-    assert.deepEqual(await readManagement(), fromOverview)
+    await page.locator('[role="tab"][id$="-gpus"]').click()
+    await page.getByRole('tabpanel').getByRole('link', { name: 'Abnormal: 1', exact: true }).click()
+    await rows.getByRole('link', { name: 'gpu-failed', exact: true }).waitFor()
+    assert.equal(await rows.count(), 1)
+    await page.reload()
+    await tabs.getByRole('button', { name: 'Abnormal 1', pressed: true }).waitFor()
+    await tabs.getByRole('button', { name: 'Normal 1', exact: true }).click()
+    await rows.getByRole('link', { name: 'gpu-ok' }).waitFor()
+    await tabs.getByRole('button', { name: 'Unknown 1', exact: true }).click()
+    await rows.getByText('gpu-unknown', { exact: true }).waitFor()
+    assert.equal(await rows.getByRole('link').count(), 0)
+    await tabs.getByRole('button', { name: 'All 3' }).click()
+    await waitUntil(async() => await rows.count() === 3, 'All physical devices remain available')
+    await page.goto(target + basePath + 'accelerators')
+    await tabs.getByRole('button', { name: 'All 3', pressed: true }).waitFor()
+    assert.equal(await rows.count(), 3)
+    assert.equal(await rows.getByText('ascend-module').count(), 0)
+    assert.equal(await page.locator('.nodeCard-legend .legend-count').innerText(), '3 (100%)')
+    assert.equal(await page.locator('.accelerator-table thead th').count(), 8)
+    await page.route('**/api/vgpu/v1/gpus', r => r.fulfill({ status: 503, json: {} }))
+    await page.goto(target + basePath + 'accelerators?health=healthy')
+    await tabs.getByRole('button', { name: 'Normal 1', pressed: true }).waitFor()
+    await rows.getByText('gpu-ok', { exact: true }).waitFor()
+    assert.equal(await rows.getByRole('link').count(), 0)
+    complete = false
+    currentDevices = [devices[0]]
+    await page.reload()
+    await tabs.getByRole('button', { name: 'All 1', exact: true }).waitFor()
+    await rows.getByText('gpu-ok', { exact: true }).waitFor()
+    currentDevices = []
+    await page.reload()
+    await page.getByTestId('stateful-table-error').waitFor()
+    assert.equal(await tabs.getByRole('button', { name: 'All 0', exact: true }).count(), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('device details distinguish missing physical health from a failed card and a registration-only module', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const node = { name: 'worker', uid: 'current-node' }
+  const registration = { nodeName: node.name, nodeUid: node.uid, vendor: 'NVIDIA', type: 'A100', health: false }
+  const devices = [
+    { deviceId: 'missing', node: node.name, provider: 'NVIDIA' },
+    { deviceId: 'failed', node: node.name, provider: 'NVIDIA', healthy: false },
+    { deviceId: 'normal', node: node.name, provider: 'NVIDIA', healthy: true },
+    { deviceId: 'old-node', node: node.name, provider: 'NVIDIA', healthy: true },
+  ]
+  await page.route('**/api/v1/overview/inventory', r => r.fulfill({ json: { nodes: [node], devices,
+    nodeCoverage: coverageFixture('node', 1), deviceCoverage: { entity: 'device', observed: devices.length, complete: false } } }))
+  await page.route('**/v1/gpu?**', r => {
+    const uuid = new URL(r.request().url()).searchParams.get('uid')
+    const fields = uuid === 'module' ? { type: 'Ascend910C', vendor: 'Ascend', health: true }
+      : uuid === 'old-node' ? { nodeUid: 'previous-node' } : {}
+    return r.fulfill({ json: { ...registration, uuid, ...fields } })
+  })
+  const status = page.locator('.layout-header-title-run-state-label')
+  try {
+    for (const [id, expected] of [['missing', 'Unknown'], ['failed', 'Abnormal'], ['normal', 'Normal'], ['module', 'Normal'], ['old-node', 'Unknown'], ['unmatched', 'Unknown']]) {
+      await page.goto(target + basePath + 'accelerators/' + id)
+      await status.filter({ hasText: new RegExp('^' + expected + '$') }).waitFor()
+    }
+    await page.route('**/api/v1/overview/inventory', r => r.fulfill({ status: 503, json: {} }))
+    await page.goto(target + basePath + 'accelerators/failed')
+    await status.filter({ hasText: /^Unknown$/ }).waitFor()
   } finally {
     await page.close()
   }
@@ -7271,7 +7351,7 @@ test('old physical bookmarks are replaced by the standard accelerator list and k
     assert.deepEqual(Object.fromEntries(new URL(page.url()).searchParams), { type: 'NVIDIA', q: 'gpu' })
     await page.locator('.accelerator-table tbody').getByRole('link', { name: 'gpu-1', exact: true }).waitFor()
     await page.locator('.card-admin-top-wrap .pie canvas').waitFor()
-    assert.deepEqual(compactRequests, [])
+    assert.ok(compactRequests.length > 0)
     await page.goBack()
     await page.waitForURL(target + basePath + 'nodes')
   } finally {

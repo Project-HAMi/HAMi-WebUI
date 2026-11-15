@@ -11,7 +11,9 @@
         :handle-click="handleClick"
         :handle-pie-click="handlePieClick"
         :currentName="currentType"
-        :model-vendors="modelVendors"
+        :model-distribution="modelDistribution"
+        :rankings="rankings"
+        :ranking-status="tableStatus"
       />
     </div>
 
@@ -22,8 +24,14 @@
         :refreshing="tableRefreshing"
         @refresh="refreshTable"
       >
-        <t-space :size="8">
+        <div class="inventory-list-filters">
+          <SegmentedControl
+            v-model="filters.health"
+            :options="healthOptions"
+            :aria-label="$t('card.status')"
+          />
           <t-select
+            class="inventory-filter-select"
             v-model="filters.type"
             clearable
             filterable
@@ -34,6 +42,7 @@
             @change="onTypeChange"
           />
           <t-select
+            class="inventory-filter-select"
             v-model="filters.nodeName"
             clearable
             filterable
@@ -47,7 +56,7 @@
           />
           <t-input
             v-model="filters.keyword"
-            class="list-keyword-search"
+            class="list-keyword-search inventory-filter-search"
             clearable
             :placeholder="$t('card.searchKeyword')"
             :aria-label="$t('card.searchKeyword')"
@@ -56,7 +65,7 @@
               <search-icon aria-hidden="true" />
             </template>
           </t-input>
-        </t-space>
+        </div>
       </toolbar>
       <stateful-table
         :status="tableStatus"
@@ -72,7 +81,7 @@
       >
         <t-table
           :key="`${locale}-card-table`"
-          row-key="uuid"
+          :row-key="hideTitle ? 'uuid' : 'physicalKey'"
           class="accelerator-table vgpu-table-skin"
           :data="pagedTableData"
           :columns="visibleColumns"
@@ -98,9 +107,10 @@
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import { useRouter, useRoute } from 'vue-router';
-import { gpuVendor } from '~/vgpu/metrics/vendor-colors.mjs';
+import { cardHealth, cardHealthDisplay, healthLabels } from './card-health.mjs';
 import VendorMark from '~/vgpu/components/VendorMark.vue';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
+import SegmentedControl from '@/components/SegmentedControl/index.vue';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
@@ -117,7 +127,8 @@ import { createOptionFilter, limitOptions, matchesKeywords, parseKeywords } from
 import { fitPopupToOptions } from '@/utils/select-popup.mjs';
 import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import useLocalPagination from '~/vgpu/hooks/useLocalPagination';
-import { getAllocationPercent } from './allocation-percent.mjs';
+import { physicalCardRankings } from './physical-card-rankings.mjs';
+import { computeAllocationPercent, memoryAllocationPercent } from './allocation-percent.mjs';
 import UnconfiguredTag from './components/UnconfiguredTag.vue';
 import DeviceConfigAlert from '~/vgpu/components/DeviceConfigAlert.vue';
 import { deviceWording } from '~/vgpu/components/device-copy.mjs';
@@ -125,7 +136,7 @@ import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs'
 import useFetchList from '@/hooks/useFetchList';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 
-const props = defineProps(['hideTitle', 'filters']);
+const props = defineProps({ hideTitle: Boolean, filters: Object });
 
 const router = useRouter();
 const route = useRoute();
@@ -140,12 +151,26 @@ const currentType = computed(() => filters.type || '');
 const hasManualNodeScope = ref(false);
 const filters = reactive({
   keyword: '',
+  health: '',
   nodeName: props.filters?.nodeName,
   type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
 });
-const rawNodes = ref([]);
-const nodesLoaded = ref(false);
-const rawCardTypes = ref([]);
+const registeredNodes = ref([]);
+const registeredTypes = ref([]);
+const registeredNodesLoaded = ref(false);
+const optionsReady = computed(() => props.hideTitle ? registeredNodesLoaded.value : tableStatus.value === REQUEST_STATUS.READY);
+const rawNodes = computed(() => {
+  if (props.hideTitle) return registeredNodes.value;
+  const ips = new Map(registeredNodes.value.map(n => [n.name, n.ip]));
+  const models = new Map();
+  for (const row of tableData.value) {
+    if (!models.has(row.nodeName)) models.set(row.nodeName, new Set());
+    models.get(row.nodeName).add(row.type);
+  }
+  return Array.from(models, ([name, types]) => ({ name, ip: ips.get(name), types: [...types] }));
+});
+const rawCardTypes = computed(() => props.hideTitle ? registeredTypes.value
+  : [...new Set(tableData.value.map(row => row.type).filter(Boolean))].sort());
 const nodeOptions = computed(() => {
   // When a card type is selected, only offer nodes that actually carry that type.
   const nodes = filters.type
@@ -186,18 +211,18 @@ const fetchFilterOptions = async () => {
   try {
     const [{ list: nodeList = [] }, { list: typeList = [] }] = await Promise.all([
       request(nodeApi.getNodeList({ filters: {} })),
-      request(cardApi.getCardType()),
+      props.hideTitle ? request(cardApi.getCardType()) : {},
     ]);
-    rawNodes.value = nodeList
+    registeredNodes.value = nodeList
       .filter((item) => item?.name)
       .map((item) => ({ name: item.name, ip: item.ip, types: Array.isArray(item.type) ? item.type : [] }));
-    nodesLoaded.value = true;
-    rawCardTypes.value = typeList
+    registeredNodesLoaded.value = true;
+    registeredTypes.value = typeList
       .map((item) => item?.type)
       .filter(Boolean);
   } catch {
-    rawNodes.value = [];
-    rawCardTypes.value = [];
+    registeredNodes.value = [];
+    registeredTypes.value = [];
   }
 };
 
@@ -206,7 +231,7 @@ const fetchFilterOptions = async () => {
 // applyFilters at every type-mutation site to avoid querying with a stale node.
 const pruneNodeScopeByType = () => {
   // Unloaded or failed options must not drop a node restored from the URL.
-  if (!filters.type || !filters.nodeName || !nodesLoaded.value) {
+  if (!filters.type || !filters.nodeName || !optionsReady.value) {
     return;
   }
   const node = rawNodes.value.find((item) => item.name === filters.nodeName);
@@ -222,19 +247,7 @@ const onTypeChange = () => {
 };
 
 const handleClick = (params) => {
-  router.push({
-    path: `/accelerators/${params.data.name}`,
-  });
-};
-
-const getCardStatusDisplay = ({ health, isExternal }) => {
-  if (isExternal || health === undefined || health === null) {
-    return { icon: 'status-unmanaged', text: t('card.unknown') };
-  }
-  if (health) {
-    return { icon: 'status-schedulable', text: t('card.normal') };
-  }
-  return { icon: 'status-unschedulable', text: t('card.abnormal') };
+  if (params.data.detailTo) router.push(params.data.detailTo);
 };
 
 const getRemainingTotalText = ({ total, used, unit = '', divisor = 1 }) => {
@@ -257,8 +270,8 @@ const baseColumns = computed(() => [
     dataIndex: 'uuid',
     width: 250,
     hideTooltip: true,
-    render: ({ uuid, type, vendor }) => {
-      const to = uuid ? { name: 'accelerator-detail', params: { uuid } } : null;
+    render: ({ uuid, type, vendor, detailTo }) => {
+      const to = props.hideTitle && uuid ? { name: 'accelerator-detail', params: { uuid } } : detailTo;
       const gpuModel = type || '';
       return (
         <div class="card-id-cell vgpu-table-name-cell">
@@ -283,13 +296,13 @@ const baseColumns = computed(() => [
     title: t('task.status'),
     dataIndex: 'health',
     width: 150,
-    render: ({ health, isExternal, unconfigured }) => {
-      const { icon, text } = getCardStatusDisplay({ health, isExternal });
+    render: (row) => {
+      const { icon, text } = cardHealthDisplay(row, t);
       return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
           <svg-icon icon={icon} style={{ fontSize: '16px' }} />
           <span>{text}</span>
-          {unconfigured ? <UnconfiguredTag /> : null}
+          {row.unconfigured ? <UnconfiguredTag /> : null}
         </span>
       );
     },
@@ -343,9 +356,8 @@ const baseColumns = computed(() => [
     dataIndex: 'used',
     width: 180,
     // The API still reports a registered size for an unconfigured device, which HAMi does not schedule.
-    render: ({ coreTotal, coreUsed, coreUsedKnown, isExternal, unconfigured }) => {
-      if (isExternal || unconfigured || coreUsedKnown === false || !coreTotal) return <span>--</span>;
-      const percent = getAllocationPercent(coreUsed, coreTotal);
+    render: (card) => {
+      const percent = computeAllocationPercent(card);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);
       return (
@@ -391,9 +403,8 @@ const baseColumns = computed(() => [
     key: 'card-memory-allocation',
     dataIndex: 'w',
     width: 180,
-    render: ({ memoryTotal, memoryUsed, isExternal, unconfigured }) => {
-      if (isExternal || unconfigured || !memoryTotal) return <span>--</span>;
-      const percent = getAllocationPercent(memoryUsed, memoryTotal);
+    render: (card) => {
+      const percent = memoryAllocationPercent(card);
       if (!percent) return <span>--</span>;
       const color = getResourceColor(percent.progress);
       return (
@@ -470,10 +481,12 @@ watch(
 );
 
 // Embedded lists keep their fixed server filters; the toolbar filters run locally while typing.
+const physicalModels = ref(null);
 const tableState = useFetchList(() => {
+  if (!props.hideTitle) return cardApi.getPhysicalCardList();
   const { nodeName, type, ...baseFilters } = props.filters || {};
   return request(cardApi.getCardList({ filters: baseFilters }));
-}, { immediate: false });
+}, { immediate: false, onSuccess: reply => { physicalModels.value = reply.models; } });
 const {
   data: tableData,
   refresh: fetchList,
@@ -484,45 +497,54 @@ const {
 const refreshTable = fetchList;
 const scopedNodeName = computed(() => (hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName));
 const keywords = computed(() => parseKeywords(filters.keyword));
-// Use the full inventory so filtering the table cannot recolour the chart.
-const modelVendors = computed(() => {
-  const vendors = new Map();
-  for (const card of tableData.value) {
-    const vendor = gpuVendor(card.vendor);
-    if (!vendors.has(card.type)) vendors.set(card.type, vendor);
-    else if (vendors.get(card.type) !== vendor) vendors.set(card.type, null);
-  }
-  return vendors;
-});
+// Summary charts cover the full physical inventory. Toolbar filters apply only to the table.
+const rankings = computed(() => physicalCardRankings(tableData.value));
+const modelDistribution = computed(() => (physicalModels.value?.rows || []).map(row => ({
+  name: row.type || '', value: row.count, vendor: row.vendor,
+})));
 const keywordCards = computed(() => tableData.value.filter((card) =>
   matchesKeywords(keywords.value, [card.uuid, card.type, card.nodeName, card.vendor])));
-const visibleCards = computed(() => keywordCards.value.filter((card) =>
+const scopedCards = computed(() => keywordCards.value.filter((card) =>
   (!scopedNodeName.value || card.nodeName === scopedNodeName.value)
   && (!filters.type || card.type === filters.type)));
-// Options show how many cards picking them would list under the other filters.
 const countBy = (cards, keyOf) => {
   const counts = new Map();
   for (const card of cards) counts.set(keyOf(card), (counts.get(keyOf(card)) ?? 0) + 1);
   return counts;
 };
-const nodeCardCounts = computed(() => countBy(keywordCards.value.filter((card) => !filters.type || card.type === filters.type), (card) => card.nodeName));
+const matchesHealth = card => !filters.health || cardHealth(card) === filters.health;
+const visibleCards = computed(() => scopedCards.value.filter(matchesHealth));
+const healthOptions = computed(() => {
+  const counts = countBy(scopedCards.value, cardHealth);
+  const ready = tableStatus.value === REQUEST_STATUS.READY;
+  return [
+    { value: '', label: t('task.statusAll'), count: ready ? scopedCards.value.length : undefined },
+    ...['healthy', 'unhealthy', 'unknown'].filter(key => key !== 'unknown' || counts.has(key) || filters.health === key)
+      .map(key => ({ value: key, label: t(healthLabels[key]), count: ready ? counts.get(key) ?? 0 : undefined,
+        tone: key === 'unhealthy' ? 'danger' : undefined })),
+  ];
+});
+const healthFilteredCards = computed(() => keywordCards.value.filter(matchesHealth));
+// Options show how many cards picking them would list under the other filters.
+const nodeCardCounts = computed(() => countBy(healthFilteredCards.value.filter((card) => !filters.type || card.type === filters.type), (card) => card.nodeName));
 const typeCardCount = computed(() => {
-  const all = countBy(keywordCards.value, (card) => card.type);
-  const onNode = scopedNodeName.value ? countBy(keywordCards.value.filter((card) => card.nodeName === scopedNodeName.value), (card) => card.type) : all;
+  const all = countBy(healthFilteredCards.value, (card) => card.type);
+  const onNode = scopedNodeName.value ? countBy(healthFilteredCards.value.filter((card) => card.nodeName === scopedNodeName.value), (card) => card.type) : all;
   const node = rawNodes.value.find((item) => item.name === filters.nodeName);
   // Picking a type drops a node that does not carry it, as pruneNodeScopeByType does.
-  const keepsNode = (type) => !filters.nodeName || !nodesLoaded.value || Boolean(node?.types.includes(type));
+  const keepsNode = (type) => !filters.nodeName || !optionsReady.value || Boolean(node?.types.includes(type));
   return (type) => ((keepsNode(type) ? onNode : all).get(type) ?? 0);
 });
 // Counts stay hidden until the list loads; a loaded empty list still shows 0.
 const cardCount = (count = 0) => (tableStatus.value === REQUEST_STATUS.READY ? { count, countLabel: t('card.deviceCount', { count }, count) } : {});
 const filtered = computed(() => Boolean(
-  keywords.value.length
+  keywords.value.length || filters.health
   || (filters.type || '') !== (props.filters?.type || '')
   || (scopedNodeName.value || '') !== (props.filters?.nodeName || '')
 ));
 const clearFilters = () => {
   filters.keyword = '';
+  filters.health = '';
   filters.type = props.filters?.type;
   filters.nodeName = props.filters?.nodeName;
   hasManualNodeScope.value = false;
@@ -534,7 +556,7 @@ watch([visibleCards, tableStatus], () => {
   else pagination.total = visibleCards.value.length;
 }, { immediate: true, flush: 'sync' });
 const applyFilters = resetToFirstPage;
-const filterKey = computed(() => JSON.stringify([keywords.value, filters.type, scopedNodeName.value]));
+const filterKey = computed(() => JSON.stringify([keywords.value, filters.health, filters.type, scopedNodeName.value]));
 let restoredFilterKey;
 // Changing a filter starts from the first page; restoring one from the URL keeps its page.
 watch(filterKey, (key) => {
@@ -547,7 +569,7 @@ const onNodeNameChange = () => {
 };
 
 const syncsRoute = !props.hideTitle && !props.filters;
-const ROUTE_KEYS = ['q', 'type', 'nodeName', 'page', 'pageSize'];
+const ROUTE_KEYS = ['q', 'type', 'nodeName', 'health', 'page', 'pageSize'];
 const DEFAULT_PAGE_SIZE = 10;
 watch(
   () => route.query,
@@ -557,6 +579,7 @@ watch(
     // Keep the typed text, including spaces between words, when the query only trimmed it.
     if ((values.q ?? '') !== filters.keyword.trim()) filters.keyword = values.q ?? '';
     filters.type = values.type;
+    filters.health = Object.hasOwn(healthLabels, values.health) ? values.health : '';
     filters.nodeName = values.nodeName;
     hasManualNodeScope.value = Boolean(values.nodeName);
     const page = Number(values.page);
@@ -568,11 +591,12 @@ watch(
   { immediate: true },
 );
 watch(
-  () => [filters.keyword, filters.type, filters.nodeName, pagination.current, pagination.pageSize],
+  () => [filters.keyword, filters.health, filters.type, filters.nodeName, pagination.current, pagination.pageSize],
   () => {
     if (!syncsRoute) return;
     const query = writeQuery(route.query, {
       q: filters.keyword.trim(),
+      health: filters.health || undefined,
       type: filters.type,
       nodeName: filters.nodeName,
       page: pagination.current > 1 ? pagination.current : undefined,
@@ -591,6 +615,7 @@ watch(
   () => {
     hasManualNodeScope.value = false;
     filters.keyword = '';
+    filters.health = '';
     filters.type = props.filters?.type;
     filters.nodeName = props.filters?.nodeName;
     applyFilters();

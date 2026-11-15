@@ -151,3 +151,33 @@
   display: flex;
   align-items: center;
 }
+
+.inventory-list-filters {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inventory-list-filters > .segmented-control {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.inventory-list-filters > .inventory-filter-select {
+  flex: 0 0 140px;
+  width: 140px;
+}
+
+.inventory-list-filters > .inventory-filter-search {
+  flex: 1 1 170px;
+  min-width: 170px;
+  max-width: 280px;
+}

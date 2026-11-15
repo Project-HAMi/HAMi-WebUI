@@ -13,7 +13,7 @@
         :refreshing="tableRefreshing"
         @refresh="refreshTable"
       >
-        <div class="workload-filters">
+        <div class="workload-filters inventory-list-filters">
           <SegmentedControl
             v-model="filters.status"
             class="workload-status-filter"
@@ -23,7 +23,7 @@
           />
           <t-select
             v-model="filters.nodeName"
-            class="workload-filter-select"
+            class="inventory-filter-select"
             clearable
             filterable
             :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: nodePopupStyle }"
@@ -36,7 +36,7 @@
           />
           <t-select
             v-model="filters.deviceId"
-            class="workload-filter-select"
+            class="inventory-filter-select"
             clearable
             filterable
             :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: cardPopupStyle }"
@@ -49,7 +49,7 @@
           />
           <t-input
             v-model="filters.keyword"
-            class="workload-search"
+            class="workload-search inventory-filter-search"
             clearable
             :placeholder="$t('task.searchKeyword')"
             :aria-label="$t('task.searchKeyword')"
@@ -681,36 +681,6 @@ watch(() => route.query, (query) => {
   width: auto;
   max-width: 100%;
   font-weight: 500;
-}
-
-.workload-filters {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-:deep(.workload-status-filter) {
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-:deep(.workload-filter-select) {
-  flex: 0 0 140px;
-  width: 140px;
-}
-
-:deep(.workload-search) {
-  flex: 1 1 170px;
-  min-width: 170px;
-  max-width: 280px;
 }
 
 :deep(.workload-identity-button) {

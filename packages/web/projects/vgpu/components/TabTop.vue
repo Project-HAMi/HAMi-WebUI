@@ -34,8 +34,9 @@
       <template v-else>
         <div
           v-for="item in displayItems"
-          :key="item.name"
+          :key="item.physicalKey ?? item.name"
           class="tab-top-item"
+          :class="{ 'is-static': item.detailTo === null }"
           @click="handleItemClick(item)"
         >
           <div class="tab-top-rank">
@@ -105,10 +106,10 @@ const props = defineProps({
 });
 const { t } = useI18n();
 const createStatefulConfigs = (configs = []) =>
-  cloneDeep(configs).map((item) => ({
+  cloneDeep(configs).map((item) => item.query ? ({
     ...item,
     ...createRequestState(Array.isArray(item.data) ? item.data : []),
-  }));
+  }) : item);
 const currentConfig = ref(createStatefulConfigs(props.config));
 const tabActive = ref('');
 
@@ -188,6 +189,7 @@ const fetchData = (configList) => {
     tabActive.value = configList[0].key;
   }
   configList.forEach((v, i) => {
+    if (!v.query) return;
     const state = configList[i];
     const hasResolved = state.hasResolved;
     const requestId = startRequest(state, { hasResolved });
@@ -225,6 +227,7 @@ watch(
       currentConfig.value.map((item) => [`${item.key}:${item.query}`, item]),
     );
     currentConfig.value = createStatefulConfigs(val).map((item) => {
+      if (!item.query) return item;
       const old = previous.get(`${item.key}:${item.query}`);
       if (!old) return item;
       return {
@@ -329,7 +332,11 @@ watch(
   color: #324558;
 }
 
-.tab-top-item:hover .tab-top-name {
+.tab-top-item.is-static {
+  cursor: default;
+}
+
+.tab-top-item:not(.is-static):hover .tab-top-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
