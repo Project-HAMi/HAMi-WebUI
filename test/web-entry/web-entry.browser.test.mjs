@@ -4321,6 +4321,13 @@ test('overview issue status opens details only for affected or paused nodes', as
     ], true, false))
     assert.equal(legacyReads, 0)
     assert.ok(await isFocused(trigger), 'Transfer focus from the healthy indicator to the incident trigger')
+    const main = page.locator('.content-body')
+    const headerY = (await header.boundingBox()).y
+    const triggerY = (await trigger.boundingBox()).y
+    await main.evaluate(el => { el.scrollTop = 240 })
+    assert.ok(await main.evaluate(el => el.scrollTop > 0), 'The shared page body must scroll the overview')
+    assert.equal((await header.boundingBox()).y, headerY)
+    assert.equal((await trigger.boundingBox()).y, triggerY)
     await trigger.getByText('1 node with issues', { exact: true }).click()
     await dialog.getByText('Device inventory incomplete', { exact: true }).waitFor()
     assert.equal(await dialog.getByRole('link', { name: 'worker', exact: true }).count(), 1)

@@ -6,7 +6,6 @@ import Layout from '@/layout';
 /* Router Modules */
 import vgpuRoutes, { legacyRoutes } from '../../projects/vgpu/router';
 // import vgpuHomeRoutes from '../../projects/vgpu/homeRouter';
-import { nextTick } from 'vue';
 
 /**
  * constantRoutes
@@ -63,14 +62,6 @@ router.afterEach((to) => {
     .map((item) => pick(item, ['path', 'meta']));
 
   localStorage.setItem('history', JSON.stringify(newData));
-
-  nextTick(() => {
-    const mainEl = document.getElementById('content');
-    try {
-      mainEl.scrollTo(0, 0);
-    } catch (error) {
-    }
-  });
 });
 
 export default router;

@@ -1,13 +1,6 @@
-.page:has(.home-layout),
 .content-body:has(> .home-layout) {
-  overflow: clip;
-}
-
-.home-layout {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
-  min-width: 0;
+  --overview-header-height: 40px;
+  scroll-padding-block-start: var(--overview-header-height);
 }
 
 .home {
@@ -18,20 +11,18 @@
   gap: 16px;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-color: var(--app-scrollbar-thumb, #cbd5e1) transparent;
-  scrollbar-width: thin;
-  scrollbar-gutter: stable;
   padding: 12px 4px 4px 2px;
   font-size: 12px;
 
   &-page-title {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    min-height: 40px;
+    min-height: var(--overview-header-height);
     padding-right: 12px;
     background: #fff;
     font-size: 18px;
