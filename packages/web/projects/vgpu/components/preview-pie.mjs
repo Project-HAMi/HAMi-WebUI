@@ -1,8 +1,7 @@
-import i18n from '@/locales';
 import { buildDonutOptions } from '../metrics/chart-presets.mjs';
 
-export const getPreviewBarPie = (statusConfig) => buildDonutOptions({
-  unit: i18n.global.t('common.unitSheet'),
+export const getPreviewBarPie = (statusConfig, unit) => buildDonutOptions({
+  unit,
   data: statusConfig.map((item) => ({
     ...item,
     value: Number(item.value || 0),

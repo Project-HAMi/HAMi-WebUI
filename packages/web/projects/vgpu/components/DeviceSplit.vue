@@ -3,7 +3,9 @@
     <header v-if="showDevice || (showSummary && hasSummary)" class="device-split__head" :class="{ 'has-device': showDevice, 'has-stacked-summary': showDevice && stackSummary }">
       <div v-if="showDevice" class="device-split__device">
         <span class="device-split__icon" aria-hidden="true">
-          <svg-icon :icon="deviceIcon" />
+          <VendorMark :vendor="device.vendor" :size="18">
+            <svg-icon :icon="deviceIcon" />
+          </VendorMark>
         </span>
         <div class="device-split__identity">
           <span class="device-split__model">
@@ -168,6 +170,7 @@ import { useI18n } from 'vue-i18n';
 import EllipsisText from '@/components/EllipsisText.vue';
 import { buildDeviceSplit, collectHolders, splitKind } from './device-split.mjs';
 import { getSplitIcon, getSplitModeKey } from './split-mode.mjs';
+import VendorMark from './VendorMark.vue';
 import MetricHelp from './MetricHelp.vue';
 import { getShapeUnknownReasonKey } from '~/vgpu/views/task/admin/allocation-display.mjs';
 import { buildWorkloadDetailLocation, formatWorkloadName } from '~/vgpu/views/task/admin/workload-identity.mjs';

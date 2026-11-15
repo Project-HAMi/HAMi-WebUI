@@ -14,3 +14,12 @@ summaries, and the fallback when a GPU vendor has no dedicated icon.
   geometry are unchanged.
 
 GPU compute and memory metrics use their own distinct icons.
+
+## Vendor marks in the model distribution
+
+NVIDIA, Ascend and MetaX reuse the existing GPU SVGs. Cambricon and Hygon
+use PNG conversions of the square icons linked by their official sites,
+preserving their original artwork and transparency.
+
+- [Cambricon site icon](https://www.cambricon.com/favicon.ico)
+- [Hygon site icon](https://www.hygon.cn/favicon.png)

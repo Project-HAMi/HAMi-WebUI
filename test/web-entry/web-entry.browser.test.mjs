@@ -9,6 +9,7 @@ import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
 import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
+import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries, buildPhysicalUsageQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -45,6 +46,19 @@ function createResponseGate(key) {
 async function waitForResponseGate(key) {
   await responseGates.get(key)?.promise
 }
+
+const coverageFixture = (entity, total) => ({ entity, observed: total, total, complete: true })
+const listFixture = (endpoint, list) => endpoint === 'nodes'
+  ? { list, inventoryCoverage: coverageFixture('node', list.length) }
+  : { list }
+
+// Standalone accelerator management reads physical rows and enriches their columns from registrations.
+const physicalFixture = rows => {
+  const nodes = Array.from(new Map(rows.map(row => [row.nodeName, { name: row.nodeName, uid: row.nodeUid }])).values())
+  const devices = rows.map(row => ({ node: row.nodeName, deviceId: row.uuid, model: row.type, provider: row.vendor, healthy: row.health, utilizationRatio: row.utilizationRatio, memoryUsageRatio: row.memoryUsageRatio }))
+  return { nodes, devices, nodeCoverage: coverageFixture('node', nodes.length), deviceCoverage: coverageFixture('device', devices.length) }
+}
+const routePhysicalFixture = (page, rows) => page.route('**/api/v1/overview/inventory', route => route.fulfill({ json: physicalFixture(rows) }))
 
 async function readJSONBody(req) {
   const chunks = []
@@ -240,10 +254,10 @@ async function loadAllowedFrame(parentURL, expectedFrameURL, { checkAPI = false 
     const renderedUse = Array.from(document.querySelectorAll('use')).find(
       (use) =>
         (use.getAttribute('href') || use.getAttribute('xlink:href')) ===
-        '#icon-more'
+        '#icon-dashboard'
     )
     const renderedBox = renderedUse?.getBBox()
-    const referencedSymbol = document.getElementById('icon-more')
+    const referencedSymbol = document.getElementById('icon-dashboard')
     return {
       present: Boolean(root),
       referencedSymbolTag: referencedSymbol?.tagName.toLowerCase(),
@@ -302,10 +316,15 @@ async function assertChartRuntime(target) {
   await page.clock.install()
   const runtimeErrors = []
   let rangeRequests = 0
+  const nodeRankQueries = new Set(Object.values(buildGroupedResourceTopQueries('node')))
+  const requestedNodeRanks = []
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
   page.on('request', (request) => {
     if (request.url().includes('/v1/monitor/query/range-vector')) {
       rangeRequests += 1
+    } else if (request.url().endsWith('/v1/monitor/query/instant-vector')) {
+      const query = request.postDataJSON()?.query
+      if (nodeRankQueries.has(query)) requestedNodeRanks.push(query)
     }
   })
   page.on('console', (message) => {
@@ -319,12 +338,11 @@ async function assertChartRuntime(target) {
 
   await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(
-    () => document.querySelectorAll('.echarts canvas').length >= 4
+    () => document.querySelectorAll('.home-bottom-trend-row .echarts canvas').length === 2
   )
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('.tab-top-value')]
-      .some((element) => element.textContent?.trim() === '0.4 %')
-  )
+  await page.locator('.gpu-distribution .distribution-group').first().waitFor()
+  assert.equal(await page.locator('.tab-top-switch').count(), 0, 'The overview must not show the node resource rankings')
+  assert.deepEqual(requestedNodeRanks, [], 'The overview must not fetch the four node ranking series')
 
   const gaugeHelp = page.locator('.gauge-card__help').first()
   await gaugeHelp.hover()
@@ -338,7 +356,7 @@ async function assertChartRuntime(target) {
   )
   await page.mouse.move(0, 0)
 
-  const distributionHelp = page.locator('.workload-distribution-tip-icon')
+  const distributionHelp = page.locator('.usage-block .metric-help')
   await distributionHelp.scrollIntoViewIfNeeded()
   await distributionHelp.hover()
   const distributionTooltip = page.locator('.t-tooltip .t-popup__content').last()
@@ -364,17 +382,14 @@ async function assertChartRuntime(target) {
 
   await assertTrendRefreshState(page)
 
-  const pie = page.locator('.card-type-chart canvas').first()
-  const pieBox = await pie.boundingBox()
-  assert.ok(pieBox?.width > 0, 'Overview card-type chart has no width')
-  assert.ok(pieBox?.height > 0, 'Overview card-type chart has no height')
-  await pie.click({
-    position: { x: pieBox.width * 0.75, y: pieBox.height * 0.5 }
-  })
+  await page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true }).click()
   await page.waitForURL((url) =>
     url.pathname.endsWith('/accelerators') &&
     url.searchParams.get('type') === 'NVIDIA'
   )
+
+  assert.equal(new URL(page.url()).searchParams.has('scope'), false)
+  await page.locator('.accelerator-table tbody').getByText('gpu-1').waitFor()
 
   const previewChart = page.locator('.pie .echarts canvas').first()
   await previewChart.waitFor()
@@ -383,22 +398,6 @@ async function assertChartRuntime(target) {
     const box = await previewChart.boundingBox()
     return box && box.width > 0 && box.height > 0
   }, 'Preview chart did not survive a resize')
-  await page.waitForFunction(() => {
-    const canvas = document.querySelector('.pie .echarts canvas')
-    const context = canvas?.getContext('2d')
-    if (!canvas?.width || !canvas.height || !context) return false
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-    for (let index = 0; index < pixels.length; index += 4) {
-      const red = pixels[index]
-      const green = pixels[index + 1]
-      const blue = pixels[index + 2]
-      const alpha = pixels[index + 3]
-      if (alpha > 0 && green > 100 && green > red * 1.2 && green > blue * 1.2) {
-        return true
-      }
-    }
-    return false
-  })
   await waitUntil(async() => previewChart.evaluate(async(canvas) => {
     const frame = canvas.toDataURL()
     await new Promise((resolve) => setTimeout(resolve, 100))
@@ -412,7 +411,10 @@ async function assertChartRuntime(target) {
   const previewBox = await previewChart.boundingBox()
   assert.ok(previewBox?.width > 0, 'Preview chart has no width after resize')
   assert.ok(previewBox?.height > 0, 'Preview chart has no height after resize')
-  const paintedSlice = await previewChart.evaluate((canvas) => {
+  const legendColor = await previewLegendItem.locator('.color-box').evaluate(
+    (item) => getComputedStyle(item).backgroundColor.match(/\d+/g).map(Number)
+  )
+  const paintedSlice = await previewChart.evaluate((canvas, [r, g, b]) => {
     const context = canvas.getContext('2d')
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
     let longestRun = 0
@@ -426,11 +428,11 @@ async function assertChartRuntime(target) {
         const green = pixels[index + 1]
         const blue = pixels[index + 2]
         const alpha = pixels[index + 3]
-        const isGreen = alpha > 0 && green > 100 && green > red * 1.2 && green > blue * 1.2
+        const inSlice = alpha === 255 && red === r && green === g && blue === b
 
-        if (isGreen && runStart === -1) runStart = x
-        if ((!isGreen || x === canvas.width - 1) && runStart !== -1) {
-          const runEnd = isGreen ? x : x - 1
+        if (inSlice && runStart === -1) runStart = x
+        if ((!inSlice || x === canvas.width - 1) && runStart !== -1) {
+          const runEnd = inSlice ? x : x - 1
           const runLength = runEnd - runStart + 1
           if (runLength > longestRun) {
             longestRun = runLength
@@ -444,7 +446,7 @@ async function assertChartRuntime(target) {
     return point
       ? { ...point, width: canvas.width, height: canvas.height }
       : null
-  })
+  }, legendColor)
   assert.ok(paintedSlice, 'Preview chart did not paint the active slice')
   await previewChart.click({
     position: {
@@ -620,9 +622,10 @@ async function localRangeAsUTC(page, values) {
   }), values)
 }
 
+const overviewTrendCount = 4
 const trendPages = [
-  ['overview', 5],
-  ['nodes/node-1?nodeName=node-1', 5],
+  ['overview', overviewTrendCount],
+  ['nodes/node-1?nodeName=node-1', 4],
   ['accelerators/gpu-1', 7],
   ['workloads/pod-1/containers/worker', 2]
 ]
@@ -642,12 +645,12 @@ async function selectTrendRange(page, value) {
   await page.locator('.t-select-option:visible').getByText(label, { exact: true }).click()
 }
 
-async function waitForChartPaint(page) {
+async function waitForChartPaint(scope) {
   let previous
   await waitUntil(async() => {
-    const frame = await page.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
+    const frame = await scope.locator('canvas').evaluateAll((canvases) => canvases.filter((canvas) => canvas.getClientRects().length).map((canvas) => {
       const bounds = canvas.getBoundingClientRect()
-      const body = canvas.closest('.metric-chart__body, .card-type-chart')?.getBoundingClientRect()
+      const body = canvas.closest('.metric-chart__body')?.getBoundingClientRect()
       return {
         fits: !body || (Math.abs(bounds.width - body.width) < 1 && Math.abs(bounds.height - body.height) < 1),
         image: canvas.toDataURL(),
@@ -736,7 +739,13 @@ async function assertMissingDetail(target, route) {
 
 before(async() => {
   backend = http.createServer(async(req, res) => {
-    const body = await readJSONBody(req)
+    let body
+    try {
+      body = await readJSONBody(req)
+    } catch (error) {
+      if (req.aborted) return
+      throw error
+    }
     const requestURL = new URL(req.url, 'http://backend.local')
     const { pathname } = requestURL
     const now = Math.floor(Date.now() / 1000)
@@ -883,14 +892,25 @@ before(async() => {
         ],
         total: 3
       }
+    } else if (pathname === '/api/v1/overview/inventory') {
+      payload = {
+        nodes: [
+          { name: 'node-1', uid: 'node-1', ready: true, schedulable: true },
+          { name: 'node-readability', uid: 'node-readability', ready: false, schedulable: true },
+          { name: 'node-cordoned', uid: 'node-cordoned', ready: true, schedulable: false },
+        ],
+        nodeCoverage: coverageFixture('node', 3),
+        devices: [{ node: 'node-1', provider: 'NVIDIA', deviceId: 'gpu-1', model: 'NVIDIA', healthy: true }],
+        deviceCoverage: coverageFixture('device', 1),
+      }
     } else if (pathname === '/v1/gpus') {
       payload = {
         code: 0,
-        list: [{ uuid: 'gpu-1', type: 'NVIDIA', node: 'node-1', health: true }],
+        list: [{ uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true }],
         total: 1
       }
     } else if (pathname === '/v1/containers' || pathname === '/v1/workloads') {
-      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1 }
+      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1, statusCounts: { all: 1, success: 1 } }
     } else if (pathname === '/v1/monitor/query/instant-vector') {
       if (body?.query?.includes('gpu-metric-new')) {
         const requestKey = 'monitor:gpu-metric-new'
@@ -924,6 +944,10 @@ before(async() => {
       }
     }
 
+    if (pathname === '/v1/nodes' && body?.useResourceInventory) Object.assign(payload, listFixture('nodes', payload.list))
+    if (pathname === '/v1/node' && requestURL.searchParams.get('useResourceInventory') === 'true') {
+      payload.inventoryCoverage = coverageFixture('device', payload.cardCnt)
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify(payload))
   })
@@ -1244,7 +1268,7 @@ test('workload and detail views keep dense identity content readable', async() =
       (await identities.nth(1).locator('.workload-container-name').textContent()).trim(),
       'worker-right'
     )
-    const sameNameLink = page.locator('.workload-identity-link[aria-label="torch-two-gpu"]')
+    const sameNameLink = identities.getByRole('link', { name: 'torch-two-gpu', exact: true })
     assert.equal(await sameNameLink.count(), 1)
     assert.equal(await sameNameLink.locator('.workload-pod-name').count(), 0)
     assert.equal(
@@ -1259,7 +1283,7 @@ test('workload and detail views keep dense identity content readable', async() =
       (await identities.first().locator('.task-namespace-text').textContent()).trim(),
       'research-space'
     )
-    const workloadLink = identities.first().locator('.workload-identity-link')
+    const workloadLink = identities.first().getByRole('link')
     assert.equal(await workloadLink.count(), 1)
     assert.equal(await identities.first().locator('a').count(), 1)
     assert.equal(await workloadLink.getAttribute('aria-label'), `${podName} / worker-left`)
@@ -1290,7 +1314,8 @@ test('workload and detail views keep dense identity content readable', async() =
       return {
         decorationBottom: decoration.bottom,
         decorationHeight: decoration.height,
-        decorationOpacity: decoration.opacity,
+        decorationColor: decoration.backgroundColor,
+        linkColor: getComputedStyle(element).color,
         labelLeft: label.left,
         labelRight: label.right,
         podLeft: pod.left,
@@ -1303,7 +1328,7 @@ test('workload and detail views keep dense identity content readable', async() =
     })
     assert.equal(workloadLinkDecoration.decorationBottom, '0px')
     assert.equal(workloadLinkDecoration.decorationHeight, '1px')
-    assert.equal(workloadLinkDecoration.decorationOpacity, '1')
+    assert.equal(workloadLinkDecoration.decorationColor, workloadLinkDecoration.linkColor)
     assert.ok(Math.abs(workloadLinkDecoration.labelLeft - workloadLinkDecoration.podLeft) <= 0.5)
     assert.ok(Math.abs(workloadLinkDecoration.labelRight - workloadLinkDecoration.containerRight) <= 0.5)
     assert.equal(workloadLinkDecoration.podHasSecondaryOverflow, false)
@@ -1576,7 +1601,7 @@ test('workload and detail views keep dense identity content readable', async() =
     assert.deepEqual(
       (await page.locator('.resource-card-footer-label').allTextContents())
         .map((value) => value.trim()),
-      ['Alloc Rate', 'Usage Rate', 'Alloc Rate', 'Usage Rate']
+      ['Alloc Rate', 'Utilization', 'Alloc Rate', 'Usage Rate']
     )
     // The resource cards follow their panel's width: compact beside the sidebar at 1280 px, full size with more room.
     const resourcePanelWidth = () => page.locator('.node-workload-panel').evaluate((element) => element.clientWidth)
@@ -1970,16 +1995,24 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
   })
   const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
   const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
+  const physicalCards = [0, 1, 2].map(i => {
+    const [coreUsed, utilization, memoryUsed, occupancy] = deviceQueries.map(query => fixtures.get(query).data[i].value)
+    return { uuid: `device_uuid-${i}`, nodeName: 'worker', nodeUid: 'uid', vendor: 'NVIDIA', type: 'A100', health: i !== 1,
+      coreUsed, coreTotal: 100, memoryUsed, memoryTotal: 100, utilizationRatio: utilization / 100, memoryUsageRatio: occupancy / 100 }
+  })
+  await routePhysicalFixture(page, physicalCards)
+  const module = { ...physicalCards[0], uuid: 'module-only', vendor: 'Ascend', type: 'Ascend910C', coreUsed: 100, memoryUsed: 100 }
+  await page.route('**/v1/gpus', route => route.fulfill({ json: { list: [...physicalCards, module] } }))
   const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
   const workloadQueries = fixtureQueries('container_pod_uuid', buildTaskAllocationTopQueries())
   const requests = trackMonitorRequests(page)
   await page.route('**/v1/monitor/query/instant-vector', (route) => {
     const fixture = fixtures.get(route.request().postDataJSON()?.query)
+    if (deviceQueries.includes(route.request().postDataJSON()?.query)) return route.fulfill({ json: { code: 0, data: [] } })
     return fixture ? route.fulfill({ json: { code: 0, data: fixture.data } }) : route.continue()
   })
   try {
     for (const [path, queries] of [
-      ['overview', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
       ['nodes', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
       ['accelerators', [deviceQueries.slice(0, 2), deviceQueries.slice(2)]],
       ['workloads', [countQueries, workloadQueries]]
@@ -1987,6 +2020,11 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
       await page.goto(`${target}${basePath}${path}`, { waitUntil: 'networkidle' })
       const cards = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') })
       assert.equal(await cards.count(), 2)
+      if (path === 'accelerators') {
+        // One abnormal card in the table, but all three physical cards still compete in each ranking.
+        await page.getByRole('button', { name: /^(Abnormal|异常) 1$/ }).click()
+        await waitUntil(async() => await page.locator('.accelerator-table tbody tr').count() === 1, 'health tab did not filter the table')
+      }
       const beforeSwitch = requests.length
       for (const [cardIndex, options] of queries.entries()) {
         const card = cards.nth(cardIndex)
@@ -2035,7 +2073,7 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
             assert.equal(header.height, 30)
             assert.ok(header.fontSizes.every((size) => size === '13px'))
           }
-          if (path === 'overview' || path === 'workloads') {
+          if (path === 'nodes' || path === 'workloads') {
             await cards.first().scrollIntoViewIfNeeded()
             await captureTrendScreenshot(page, `p7-${path}-${language}-${width}-compact-top5`)
           }
@@ -2122,12 +2160,12 @@ test('workload rankings show Pod and container names independently of list filte
     await search.fill('worker')
     await search.press('Enter')
     await waitUntil(() => filteredRequests > 0, 'Workload name filter did not issue a request')
-    await page.locator('.workload-table .workload-identity-link[aria-label="worker"]').waitFor()
+    await page.locator('.workload-table').getByRole('link', { name: 'worker', exact: true }).waitFor()
     await waitUntil(
-      async() => await page.locator('.workload-table .workload-identity-link').count() === 1,
+      async() => await page.locator('.workload-identity').getByRole('link').count() === 1,
       'Filtered workload rows did not replace the previous list'
     )
-    assert.equal(await page.locator('.workload-table .workload-identity-link').count(), 1)
+    assert.equal(await page.locator('.workload-identity').getByRole('link').count(), 1)
     assert.equal(await rankings.count(), 4)
     await rankings.first().getByRole('link', { name: `${podName} / main`, exact: true }).waitFor()
     const dimensions = await page.evaluate(() => ({
@@ -2773,6 +2811,8 @@ test('explicit trend refresh advances relative ranges once and blocks repeat req
             await page.keyboard.up(key)
           } else {
             await refresh.press(key)
+            // A page that was already idle can report networkidle before this key's requests start.
+            await waitUntil(() => requests.length >= seriesCount * (3 + index), 'Keyboard refresh did not start every series')
           }
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * (3 + index), `${key} must refresh exactly once, including a held key after the response`)
@@ -2807,14 +2847,14 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     await end.fill(applied[1])
     await end.press('Enter')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
     for (const width of [960, 1000, 1024]) {
       await filter.evaluate(async(element, width) => {
         element.style.width = `${width}px`
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       }, width)
       assert.ok(await customTimestampFieldsFit(filter), `Full timestamps must remain readable at the ${width}px container boundary`)
-      assert.equal(requests.length, 10, 'Resizing custom controls must not query')
+      assert.equal(requests.length, overviewTrendCount * 2, 'Resizing custom controls must not query')
     }
     await filter.evaluate((element) => { element.style.width = '' })
 
@@ -2824,11 +2864,11 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     await refresh.click()
     await page.locator('.trend-time-filter-popup:visible').waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 15, 'Refreshing a custom range must request once without applying the draft')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Refreshing a custom range must request once without applying the draft')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
     assert.equal(await trendRangeButton(page, 'custom').getAttribute('aria-pressed'), 'true')
     assert.equal(await page.locator('.t-message').count(), 0)
-    for (const request of requests.slice(10)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
+    for (const request of requests.slice(overviewTrendCount * 2)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
 
     let fail = true
     await page.route('**/v1/monitor/query/range-vector', (route) => fail
@@ -2837,16 +2877,16 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     await refresh.press('Enter')
     await page.locator('.metric-chart__refresh--error').first().waitFor()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 20)
+    assert.equal(requests.length, overviewTrendCount * 4)
     assert.equal(await refresh.isEnabled(), true, 'A failed refresh must allow another attempt')
     fail = false
     await refresh.press('Space')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 25, 'Retry must request exactly one batch')
+    assert.equal(requests.length, overviewTrendCount * 5, 'Retry must request exactly one batch')
     assert.equal(await page.locator('.metric-chart__refresh--error').count(), 0)
     await waitUntil(() => refresh.isEnabled(), 'A completed retry must enable refresh again')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-    for (const request of requests.slice(15)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
+    for (const request of requests.slice(overviewTrendCount * 3)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
     await captureTrendScreenshot(page, 'p7-custom-refresh-applied')
   } finally {
     await page.close()
@@ -2937,17 +2977,25 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
     const selected = trendRangeButton(page, '1h')
+    const presets = filter.getByRole('group', { name: 'Time range', exact: true })
+    for (const [name, label] of [
+      ['1 Hour', '1h'], ['3 Hours', '3h'], ['6 Hours', '6h'], ['24 Hours', '24h'],
+      ['7 Days', '7d'], ['30 Days', '30d'], ['Custom', 'Custom']
+    ]) {
+      assert.equal((await presets.getByRole('button', { name, exact: true }).innerText()).trim(), label)
+    }
     await selected.focus()
     await filter.evaluate((element) => { element.style.width = '600px' })
     const narrow = filter.locator('.trend-time-filter-select')
     const input = narrow.getByRole('textbox', { name: 'Time range', exact: true })
     await narrow.waitFor()
+    assert.equal(await input.getAttribute('aria-description'), '1 Hour')
     await waitUntil(async() => await narrow.evaluate((element) => element.contains(document.activeElement)), 'Narrow mode must retain focus on the visible preset entry')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
     await filter.evaluate((element) => { element.style.width = '900px' })
     await selected.waitFor()
     await waitUntil(async() => await selected.evaluate((element) => element === document.activeElement || element.contains(document.activeElement)), 'Wide mode must return focus to the selected preset')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
     await filter.evaluate((element) => { element.style.width = '360px' })
     await narrow.waitFor()
     await input.press('Enter')
@@ -2956,10 +3004,10 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await stablePopupBounds(page.locator('.t-popup:visible').filter({ has: page.locator('.t-select-option') }))
     await captureTrendScreenshot(page, 'p7-en-360-preset-menu')
     assert.deepEqual((await options.allTextContents()).map((label) => label.trim()), (await filter.locator('.segmented-control__option').allTextContents()).map((label) => label.trim()))
-    assert.equal(requests.length, 5, 'Opening presets must not refresh')
+    assert.equal(requests.length, overviewTrendCount, 'Opening presets must not refresh')
     await input.press('Escape')
     await options.first().waitFor({ state: 'hidden' })
-    assert.equal(requests.length, 5, 'Escape must not refresh')
+    assert.equal(requests.length, overviewTrendCount, 'Escape must not refresh')
     assert.ok(await narrow.evaluate((element) => element.contains(document.activeElement)))
 
     await input.press('Space')
@@ -2967,14 +3015,14 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     for (let index = 0; index < 4; index += 1) await input.press('ArrowDown')
     await input.press('Enter')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 10, 'A keyboard selection must publish once')
+    assert.equal(requests.length, overviewTrendCount * 2, 'A keyboard selection must publish once')
     assert.equal(new Date(requests.at(-1).range.end) - new Date(requests.at(-1).range.start), 24 * 60 * 60 * 1000)
 
     const initialEnd = requests.at(-1).range.end
     await page.clock.setSystemTime(new Date('2026-10-07T12:01:01Z'))
     await selectTrendRange(page, '24h')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 15, 'Reselecting the current dropdown item must refresh once')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Reselecting the current dropdown item must refresh once')
     assert.notEqual(requests.at(-1).range.end, initialEnd)
     await filter.evaluate((element) => { element.style.width = '900px' })
     await trendRangeButton(page, '24h').waitFor()
@@ -2989,19 +3037,19 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await filter.evaluate((element) => { element.style.width = '900px' })
     await options.first().waitFor({ state: 'hidden' })
     assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Closing a hidden dropdown after Tab must not pull focus back')
-    assert.equal(requests.length, 15, 'Hiding an open dropdown must not select an option')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Hiding an open dropdown must not select an option')
     await filter.evaluate((element) => { element.style.width = '360px' })
     await narrow.waitFor()
     await narrow.click()
     await options.first().waitFor()
     await page.locator('.home-page-title').click()
     await options.first().waitFor({ state: 'hidden' })
-    assert.equal(requests.length, 15, 'Outside dismissal must not refresh')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Outside dismissal must not refresh')
     await filter.evaluate((element) => { element.style.width = '900px' })
     await trendRangeButton(page, '24h').waitFor()
     assert.equal(await trendRangeButton(page, '24h').getAttribute('aria-pressed'), 'true')
     assert.equal(await filter.evaluate((element) => element.contains(document.activeElement)), false, 'Resizing after clicking the page title must not steal focus back')
-    assert.equal(requests.length, 15, 'Returning to wide mode must preserve the selected range')
+    assert.equal(requests.length, overviewTrendCount * 3, 'Returning to wide mode must preserve the selected range')
     await captureTrendScreenshot(page, 'p7-preset-keyboard-wide')
     await filter.evaluate((element) => { element.style.width = '360px' })
     await narrow.waitFor()
@@ -3011,7 +3059,7 @@ test('narrow trend presets preserve selection, keyboard focus and exactly one re
     await page.clock.setSystemTime(new Date('2026-10-07T12:02:02Z'))
     await refresh.click()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 20, 'Compact refresh must publish exactly once')
+    assert.equal(requests.length, overviewTrendCount * 4, 'Compact refresh must publish exactly once')
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], ['2026-10-06T12:02:02Z', '2026-10-07T12:02:02Z'])
   } finally {
     await page.close()
@@ -3043,7 +3091,7 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
       assert.ok(await startElement.evaluate((element) => element.isConnected && element === document.activeElement), 'Resizing must keep the same focused date input')
       assert.equal(await start.inputValue(), rawDraft, 'Resizing must retain incomplete text exactly')
       assert.equal(await end.inputValue(), applied[1])
-      assert.equal(requests.length, 5)
+      assert.equal(requests.length, overviewTrendCount)
     }
     await page.getByRole('button', { name: 'Switch to 中文', exact: true }).click()
     await page.locator('html[lang="zh-CN"]').waitFor()
@@ -3051,7 +3099,7 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
     end = filter.getByRole('textbox', { name: '结束时间', exact: true })
     await waitUntil(async() => await start.inputValue() === applied[0], 'Clicking the language button must cancel an unconfirmed draft')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-    assert.equal(requests.length, 5, 'Changing language must not apply the canceled draft')
+    assert.equal(requests.length, overviewTrendCount, 'Changing language must not apply the canceled draft')
 
     await start.click()
     await start.fill(rawDraft)
@@ -3082,12 +3130,12 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
           element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2))
       }), `Calendar confirmation must be visible and unobstructed at ${width}x${height}`)
     }
-    assert.equal(requests.length, 5, 'Narrow calendar drafts must not submit early')
+    assert.equal(requests.length, overviewTrendCount, 'Narrow calendar drafts must not submit early')
     await confirm.click()
     await panel.waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
-    assert.equal(requests.length, 10, 'Narrow confirmation must apply exactly once')
+    assert.equal(requests.length, overviewTrendCount * 2, 'Narrow confirmation must apply exactly once')
     assert.ok(await end.evaluate((element) => element === document.activeElement))
     await waitUntil(async() => await end.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor) === 'rgb(242, 243, 255)', 'Narrow focused input must retain the accepted light-blue fill')
     assert.ok(await customTimestampFieldsFit(filter), 'Narrow fields must show complete timestamps without horizontal scrolling')
@@ -3101,9 +3149,9 @@ test('custom trend drafts survive resizing and narrow calendars keep confirmatio
     await waitUntil(async() => await end.inputValue() !== beforeWheel, 'Real mouse wheel must still edit the time')
     const afterWheel = await end.inputValue()
     assert.ok(Number.isFinite(new Date(afterWheel).getTime()))
-    assert.equal(requests.length, 10, 'Wheel editing must not submit before confirmation')
+    assert.equal(requests.length, overviewTrendCount * 2, 'Wheel editing must not submit before confirmation')
     await confirm.click()
-    await waitUntil(() => requests.length === 15, 'Confirming a wheel edit must fetch exactly once')
+    await waitUntil(() => requests.length === overviewTrendCount * 3, 'Confirming a wheel edit must fetch exactly once')
     assert.equal(requests.at(-1).range.end, (await localRangeAsUTC(page, [afterWheel]))[0])
   } finally {
     await page.close()
@@ -3158,7 +3206,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.equal(await end.getAttribute('aria-label'), 'End Time')
     assert.ok(await start.inputValue())
     assert.ok(await end.inputValue())
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
 
     const inputBackground = (input) => input.evaluate((element) => getComputedStyle(element.closest('.t-input')).backgroundColor)
     const title = page.locator('.home-page-title')
@@ -3205,12 +3253,12 @@ test('custom trend dates apply exact input and restore the applied range on canc
     assert.ok(await filter.getByRole('button', { name: 'Refresh trends', exact: true }).evaluate((element) => element === document.activeElement), 'Tab from the end input must go directly to refresh')
     await title.click()
     await waitUntil(async() => JSON.stringify(await Promise.all([inputBackground(start), inputBackground(end)])) === JSON.stringify(restingBackgrounds), 'Blurring the picker must restore both input backgrounds')
-    assert.equal(requests.length, 5, 'Hover, focus, selection, and unchanged typing must not request another range')
+    assert.equal(requests.length, overviewTrendCount, 'Hover, focus, selection, and unchanged typing must not request another range')
 
     await start.click()
     await end.press('Enter')
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 5, 'Confirming unchanged visible seconds must not refetch')
+    assert.equal(requests.length, overviewTrendCount, 'Confirming unchanged visible seconds must not refetch')
 
     const selected = ['2025-09-01 10:12:34', '2025-09-01 11:23:45']
     await start.click()
@@ -3220,7 +3268,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
     await end.press('Enter')
     await page.waitForLoadState('networkidle')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
     assert.equal(await page.locator('.t-message').count(), 0, 'Valid Enter must not show a warning')
     assert.deepEqual(
       [requests.at(-1).range.start, requests.at(-1).range.end],
@@ -3232,24 +3280,24 @@ test('custom trend dates apply exact input and restore the applied range on canc
     await page.locator('.home-page-title').click()
     await waitUntil(async() => await start.inputValue() === selected[0], 'Cancel did not restore the applied start')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await start.fill('')
     await page.locator('.home-page-title').click()
     assert.equal(await start.inputValue(), selected[0])
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await end.fill('2999-01-01 00:00:00')
     await end.press('Enter')
     await page.locator('.t-message').filter({ hasText: 'End time cannot be in the future. The previous range has been restored.' }).waitFor()
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await start.fill('2025-10-01 00:00:00')
     await end.press('Enter')
     await page.locator('.t-message').filter({ hasText: 'End time must be after start time. The previous range has been restored.' }).waitFor()
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await selectTrendRange(page, '3h')
     await page.waitForLoadState('networkidle')
@@ -3260,7 +3308,7 @@ test('custom trend dates apply exact input and restore the applied range on canc
       await localRangeAsUTC(page, [await start.inputValue(), await end.inputValue()]),
       [requests.at(-1).range.start, requests.at(-1).range.end]
     )
-    assert.equal(requests.length, 15)
+    assert.equal(requests.length, overviewTrendCount * 3)
 
     for (const locale of ['en', 'zh-CN']) {
       if (locale === 'zh-CN') {
@@ -3302,7 +3350,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
         const start = filter.getByRole('textbox', { name: 'Start Time', exact: true })
         const end = filter.getByRole('textbox', { name: 'End Time', exact: true })
         const applied = [await start.inputValue(), await end.inputValue()]
-        assert.equal(requests.length, 5)
+        assert.equal(requests.length, overviewTrendCount)
         await page.clock.setSystemTime(new Date('2026-10-06T12:01:01.123Z'))
 
         const input = name === 'empty end' ? end : start
@@ -3314,7 +3362,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
         await panel.waitFor({ state: 'hidden' })
         await page.waitForLoadState('networkidle')
         assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-        assert.equal(requests.length, 5, 'Invalid Enter must not change the chart range')
+        assert.equal(requests.length, overviewTrendCount, 'Invalid Enter must not change the chart range')
         const warning = page.locator('.t-message')
         assert.equal(await warning.count(), 1, 'One Enter must show exactly one warning')
         assert.equal(await warning.textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
@@ -3329,7 +3377,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
           await waitUntil(async() => await start.inputValue() === applied[0], 'Tabbing away after malformed Enter must discard the next draft')
           assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
           assert.equal(await panel.count(), 0)
-          assert.equal(requests.length, 5)
+          assert.equal(requests.length, overviewTrendCount)
         }
       } finally {
         await page.close()
@@ -3403,7 +3451,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
           assert.equal(await warning.count(), 1)
           assert.equal(await filter.getByRole('status').textContent(), expected)
           assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-          assert.equal(requests.length, 5, 'Rejected edits must not fetch another range')
+          assert.equal(requests.length, overviewTrendCount, 'Rejected edits must not fetch another range')
           assert.equal(await filter.locator('.t-is-error, [aria-invalid="true"], .t-input__tips').count(), 0)
           const after = await geometry()
           assert.equal(after.filter.height, before.filter.height, `${locale} rejection changes filter height at ${width}`)
@@ -3414,7 +3462,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
           await end.press('Enter')
           await warning.waitFor({ state: 'detached' })
           assert.equal(await filter.getByRole('status').textContent(), '', 'Accepting the restored range clears feedback')
-          assert.equal(requests.length, 5, 'Accepting unchanged seconds must not refetch')
+          assert.equal(requests.length, overviewTrendCount, 'Accepting unchanged seconds must not refetch')
         }
       } finally {
         await page.close()
@@ -3444,11 +3492,13 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
     for (const options of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }]) {
       await start.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', ...options })
       assert.equal(await warning.count(), 0)
-      assert.equal(requests.length, 5, 'Composition and key repeats must not submit a draft')
+      assert.equal(requests.length, overviewTrendCount, 'Composition and key repeats must not submit a draft')
       assert.equal(await start.inputValue(), '2025-08-01 01:02:03')
     }
     await page.locator('.home-page-title').click()
     await waitUntil(async() => await start.inputValue() === applied[0], 'Cancel must restore the IME draft')
+    // The warning animates across the title and pauses its countdown under the pointer.
+    await page.mouse.move(0, 0)
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       await start.fill('not-a-date')
@@ -3457,7 +3507,7 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
       assert.equal(await warning.count(), 1, 'Repeating the same rejected input must replace its own warning')
       assert.equal(await filter.getByRole('status').textContent(), 'The time range is incomplete or invalid. The previous range has been restored.')
       assert.deepEqual([await start.inputValue(), await end.inputValue()], applied)
-      assert.equal(requests.length, 5)
+      assert.equal(requests.length, overviewTrendCount)
     }
     await page.clock.fastForward(5500)
     await warning.waitFor({ state: 'detached' })
@@ -3465,7 +3515,7 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
     await start.press('Enter')
     await warning.waitFor()
     assert.equal(await warning.count(), 1, 'The same error must be explained again after the earlier warning expires')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
 
     await page.getByRole('link', { name: 'Nodes', exact: true }).click()
     await warning.waitFor({ state: 'detached' })
@@ -3583,13 +3633,13 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await day('2').click()
     await panel.locator('.t-time-picker__panel-body-scroll').first().getByText('04', { exact: true }).click()
     await waitUntil(async() => (await end.inputValue()).includes(' 04:'), 'Time column selection did not update the draft')
-    assert.equal(requests.length, 5, 'Calendar drafts must not fetch before confirmation')
+    assert.equal(requests.length, overviewTrendCount, 'Calendar drafts must not fetch before confirmation')
     const selected = [await start.inputValue(), await end.inputValue()]
     assert.ok(selected[0].startsWith('2026-10-01 '), JSON.stringify(selected))
     assert.ok(selected[1].startsWith('2026-10-02 '), JSON.stringify(selected))
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, selected))
     assert.equal(await panel.count(), 0, 'Confirm must finish editing and close the calendar')
     assert.ok(await end.evaluate((element) => element === document.activeElement), 'Confirm must return keyboard focus to the date input')
@@ -3597,7 +3647,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await start.click()
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await waitUntil(async() => await panel.count() === 0, 'Confirming an unchanged range must also close the calendar')
-    assert.equal(requests.length, 10, 'Confirming the applied range must not fetch again')
+    assert.equal(requests.length, overviewTrendCount * 2, 'Confirming the applied range must not fetch again')
 
     await start.fill('2025-08-01 01:02:03')
     await start.press('Tab')
@@ -3605,7 +3655,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await waitUntil(async() => await start.inputValue() === selected[0], 'Tabbing away after Confirm must discard unconfirmed input')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], selected)
     assert.equal(await panel.count(), 0)
-    assert.equal(requests.length, 10)
+    assert.equal(requests.length, overviewTrendCount * 2)
 
     await start.click()
     await end.click()
@@ -3614,7 +3664,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     assert.ok(nextSelected[1].startsWith('2026-10-03 '), JSON.stringify(nextSelected))
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await page.waitForLoadState('networkidle')
-    assert.equal(requests.length, 15, 'A new calendar range after Confirm must apply once')
+    assert.equal(requests.length, overviewTrendCount * 3, 'A new calendar range after Confirm must apply once')
     assert.deepEqual([requests.at(-1).range.start, requests.at(-1).range.end], await localRangeAsUTC(page, nextSelected))
     assert.equal(await panel.count(), 0)
 
@@ -3623,7 +3673,7 @@ test('calendar confirmation applies one range and canceled calendar edits keep i
     await page.locator('.home-page-title').click()
     await waitUntil(async() => await start.inputValue() === nextSelected[0], 'Calendar cancellation did not restore the applied range')
     assert.deepEqual([await start.inputValue(), await end.inputValue()], nextSelected)
-    assert.equal(requests.length, 15)
+    assert.equal(requests.length, overviewTrendCount * 3)
   } finally {
     await page.close()
   }
@@ -3919,7 +3969,7 @@ test('distribution legends keep each name and its count on one line', async() =>
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 800 } })
   const legends = {
     'count by (device_type)': [['NVIDIA-A100-SXM4-80GB', 59], ['Ascend910B3', 42], ['NVIDIA-H100-SXM5-80GB', 24], ['DCU', 12345]],
-    'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['DCU', 1], ['HCU', 1]],
+    'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['Hygon', 2], ['Metax', 1]],
   }
   await page.route('**/monitor/query/instant-vector', async(route) => {
     const query = route.request().postDataJSON()?.query || ''
@@ -3930,6 +3980,13 @@ test('distribution legends keep each name and its count on one line', async() =>
       json: { code: 0, data: legends[prefix].map(([name, value]) => ({ metric: { [label]: name }, value })) }
     })
   })
+  const devices = legends['count by (device_type)'].flatMap(([type, count]) =>
+    Array.from({ length: Math.min(count, 125) }, (_, index) => ({
+      type, uuid: type + index, nodeName: 'worker', nodeUid: 'node-uid', vendor: 'NVIDIA', health: true,
+      coreUsed: 0, coreTotal: 100, memoryUsed: 0, memoryTotal: 100,
+    })))
+  await routePhysicalFixture(page, devices)
+  await page.route('**/v1/gpus', route => route.fulfill({ json: { list: devices } }))
   const legendRows = () => page.locator('.nodeCard-legend li').evaluateAll((items) => items.map((item) => {
     const text = item.querySelector('.ellipsis-text')
     const range = document.createRange()
@@ -3998,7 +4055,7 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
   const device = (uuid, fields) => ({
-    uuid, type: 'NVIDIA', nodeName: 'node-1', health: true,
+    uuid, type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true,
     coreTotal: 100, coreUsed: 0, coreUsedKnown: true, memoryTotal: 24576, memoryUsed: 0, vgpuTotal: 10, vgpuUsed: 0,
     ...fields,
   })
@@ -4011,6 +4068,7 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
     device('external', { isExternal: true }),
   ]
   await page.route('**/v1/gpus', (route) => route.fulfill({ json: { code: 0, list: devices, total: devices.length } }))
+  await routePhysicalFixture(page, devices)
   const rateCells = (uuid) => page.locator('.accelerator-table').evaluate((table, uuid) => {
     const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim())
     const row = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes(uuid))
@@ -4032,6 +4090,283 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
     assert.deepEqual(await rateCells('share-unk'), { compute: notCounted, memory: { text: '16.67%', ring: true } })
     assert.deepEqual(await rateCells('external'), { compute: notCounted, memory: notCounted })
   } finally {
+    await page.close()
+  }
+})
+
+test('overview links GPU sections to the default accelerator list and model rows to a filtered list', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  try {
+    await page.goto(target + deepRoute)
+    for (const [section, label] of [
+      ['.home-gpu-metrics', 'View all GPU resources'],
+      ['.model-summary', 'View all GPUs across models'],
+    ]) {
+      const header = page.locator(section + ' .home-block-header')
+      const all = header.getByRole('link', { name: label, exact: true })
+      assert.equal(await all.innerText(), 'All')
+      assert.equal(await all.getAttribute('href'), basePath + 'accelerators')
+      await all.click()
+      await page.waitForURL(url => url.pathname + url.search === basePath + 'accelerators')
+      await page.goBack()
+    }
+    for (const [resource, suffix, label] of [
+      ['nodes', 'nodes', 'View all nodes'],
+      ['gpus', 'accelerators', 'View all GPUs'],
+      ['workloads', 'workloads', 'View all workloads'],
+    ]) {
+      await page.locator(`[role="tab"][id$="-${resource}"]`).click()
+      const all = page.getByRole('tabpanel').getByRole('link', { name: label, exact: true })
+      assert.equal(await all.innerText(), 'All')
+      assert.equal(await all.getAttribute('href'), basePath + suffix)
+      await all.click()
+      await page.waitForURL(url => url.pathname + url.search === basePath + suffix)
+      await page.goBack()
+    }
+    const model = page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true })
+    await model.click()
+    await page.waitForURL(url => url.pathname === basePath + 'accelerators' &&
+      !url.searchParams.has('scope') && url.searchParams.get('type') === 'NVIDIA')
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview details fetch verified device links on demand and keep missing readings separate', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  let lists = 0
+  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true, physicalDevices: 8 }
+  const devices = Array.from({ length: 8 }, (_, i) => ({
+    node: node.name, provider: 'NVIDIA', deviceId: `gpu-${i}`, model: 'A100', healthy: i > 0,
+    utilizationRatio: 0, memoryUsageRatio: i === 0 ? null : 0.5
+  }))
+  await page.route('**/api/v1/overview/inventory', route => route.fulfill({ json: {
+    nodes: [node], devices, nodeCoverage: coverageFixture('node', 1), deviceCoverage: coverageFixture('device', 8)
+  } }))
+  await page.route('**/v1/gpus', route => {
+    lists++
+    return route.fulfill({ json: { list: devices.map(d => ({
+      nodeName: node.name, nodeUid: node.uid, uuid: d.deviceId, vendor: d.provider
+    })) } })
+  })
+  try {
+    await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
+    const distribution = page.locator('.gpu-distribution')
+    const compute = distribution.locator('.metric-cell').first()
+    const memory = distribution.locator('.metric-cell').nth(1)
+    assert.equal(await compute.locator('.dot-chart button').count(), 1)
+    assert.match(await compute.innerText(), /8 GPUs/)
+    assert.match(await memory.innerText(), /1 GPU without data/)
+    assert.equal(lists, 0, 'Aggregates must not read the legacy list to paint')
+    await compute.locator('.dot-chart button').click()
+    const details = distribution.locator('.device-list')
+    await details.getByRole('link', { name: 'gpu-0', exact: true }).waitFor()
+    assert.equal(await details.getByRole('link', { name: 'worker', exact: true }).count(), 1)
+    assert.equal(await details.getByRole('link', { name: /^gpu-/ }).count(), 8)
+    assert.equal(lists, 1)
+    await page.locator('.home-page-title > span').click()
+    await details.waitFor({ state: 'detached' })
+    await page.locator('.issues-trigger').click()
+    const issues = page.getByRole('dialog')
+    await issues.getByRole('link', { name: 'worker', exact: true }).waitFor()
+    assert.match(await issues.innerText(), /1.*GPU/i)
+    await page.keyboard.press('Escape')
+    await issues.waitFor({ state: 'hidden' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview retains keyboard focus when a refresh removes a reading or an incident', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const nodes = ['worker-a', 'worker-b'].map(name => ({ name, uid: name + '-uid', ready: true, schedulable: true }))
+  const devices = nodes.map((node, i) => ({
+    node: node.name, provider: 'NVIDIA', deviceId: 'gpu-' + i, model: 'A100',
+    healthy: false, utilizationRatio: i === 0 ? 0.25 : 0.75, memoryUsageRatio: 0.42,
+  }))
+  const inventoryPath = '**/api/v1/overview/inventory'
+  await page.route(inventoryPath, route => route.fulfill({ json: {
+    nodes, devices, nodeCoverage: coverageFixture('node', 2), deviceCoverage: coverageFixture('device', 2),
+  } }))
+  async function refresh() {
+    await Promise.all([
+      page.waitForResponse(inventoryPath),
+      page.evaluate(() => document.dispatchEvent(new Event('visibilitychange'))),
+    ])
+  }
+  const focused = locator => locator.evaluate(el => el === document.activeElement)
+  try {
+    await page.goto(target + deepRoute)
+    const compute = page.locator('.metric-cell').first()
+    const reading = percent => compute.getByRole('button', { name: new RegExp(percent + '%') })
+    const details = page.locator('.device-list')
+    await reading(25).press('Enter')
+    assert.ok(await focused(details.getByRole('heading')))
+    devices[0].utilizationRatio = 0.26
+    await refresh()
+    await details.waitFor({ state: 'detached' })
+    assert.ok(await focused(reading(26)), 'Continue in the same model and metric')
+
+    // A refresh with the keyboard already elsewhere must leave it there.
+    await reading(26).press('Enter')
+    const trigger = page.locator('.issues-trigger')
+    await trigger.focus()
+    devices[0].utilizationRatio = 0.27
+    await refresh()
+    await details.waitFor({ state: 'detached' })
+    assert.ok(await focused(trigger))
+
+    await trigger.press('Enter')
+    const dialog = page.getByRole('dialog')
+    const nodeLink = name => dialog.getByRole('link', { name, exact: true })
+    await nodeLink('worker-a').focus()
+    devices[0].healthy = true
+    await refresh()
+    await nodeLink('worker-a').waitFor({ state: 'detached' })
+    assert.ok(await focused(nodeLink('worker-b')), 'Continue at the remaining incident')
+    await page.keyboard.press('Escape')
+    assert.ok(await focused(trigger))
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview issue status opens details only for affected or paused nodes', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const header = page.locator('.home-page-title')
+  const trigger = header.getByRole('button')
+  const healthy = header.locator('.issues-healthy')
+  const dialog = page.getByRole('dialog')
+  const inventoryPath = '**/api/v1/overview/inventory'
+  const initialResponse = Promise.withResolvers()
+  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true }
+  const gpu = { node: node.name, provider: 'NVIDIA', deviceId: 'gpu-1', model: 'A100', healthy: true }
+  const snapshot = (nodes, devices, nodeComplete = true, deviceComplete = true) => ({
+    nodes, devices,
+    nodeCoverage: { ...coverageFixture('node', nodes.length), complete: nodeComplete },
+    deviceCoverage: { ...coverageFixture('device', devices.length), complete: deviceComplete },
+  })
+  let reply = null
+  let legacyReads = 0
+  let pendingLookup
+  await page.route(inventoryPath, async(route) => {
+    await initialResponse.promise
+    await route.fulfill(reply ? { json: reply } : { status: 503, json: {} })
+  })
+  await page.route('**/v1/gpus', async route => {
+    legacyReads++
+    if (pendingLookup) await pendingLookup.promise
+    await route.fulfill({ json: { code: 0, list: [{ uuid: gpu.deviceId, vendor: gpu.provider, nodeName: node.name, nodeUid: node.uid }] } })
+  })
+  async function nextSnapshot(next) {
+    reply = next
+    await Promise.all([page.waitForResponse(inventoryPath), page.clock.fastForward(30_000)])
+    await page.waitForLoadState('networkidle')
+  }
+  async function checkStatic(text) {
+    await header.getByText(text, { exact: true }).waitFor()
+    assert.equal(await trigger.count(), 0)
+    assert.equal(await healthy.count(), 0)
+    assert.equal(await dialog.count(), 0)
+  }
+  const isFocused = locator => locator.evaluate(el => el === document.activeElement)
+  async function checkHealthy(label) {
+    await healthy.waitFor()
+    assert.equal(await header.getByRole('img', { name: label, exact: true }).count(), 1)
+    assert.equal(await trigger.count(), 0)
+    const priorReads = legacyReads
+    await healthy.focus()
+    assert.ok(await isFocused(healthy))
+    await healthy.press('Enter')
+    await healthy.click()
+    await page.waitForLoadState('networkidle')
+    assert.equal(await dialog.count(), 0)
+    assert.equal(legacyReads, priorReads, 'Checking healthy status must not fetch device details')
+  }
+
+  try {
+    await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+    await page.goto(target + deepRoute, { waitUntil: 'domcontentloaded' })
+    await checkStatic('Loading status')
+    initialResponse.resolve()
+    await checkStatic('Status unavailable')
+    await page.waitForLoadState('networkidle')
+
+    for (const [nodeComplete, deviceComplete, text] of [
+      [false, false, 'Inventory incomplete'],
+      [false, true, 'Node inventory incomplete'],
+      [true, false, 'Device inventory incomplete'],
+    ]) {
+      await nextSnapshot(snapshot([node], [gpu], nodeComplete, deviceComplete))
+      await checkStatic(text)
+    }
+    await nextSnapshot(snapshot([node], [{ ...gpu, healthy: null }]))
+    await checkStatic('Status incomplete')
+    await nextSnapshot(snapshot([node], [{ ...gpu, healthy: false }]))
+    await trigger.getByText('1 node with issues', { exact: true }).waitFor()
+    assert.equal(await dialog.count(), 0)
+    await nextSnapshot(snapshot([], []))
+    assert.equal(await header.innerText(), await header.locator(':scope > span').first().innerText())
+    assert.equal(await header.locator('[tabindex="0"], button').count(), 0)
+
+    await nextSnapshot(snapshot([node], [gpu]))
+    await checkHealthy('No node or device issues')
+    // Both cards and their unready node constitute a single affected node.
+    await nextSnapshot(snapshot([{ ...node, ready: false, schedulable: false }], [
+      { ...gpu, healthy: false }, { ...gpu, deviceId: 'gpu-2', healthy: false },
+    ], true, false))
+    assert.equal(legacyReads, 0)
+    assert.ok(await isFocused(trigger), 'Transfer focus from the healthy indicator to the incident trigger')
+    const main = page.locator('.content-body')
+    const headerY = (await header.boundingBox()).y
+    const triggerY = (await trigger.boundingBox()).y
+    await main.evaluate(el => { el.scrollTop = 240 })
+    assert.ok(await main.evaluate(el => el.scrollTop > 0), 'The shared page body must scroll the overview')
+    assert.equal((await header.boundingBox()).y, headerY)
+    assert.equal((await trigger.boundingBox()).y, triggerY)
+    await trigger.getByText('1 node with issues', { exact: true }).click()
+    await dialog.getByText('Device inventory incomplete', { exact: true }).waitFor()
+    assert.equal(await dialog.getByRole('link', { name: 'worker', exact: true }).count(), 1)
+    assert.match(await dialog.innerText(), /2 unhealthy GPUs/)
+    await waitUntil(() => legacyReads > 0, 'Opening issue details should resolve device links')
+
+    await dialog.locator('.issue-disclosure').click()
+    const deviceLink = dialog.getByRole('link', { name: gpu.deviceId, exact: true })
+    await deviceLink.waitFor()
+    pendingLookup = Promise.withResolvers()
+    const refreshing = page.waitForRequest('**/v1/gpus')
+    await page.clock.fastForward(30_000)
+    await refreshing
+    assert.ok(await deviceLink.isVisible(), 'A pending lookup must preserve the link for the same device')
+    pendingLookup.resolve()
+    await page.waitForLoadState('networkidle')
+
+    // Poll while the dialog is still open; recovery closes the obsolete details.
+    await nextSnapshot(snapshot([node], [gpu]))
+    await dialog.waitFor({ state: 'hidden' })
+    assert.ok(await isFocused(healthy), 'Return focus from the recovered incident to the healthy indicator')
+    await checkHealthy('No node or device issues')
+    await page.locator('.gpu-distribution').getByText('1 GPU without data').first().waitFor()
+    await nextSnapshot(snapshot([{ ...node, schedulable: false }], [gpu]))
+    await trigger.getByText('Scheduling paused', { exact: true }).click()
+    await dialog.getByRole('link', { name: 'worker', exact: true }).waitFor()
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden' })
+    assert.ok(await isFocused(trigger))
+    await nextSnapshot(snapshot([], []))
+    assert.ok(await header.evaluate(el => el.contains(document.activeElement)), 'Retain focus at the title when the trigger disappears')
+
+    reply = snapshot([node], [gpu])
+    await page.context().addCookies([{ name: 'language', value: 'zh', url: target }])
+    await page.reload({ waitUntil: 'networkidle' })
+    await checkHealthy('节点与设备暂无异常')
+  } finally {
+    pendingLookup?.resolve()
+    initialResponse.resolve()
     await page.close()
   }
 })
@@ -4059,12 +4394,8 @@ test('overview workload count matches the workload list total', async() => {
       json: { code: 0, items: [row], total: 68, statusCounts: { all: 68, pending: 6, success: 60, abnormal: 2 } },
     })
   })
-  const workloadCard = page.locator('.resource-overview-item', { hasText: 'Workloads' })
-  const cardCount = async() => {
-    await workloadCard.locator('.count, .resource-state-text').first().waitFor()
-    const shown = await workloadCard.locator('.count').count()
-    return shown ? (await workloadCard.locator('.count').textContent()).trim() : null
-  }
+  const workloadTab = page.locator('[role="tab"][id$="-workloads"]')
+  const cardCount = () => workloadTab.locator('.resource-tab__count').innerText()
 
   try {
     await page.goto(`${target}${basePath}overview`, { waitUntil: 'domcontentloaded' })
@@ -4072,17 +4403,20 @@ test('overview workload count matches the workload list total', async() => {
 
     reply = 'no total'
     await page.reload({ waitUntil: 'domcontentloaded' })
-    assert.equal(await cardCount(), null, 'A reply without a total must not read as a number')
+    assert.equal(await cardCount(), '—', 'A reply without a total must not read as a number')
 
     reply = 'counted'
     workloadRequests.length = 0
     containerRequests = 0
     await page.reload({ waitUntil: 'domcontentloaded' })
     assert.equal(await cardCount(), '68')
-    assert.deepEqual(workloadRequests[0], { filters: {}, page: 1, pageSize: 1 })
+    assert.deepEqual(workloadRequests, [{ filters: {}, page: 1, pageSize: 1 }])
     assert.equal(containerRequests, 0, 'The overview still read the container list')
 
-    await workloadCard.click()
+    await workloadTab.click()
+    const panel = page.getByRole('tabpanel')
+    assert.deepEqual(await panel.locator('.resource-status__count').allTextContents(), ['60', '2', '6'])
+    await panel.getByRole('link', { name: 'View all workloads', exact: true }).click()
     await page.waitForURL((url) => url.pathname.endsWith('/workloads'))
     const listTotal = page.locator('.table-plus-pagination-total')
     await listTotal.waitFor()
@@ -4091,7 +4425,7 @@ test('overview workload count matches the workload list total', async() => {
     reply = 'failed'
     await page.goBack({ waitUntil: 'domcontentloaded' })
     await page.waitForURL((url) => url.pathname.endsWith('/overview'))
-    assert.equal(await cardCount(), null, 'A failed total must not read as a number')
+    assert.equal(await cardCount(), '—', 'A failed total must not read as a number')
   } finally {
     await page.close()
   }
@@ -4104,26 +4438,28 @@ test('resource names navigate while decorative table icons do not', async() => {
       items: [{
         name: 'worker', appName: 'job-1', podUid: 'pod-icon', namespace: 'default', nodeName: 'node-1',
         status: 'success', deviceIds: ['gpu-1'], allocatedCores: 10, allocatedMem: 256,
+      }, {
+        name: 'unidentified', appName: 'unidentified', namespace: 'default', status: 'success',
       }],
-      total: 1,
+      total: 2,
   }))
   const cases = [
     {
       path: 'nodes',
       icon: '.node-table .node-name-icon-card',
-      name: '.node-table .text-plus .link',
+      name: 'node-1',
       detail: 'nodes/node-1?nodeName=node-1',
     },
     {
       path: 'accelerators',
       icon: '.accelerator-table .card-id-cell-icon',
-      name: '.accelerator-table .text-plus .link',
+      name: 'gpu-1',
       detail: 'accelerators/gpu-1',
     },
     {
       path: 'workloads',
       icon: '.workload-table .task-name-icon-card',
-      name: '.workload-table .workload-identity-link',
+      name: 'job-1 / worker',
       detail: 'workloads/pod-icon/containers/worker',
     },
   ]
@@ -4138,7 +4474,18 @@ test('resource names navigate while decorative table icons do not', async() => {
       await delay(100)
       assert.equal(page.url(), listURL, `${entry.path}: a decorative icon navigated`)
       assert.notEqual(await icon.evaluate((element) => getComputedStyle(element).cursor), 'pointer')
-      await page.locator(entry.name).first().click()
+      const cell = icon.locator('..')
+      assert.equal(await cell.evaluate((element) => getComputedStyle(element).columnGap), '10px')
+      const name = cell.getByRole('link', { name: entry.name, exact: true })
+      assert.equal(await name.getAttribute('href'), basePath + entry.detail)
+      assert.ok(await name.evaluate((element) => parseFloat(getComputedStyle(element, '::after').width) > 0))
+      if (entry.path === 'workloads') {
+        const plainName = page.locator('.workload-identity-primary').filter({ hasText: 'unidentified' })
+        assert.equal(await plainName.evaluate((element) => element.tagName), 'SPAN')
+        assert.equal(await plainName.evaluate((element) => getComputedStyle(element, '::after').content), 'none')
+      }
+      await name.focus()
+      await name.press('Enter')
       await page.waitForURL(`${target}${basePath}${entry.detail}`)
       await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
     }
@@ -4417,6 +4764,7 @@ async function installNodeAllocationFixture(page, state) {
   })
   await page.route('**/v1/node?**', (route) => route.fulfill({ json: {
     ...allocationNode, ip: '192.0.2.30', isReady: true, isSchedulable: true,
+    inventoryCoverage: coverageFixture('device', state.devices.length),
     type: ['NVIDIA'], cardCnt: state.devices.length,
     vgpuUsed: state.devices.length * 2, vgpuTotal: state.devices.length * 10,
     coreUsed: state.devices.length * 30, coreTotal: state.devices.length * 100,
@@ -4452,7 +4800,7 @@ test('node device allocation uses two node-scoped batches and shows at most four
       await section.waitFor()
       const cards = section.locator('article[data-device-id]:visible')
       assert.equal(await cards.count(), Math.min(count, 4), `Node with ${count} devices has the wrong initial visible count`)
-      if (!count) await section.getByText('No devices on this node', { exact: true }).waitFor()
+      if (!count) await section.getByText('No device records for this node', { exact: true }).waitFor()
       assertNodeAllocationRequests(requests.slice(start))
       const expand = section.getByRole('button', { name: `Show ${count - 4} more ${count === 5 ? 'device' : 'devices'}`, exact: true })
       assert.equal(await expand.count(), count > 4 ? 1 : 0)
@@ -5101,7 +5449,11 @@ async function readTimeAxisTexts(page) {
 }
 
 async function assertTimeAxisLayout(page, context) {
-  const canvas = page.locator('.metric-chart canvas').first()
+  const chart = page.locator('.metric-chart').first()
+  const canvas = chart.locator('canvas').first()
+  // Resizing the viewport precedes ECharts' redraw. Two reads of the same old
+  // labels do not establish that the new canvas fits its container.
+  await waitForChartPaint(chart)
   let previousFrame
   const labels = await waitUntil(async() => {
     const current = await readTimeAxisLabels(page)
@@ -5179,7 +5531,6 @@ test('trend dates stay readable across all trend pages, languages and ordinary w
               // explicitly so this test checks chart layout in usable space.
               await setSidebarCollapsed(width < 600, language)
               await chart.scrollIntoViewIfNeeded()
-              await waitUntil(async() => chart.locator('canvas').evaluate((canvas) => Math.abs(canvas.getBoundingClientRect().width - canvas.closest('.metric-chart__body').getBoundingClientRect().width) < 2), 'Canvas did not resize')
               const texts = await assertTimeAxisLayout(page, `${route}/${language}/${range}/${width}`)
               assert.ok(texts.length <= 14, 'Time labels became an unreadable wall of text')
               const layout = await chart.evaluate((element) => {
@@ -5301,7 +5652,7 @@ async function withCalendarDraftProbe(run) {
     ]
     const panel = page.locator('.trend-time-filter-popup:visible')
     const applied = await Promise.all(inputs.map((input) => input.inputValue()))
-    assert.equal(requests.length, 5, 'Opening custom controls must not issue another range batch')
+    assert.equal(requests.length, overviewTrendCount, 'Opening custom controls must not issue another range batch')
     await run({ page, filter, inputs, panel, applied, requests })
   } finally {
     await page.close()
@@ -5349,7 +5700,7 @@ test('calendar hover preserves exact incomplete drafts before and after popup in
           assert.equal(await inputs[index].inputValue(), draft, 'Leaving a calendar preview must restore the exact unconfirmed draft')
           assert.equal(await inputs[1 - index].inputValue(), applied[1 - index], 'A draft must not alter the other endpoint')
           assert.ok(await inputs[index].evaluate((element) => element === document.activeElement), 'Calendar hover must retain input focus')
-          assert.equal(requests.length, 5, 'Opening, typing and hover must not submit a draft')
+          assert.equal(requests.length, overviewTrendCount, 'Opening, typing and hover must not submit a draft')
         })
       })
     }
@@ -5363,18 +5714,18 @@ test('canceling an invalid early calendar draft restores applied dates and canno
     await openCalendarDraftProbe(context, 1, draft, 'early')
     await hoverCalendarDraftProbe(context, 1)
     assert.equal(await inputs[1].inputValue(), draft, 'Unparseable text must survive hover while it is still being edited')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
 
     await page.locator('.home-page-title').click()
     await page.locator('.trend-time-filter-popup').waitFor({ state: 'hidden' })
     await waitUntil(async() => JSON.stringify(await Promise.all(inputs.map((input) => input.inputValue()))) === JSON.stringify(applied), 'Canceling must restore the applied range')
-    assert.equal(requests.length, 5, 'Canceling an invalid draft must not submit')
+    assert.equal(requests.length, overviewTrendCount, 'Canceling an invalid draft must not submit')
 
     await inputs[1].click()
     await stablePopupBounds(panel)
     await hoverCalendarDraftProbe(context, 1)
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), applied, 'A reopened picker must not restore a previously canceled draft')
-    assert.equal(requests.length, 5)
+    assert.equal(requests.length, overviewTrendCount)
   })
 })
 
@@ -5389,14 +5740,14 @@ test('a complete early calendar draft submits its own values exactly once after 
     await inputs[1].fill(selected[1])
     await hoverCalendarDraftProbe(context, 1)
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
-    assert.equal(requests.length, 5, 'Hover must not apply the complete draft early')
+    assert.equal(requests.length, overviewTrendCount, 'Hover must not apply the complete draft early')
 
     await panel.getByRole('button', { name: 'Confirm', exact: true }).click()
     await panel.waitFor({ state: 'hidden' })
     await page.waitForLoadState('networkidle')
     const expected = await localRangeAsUTC(page, selected)
-    assert.equal(requests.length, 10, 'Confirmation must publish exactly one range-query batch')
-    for (const request of requests.slice(5)) {
+    assert.equal(requests.length, overviewTrendCount * 2, 'Confirmation must publish exactly one range-query batch')
+    for (const request of requests.slice(overviewTrendCount)) {
       assert.deepEqual([request.range.start, request.range.end], expected, 'Confirmed requests must use the typed range, not stale applied dates')
     }
     assert.deepEqual(await Promise.all(inputs.map((input) => input.inputValue())), selected)
@@ -5429,7 +5780,7 @@ test('typing over a calendar preview preserves invalid drafts without selecting 
     await inputs[1].hover()
     assert.equal(await inputs[0].inputValue(), 'not-a-date', 'Hovering the other endpoint must preserve the invalid draft without parsing it')
     assert.equal(await inputs[1].inputValue(), applied[1])
-    assert.equal(requests.length, 5, 'Neither a date pick nor invalid text may apply before confirmation')
+    assert.equal(requests.length, overviewTrendCount, 'Neither a date pick nor invalid text may apply before confirmation')
     assert.deepEqual(errors, [], 'Invalid text must not reach the calendar date parser')
     await page.locator('.home-page-title').click()
     await panel.waitFor({ state: 'hidden' })
@@ -5604,39 +5955,24 @@ test('overview loading regions keep page containers while data arrives', { timeo
       const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
       let release
       const gate = new Promise((resolve) => { release = resolve })
-      await page.route(/\/v1\/(?:nodes|gpus|monitor\/query\/instant-vector)$/, async(route) => {
+      await page.route(/\/v1\/(?:overview\/inventory|workloads|monitor\/query\/instant-vector)$/, async(route) => {
         const response = await route.fetch()
-        const query = route.request().method() === 'POST' ? route.request().postDataJSON()?.query : ''
-        const ranking = query?.includes('topk(')
         await gate
-        await route.fulfill(ranking ? { json: { data: Array.from({ length: 5 }, (_, index) => ({
-          metric: { node: `node-${index + 1}`, device_uuid: `gpu-${index + 1}` }, value: 5 - index,
-        })) } } : { response })
+        await route.fulfill({ response })
       })
       const measure = () => page.evaluate(() => {
         const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height
         return {
-          node: height('.node-overview-skeleton') ?? height('.node-all'),
-          nodeBlock: height('.home-top-right-card'),
-          type: height('.card-type-skeleton') ?? height('.card-type-chart'),
-          top5: [...document.querySelectorAll('.tab-top-list')].map((element) => element.getBoundingClientRect().height),
-          workload: height('.workload-table-skeleton') ?? height('.top5-item-list-table'),
+          resources: height('.resource-tabs'),
           chart: [...document.querySelectorAll('.metric-chart__body')].map((element) => element.getBoundingClientRect().height),
         }
       })
       try {
         await page.goto(`${target}${deepRoute}`, { waitUntil: 'domcontentloaded' })
-        await page.locator('.node-overview-skeleton').waitFor()
-        const countFonts = await page.locator('.node-overview-skeleton .count').evaluateAll((counts) => counts.map((count) => {
-          const font = (element) => {
-            const style = getComputedStyle(element)
-            return { size: style.fontSize, family: style.fontFamily, weight: style.fontWeight }
-          }
-          return { count: font(count), placeholder: font(count.querySelector('.loading-value')) }
-        }))
-        for (const fonts of countFonts) {
-          assert.deepEqual(fonts.placeholder, fonts.count, 'Character-width placeholders must use the count font, not the skeleton library font')
-        }
+        await page.locator('.card-type-skeleton').waitFor()
+        const modelCard = await page.locator('.model-summary').elementHandle()
+        assert.equal(await page.locator('[role="tab"][aria-busy="true"]').count(), 3)
+        await page.getByRole('tabpanel').locator('.resource-statuses--loading').waitFor()
         const pending = []
         for (const width of [1280, 1366, 1440, 1920, 600]) {
           await page.setViewportSize({ width, height: 1000 })
@@ -5646,8 +5982,9 @@ test('overview loading regions keep page containers while data arrives', { timeo
           if (width === 1280) await captureTrendScreenshot(page, `skeleton-overview-${locale}-1280`)
         }
         release()
-        await page.locator('.node-all').waitFor()
-        await page.locator('.tab-top-skeleton').first().waitFor({ state: 'detached' })
+        await page.locator('.model-distribution').getByRole('link', { name: 'NVIDIA', exact: true }).waitFor()
+        assert.ok(await modelCard.evaluate(card => card.isConnected), 'The model card container must survive its loading state')
+        await page.locator('.gpu-distribution .distribution-group').first().waitFor()
         const ready = []
         for (const width of [1280, 1366, 1440, 1920, 600]) {
           await page.setViewportSize({ width, height: 1000 })
@@ -5659,10 +5996,7 @@ test('overview loading regions keep page containers while data arrives', { timeo
         t.diagnostic(JSON.stringify({ locale, pending, ready }))
         assert.ok(ready.every((state) => state.chart.every((height) => height === 250)))
         for (const [index, state] of ready.entries()) {
-          assert.equal(state.node, pending[index].node, 'Known node status labels must reserve their wrapped height')
-          assert.equal(state.workload, pending[index].workload, 'Five loading rows must match five result rows in the count table')
-          assert.ok(state.top5.every((height, rank) => Math.abs(height - pending[index].top5[rank]) < 4),
-            'Five ranking placeholders must retain the five-item row rhythm')
+          assert.equal(state.resources, pending[index].resources, 'Resource tabs must reserve their height while loading')
         }
       } finally {
         release()
@@ -5742,7 +6076,13 @@ test('node allocation loading follows identity and both allocation snapshots wit
       try {
         await page.goto(`${target}${basePath}nodes/${allocationNode.uid}?nodeName=${allocationNode.name}`, { waitUntil: 'domcontentloaded' })
         await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
-        if (width === 375) await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+        if (width === 375) {
+          await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click()
+          // Compare allocation layouts at the same content width.
+          await page.locator('.page-aside').evaluate(async(aside) => {
+            await Promise.all(aside.getAnimations().map((animation) => animation.finished))
+          })
+        }
         assert.equal(await page.locator('.node-allocation').count(), 0, 'Unknown node identity must not imply four real devices or a split mode')
         assert.equal(requests.length, 0, 'Allocation requests need the resolved node identity')
         await captureTrendScreenshot(page, `skeleton-node-identity-${width}`)
@@ -5993,7 +6333,8 @@ test('list no-match recovery fits common screen widths in both languages', { tim
   for (const locale of ['en-US', 'zh-CN']) {
     for (const config of listSearchCases) {
       const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
-      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? { list: [] } : { items: [], total: 0 } }))
+      if (config.endpoint === 'gpus') await routePhysicalFixture(page, [])
+      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } }))
       try {
         await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
         await page.getByTestId('stateful-table-empty').waitFor()
@@ -6032,7 +6373,7 @@ test('clearing list filters removes route filters while the input clear preserve
     const queries = []
     await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
       queries.push(route.request().postDataJSON())
-      return route.fulfill({ json: config.local ? { list: [] } : { items: [], total: 0 } })
+      return route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } })
     })
     try {
       await page.goto(`${target}${basePath}${config.route}?${config.query}`, { waitUntil: 'domcontentloaded' })
@@ -6079,9 +6420,9 @@ const localSearchRows = {
     { name: 'npu-node-c', uid: 'node-c', ip: '10.1.12.9', type: ['Ascend910B4'], isSchedulable: false, isReady: true },
   ],
   gpus: [
-    { uuid: 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525', nodeName: 'gpu-node-a', type: 'NVIDIA-A100-SXM4-80GB', health: true },
-    { uuid: 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', nodeName: 'gpu-node-b', type: 'NVIDIA-H100-SXM5-80GB', health: true },
-    { uuid: '57cd034427925618899c0cfd6c607d98', nodeName: 'npu-node-c', type: 'Ascend910B4', health: true },
+    { uuid: 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525', nodeName: 'gpu-node-a', nodeUid: 'node-a', vendor: 'NVIDIA', type: 'NVIDIA-A100-SXM4-80GB', health: true },
+    { uuid: 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', nodeName: 'gpu-node-b', nodeUid: 'node-b', vendor: 'NVIDIA', type: 'NVIDIA-H100-SXM5-80GB', health: true },
+    { uuid: '57cd034427925618899c0cfd6c607d98', nodeName: 'npu-node-c', nodeUid: 'node-c', vendor: 'Ascend', type: 'Ascend910B4', health: true },
   ],
 }
 const localSearchPages = [
@@ -6099,10 +6440,11 @@ const localSearchPages = [
   },
 ]
 const mockLocalSearchLists = async(page, counts = {}) => {
+  await routePhysicalFixture(page, localSearchRows.gpus)
   for (const endpoint of ['nodes', 'gpus']) {
     await page.route(`**/api/vgpu/v1/${endpoint}`, (route) => {
       counts[endpoint] = (counts[endpoint] ?? 0) + 1
-      return route.fulfill({ json: { list: localSearchRows[endpoint] } })
+      return route.fulfill({ json: listFixture(endpoint, localSearchRows[endpoint]) })
     })
   }
   const types = [...new Set(localSearchRows.gpus.map((gpu) => gpu.type))].map((type) => ({ type }))
@@ -6133,7 +6475,7 @@ test('node and accelerator keywords match fragments of several fields while typi
       await search.fill(config.linked.keyword)
       await page.reload({ waitUntil: 'domcontentloaded' })
       await waitUntil(async() => await search.inputValue() === config.linked.keyword && await rows.count() === 1, 'Reload must restore the keyword')
-      await rows.first().locator('.link').first().click()
+      await rows.first().getByRole('cell').first().getByRole('link').click()
       await waitUntil(() => new URL(page.url()).pathname.endsWith(config.linked.path), 'The row must open its detail page')
       await page.goBack({ waitUntil: 'domcontentloaded' })
       await waitUntil(async() => await search.inputValue() === config.linked.keyword && await rows.count() === 1, 'Back must return to the same filtered list')
@@ -6161,18 +6503,20 @@ test('node pagination keeps the detail return position and adjusts to filters an
   let nodes = Array.from({ length: 25 }, (_, i) => ({
     ...localSearchRows.nodes[0], name: `gpu-${i + 1}`, uid: `node-${i + 1}`,
   }))
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', nodes) }))
   const rows = page.locator('.node-table tbody tr')
   const expectPage = async(firstNode, count) => {
     await rows.first().getByText(firstNode, { exact: true }).waitFor()
     assert.equal(await rows.count(), count)
   }
   try {
-    await page.goto(`${target}${basePath}nodes?q=gpu`)
-    await expectPage('gpu-1', 10)
+    await page.goto(`${target}${basePath}nodes?q=gpu&page=2`)
+    await expectPage('gpu-11', 10)
+    await page.reload()
+    await expectPage('gpu-11', 10)
     await page.locator('.table-plus-pagination').getByText('3', { exact: true }).click()
     await expectPage('gpu-21', 5)
-    await rows.first().locator('.link').click()
+    await rows.first().getByRole('link', { name: 'gpu-21', exact: true }).click()
     await page.waitForURL('**/nodes/node-21?*')
     await page.goBack()
     await expectPage('gpu-21', 5)
@@ -6201,10 +6545,135 @@ test('node pagination keeps the detail return position and adjusts to filters an
   }
 })
 
+test('node rankings open the same node UID as the current table after a node is replaced', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const name = 'gpu-worker'
+  let uid = 'old-node'
+  const reads = []
+  await page.route('**/api/vgpu/v1/nodes', (route) => {
+    reads.push(route.request().postDataJSON())
+    return route.fulfill({ json: listFixture('nodes', [
+      { name, uid, ip: '192.0.2.2', type: [], isReady: true, isSchedulable: true },
+      { name: 'registered', uid: 'registered-uid', ip: '192.0.2.3', type: ['A100'], isReady: true, isSchedulable: true,
+        coreTotal: 100, coreUsed: 0, coreAllocationPercent: 0, memoryTotal: 1024 },
+    ]) })
+  })
+  const query = buildGroupedResourceTopQueries('node').computeUsage
+  await page.route('**/v1/monitor/query/instant-vector', (route) =>
+    route.request().postDataJSON()?.query === query
+      ? route.fulfill({ json: { data: [{ metric: { node: name }, value: 80 }] } })
+      : route.continue())
+  try {
+    await page.goto(`${target}${basePath}nodes`, { waitUntil: 'networkidle' })
+    const row = page.locator('.node-table').getByRole('link', { name, exact: true })
+    assert.equal(await row.getAttribute('href'), `${basePath}nodes/${uid}?nodeName=${name}`)
+    const rows = page.locator('.node-table tbody tr')
+    assert.equal(await rows.filter({ has: page.getByRole('link', { name, exact: true }) }).getByText('--', { exact: true }).count(), 2)
+    const registered = rows.filter({ has: page.getByRole('link', { name: 'registered', exact: true }) })
+    await registered.getByText('0%', { exact: true }).waitFor()
+    assert.equal(await registered.getByText('--', { exact: true }).count(), 1, 'An unknown numerator must not become zero')
+    const chart = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') }).first()
+    await chart.locator('.tab-top-switch button').nth(1).click()
+    const ranking = chart.getByText(name, { exact: true })
+    await ranking.waitFor()
+    uid = 'replacement-node'
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await waitUntil(async() => (await row.getAttribute('href')).includes(uid), 'Refresh must show the replacement')
+    const detailRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/v1/node'))
+    await ranking.click()
+    await page.waitForURL(`**/nodes/${uid}?nodeName=${name}`)
+    assert.equal(new URL((await detailRequest).url()).searchParams.get('useResourceInventory'), 'true')
+    assert.deepEqual(reads, [{ useResourceInventory: true }, { useResourceInventory: true }],
+      'Both links must use the same accelerator roster per load or refresh')
+  } finally {
+    await page.close()
+  }
+})
+
+test('Ascend node rates and capacity come from one inventory snapshot, with per-node physical allocation history', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const node = { uid: 'ascend-uid', name: 'ascend-host', coreAllocationPercent: 29.6875, memoryAllocationPercent: 0,
+    coreTotal: 800, memoryTotal: 8192, isReady: true, isSchedulable: true }
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', [node]) }))
+  await page.route('**/v1/node?**', (route) => route.fulfill({ json: { ...node, inventoryCoverage: coverageFixture('device', 8) } }))
+  const grouped = buildGroupedResourceTopQueries('node')
+  const usage = buildPhysicalUsageQueries({ byNode: true, selector: `node="${node.name}",node_uid="${node.uid}"` })
+  const instantValues = new Map([
+    [grouped.computeAllocation, node.coreAllocationPercent], [grouped.memoryAllocation, node.memoryAllocationPercent],
+    [usage.computeUsage.query, 25], [usage.memoryUsage.query, 2], [usage.memoryUsage.totalQuery, 4]
+  ])
+  await page.route('**/v1/monitor/query/instant-vector', (route) => {
+    const value = instantValues.get(route.request().postDataJSON()?.query)
+    return value === undefined ? route.continue() : route.fulfill({ json: { data: [{ metric: { node: node.name }, value }] } })
+  })
+  const ranges = []
+  const instant = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (path.endsWith('/range-vector')) ranges.push(request.postDataJSON().query)
+    if (path.endsWith('/instant-vector')) instant.push(request.postDataJSON().query)
+  })
+  try {
+    await page.goto(`${target}${basePath}nodes`, { waitUntil: 'networkidle' })
+    const row = page.locator('.node-table tbody tr').first()
+    await row.getByText('29.69%', { exact: true }).waitFor()
+    await row.getByText('0%', { exact: true }).waitFor()
+    const rankings = page.locator('.tab-top-list')
+    await rankings.nth(0).getByText('29.69 %', { exact: true }).waitFor()
+    await rankings.nth(1).getByText('0 %', { exact: true }).waitFor()
+    assert.equal(instant.some((query) => query.includes('hami_container_vcore_allocation_known')), false)
+    instant.length = 0
+    await row.getByRole('link', { name: node.name, exact: true }).click()
+    const cards = page.locator('.node-system-resource-cards .resource-card')
+    await cards.first().getByText('29.69%', { exact: true }).waitFor()
+    await cards.last().getByText('0.00%', { exact: true }).waitFor()
+    assert.equal(await cards.first().locator('.resource-card-value').innerText(), '8')
+    assert.equal(await cards.last().locator('.resource-card-value').innerText(), '8.00 GiB')
+    const scoped = buildPhysicalAllocationQueries({ selector: `node="${node.name}",node_uid="${node.uid}"` })
+    await waitUntil(() => [scoped.computeAllocation, scoped.memoryAllocation].every((metric) => ranges.includes(metric.percentQuery)),
+      'Both allocation trends must scope the physical formula to the opened node')
+    await cards.first().getByText('25.00%', { exact: true }).waitFor()
+    await cards.last().getByText('50.00%', { exact: true }).waitFor()
+    await waitUntil(() => [usage.computeUsage, usage.memoryUsage].every((metric) => ranges.includes(metric.percentQuery)),
+      'Both usage trends must measure the same physical devices as the node ranking')
+    assert.equal(instant.some((query) => query.includes('allocated')), false, 'Current allocation must use the same snapshot as its capacity')
+  } finally {
+    await page.close()
+  }
+})
+
+test('node detail distinguishes a removed node from an incomplete inventory or a missing API route', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  let response
+  await page.route('**/v1/node?**', (route) => route.fulfill(response))
+  try {
+    for (const [status, json, state] of [
+      [404, { reason: 'RESOURCE_NODE_NOT_FOUND' }, 'missing'],
+      [503, { reason: 'NODE_INVENTORY_UNAVAILABLE' }, 'error'],
+      [404, { reason: 'ROUTE_NOT_FOUND' }, 'error'],
+      [200, { uid: 'removed-uid', name: 'old-server-node' }, 'error'],
+    ]) {
+      response = { status, json }
+      await page.goto(`${target}${basePath}nodes/removed-uid`)
+      await page.getByTestId(`detail-page-${state}`).waitFor()
+    }
+    await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: [] } }))
+    await page.goto(`${target}${basePath}nodes`)
+    await page.getByTestId('stateful-table-error').waitFor()
+    assert.equal(await page.getByTestId('stateful-table-empty').count(), 0, 'An older roster cannot confirm there are no nodes')
+  } finally {
+    await page.close()
+  }
+})
+
 test('accelerators restore page and node filters from the URL when the data arrives late', { timeout: 60_000 }, async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
-  const gpus = Array.from({ length: 25 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(2, '0')}`, nodeName: 'gpu-node-a', type: 'NVIDIA-A100-SXM4-80GB', health: true }))
+  const gpus = Array.from({ length: 25 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(2, '0')}`, nodeName: 'gpu-node-a', nodeUid: 'node-a', vendor: 'NVIDIA', type: 'NVIDIA-A100-SXM4-80GB', health: true }))
+  await routePhysicalFixture(page, gpus)
   let release
   const gate = new Promise((resolve) => { release = resolve })
   await page.route('**/api/vgpu/v1/gpus', async(route) => {
@@ -6237,6 +6706,9 @@ test('long node dropdowns show the first matches and keep keyboard picks correct
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   const nodes = Array.from({ length: 150 }, (_, index) => ({ name: `node-${String(index).padStart(3, '0')}`, uid: `uid-${index}`, ip: `10.0.${index}.1`, type: [index % 3 ? 'NVIDIA-A100-SXM4-80GB' : 'NVIDIA-H100-SXM5-80GB'], isSchedulable: true, isReady: true }))
+  await routePhysicalFixture(page, nodes.map(node => ({
+    uuid: 'GPU-' + node.name, nodeName: node.name, nodeUid: node.uid, type: node.type[0], vendor: 'NVIDIA', health: true,
+  })))
   await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
   await page.route('**/api/vgpu/v1/gpus', (route) => route.fulfill({ json: { list: nodes.map((node) => ({ uuid: `GPU-${node.name}`, nodeName: node.name, type: node.type[0], health: true })) } }))
   await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: [{ type: 'NVIDIA-A100-SXM4-80GB' }, { type: 'NVIDIA-H100-SXM5-80GB' }] } }))
@@ -6552,13 +7024,10 @@ test('node and accelerator dropdowns show how many rows each option would list',
     await page.goto(`${target}${basePath}nodes?q=gpu`, { waitUntil: 'domcontentloaded' })
     await waitUntil(async() => await page.locator('.node-table tbody tr').count() === 2, 'The keyword must leave two nodes')
     const nodeSelects = page.locator('.table-toolbar .t-select')
-    await nodeSelects.nth(0).click()
-    await waitUntil(async() => await options.count() === 3, 'Status options must show')
-    assert.deepEqual(await countsOf(), { Schedulable: 2, 'Temporarily Unschedulable': 0 })
-    assert.deepEqual((await shown()).filter(({ cut }) => cut), [], 'Counts must not cut the widest label')
-    await page.keyboard.press('Escape')
-    await popupClosed()
-    await nodeSelects.nth(1).click()
+    const nodeStatus = page.getByRole('group', { name: 'Node Status' })
+    await nodeStatus.getByRole('button', { name: 'Schedulable 2', exact: true }).waitFor()
+    await nodeStatus.getByRole('button', { name: 'Temporarily Unschedulable 0', exact: true }).waitFor()
+    await nodeSelects.first().click()
     await waitUntil(async() => await options.count() === 4, 'Model options must show')
     assert.deepEqual(await countsOf(), { 'NVIDIA-A100-SXM4-80GB': 1, 'NVIDIA-H100-SXM5-80GB': 1, Ascend910B4: 0 })
     await page.keyboard.press('Escape')
@@ -6586,17 +7055,19 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
   const target = await startWebEntry({ frameAncestors: undefined })
   const zeros = (counts) => Object.fromEntries(Object.keys(counts).map((key) => [key, 0]))
   for (const config of [
-    { route: 'nodes', endpoint: 'nodes', select: 0, widest: 0, loaded: { Schedulable: 2, 'Temporarily Unschedulable': 1 } },
-    { route: 'accelerators', endpoint: 'gpus', select: 1, widest: 0, loaded: { 'gpu-node-a': 1, 'gpu-node-b': 1, 'npu-node-c': 1 } },
+    { route: 'nodes', endpoint: 'nodes', select: 0, widest: 0, loaded: { All: 3, Schedulable: 2, 'Temporarily Unschedulable': 1 } },
+    { route: 'accelerators', endpoint: 'gpus', select: 1, widest: 0, loaded: { All: 3, Normal: 3, Abnormal: 0 } },
   ]) {
     const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
     await mockLocalSearchLists(page)
     let answer = 'hold'
     const held = []
-    await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
+    const isGPU = config.endpoint === 'gpus'
+    const fixture = list => isGPU ? physicalFixture(list) : listFixture(config.endpoint, list)
+    await page.route(isGPU ? '**/api/v1/overview/inventory' : '**/api/vgpu/v1/nodes', (route) => {
       if (answer === 'hold') held.push(route)
       else if (answer === 'fail') route.fulfill({ status: 500, json: { message: 'unavailable' } })
-      else route.fulfill({ json: { list: answer === 'empty' ? [] : localSearchRows[config.endpoint] } })
+      else route.fulfill({ json: fixture(answer === 'empty' ? [] : localSearchRows[config.endpoint]) })
     })
     const selects = page.locator('.table-toolbar .t-select')
     const options = page.locator('.t-select__dropdown:visible .t-select-option')
@@ -6615,14 +7086,10 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
       await page.keyboard.press('Escape')
       await waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The popup must close')
     }
-    const countsShown = async() => {
-      await open(config.select)
-      const labels = await shownLabels()
-      await close()
-      assert.deepEqual(labels.filter(({ cut }) => cut), [], `${config.route}: counts must not cut a label`)
-      return Object.fromEntries(labels.filter(({ count }) => count !== null).map(({ label, count }) => [label, count]))
-    }
-    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: { list } } : { status: 500, json: { message: 'unavailable' } })))
+    const countsShown = () => page.locator('.inventory-list-filters .segmented-control__option').evaluateAll(options =>
+      Object.fromEntries(options.filter(el => el.querySelector('.segmented-control__count'))
+        .map(el => [el.querySelector('.segmented-control__label').textContent, Number(el.querySelector('.segmented-control__count').textContent)])))
+    const release = (list) => Promise.all(held.splice(0).map((route) => route.fulfill(list ? { json: fixture(list) } : { status: 500, json: { message: 'unavailable' } })))
     try {
       await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
       await waitUntil(() => held.length > 0, `${config.route}: the list must be requested`)
@@ -6643,17 +7110,9 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
       await page.locator('[data-testid="stateful-table-refresh-error"]').waitFor()
       assert.deepEqual(await countsShown(), config.loaded, `${config.route}: a failed refresh keeps the counts of the rows still shown`)
 
-      // Counts that arrive while the widest dropdown is open widen it instead of cutting its labels.
-      answer = 'hold'
-      await page.reload({ waitUntil: 'domcontentloaded' })
-      await waitUntil(() => held.length > 0, `${config.route}: the list must be requested again`)
+      if (config.route === 'nodes') continue
       await open(config.widest)
-      await release(localSearchRows[config.endpoint])
-      await waitUntil(async() => (await shownLabels()).some(({ count }) => count !== null), `${config.route}: counts must arrive in the open popup`)
-      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], `${config.route}: arriving counts must not cut a label`)
-      await close()
-      await open(config.widest)
-      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], `${config.route}: a reopened popup must fit its labels`)
+      assert.deepEqual((await shownLabels()).filter(({ cut }) => cut), [], 'Dropdown counts must fit beside the model')
       await close()
     } finally {
       await page.close()
@@ -6686,7 +7145,7 @@ test('model and node dropdowns filter their options while typing', { timeout: 60
     await page.goto(`${target}${basePath}nodes`, { waitUntil: 'domcontentloaded' })
     const nodeRows = page.locator('.node-table tbody tr')
     await waitUntil(async() => await nodeRows.count() === 3, 'Nodes must load')
-    await page.locator('.table-toolbar .t-select').nth(1).click()
+    await page.locator('.table-toolbar .t-select').first().click()
     await waitUntil(async() => await options.count() === 4, 'All model options must load')
     await page.keyboard.type('H100')
     await waitUntil(async() => await options.count() === 1, 'Typing a model fragment must leave one model')
@@ -6706,6 +7165,202 @@ test('model and node dropdowns filter their options while typing', { timeout: 60
     await options.first().click()
     await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', 'Picking the device must update the URL')
     await listed
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview gauges share the initial trend time and advance together on a visible or manual refresh', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC' })
+  const metrics = Object.values(buildPhysicalResourceQueries())
+  const gaugeQueries = new Set(metrics.flatMap(({ query, totalQuery }) => [query, totalQuery].filter(Boolean)))
+  const trendQueries = new Set(metrics.map(({ percentQuery }) => percentQuery))
+  const rounds = new Map()
+  const trendEnds = new Map()
+  const inventoryReads = []
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname
+    if (/\/v1\/(?:overview\/inventory|nodes|gpus|summary|device-models|containers|workloads)$/.test(path)) {
+      inventoryReads.push(path.replace(basePath, '/'))
+    }
+  })
+  const snapshotInventoryReads = ['/api/v1/overview/inventory', '/api/vgpu/v1/workloads'].sort()
+  const assertInventoryRounds = count => assert.deepEqual(
+    inventoryReads.slice().sort(), Array.from({ length: count }, () => snapshotInventoryReads).flat().sort(),
+    'Each live snapshot must read compact inventory once and the container total once',
+  )
+  const readRound = async(index) => {
+    await waitUntil(() => [...rounds.values()][index]?.size === 7, 'Missing overview gauge query')
+    return [...rounds.keys()][index]
+  }
+
+  await page.route('**/monitor/query/range-vector', async(route) => {
+    const { query, range } = route.request().postDataJSON()
+    if (trendQueries.has(query)) trendEnds.set(query, range.end)
+    await route.continue()
+  })
+  await page.route('**/monitor/query/instant-vector', async(route) => {
+    const { query, time } = route.request().postDataJSON()
+    if (!gaugeQueries.has(query)) return route.continue()
+    if (!rounds.has(time)) rounds.set(time, new Set())
+    rounds.get(time).add(query)
+    // Move the clock forward between numerator and capacity requests.
+    if (query === metrics[0].query) await page.clock.fastForward(1200)
+    await route.fulfill({ json: { code: 0, data: [{ value: 1 }] } })
+  })
+  try {
+    await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
+    await page.goto(target + deepRoute, { waitUntil: 'networkidle' })
+    const first = await readRound(0)
+    assertInventoryRounds(1)
+    await waitUntil(() => trendEnds.size === 4, 'Missing initial overview trends')
+    assert.ok(Number.isFinite(Date.parse(first)))
+    assert.deepEqual(new Set(trendEnds.values()), new Set([first]))
+    await page.clock.fastForward(30_000)
+    const next = await readRound(1)
+    assert.ok(Date.parse(next) > Date.parse(first))
+    await page.waitForLoadState('networkidle')
+    assertInventoryRounds(2)
+    await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+    const manual = await readRound(2)
+    assert.ok(Date.parse(manual) > Date.parse(next))
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual(new Set(trendEnds.values()), new Set([manual]))
+
+    await selectTrendRange(page, 'custom')
+    const start = page.getByRole('textbox', { name: 'Start Time', exact: true })
+    const end = page.getByRole('textbox', { name: 'End Time', exact: true })
+    await start.click()
+    await start.fill('2026-10-03 10:12:34')
+    await end.click()
+    await end.fill('2026-10-06 11:23:45')
+    await end.press('Enter')
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
+    await page.waitForLoadState('networkidle')
+    assert.deepEqual(new Set(trendEnds.values()), new Set(['2026-10-06T11:23:45Z']))
+    assert.equal(rounds.size, 3, 'Browsing or refreshing history must not rewind the live gauges')
+    assertInventoryRounds(3)
+  } finally {
+    await page.close()
+  }
+})
+
+test('overview, default management, health tabs and model legend share one physical inventory', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true }
+  const device = { node: node.name, provider: 'NVIDIA', model: 'A100' }
+  const devices = [
+    { ...device, deviceId: 'gpu-ok', healthy: true },
+    { ...device, deviceId: 'gpu-failed', healthy: false },
+    { ...device, deviceId: 'gpu-unknown' },
+  ]
+  const registration = { nodeName: node.name, nodeUid: node.uid, type: device.model, vendor: device.provider }
+  const list = [
+    { ...registration, uuid: 'gpu-ok', health: false, isExternal: true },
+    { ...registration, uuid: 'gpu-failed', health: false },
+    { ...registration, uuid: 'ascend-module', type: 'Ascend910C', vendor: 'Ascend', health: true },
+    { ...registration, uuid: 'external', isExternal: true, health: true },
+  ]
+  let currentDevices = devices
+  let complete = true
+  await page.route('**/api/v1/overview/inventory', r => r.fulfill({ json: { nodes: [node], devices: currentDevices,
+    nodeCoverage: coverageFixture('node', 1), deviceCoverage: { ...coverageFixture('device', currentDevices.length), complete } } }))
+  await page.route('**/api/vgpu/v1/gpus', r => r.fulfill({ json: { list } }))
+  const tabs = page.getByRole('group', { name: 'GPU Status', exact: true })
+  const rows = page.locator('.accelerator-table tbody tr')
+  try {
+    await page.goto(target + deepRoute)
+    await page.locator('[role="tab"][id$="-gpus"]').click()
+    await page.getByRole('tabpanel').getByRole('link', { name: 'Abnormal: 1', exact: true }).click()
+    await rows.getByRole('link', { name: 'gpu-failed', exact: true }).waitFor()
+    assert.equal(await rows.count(), 1)
+    await page.reload()
+    await tabs.getByRole('button', { name: 'Abnormal 1', pressed: true }).waitFor()
+    await tabs.getByRole('button', { name: 'Normal 1', exact: true }).click()
+    await rows.getByRole('link', { name: 'gpu-ok' }).waitFor()
+    await tabs.getByRole('button', { name: 'Unknown 1', exact: true }).click()
+    await rows.getByText('gpu-unknown', { exact: true }).waitFor()
+    assert.equal(await rows.getByRole('link').count(), 0)
+    await tabs.getByRole('button', { name: 'All 3' }).click()
+    await waitUntil(async() => await rows.count() === 3, 'All physical devices remain available')
+    await page.goto(target + basePath + 'accelerators')
+    await tabs.getByRole('button', { name: 'All 3', pressed: true }).waitFor()
+    assert.equal(await rows.count(), 3)
+    assert.equal(await rows.getByText('ascend-module').count(), 0)
+    assert.equal(await page.locator('.nodeCard-legend .legend-count').innerText(), '3 (100%)')
+    assert.equal(await page.locator('.accelerator-table thead th').count(), 8)
+    await page.route('**/api/vgpu/v1/gpus', r => r.fulfill({ status: 503, json: {} }))
+    await page.goto(target + basePath + 'accelerators?health=healthy')
+    await tabs.getByRole('button', { name: 'Normal 1', pressed: true }).waitFor()
+    await rows.getByText('gpu-ok', { exact: true }).waitFor()
+    assert.equal(await rows.getByRole('link').count(), 0)
+    complete = false
+    currentDevices = [devices[0]]
+    await page.reload()
+    await tabs.getByRole('button', { name: 'All 1', exact: true }).waitFor()
+    await rows.getByText('gpu-ok', { exact: true }).waitFor()
+    currentDevices = []
+    await page.reload()
+    await page.getByTestId('stateful-table-error').waitFor()
+    assert.equal(await tabs.getByRole('button', { name: 'All 0', exact: true }).count(), 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('device details distinguish missing physical health from a failed card and a registration-only module', async() => {
+  const target = await startWebEntry({})
+  const page = await browser.newPage({ locale: 'en-US' })
+  const node = { name: 'worker', uid: 'current-node' }
+  const registration = { nodeName: node.name, nodeUid: node.uid, vendor: 'NVIDIA', type: 'A100', health: false }
+  const devices = [
+    { deviceId: 'missing', node: node.name, provider: 'NVIDIA' },
+    { deviceId: 'failed', node: node.name, provider: 'NVIDIA', healthy: false },
+    { deviceId: 'normal', node: node.name, provider: 'NVIDIA', healthy: true },
+    { deviceId: 'old-node', node: node.name, provider: 'NVIDIA', healthy: true },
+  ]
+  await page.route('**/api/v1/overview/inventory', r => r.fulfill({ json: { nodes: [node], devices,
+    nodeCoverage: coverageFixture('node', 1), deviceCoverage: { entity: 'device', observed: devices.length, complete: false } } }))
+  await page.route('**/v1/gpu?**', r => {
+    const uuid = new URL(r.request().url()).searchParams.get('uid')
+    const fields = uuid === 'module' ? { type: 'Ascend910C', vendor: 'Ascend', health: true }
+      : uuid === 'old-node' ? { nodeUid: 'previous-node' } : {}
+    return r.fulfill({ json: { ...registration, uuid, ...fields } })
+  })
+  const status = page.locator('.layout-header-title-run-state-label')
+  try {
+    for (const [id, expected] of [['missing', 'Unknown'], ['failed', 'Abnormal'], ['normal', 'Normal'], ['module', 'Normal'], ['old-node', 'Unknown'], ['unmatched', 'Unknown']]) {
+      await page.goto(target + basePath + 'accelerators/' + id)
+      await status.filter({ hasText: new RegExp('^' + expected + '$') }).waitFor()
+    }
+    await page.route('**/api/v1/overview/inventory', r => r.fulfill({ status: 503, json: {} }))
+    await page.goto(target + basePath + 'accelerators/failed')
+    await status.filter({ hasText: /^Unknown$/ }).waitFor()
+  } finally {
+    await page.close()
+  }
+})
+
+test('old physical bookmarks are replaced by the standard accelerator list and keep their filters', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const compactRequests = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/overview/inventory')) compactRequests.push(request.url())
+  })
+  try {
+    await page.goto(target + basePath + 'nodes')
+    await page.goto(target + basePath + 'accelerators?scope=physical&type=NVIDIA&q=gpu')
+    await page.waitForURL(url => url.pathname === basePath + 'accelerators' && !url.searchParams.has('scope'))
+    assert.deepEqual(Object.fromEntries(new URL(page.url()).searchParams), { type: 'NVIDIA', q: 'gpu' })
+    await page.locator('.accelerator-table tbody').getByRole('link', { name: 'gpu-1', exact: true }).waitFor()
+    await page.locator('.card-admin-top-wrap .pie canvas').waitFor()
+    assert.ok(compactRequests.length > 0)
+    await page.goBack()
+    await page.waitForURL(target + basePath + 'nodes')
   } finally {
     await page.close()
   }

@@ -16,6 +16,7 @@
           @mouseenter="helpHovered = true"
           @mouseleave="helpHovered = false"
           @focus="helpFocused = true"
+          @keydown.esc.stop="helpHovered = helpFocused = false"
           @blur="helpFocused = false"
         >
           <help-circle-icon aria-hidden="true" />
@@ -36,19 +37,19 @@
         :row-col="[{ width: '44%', height: '28px' }]"
         aria-hidden="true"
       />
-      <template v-else-if="isReady && nothingCounted">
-        <span class="gauge-card__number gauge-card__number--empty">—</span>
-        <span class="gauge-card__sr-only">{{ nothingCountedMessage($t, uncounted) }}</span>
-      </template>
       <template v-else-if="isReady">
-        <span v-if="lowerBound" class="gauge-card__bound" aria-hidden="true">≥</span>
-        <span class="gauge-card__number">{{ numericPercent.toFixed(1) }}</span>
-        <span class="gauge-card__unit">{{ gaugeUnit || '%' }}</span>
-        <span v-if="lowerBound" class="gauge-card__sr-only">
-          {{ lowerBoundMessage($t, uncounted) }}
+        <span class="gauge-card__reading">
+          <span class="gauge-card__number">{{ numericPercent.toFixed(1) }}</span>
+          <span class="gauge-card__unit">{{ gaugeUnit || '%' }}</span>
+        </span>
+        <span v-if="detailMode !== 'value'" class="gauge-card__aside">
+          <b>{{ amount.used }}</b> / {{ amount.total }}<template v-if="amount.unit">&nbsp;{{ amount.unit }}</template>
         </span>
       </template>
-      <span v-else class="gauge-card__number gauge-card__number--empty">—</span>
+      <template v-else>
+        <span class="gauge-card__number gauge-card__number--empty">—</span>
+        <span :class="status === 'missing' ? 'gauge-card__sr-only' : 'gauge-card__aside'">{{ $t(stateTextKey) }}</span>
+      </template>
     </div>
     <t-skeleton
       v-if="status === 'loading'"
@@ -58,53 +59,15 @@
       aria-hidden="true"
     />
     <t-progress
-      v-else-if="showProgress && isReady"
+      v-else-if="showProgress"
       theme="line"
-      :percentage="Math.min(100, Math.max(0, numericPercent))"
+      :percentage="isReady ? Math.min(100, Math.max(0, numericPercent)) : 0"
       :color="progressColor"
       :label="false"
       track-color="#e5e7eb"
       class="gauge-card__progress"
       aria-hidden="true"
     />
-    <div class="gauge-card__detail" v-if="!hideInfo">
-      <t-skeleton
-        v-if="status === 'loading'"
-        animation="gradient"
-        :row-col="[{ width: '68%', height: '16px' }]"
-        aria-hidden="true"
-      />
-      <span v-else-if="isReady && nothingCounted" class="gauge-card__uncounted">
-        {{ $t('dashboard.metricUncounted', { count: uncounted }, uncounted) }}
-      </span>
-      <template v-else-if="isReady">
-        <span>{{ detailLabel }}</span>
-        <span>: </span>
-        <b v-if="detailMode === 'value'">{{
-          displayUsed.toFixed(usedPrecision)
-        }}</b>
-        <b v-else>
-          {{ displayUsed.toFixed(usedPrecision) }} /
-          {{ displayTotal.toFixed(totalPrecision) }}
-        </b>
-        <span v-if="unit" class="gauge-card__detail-unit"
-          >&nbsp;{{ unit }}</span
-        >
-        <span v-if="lowerBound" class="gauge-card__uncounted">
-          {{ uncounted === null ? $t('dashboard.metricUncountedUnknown') : $t('dashboard.metricUncounted', { count: uncounted }, uncounted) }}
-        </span>
-      </template>
-      <span v-else-if="status === 'error'">{{
-        $t('dashboard.metricQueryFailed')
-      }}</span>
-      <span v-else-if="status === 'invalid'">{{
-        $t('dashboard.metricInvalid')
-      }}</span>
-      <span v-else-if="status === 'no-capacity'">{{
-        $t('dashboard.metricNoCapacity')
-      }}</span>
-      <span v-else>{{ $t('dashboard.metricNoData') }}</span>
-    </div>
     <span
       v-if="status === 'loading'"
       class="gauge-card__sr-only"
@@ -119,27 +82,21 @@
 import { computed, ref, useId } from 'vue';
 import { HelpCircleIcon } from 'tdesign-icons-vue-next';
 import { LONG_TEXT_TOOLTIP_STYLE } from './tooltip-policy.mjs';
-import { isLowerBound, isNothingCounted, lowerBoundMessage, nothingCountedMessage } from '../metrics/uncounted.mjs';
+import { formatAmountPair } from '../metrics/amount-format.mjs';
 
 const props = defineProps({
   title: { type: String, required: true },
   description: { type: String, default: '' },
   metricHelpLabel: { type: String, default: '' },
-  detailLabel: { type: String, default: '' },
   detailMode: { type: String, default: 'ratio' },
   kind: { type: String, default: 'allocation' },
   displayDivisor: { type: Number, default: 1 },
-  usedPrecision: { type: Number, default: 1 },
-  totalPrecision: { type: Number, default: 0 },
   status: { type: String, default: 'loading' },
-  // Allocations the rate leaves out; null when that count cannot be read.
-  uncounted: { type: Number, default: 0 },
   total: { type: [Number, String], default: 0 },
   used: { type: [Number, String], default: 0 },
   unit: { type: String, default: '' },
   gaugeUnit: { type: String, default: '%' },
   percent: { type: [Number, String], default: 0 },
-  hideInfo: { type: Boolean, default: false },
   showProgress: { type: Boolean, default: true },
 });
 
@@ -149,26 +106,25 @@ const helpFocused = ref(false);
 const helpVisible = computed(() => helpHovered.value || helpFocused.value);
 const showProgress = computed(() => props.showProgress !== false);
 const numericPercent = computed(() => Number(props.percent));
-const lowerBound = computed(() => isLowerBound(props.uncounted));
-const nothingCounted = computed(() => isNothingCounted(props.used, props.uncounted));
 const isReady = computed(
   () => props.status === 'ready' && Number.isFinite(numericPercent.value),
 );
-const displayUsed = computed(
-  () => Number(props.used || 0) / props.displayDivisor,
-);
-const displayTotal = computed(
-  () => Number(props.total || 0) / props.displayDivisor,
-);
+const STATE_TEXT_KEYS = {
+  error: 'dashboard.metricQueryFailed',
+  invalid: 'dashboard.metricInvalid',
+  'no-capacity': 'dashboard.metricNoCapacity',
+};
+const stateTextKey = computed(() => STATE_TEXT_KEYS[props.status] || 'dashboard.metricNoData');
+const amount = computed(() => formatAmountPair(
+  Number(props.used || 0) / props.displayDivisor,
+  Number(props.total || 0) / props.displayDivisor,
+  props.unit,
+));
 
-const progressColor = computed(() => {
-  if (props.kind === 'utilization') return '#2563EB';
-
-  const value = Number(props.percent);
-  if (value < 50) return '#16A34A';
-  if (value < 80) return '#2563EB';
-  return '#DC2626';
-});
+// One neutral color; only an allocation close to full asks for attention.
+const progressColor = computed(() => (
+  props.kind === 'allocation' && Number(props.percent) >= 80 ? '#DC2626' : '#2563EB'
+));
 </script>
 
 <style lang="scss" scoped>
@@ -185,6 +141,7 @@ const progressColor = computed(() => {
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
     font-size: 12px;
     color: #939ea9;
     margin-bottom: 8px;
@@ -231,15 +188,26 @@ const progressColor = computed(() => {
     border: 0;
   }
 
+  // The denominator qualifies the number, so it shares the number's row.
   &__value {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2px 8px;
     margin-bottom: 10px;
   }
 
-  &__bound {
-    font-size: 16px;
-    font-weight: 600;
+  &__aside {
+    font-size: 11px;
+    line-height: 16px;
     color: #697886;
-    margin-right: 2px;
+    white-space: nowrap;
+
+    b {
+      color: #1d2b3a;
+      font-weight: 500;
+    }
   }
 
   &__number {
@@ -259,28 +227,19 @@ const progressColor = computed(() => {
     margin-left: 2px;
   }
 
+  // Pinned to the bottom, so a taller neighbor never leaves a gap under the bar.
   &__progress {
-    margin-bottom: 8px;
+    margin-top: auto;
+
+    // TDesign keeps an empty label with an 8px margin when label is false.
+    :deep(.t-progress__info) {
+      display: none;
+    }
   }
 
   &__progress-skeleton {
     min-height: 4px;
   }
 
-  &__detail {
-    font-size: 11px;
-    color: #697886;
-    line-height: 16px;
-
-    b {
-      color: #1d2b3a;
-      font-weight: 500;
-    }
-  }
-
-  &__uncounted {
-    display: block;
-    color: #697886;
-  }
 }
 </style>

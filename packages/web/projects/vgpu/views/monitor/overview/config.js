@@ -1,38 +1,20 @@
-import { buildClusterTrendQueries } from '../../../metrics/query-contract.mjs';
-import { CHART_COLORS } from '../../../metrics/chart-colors.mjs';
+import { buildPhysicalResourceQueries } from '../../../metrics/physical-resource-queries.mjs';
 
-export const getRangeConfigInit = (t) => {
-  const queries = buildClusterTrendQueries();
-  const allocation = (key, query) => ({
-    key,
-    name: t('dashboard.allocRateLegend'),
-    color: CHART_COLORS.allocation,
-    data: [],
-    query,
-  });
-  const usage = (key, query) => ({
-    key,
-    name: t('dashboard.usageRateLegend'),
-    color: CHART_COLORS.usage,
-    data: [],
-    query,
-  });
-
+export const getRangeConfigInit = () => {
+  const queries = buildPhysicalResourceQueries();
   return [
     {
       key: 'compute',
-      title: t('dashboard.gpuComputeAllocUsageTrend'),
       dataSource: [
-        allocation('compute-allocation', queries.computeAllocation),
-        usage('compute-usage', queries.computeUsage),
+        { key: 'compute-allocation', query: queries.computeAllocation.percentQuery },
+        { key: 'compute-usage', query: queries.computeUsage.percentQuery },
       ],
     },
     {
       key: 'memory',
-      title: t('dashboard.gpuMemAllocUsageTrend'),
       dataSource: [
-        allocation('memory-allocation', queries.memoryAllocation),
-        usage('memory-usage', queries.memoryUsage),
+        { key: 'memory-allocation', query: queries.memoryAllocation.percentQuery },
+        { key: 'memory-usage', query: queries.memoryUsage.percentQuery },
       ],
     },
   ];

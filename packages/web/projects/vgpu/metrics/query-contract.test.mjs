@@ -3,8 +3,6 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
-  buildClusterAllocatableQueries,
-  buildClusterTrendQueries,
   buildComputeAllocationQueries,
   buildGroupedResourceTopQueries,
   buildMemoryAllocationQueries,
@@ -228,14 +226,7 @@ test('task trend queries reject inconsistent device-identity and vGPU counts', (
   }
 });
 
-test('Kubernetes resource queries deduplicate replicas and bind the current Pod UID', () => {
-  assert.deepEqual(buildClusterAllocatableQueries(), {
-    cpu:
-      'sum(max by (node) (kube_node_status_allocatable{resource="cpu",unit="core"}))',
-    memory:
-      'sum(max by (node) (kube_node_status_allocatable{resource="memory",unit="byte"}))',
-  });
-
+test('Kubernetes container limits bind the current Pod UID', () => {
   const task = buildTaskContainerResourceQueries();
   assert.equal(
     task.cpuLimit,
@@ -312,43 +303,16 @@ test('memory usage only includes devices that report both used and capacity', ()
   assert.doesNotMatch(queries.percentQuery, /\* 0/);
 });
 
-test('grouped rankings preserve idle allocation but not missing usage', () => {
-  for (const groupLabel of ['node', 'device_uuid']) {
-    const queries = buildGroupedResourceTopQueries(groupLabel);
-
-    assert.match(
-      queries.memoryAllocation,
-      new RegExp(`or on \\(${groupLabel}\\)`),
-    );
-    assert.match(queries.memoryAllocation, /hami_vmemory_size/);
-    assert.match(
-      queries.memoryUsage,
-      /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
-    );
-    assert.match(
-      queries.memoryUsage,
-      /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
-    );
-    assert.doesNotMatch(queries.memoryUsage, / or /);
-    assert.match(queries.memoryUsage, /sum by \([^)]*instance\)/);
+test('non-node rankings keep their grouped allocation, utilization and physical memory formulas', () => {
+  for (const groupLabel of ['device_uuid', 'provider']) {
+    const options = { groupLabel };
+    assert.deepEqual(buildGroupedResourceTopQueries(groupLabel), {
+      computeAllocation: `topk(5, ${buildComputeAllocationQueries(options).percentQuery})`,
+      computeUsage: `topk(5, avg by (${groupLabel}) (hami_core_util_avg))`,
+      memoryAllocation: `topk(5, ${buildMemoryAllocationQueries(options).percentQuery})`,
+      memoryUsage: `topk(5, ${buildMemoryUsageQueries(options).percentQuery})`,
+    });
   }
-});
-
-test('cluster trends share the allocation and reporting-device contracts', () => {
-  const queries = buildClusterTrendQueries();
-
-  assert.match(queries.computeAllocation, / or /);
-  assert.match(queries.memoryAllocation, /hami_vmemory_size/);
-  assert.match(queries.memoryAllocation, / or /);
-  assert.match(
-    queries.memoryUsage,
-    /hami_memory_used and on \(instance, node, provider, device_uuid\) hami_memory_size/,
-  );
-  assert.match(
-    queries.memoryUsage,
-    /hami_memory_size and on \(instance, node, provider, device_uuid\) hami_memory_used/,
-  );
-  assert.doesNotMatch(queries.memoryUsage, / or /);
 });
 
 test('grouped query labels reject malformed PromQL input', () => {

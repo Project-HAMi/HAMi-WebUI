@@ -4,7 +4,7 @@
       <LangSelect />
     </div>
     <div class="content-main-card">
-      <div class="content-body">
+      <div ref="contentBody" class="content-body">
         <router-view />
       </div>
     </div>
@@ -12,11 +12,17 @@
 </template>
 
 <script setup>
+import { ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import LangSelect from '@/components/LangSelect/index.vue';
 
 defineProps({
   showLanguageSwitch: { type: Boolean, default: false },
 });
+
+const contentBody = ref(null);
+const route = useRoute();
+watch(() => route.path, () => contentBody.value?.scrollTo(0, 0), { flush: 'post' });
 </script>
 
 <style lang="scss" scoped>
@@ -67,6 +73,8 @@ defineProps({
   overflow-y: auto;
   overflow-x: auto;
   padding-right: 12px;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }

@@ -8,7 +8,7 @@
         <div class="pie">
           <VChart
             ref="pieChartRef"
-            :option="getPreviewBarPie(pieData)"
+            :option="getPreviewBarPie(pieData, t(isNodeType ? 'common.unitNode' : 'common.unitSheet'))"
             :autoresize="true"
             @click="onPieClick"
           />
@@ -29,17 +29,8 @@
         </ul>
       </block-box>
     </li>
-    <li v-if="isNodeType" class="preview-item">
-      <TabTop v-bind="nodeComputeTop5" :onClick="handleClick" class="node-top" />
-    </li>
-    <li v-else class="preview-item">
-      <TabTop v-bind="gpuComputeTop5" :onClick="handleClick" class="node-top" />
-    </li>
-    <li v-if="isNodeType" class="preview-item">
-      <TabTop v-bind="nodeMemoryTop5" :onClick="handleClick" class="node-top" />
-    </li>
-    <li v-else class="preview-item">
-      <TabTop v-bind="gpuMemoryTop5" :onClick="handleClick" class="node-top" />
+    <li v-for="chart in rankingCharts" :key="chart.key" class="preview-item">
+      <TabTop :title="chart.title" :config="chart.config" :onClick="handleClick" class="node-top" />
     </li>
   </ul>
 </template>
@@ -47,15 +38,15 @@
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
-import { categoricalColor } from '~/vgpu/metrics/chart-colors.mjs';
+import { donutSliceColors } from '~/vgpu/metrics/vendor-colors.mjs';
 import { getPreviewBarPie } from '~/vgpu/components/preview-pie.mjs';
 import { onMounted, ref, computed } from 'vue';
 import VChart from 'vue-echarts';
 import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
 import {
+  nodeVendorDistributionQuery,
   buildGroupedResourceTopQueries,
-  buildUnknownComputeShareQuery,
 } from '~/vgpu/metrics/query-contract.mjs';
 
 const props = defineProps({
@@ -66,6 +57,9 @@ const props = defineProps({
     default: 'node',
   },
   hidePie: Boolean,
+  modelDistribution: Array,
+  rankings: Object,
+  rankingStatus: String,
   handleClick: Function,
   handlePieClick: Function,
   currentName: String,
@@ -75,110 +69,39 @@ const { t } = useI18n();
 const pieChartRef = ref();
 
 const onPieClick = (params) => {
+  if (props.modelDistribution && !props.modelDistribution.some(row => row.name && row.name === params.name)) return;
   props.handlePieClick?.(params, pieChartRef.value);
 };
 
 const isNodeType = computed(() => props.type === 'node');
-const resourceTopQueries = computed(() =>
-  buildGroupedResourceTopQueries(props.type),
-);
+const nodeQueries = buildGroupedResourceTopQueries('node');
+const rankingCharts = computed(() => {
+  const series = (metric, key, label) => ({
+    key, tab: t(label),
+    ...(isNodeType.value
+      ? { query: nodeQueries[metric], nameKey: 'node' }
+      : { data: props.rankings[metric], status: props.rankingStatus }),
+  });
+  return [
+    {
+      key: 'compute', title: t(isNodeType.value ? 'dashboard.nodeComputeTop5' : 'dashboard.gpuComputeTop5'),
+      config: [series('computeAllocation', 'alloc', 'dashboard.allocRate'), series('computeUsage', 'usage', 'dashboard.utilizationRateLegend')],
+    },
+    {
+      key: 'memory', title: t(isNodeType.value ? 'dashboard.nodeMemoryTop5' : 'dashboard.gpuMemoryTop5'),
+      config: [series('memoryAllocation', 'alloc', 'dashboard.allocRate'), series('memoryUsage', 'usage', 'dashboard.overviewMemoryOccupancyLegend')],
+    },
+  ];
+});
 
-
-const nodeComputeTop5 = computed(() => ({
-  title: t('dashboard.nodeComputeTop5'),
-  config: [
-    {
-      tab: t('dashboard.allocRate'),
-      key: 'alloc',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.computeAllocation,
-      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: props.type }),
-    },
-    {
-      tab: t('dashboard.usageRateLegend'),
-      key: 'usage',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.computeUsage,
-    },
-  ],
-}));
-
-const nodeMemoryTop5 = computed(() => ({
-  title: t('dashboard.nodeMemoryTop5'),
-  config: [
-    {
-      tab: t('dashboard.allocRate'),
-      key: 'alloc',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.memoryAllocation,
-    },
-    {
-      tab: t('dashboard.usageRateLegend'),
-      key: 'usage',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.memoryUsage,
-    },
-  ],
-}));
-
-const gpuComputeTop5 = computed(() => ({
-  title: t('dashboard.gpuComputeTop5'),
-  config: [
-    {
-      tab: t('dashboard.allocRate'),
-      key: 'alloc',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.computeAllocation,
-      uncountedQuery: buildUnknownComputeShareQuery({ groupLabel: props.type }),
-    },
-    {
-      tab: t('dashboard.usageRateLegend'),
-      key: 'usage',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.computeUsage,
-    },
-  ],
-}));
-
-const gpuMemoryTop5 = computed(() => ({
-  title: t('dashboard.gpuMemoryTop5'),
-  config: [
-    {
-      tab: t('dashboard.allocRate'),
-      key: 'alloc',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.memoryAllocation,
-    },
-    {
-      tab: t('dashboard.usageRateLegend'),
-      key: 'usage',
-      nameKey: props.type,
-      data: [],
-      query: resourceTopQueries.value.memoryUsage,
-    },
-  ],
-}));
-
-const pieConfig = {
-  device_uuid: {
-    query:
-      'count by (device_type) (sum by (device_uuid, device_type) (hami_vgpu_count))',
-    key: 'device_type',
-  },
-  node: {
-    query: 'count by (provider) (sum by (node,provider) (hami_vgpu_count))',
-    key: 'provider',
-  },
-};
-
-const pieData = ref([]);
+const nodeVendors = ref([]);
+const pieData = computed(() => {
+  const rows = isNodeType.value ? nodeVendors.value : (props.modelDistribution || []).map(row => ({
+    ...row, name: row.name || t('dashboard.unknownModel'),
+  }));
+  const colors = donutSliceColors(rows);
+  return rows.map(row => ({ ...row, color: colors.get(row.name) }));
+});
 
 const totalCount = computed(() =>
   pieData.value.reduce((sum, item) => sum + Number(item.value || 0), 0),
@@ -203,16 +126,10 @@ const pieDataWithPercent = computed(() => {
 
 
 onMounted(async () => {
-  const thisPieConfig = pieConfig[props.type];
-
-  const { data } = await cardApi.getInstantVector({
-    query: thisPieConfig.query,
-  });
-
-  pieData.value = data.map((item, index) => ({
-    name: item.metric[thisPieConfig.key],
-    value: Number(item.value),
-    color: categoricalColor(index),
+  if (!isNodeType.value || props.hidePie) return;
+  const { data } = await cardApi.getInstantVector({ query: nodeVendorDistributionQuery });
+  nodeVendors.value = data.map(item => ({
+    name: item.metric.provider, vendor: item.metric.provider, value: Number(item.value),
   }));
 });
 </script>

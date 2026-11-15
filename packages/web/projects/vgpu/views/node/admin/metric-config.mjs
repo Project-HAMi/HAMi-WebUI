@@ -1,9 +1,14 @@
-export const createNodeComputeUsageGaugeConfig = ({ selector }) => ({
-  titleKey: 'dashboard.computeUsageRate',
-  percent: 0,
-  query: `avg(avg(hami_core_util{${selector}}) by (node, device_uuid))`,
-  percentQuery: `avg(avg(hami_core_util_avg{${selector}}) by (node, device_uuid))`,
-  total: 100,
-  used: 0,
-  unit: ' ',
-});
+import { buildPhysicalAllocationQueries, buildPhysicalUsageQueries } from '../../../metrics/physical-resource-queries.mjs';
+
+// A same-name replacement node owns a different history.
+const selector = 'node=$node,node_uid=$uid';
+export const nodeResourceQueries = {
+  ...buildPhysicalAllocationQueries({ selector }),
+  ...buildPhysicalUsageQueries({ selector, byNode: true }),
+};
+
+const { computeUsage, memoryUsage } = nodeResourceQueries;
+export const nodeUsageGaugeConfigs = [
+  { query: computeUsage.query, total: 100, percent: 0 },
+  { query: memoryUsage.query, totalQuery: memoryUsage.totalQuery, percent: 0 },
+];

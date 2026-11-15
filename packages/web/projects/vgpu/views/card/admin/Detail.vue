@@ -47,9 +47,8 @@
         </block-box>
         <TrendTimeFilter :model-value="times" loading class="card-trend-filter" />
         <div class="line-box">
-          <block-box v-for="section in trendSections" :key="section.key" :title="section.title">
-            <MetricChart :option="section.option" />
-          </block-box>
+          <ResourceTrend kind="compute" />
+          <ResourceTrend kind="memory" />
           <block-box v-for="item in lineToolsView" :key="item.titleKey" :title="item.title">
             <MetricChart :option="item.option" />
           </block-box>
@@ -77,7 +76,9 @@
             </div>
             <div class="basic-info-card">
               <div class="basic-info-title">
-                <svg-icon v-if="gpuTypeIcon && detail.type" :icon="gpuTypeIcon" class="gpu-type-icon" />
+                <VendorMark v-if="detail.type" :vendor="detail.vendor">
+                  <svg-icon :icon="fallbackModelIcon" class="gpu-type-icon" />
+                </VendorMark>
                 {{ detail.type || '--' }}
                 <UnconfiguredTag v-if="detail.unconfigured" />
               </div>
@@ -316,20 +317,8 @@
 
     <TrendTimeFilter v-model="times" :loading="trendLoading" class="card-trend-filter" />
     <div class="line-box">
-      <block-box
-        v-for="section in trendSections"
-        :key="section.key"
-        :title="section.title"
-      >
-        <MetricChart
-          :status="section.status"
-          :option="section.option"
-          :note="section.note"
-          :state-text="section.stateText"
-          :refreshing="section.refreshing"
-          :refresh-error="Boolean(section.refreshError)"
-        />
-      </block-box>
+      <ResourceTrend kind="compute" :series="computeTrend" :allocation-label="computeAllocLegend" :vendor="detail.vendor" />
+      <ResourceTrend kind="memory" :series="memoryTrend" :vendor="detail.vendor" />
 
       <block-box
         v-for="item in lineToolsView"
@@ -377,9 +366,10 @@ import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
 import nodeApi from '~/vgpu/api/node';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
+import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
-import { stateTextKey, summarizeRangeSeries } from '~/vgpu/metrics/metric-state.mjs';
+import { stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
 import {
   buildComputeAllocationQueries,
@@ -397,6 +387,8 @@ import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
+import { cardHealthDisplay } from './card-health.mjs';
+import VendorMark from '~/vgpu/components/VendorMark.vue';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import taskApi from '~/vgpu/api/task';
 
@@ -459,39 +451,25 @@ const nodeDetailLocation = computed(() =>
     nodeName: detail.value?.nodeName,
   }),
 );
-const CARD_TYPE_ICON_MAP = {
-  NVIDIA: 'gpu-nvidia',
-  MXC: 'gpu-nvidia',
-  ASCEND: 'gpu-ascend',
-  METAX: 'gpu-metax',
-  AWS: 'gpu-aws',
-  AWSNEURON: 'gpu-aws',
-};
+// Keep the legacy AWS model mark for entries without a recognised inventory provider.
+const fallbackModelIcon = computed(() => /^AWS(?:NEURON)?(?:[^a-z]|$)/i.test(detail.value?.type || '') ? 'gpu-aws' : 'vgpu-card');
 
-const extractLetters = (value) => {
-  if (typeof value === 'string') {
-    return value.match(/[a-z]+/gi) || [];
+const headerHealth = ref(null);
+watch(detail, async (card, _, onCleanup) => {
+  headerHealth.value = null;
+  if (!card?.uuid || card.uuid !== routeCardUuid.value) return;
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
+  try {
+    const health = await cardApi.getDetailHealth(card, controller.signal);
+    if (!controller.signal.aborted) headerHealth.value = health;
+  } catch {
+    if (!controller.signal.aborted) headerHealth.value = {};
   }
-  return [];
-};
-
-const gpuTypeIcon = computed(() => {
-  const vendor = extractLetters(detail.value?.type)?.[0]?.toUpperCase();
-  if (!vendor) return '';
-  return CARD_TYPE_ICON_MAP[vendor] || 'vgpu-card';
 });
-const getCardStatusDisplay = ({ health, isExternal }) => {
-  if (isExternal || health === undefined || health === null) {
-    return { icon: 'status-unmanaged', text: t('card.unknown') };
-  }
-  if (health) {
-    return { icon: 'status-schedulable', text: t('card.normal') };
-  }
-  return { icon: 'status-unschedulable', text: t('card.abnormal') };
-};
 const headerStatusDisplay = computed(() =>
-  isDetailReady.value
-    ? getCardStatusDisplay(detail.value || {})
+  isDetailReady.value && headerHealth.value
+    ? cardHealthDisplay(headerHealth.value, t)
     : { icon: '', text: '' },
 );
 
@@ -768,25 +746,6 @@ const lineToolsView = computed(() =>
     };
   }),
 );
-
-const trendSection = (key, title, [allocation, usage], allocationName) => {
-  const series = [
-    { ...allocation, name: allocationName, color: CHART_COLORS.allocation },
-    { ...usage, name: t('dashboard.usageRateLegend'), color: CHART_COLORS.usage },
-  ];
-  const summary = summarizeRangeSeries(series, t);
-  return {
-    key,
-    title,
-    ...summary,
-    stateText: t(stateTextKey(summary.status)),
-    option: buildTimeSeriesOptions({ series }),
-  };
-};
-const trendSections = computed(() => [
-  trendSection('compute', dt('dashboard.gpuComputeAllocUsageTrend'), computeTrend.value, computeAllocLegend.value),
-  trendSection('memory', dt('dashboard.gpuMemAllocUsageTrend'), memoryTrend.value, t('dashboard.allocRateLegend')),
-]);
 
 let nodeEnrichmentGeneration = 0;
 watch(

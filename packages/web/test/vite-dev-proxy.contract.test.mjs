@@ -55,6 +55,21 @@ const getRawPath = async(origin, requestPath) => {
   })
 }
 
+test('the dev API guard keeps each raw route within its own API namespace', async() => {
+  const { config } = await loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile, webRoot)
+  const guard = config.plugins.find(plugin => plugin.name === 'hami-webui-dev-api-boundary')
+  let middleware
+  guard.configureServer({ middlewares: { use(fn) { middleware = fn } } })
+  for (const prefix of ['/api/v1', '/api/vgpu/v1']) {
+    const toRoot = '../'.repeat(prefix.split('/').length - 1)
+    for (const destination of ['example', prefix === '/api/v1' ? 'api/vgpu/v1/example' : 'api/v1/example']) {
+      const response = { setHeader() {}, end() {} }
+      middleware({ url: prefix + '/' + toRoot + destination }, response, () => assert.fail('Unexpected proxy handoff'))
+      assert.equal(response.statusCode, 404)
+    }
+  }
+})
+
 test('Vite serves the SPA and proxies the versioned Web API without NestJS', async() => {
   const requests = []
   const backend = createHTTPServer(async(request, response) => {
@@ -112,6 +127,7 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     assert.equal(vite.config.server.port, 3000)
     assert.equal(vite.config.server.strictPort, true)
     assert.deepEqual(Object.keys(vite.config.server.proxy), [
+      '^/api/v1(?:/|[?]|$)',
       '^/api/vgpu/v1(?:/|[?]|$)',
     ])
     assert.equal(
@@ -150,6 +166,12 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     assert.equal(requests[0].headers['content-type'], 'application/json')
     assert.equal(requests[0].headers['x-contract-request'], 'preserved')
 
+    const inventoryResponse = await fetch(`${frontendURL}/api/v1/overview/inventory`)
+    assert.equal(inventoryResponse.status, 422)
+    assert.equal(requests.length, 2)
+    assert.equal(requests[1].method, 'GET')
+    assert.equal(requests[1].url, '/api/v1/overview/inventory')
+
     const deepLinkResponse = await fetch(
       `${frontendURL}/overview`,
       { headers: { accept: 'text/html' } }
@@ -159,6 +181,9 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
 
     for (const blockedPath of [
       '/api/unknown',
+      '/api/v1-extra/overview/inventory',
+      '/api/v2/overview/inventory',
+      '/api/v1/../metrics',
       '/api/vgpu-extra/v1/nodes',
       '/api/vgpu/metrics',
       '/api/vgpu/readyz',
@@ -174,7 +199,7 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
         blockedPath
       )
       assert.equal(blockedResponse.body, '404 page not found\n')
-      assert.equal(requests.length, 1, blockedPath)
+      assert.equal(requests.length, 2, blockedPath)
     }
   } finally {
     if (frontend) await close(frontend)

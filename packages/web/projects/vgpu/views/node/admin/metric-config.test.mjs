@@ -2,41 +2,28 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  calculateMetricPercent,
   METRIC_STATUS,
   readReadyMetricField,
   resetMetricQueryState,
   requiresMetricCapacity,
   resolveMetricStatus,
 } from '../../../hooks/instant-vector-state.mjs';
-import { createNodeComputeUsageGaugeConfig } from './metric-config.mjs';
+import { nodeResourceQueries, nodeUsageGaugeConfigs } from './metric-config.mjs';
+import { buildPhysicalResourceQueries } from '../../../metrics/physical-resource-queries.mjs';
 
-const config = createNodeComputeUsageGaugeConfig({
-  selector: 'node=$node',
-});
+const [config, memoryGauge] = nodeUsageGaugeConfigs;
 
-test('node compute utilization stays normalized for one-card and eight-card nodes', () => {
-  assert.equal(
-    config.query,
-    'avg(avg(hami_core_util{node=$node}) by (node, device_uuid))',
-  );
-  assert.equal(config.total, 100);
-  assert.equal(config.totalQuery, undefined);
-
-  for (const deviceCount of [1, 8]) {
-    const deviceSamples = Array(deviceCount).fill(41);
-    const nodePercentage =
-      deviceSamples.reduce((total, sample) => total + sample, 0) /
-      deviceSamples.length;
-
-    const metric = {
-      ...config,
-      status: METRIC_STATUS.READY,
-      percent: calculateMetricPercent(nodePercentage, config.total),
-    };
-
-    assert.equal(readReadyMetricField(metric, 'percent'), 41);
+test('node usage cards and trends use the same physical devices as the node ranking', () => {
+  const ranking = buildPhysicalResourceQueries({ byNode: true });
+  for (const metric of ['computeUsage', 'memoryUsage']) {
+    for (const [field, query] of Object.entries(ranking[metric])) {
+      assert.equal(nodeResourceQueries[metric][field], query.replaceAll('device_kind="physical"', 'device_kind="physical",node=$node,node_uid=$uid'));
+    }
   }
+  assert.equal(config.query, nodeResourceQueries.computeUsage.percentQuery);
+  assert.equal(config.total, 100);
+  assert.equal(memoryGauge.query, nodeResourceQueries.memoryUsage.query);
+  assert.equal(memoryGauge.totalQuery, nodeResourceQueries.memoryUsage.totalQuery);
 });
 
 test('node compute utilization preserves loading and missing states', () => {

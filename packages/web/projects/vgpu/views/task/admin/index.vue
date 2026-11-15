@@ -13,7 +13,7 @@
         :refreshing="tableRefreshing"
         @refresh="refreshTable"
       >
-        <div class="workload-filters">
+        <div class="workload-filters inventory-list-filters">
           <SegmentedControl
             v-model="filters.status"
             class="workload-status-filter"
@@ -23,7 +23,7 @@
           />
           <t-select
             v-model="filters.nodeName"
-            class="workload-filter-select"
+            class="inventory-filter-select"
             clearable
             filterable
             :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: nodePopupStyle }"
@@ -36,7 +36,7 @@
           />
           <t-select
             v-model="filters.deviceId"
-            class="workload-filter-select"
+            class="inventory-filter-select"
             clearable
             filterable
             :popup-props="{ overlayClassName: 'select-option-label-popup', overlayInnerStyle: cardPopupStyle }"
@@ -49,7 +49,7 @@
           />
           <t-input
             v-model="filters.keyword"
-            class="workload-search"
+            class="workload-search inventory-filter-search"
             clearable
             :placeholder="$t('task.searchKeyword')"
             :aria-label="$t('task.searchKeyword')"
@@ -260,7 +260,7 @@ const baseColumns = computed(() => [
         <span class="workload-container-kind">{t(`scheduling.containerKind.${containerKind}`)}</span>
       ) : null;
       return (
-        <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <span class="vgpu-table-name-cell">
           <span class="task-name-icon-card vgpu-table-name-icon-card">
             <svg-icon icon="task-name" style={{ fontSize: '20px' }} />
           </span>
@@ -269,7 +269,7 @@ const baseColumns = computed(() => [
               {scheduling && resourceRequest ? (
                 <button
                   type="button"
-                  class="workload-identity-primary workload-identity-link workload-identity-button"
+                  class="workload-identity-primary vgpu-resource-link workload-identity-button"
                   aria-label={workloadName}
                   aria-haspopup="dialog"
                   onClick={() => { selectedSchedulingContainer.value = name; selectedSchedulingPod.value = scheduling; }}
@@ -278,7 +278,7 @@ const baseColumns = computed(() => [
                   {containerKindBadge}
                 </button>
               ) : to ? (
-                <RouterLink class="workload-identity-primary workload-identity-link" to={to} aria-label={workloadName}>
+                <RouterLink class="workload-identity-primary vgpu-resource-link" to={to} aria-label={workloadName}>
                   {identityLabel}
                   {containerKindBadge}
                 </RouterLink>
@@ -676,40 +676,11 @@ watch(() => route.query, (query) => {
   line-height: 20px;
 }
 
-:deep(.workload-identity-link) {
-  color: #324558;
-  font-weight: 500;
-  text-decoration: none;
-}
-
-.workload-filters {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-:deep(.workload-status-filter) {
+:deep(.workload-identity-primary.vgpu-resource-link) {
+  align-self: flex-start;
+  width: auto;
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-:deep(.workload-filter-select) {
-  flex: 0 0 140px;
-  width: 140px;
-}
-
-:deep(.workload-search) {
-  flex: 1 1 170px;
-  min-width: 170px;
-  max-width: 280px;
+  font-weight: 500;
 }
 
 :deep(.workload-identity-button) {
@@ -720,11 +691,6 @@ watch(() => route.query, (query) => {
   font-size: inherit;
   text-align: left;
   cursor: pointer;
-}
-
-:deep(.workload-identity-link:hover),
-:deep(.workload-identity-link:focus-visible) {
-  color: var(--el-color-primary);
 }
 
 :deep(.workload-identity-label) {
@@ -763,6 +729,7 @@ watch(() => route.query, (query) => {
 }
 
 :deep(.workload-container-kind) {
+  order: 1;
   flex: 0 0 auto;
   align-self: center;
   padding: 0 4px;
@@ -782,15 +749,9 @@ watch(() => route.query, (query) => {
   bottom: 0;
   left: 0;
   height: 1px;
-  background: currentcolor;
+  background: var(--resource-link-underline, transparent);
   content: '';
-  opacity: 0;
   pointer-events: none;
-}
-
-:deep(.workload-identity-link:hover .workload-identity-label::after),
-:deep(.workload-identity-link:focus-visible .workload-identity-label::after) {
-  opacity: 1;
 }
 
 :deep(.workload-namespace-line) {

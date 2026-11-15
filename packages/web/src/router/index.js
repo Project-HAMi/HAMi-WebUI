@@ -6,7 +6,6 @@ import Layout from '@/layout';
 /* Router Modules */
 import vgpuRoutes, { legacyRoutes } from '../../projects/vgpu/router';
 // import vgpuHomeRoutes from '../../projects/vgpu/homeRouter';
-import { nextTick } from 'vue';
 
 /**
  * constantRoutes
@@ -46,6 +45,13 @@ const router = createRouter({
   routes: constantRoutes,
 });
 
+// Older overview bookmarks used a separate physical-device list.
+router.beforeEach((to) => {
+  if (to.name === 'accelerators' && to.query.scope === 'physical') {
+    return { path: to.path, query: { ...to.query, scope: undefined }, hash: to.hash, replace: true };
+  }
+});
+
 router.afterEach((to) => {
   const history = JSON.parse(localStorage.getItem('history')) || [];
   if (to.path !== '/home') {
@@ -56,14 +62,6 @@ router.afterEach((to) => {
     .map((item) => pick(item, ['path', 'meta']));
 
   localStorage.setItem('history', JSON.stringify(newData));
-
-  nextTick(() => {
-    const mainEl = document.getElementById('content');
-    try {
-      mainEl.scrollTo(0, 0);
-    } catch (error) {
-    }
-  });
 });
 
 export default router;

@@ -1,5 +1,5 @@
 import cardApi from '~/vgpu/api/card';
-import { computed, ref, watch } from 'vue';
+import { computed, onScopeDispose, ref, watch } from 'vue';
 import { calculatePrometheusStep } from '@/utils';
 import { formatQueryTimestamp } from '@/utils/query-time.mjs';
 import {
@@ -23,7 +23,7 @@ import {
   startRequest,
 } from '@/hooks/request-state.mjs';
 
-const useInstantVector = (configs, parseQuery = (query) => query, times) => {
+const useInstantVector = (configs, parseQuery = (query) => query, times, { subscribe } = {}) => {
   const data = ref(
     configs.map((config) => ({
       ...config,
@@ -48,7 +48,7 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
       percentQuery: percentQuery ? safeParseQuery(percentQuery) : undefined,
     }));
 
-  const fetchInstantData = async (parsedConfigs) => {
+  const fetchInstantData = async (parsedConfigs, time, signal) => {
     const reqs = configs.map(
       async (config, index) => {
         const { query, totalQuery } = config;
@@ -89,9 +89,9 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
           let totalStatus;
           if (query) {
             const usedData = await cardApi.getInstantVector({
-              query: parsedQuery,
-            });
-            if (!isLatestRequest(metric, requestId)) return;
+              query: parsedQuery, time,
+            }, signal);
+            if (signal?.aborted || !isLatestRequest(metric, requestId)) return;
             const usedSample = readInstantValue(usedData);
 
             // Preserve whether Prometheus returned a real sample. A zero sample
@@ -105,9 +105,9 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
           if (totalQuery) {
             const parsedTotalQuery = parsedConfig.totalQuery;
             const totalData = await cardApi.getInstantVector({
-              query: parsedTotalQuery,
-            });
-            if (!isLatestRequest(metric, requestId)) return;
+              query: parsedTotalQuery, time,
+            }, signal);
+            if (signal?.aborted || !isLatestRequest(metric, requestId)) return;
             const totalSample = readInstantValue(totalData);
             totalStatus = totalSample.status;
             nextMetric.totalHasData = totalSample.status === METRIC_STATUS.READY;
@@ -129,14 +129,14 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
             nextMetric.percent = percent ?? 0;
           }
 
-          if (!isLatestRequest(metric, requestId)) return;
+          if (signal?.aborted || !isLatestRequest(metric, requestId)) return;
           restoreMetricState(metric, nextMetric);
           resolveRequest(metric, {
             status: nextMetric.status,
             requestId,
           });
         } catch (error) {
-          if (!isLatestRequest(metric, requestId)) return;
+          if (signal?.aborted || !isLatestRequest(metric, requestId)) return;
           if (!hasResolved) {
             setMetricErrorState(metric, {
               hasTotal: Boolean(totalQuery),
@@ -186,13 +186,16 @@ const useInstantVector = (configs, parseQuery = (query) => query, times) => {
   };
 
   const parsedConfigs = computed(parseConfigQueries);
+  if (subscribe) {
+    onScopeDispose(subscribe((time, signal) => fetchInstantData(parsedConfigs.value, time, signal)));
+  }
   watch(
     parsedConfigs,
     (value) => {
-      fetchInstantData(value);
+      if (!subscribe) fetchInstantData(value);
       fetchRangeData(value);
     },
-    { immediate: true, deep: true },
+    { immediate: !subscribe, deep: true },
   );
 
   if (times) {

@@ -7,6 +7,8 @@ import { LONG_TEXT_TOOLTIP_STYLE } from '../components/tooltip-policy.mjs';
 const readSource = (relativePath) =>
   readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
+const overview = readSource('./monitor/overview/index.vue');
+const resourceTrend = readSource('../components/ResourceTrend.vue');
 const nodeDetail = readSource('./node/admin/Detail.vue');
 const cardDetail = readSource('./card/admin/Detail.vue');
 const metricHelp = readSource('../components/MetricHelp.vue');
@@ -17,9 +19,9 @@ const zhLocale = readSource('../../../src/locales/zh.js');
 test('memory labels distinguish schedulable allocation from physical usage', () => {
   assert.match(enLocale, /memAllocRate: 'Schedulable Memory Allocation'/);
   assert.match(enLocale, /memUsageRate: 'Physical Memory Usage'/);
-  assert.match(zhLocale, /computeUsageRate: '算力使用率'/);
-  assert.match(zhLocale, /memUsageRate: '物理显存使用率'/);
-  assert.match(zhLocale, /computeUsageTrend: 'GPU 算力使用率（%）'/);
+  assert.match(zhLocale, /computeUsageRate: '算力利用率'/);
+  assert.match(zhLocale, /memUsageRate: '物理显存占用率'/);
+  assert.match(zhLocale, /computeUsageTrend: 'GPU 算力利用率（%）'/);
 
   for (const source of [nodeDetail, cardDetail]) {
     assert.match(source, /dashboard\.memAllocRateDescription/);
@@ -35,7 +37,7 @@ test('detail memory cards use compact labels without weakening metric help', () 
   );
   assert.match(
     nodeDetail,
-    /dashboard\.usageRateLegend'[\s\S]*?dashboard\.memUsageRateDescription/,
+    /dashboard\.overviewMemoryOccupancyLegend'[\s\S]*?dashboard\.memUsageRateDescription/,
   );
   assert.match(
     cardDetail,
@@ -80,44 +82,34 @@ test('node detail stacks the rates while keeping each rate row horizontal', () =
   );
 });
 
-test('memory and compute trend legends use the same compact labels', () => {
-  // Both pages build every trend through one helper and the shared preset, so
-  // the two charts cannot drift apart.
+test('overview and details use the same trend card while keeping their own data and allocation coverage', () => {
+  assert.match(overview, /<ResourceTrend :kind="section.key" :series="section.series"/);
   for (const source of [nodeDetail, cardDetail]) {
-    const helper = source.slice(
-      source.indexOf('const trendSection = '),
-      source.indexOf('const trendSections'),
-    );
-    const sections = source.slice(
-      source.indexOf('const trendSections'),
-      source.indexOf(']);', source.indexOf('const trendSections')),
-    );
-    assert.match(helper, /name: t\('dashboard\.usageRateLegend'\)/);
-    assert.match(helper, /buildTimeSeriesOptions/);
-    assert.match(sections, /gpuComputeAllocUsageTrend'\), computeTrend\.value, computeAllocLegend\.value\)/);
-    assert.match(sections, /gpuMemAllocUsageTrend'\), memoryTrend\.value, t\('dashboard\.allocRateLegend'\)\)/);
-    assert.doesNotMatch(helper + sections, /dashboard\.mem(?:Alloc|Usage)Rate'/);
-    // The compute allocation legend switches to its lower-bound form.
-    assert.match(source, /'dashboard\.allocRateLowerBoundLegend'\s*:\s*'dashboard\.allocRateLegend'/);
+    assert.match(source, /<ResourceTrend kind="compute" :series="computeTrend"/);
+    assert.match(source, /<ResourceTrend kind="memory" :series="memoryTrend"/);
   }
+  assert.doesNotMatch(nodeDetail, /allocRateLowerBoundLegend/);
+  assert.match(cardDetail, /:allocation-label="computeAllocLegend"/);
+  assert.match(cardDetail, /'dashboard\.allocRateLowerBoundLegend'\s*:\s*'dashboard\.allocRateLegend'/);
+  assert.match(resourceTrend, /note-placement="legend"/);
 });
 
 test('a detail trend chart draws its lines from one range group', () => {
   for (const source of [cardDetail, nodeDetail]) {
-    // Gauges read current values only, so no line comes from a separate request.
-    assert.match(source, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
     assert.doesNotMatch(source, /gaugeConfig\[\d\]\??\.data/);
-    assert.match(source, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
-    assert.match(source, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
-    assert.match(source, /:refresh-error="Boolean\(section\.refreshError\)"/);
   }
+  assert.match(cardDetail, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
+  assert.match(cardDetail, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
+  assert.match(cardDetail, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
+  assert.match(nodeDetail, /\[\{ query: computeAllocation\.percentQuery \}, \{ query: computeUsage\.percentQuery \}\]/);
+  assert.match(nodeDetail, /\[\{ query: memoryAllocation\.percentQuery \}, \{ query: memoryUsage\.percentQuery \}\]/);
+  assert.match(resourceTrend, /:refresh-error=/);
   assert.match(metricChart, /common\.refreshFailedShowingPreviousResult/);
 });
 
-test('a trend chart keeps its instance when the language changes', () => {
-  const overview = readSource('./monitor/overview/index.vue');
-  for (const source of [overview, nodeDetail, cardDetail]) {
-    assert.match(source, /v-for="section in (?:rangeConfig|trendSections)"\s+:key="section\.key"/);
+test('detail trend keys are independent of the translated chart title', () => {
+  for (const source of [nodeDetail, cardDetail]) {
+    assert.doesNotMatch(source, /<ResourceTrend[^>]*:key="[^"]*title/i);
   }
   assert.match(cardDetail, /v-for="item in lineToolsView"\s+:key="item\.titleKey"/);
 });

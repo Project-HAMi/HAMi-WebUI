@@ -85,6 +85,13 @@
   line-height: 24px;
 }
 
+.vgpu-table-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .vgpu-table-name-icon-card {
   display: inline-flex;
   align-items: center;
@@ -97,8 +104,80 @@
   flex-shrink: 0;
 }
 
+.vgpu-resource-link,
+.vgpu-resource-link:focus {
+  color: #324558;
+  text-decoration: none;
+}
+
+.vgpu-resource-link {
+  --resource-link-underline: transparent;
+  align-items: last baseline;
+  cursor: pointer;
+
+  // Keep a visible cue at rest without coloring every name in the list.
+  &::after {
+    content: '';
+    display: inline-block;
+    width: .42em;
+    height: .64em;
+    flex: none;
+    align-self: last baseline;
+    vertical-align: baseline;
+    margin-inline-start: 5px;
+    background: #718398;
+    clip-path: polygon(0 10%, 20% 0, 100% 50%, 20% 100%, 0 90%, 66% 50%);
+  }
+
+  &:hover, &:focus-visible, &:active {
+    color: var(--el-color-primary, #2563eb);
+    --resource-link-underline: currentColor;
+    &::after { background: currentColor; }
+  }
+
+  &:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (hover: none) {
+    --resource-link-underline: currentColor;
+  }
+}
+
 .vgpu-table-name-text-wrap {
   min-width: 0;
   display: flex;
   align-items: center;
+}
+
+.inventory-list-filters {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inventory-list-filters > .segmented-control {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.inventory-list-filters > .inventory-filter-select {
+  flex: 0 0 140px;
+  width: 140px;
+}
+
+.inventory-list-filters > .inventory-filter-search {
+  flex: 1 1 170px;
+  min-width: 170px;
+  max-width: 280px;
 }

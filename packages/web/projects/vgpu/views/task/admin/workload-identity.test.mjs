@@ -106,7 +106,7 @@ test('unresolved metric labels do not produce an invalid details link', () => {
 test('workload rows use one link for the middle-truncated Pod and full container', () => {
   const source = readFileSync(new URL('./index.vue', import.meta.url), 'utf8');
 
-  assert.match(source, /<RouterLink[\s\S]*?class="workload-identity-primary workload-identity-link"/);
+  assert.match(source, /<RouterLink[\s\S]*?class="workload-identity-primary vgpu-resource-link"/);
   assert.match(source, /aria-label=\{workloadName\}/);
   assert.match(source, /class="workload-pod-name"/);
   assert.match(source, /class="workload-container-name"/);
@@ -123,7 +123,7 @@ test('workload rows use one link for the middle-truncated Pod and full container
   assert.match(source, /\.workload-container-name[\s\S]*?max-width:\s*240px;/);
   assert.match(source, /\.workload-identity-label::after[\s\S]*?height:\s*1px;/);
   assert.match(source, /\.workload-namespace-line[\s\S]*?align-items:\s*baseline;/);
-  assert.doesNotMatch(source, /\.workload-identity-link\s*\{[^}]*width:\s*fit-content;/s);
+  assert.doesNotMatch(source, /\.vgpu-resource-link\)\s*\{[^}]*width:\s*fit-content;/s);
   assert.doesNotMatch(source, /\.workload-pod-name::after/);
   assert.doesNotMatch(source, /\.workload-container-name::after/);
   assert.doesNotMatch(source, /<TextPlus/);

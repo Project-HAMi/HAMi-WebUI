@@ -13,7 +13,7 @@ const readSource = (relativePath) =>
 const ellipsisText = readSource('../../../src/components/EllipsisText.vue');
 const taskDetail = readSource('./task/admin/Detail.vue');
 const cardList = readSource('./card/admin/index.vue');
-const overview = readSource('./monitor/overview/index.vue');
+const distribution = readSource('./monitor/overview/DeviceUsageDistribution.vue');
 const gauge = readSource('../components/gauge.vue');
 
 test('long text tooltips wrap at a consistent readable width', () => {
@@ -30,7 +30,7 @@ test('long text tooltips wrap at a consistent readable width', () => {
   );
   assert.match(gauge, /:overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"/);
   assert.match(taskDetail, /LONG_TEXT_TOOLTIP_STYLE/);
-  assert.match(overview, /:overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"/);
+  assert.match(distribution, /<MetricHelp[\s\S]*?multiline/);
 });
 
 test('GPU UUID tooltips remain complete on one line', () => {
