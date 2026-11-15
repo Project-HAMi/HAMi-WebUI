@@ -101,6 +101,7 @@ func newTestHTTPHandler() nethttp.Handler {
 		nil,
 		nil,
 		nil,
+		nil,
 		prometheus.NewRegistry(),
 		nil,
 	)

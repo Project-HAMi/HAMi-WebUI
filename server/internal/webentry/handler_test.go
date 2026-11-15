@@ -82,6 +82,11 @@ func TestHandlerRoutes(t *testing.T) {
 			wantAPIPath: "/v1/nodes",
 		},
 		{
+			name: "resource API keeps its prefix", method: http.MethodGet,
+			path: "/api/v1/overview/inventory", wantStatus: http.StatusTeapot,
+			wantBody: `{"error":"upstream"}`, wantAPIPath: "/api/v1/overview/inventory",
+		},
+		{
 			name:       "unknown api is not a frontend route",
 			method:     http.MethodGet,
 			path:       "/api/unknown",
@@ -399,6 +404,10 @@ func TestHandlerConfiguredBasePath(t *testing.T) {
 		{name: "deep link", method: http.MethodGet, path: "/gpu-ui/nodes/node-1", wantStatus: http.StatusOK, wantIndex: true},
 		{name: "static asset", method: http.MethodGet, path: "/gpu-ui/static/app.js", wantStatus: http.StatusOK},
 		{name: "API", method: http.MethodPost, path: "/gpu-ui/api/vgpu/v1/nodes?limit=10", wantStatus: http.StatusNoContent, wantAPIPath: "/v1/nodes?limit=10"},
+		{name: "resource API", method: http.MethodGet, path: "/gpu-ui/api/v1/overview/inventory", wantStatus: http.StatusNoContent, wantAPIPath: "/api/v1/overview/inventory"},
+		{name: "unprefixed resource API", method: http.MethodGet, path: "/api/v1/overview/inventory", wantStatus: http.StatusNotFound},
+		{name: "similar resource API", method: http.MethodGet, path: "/gpu-ui/api/v1-extra/overview/inventory", wantStatus: http.StatusNotFound},
+		{name: "resource API dot escape", method: http.MethodGet, path: "/gpu-ui/api/v1/../metrics", wantStatus: http.StatusNotFound},
 		{name: "unprefixed root", method: http.MethodGet, path: "/", wantStatus: http.StatusNotFound},
 		{name: "unprefixed deep link", method: http.MethodGet, path: "/nodes/node-1", wantStatus: http.StatusNotFound},
 		{name: "unprefixed API", method: http.MethodPost, path: "/api/vgpu/v1/nodes", wantStatus: http.StatusNotFound},

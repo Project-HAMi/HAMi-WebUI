@@ -51,6 +51,16 @@ func TestNodePagesFollowOverviewInventory(t *testing.T) {
 	if err != nil || len(rows.List) != 2 || rows.InventoryCoverage.GetObserved() != 2 || !rows.InventoryCoverage.Complete {
 		t.Fatalf("roster = %v, error = %v", rows, err)
 	}
+	overview, err := (&OverviewService{source: &src}).GetInventory(ctx, &view.InventoryRequest{})
+	if err != nil || !proto.Equal(rows.InventoryCoverage, overview.NodeCoverage) || len(overview.Nodes) != len(rows.List) {
+		t.Fatalf("roster and overview disagree: %v, %v, %v", rows, overview, err)
+	}
+	for i, node := range overview.Nodes {
+		row := rows.List[i]
+		if node.Uid != row.Uid || node.GetPhysicalDevices() != row.GetCardCnt() || (node.PhysicalDevices == nil) != (row.CardCnt == nil) {
+			t.Fatalf("node %d: overview %v, list %v", i, node, row)
+		}
+	}
 	r := rows.List[0]
 	if r.GetCardCnt() != 2 || r.GetCoreUsed() != 7 || r.GetCoreTotal() != 100 || r.GetMemoryUsed() != 1 || r.GetMemoryTotal() != 8 || math.Abs(r.GetCoreAllocationPercent()-7) > 1e-12 || r.GetMemoryAllocationPercent() != 12.5 {
 		t.Fatalf("registered node = %v", r)

@@ -2,6 +2,8 @@ package server
 
 import (
 	nethttp "net/http"
+
+	pb "vgpu/api/observability/v1"
 	v1 "vgpu/api/v1"
 	"vgpu/internal/conf"
 	"vgpu/internal/service"
@@ -43,6 +45,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	scheduling *service.SchedulingService,
 	workload *service.WorkloadService,
 	deviceConfig *service.DeviceConfigService,
+	overview *service.OverviewService,
 	gatherer prometheus.Gatherer,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
@@ -50,6 +53,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 			recovery.Recovery(),
 			metrics.Server(),
 		),
+		http.RequestQueryDecoder(overviewQuery),
 		http.NotFoundHandler(httpErrorHandler(nethttp.StatusNotFound, httpReasonRouteNotFound)),
 		http.MethodNotAllowedHandler(httpErrorHandler(nethttp.StatusMethodNotAllowed, httpReasonMethodNotAllowed)),
 	}
@@ -70,6 +74,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterSchedulingHTTPServer(srv, scheduling)
 	v1.RegisterWorkloadHTTPServer(srv, workload)
 	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
+	pb.RegisterOverviewHTTPServer(srv, overview)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})))
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
