@@ -100,7 +100,7 @@ message NodeReply {
   string creation_timestamp = 21;
   optional bool core_used_known = 22;
   // Physical cards observed on this node, only in resource inventory mode.
-  observability.v1.Coverage inventory_coverage = 23;
+  optional observability.v1.Coverage inventory_coverage = 23;
   // Percentages over physical cards with both known allocation and capacity.
   optional double core_allocation_percent = 24;
   optional double memory_allocation_percent = 25;
@@ -109,5 +109,5 @@ message NodeReply {
 message NodesReply {
   repeated NodeReply list = 1;
   // Membership coverage for this result, only in resource inventory mode.
-  observability.v1.Coverage inventory_coverage = 2;
+  optional observability.v1.Coverage inventory_coverage = 2;
 }
