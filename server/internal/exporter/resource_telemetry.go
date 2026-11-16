@@ -149,7 +149,7 @@ func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 				rows = append(rows, byKey[key]...)
 			}
 			var families []string
-			filter := fmt.Sprintf("UUID=~%q,GPU_I_ID=\"\",GPU_CI_ID=\"\"", strings.Join(ids, "|"))
+			filter := fmt.Sprintf("UUID=~%q,%s", strings.Join(ids, "|"), dcgmWholeGPUMatchers)
 			switch provider {
 			case biz.NvidiaGPUDevice:
 				for _, spec := range dcgmPhysicalMetrics {

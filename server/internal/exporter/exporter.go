@@ -632,7 +632,7 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
-		query = fmt.Sprintf("avg(DCGM_FI_DEV_FB_USED{UUID=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(DCGM_FI_DEV_FB_USED{UUID=%q,%s})", deviceUUID, dcgmWholeGPUMatchers)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_used{uuid=\"%s\"})", deviceUUID)
 	case biz.AscendGPUDevice:
@@ -657,7 +657,8 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
-		query = fmt.Sprintf("avg(DCGM_FI_DEV_FB_FREE{UUID=\"%s\"})+avg(DCGM_FI_DEV_FB_USED{UUID=\"%s\"})", deviceUUID, deviceUUID)
+		selector := fmt.Sprintf("{UUID=%q,%s}", deviceUUID, dcgmWholeGPUMatchers)
+		query = fmt.Sprintf("avg(DCGM_FI_DEV_FB_FREE%s)+avg(DCGM_FI_DEV_FB_USED%s)", selector, selector)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_total{uuid=\"%s\"})", deviceUUID)
 	case biz.AscendGPUDevice:

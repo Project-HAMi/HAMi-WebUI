@@ -56,6 +56,10 @@ type dcgmSelection struct {
 	Labels   map[string]string
 }
 
+// DCGM reports MIG instances under the parent UUID. Whole-GPU readings have
+// neither an instance ID nor a compute-instance ID.
+const dcgmWholeGPUMatchers = `GPU_I_ID="",GPU_CI_ID=""`
+
 // Values retain the existing hami_* units. FB_CAPACITY is deliberately absent:
 // its reserved-memory semantics must be verified before changing the denominator.
 var dcgmPhysicalMetrics = map[string]dcgmMetricSpec{
