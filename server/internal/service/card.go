@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+
+	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"sort"
 	"strings"
 	pb "vgpu/api/v1"
@@ -32,9 +34,24 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 	// Fetch the container list once. StatisticsByDeviceId re-lists all containers
 	// on every call, so calling it per device turned this into an O(devices)
 	// re-scan; at large scale (100+ cards) that alone was seconds of work.
-	containers, err := s.pod.ListAllContainers(ctx)
-	if err != nil {
-		return nil, err
+	var containers []*biz.Container
+	var uncertain map[string]bool
+	statistics := biz.ContainersStatisticsInfo
+	if filters.NodeUid != "" {
+		if filters.NodeName == "" {
+			return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Node allocation requires nodeName and nodeUid")
+		}
+		holders, err := s.pod.NodeHolders(ctx, filters.NodeName, filters.NodeUid)
+		if err != nil {
+			return nil, err
+		}
+		statistics = biz.ExactDeviceStatistics
+		containers, uncertain = holders.Containers, holders.UncertainDeviceIDs
+	} else {
+		containers, err = s.pod.ListAllContainers(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
@@ -52,6 +69,13 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		if deviceUid != "" && deviceUid != device.Id {
 			continue
 		}
+		if filters.NodeUid != "" {
+			if filters.NodeUid != device.NodeUid || filters.NodeName != device.NodeName {
+				continue
+			}
+			complete := !uncertain[device.AliasId]
+			gpu.NodeAllocationComplete = &complete
+		}
 		gpu.Uuid = device.Id
 		gpu.NodeName = device.NodeName
 		gpu.Type = device.Type
@@ -65,7 +89,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.Vendor = device.Provider
 		gpu.MigProfiles = migProfiles(device.MigProfiles)
 
-		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
+		vGPU, core, memory, coreKnown := statistics(containers, device.AliasId)
 		gpu.VgpuUsed = vGPU
 		gpu.CoreUsed = core
 		gpu.CoreUsedKnown = &coreKnown

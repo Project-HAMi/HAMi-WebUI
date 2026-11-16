@@ -93,6 +93,8 @@ func TestRequestsTreatMissingFiltersAsEmpty(t *testing.T) {
 }
 
 type emptyFiltersPodRepo struct {
+	biz.NodeHolderReader
+
 	containers []*biz.Container
 }
 

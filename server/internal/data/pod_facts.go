@@ -26,14 +26,17 @@ func (r *podRepo) initFacts(informer cache.SharedIndexInformer, catalog deviceca
 		if !ok {
 			return nil, nil
 		}
-		name := p.Spec.NodeName
-		if name == "" {
-			name = p.Annotations["hami.io/vgpu-node"]
-		}
-		if name == "" {
+		bound, assigned := p.Spec.NodeName, p.Annotations["hami.io/vgpu-node"]
+		switch {
+		case bound == "" && assigned == "":
 			return nil, nil
+		case assigned == "" || bound == assigned:
+			return []string{bound}, nil
+		case bound == "":
+			return []string{assigned}, nil
+		default:
+			return []string{bound, assigned}, nil
 		}
-		return []string{name}, nil
 	}}); err != nil {
 		return fmt.Errorf("index Pod facts by node: %w", err)
 	}

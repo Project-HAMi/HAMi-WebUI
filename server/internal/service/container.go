@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+
+	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"sort"
 	"strings"
 	"time"
@@ -106,17 +108,44 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 	if filters == nil {
 		filters = &pb.GetAllContainersReq_Filters{}
 	}
-	containers, err := s.pod.ListAllContainers(ctx)
-	if err != nil {
-		return nil, err
+	var containers []*biz.Container
+	var scopedAliases map[string]*biz.DeviceInfo
+	if req.UseNodeAllocation {
+		if filters.NodeName == "" || filters.NodeUid == "" {
+			return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Node allocation requires nodeName and nodeUid")
+		}
+		holders, err := s.pod.NodeHolders(ctx, filters.NodeName, filters.NodeUid)
+		if err != nil {
+			return nil, err
+		}
+		containers = holders.Containers
+		devices, err := s.node.ListAllDevices(ctx)
+		if err != nil {
+			return nil, err
+		}
+		scopedAliases = make(map[string]*biz.DeviceInfo)
+		for _, device := range devices {
+			if device.NodeName == filters.NodeName && device.NodeUid == filters.NodeUid {
+				scopedAliases[device.AliasId] = device
+			}
+		}
+	} else {
+		var err error
+		containers, err = s.pod.ListAllContainers(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var res = &pb.ContainersReply{Items: []*pb.ContainerReply{}}
+	if req.UseNodeAllocation {
+		res.AllocationNodeUid = &filters.NodeUid
+	}
 	for _, container := range containers {
 		status := normalizedContainerStatus(container.Status)
 		if !matchesWorkloadName(container.PodName, container.Name, filters.Name) {
 			continue
 		}
-		if filters.NodeName != "" && filters.NodeName != container.NodeName {
+		if scopedAliases == nil && filters.NodeName != "" && filters.NodeName != container.NodeName {
 			continue
 		}
 		if !matchesWorkloadStatus(status, filters.Status) {
@@ -148,7 +177,13 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		var vendors []string
 		for _, containerDevice := range container.ContainerDevices {
 			deviceID, vendor := containerDevice.UUID, containerDevice.Vendor
-			if device, err := s.node.FindDeviceByAliasId(containerDevice.UUID); err == nil {
+			var device *biz.DeviceInfo
+			if scopedAliases != nil {
+				device = scopedAliases[containerDevice.UUID]
+			} else {
+				device, _ = s.node.FindDeviceByAliasId(containerDevice.UUID)
+			}
+			if device != nil {
 				deviceID, vendor = device.Id, device.Provider
 			}
 

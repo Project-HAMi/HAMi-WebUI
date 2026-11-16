@@ -127,7 +127,9 @@ func (r *capacityTestNodeRepo) FindDeviceByAliasId(aliasID string) (*biz.DeviceI
 	return nil, nil
 }
 
-type capacityTestPodRepo struct{}
+type capacityTestPodRepo struct {
+	biz.NodeHolderReader
+}
 
 func (*capacityTestPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
 	return nil, nil

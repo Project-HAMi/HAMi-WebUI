@@ -45,16 +45,28 @@ type ContainerStatusDetail struct {
 }
 
 type PodInfo struct {
-	Namespace string
-	Name      string
-	UID       k8stypes.UID
-	NodeID    string
-	Devices   PodDevices
-	CtrIDs    []string
-	Ctrs      []*Container
+	AllocationRevision string // Node and catalog used to decode Devices and Ctrs.
+	ResourceVersion    string
+	Namespace          string
+	Name               string
+	UID                k8stypes.UID
+	NodeID             string
+	Devices            PodDevices
+	CtrIDs             []string
+	Ctrs               []*Container
 }
 
+// NodeHolders contains only allocations attributable to the requested Node UID.
+// An ambiguous reservation prevents the affected device from reporting a total.
+type NodeHolders struct {
+	Containers         []*Container
+	UncertainDeviceIDs map[string]bool
+}
+type NodeHolderReader interface {
+	NodeHolders(ctx context.Context, name, uid string) (NodeHolders, error)
+}
 type PodRepo interface {
+	NodeHolderReader
 	ListAll(context.Context) ([]*Container, error)
 	FindOne(context.Context, string, string) (*Container, error)
 }
@@ -66,6 +78,10 @@ type PodUseCase struct {
 
 func NewPodUseCase(repo PodRepo, logger log.Logger) *PodUseCase {
 	return &PodUseCase{repo: repo, log: log.NewHelper(logger)}
+}
+
+func (uc *PodUseCase) NodeHolders(ctx context.Context, name, uid string) (NodeHolders, error) {
+	return uc.repo.NodeHolders(ctx, name, uid)
 }
 
 func (uc *PodUseCase) ListAllContainers(ctx context.Context) ([]*Container, error) {
@@ -93,13 +109,19 @@ func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 }
 
 func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32, bool) {
-	var vGPU int32 = 0
-	var core int32 = 0
-	var memory int32 = 0
+	return containerStatistics(containers, func(id string) bool { return deviceId == "" || strings.HasPrefix(id, deviceId) })
+}
+
+func ExactDeviceStatistics(containers []*Container, deviceID string) (int32, int32, int32, bool) {
+	return containerStatistics(containers, func(id string) bool { return deviceID != "" && id == deviceID })
+}
+
+func containerStatistics(containers []*Container, matches func(string) bool) (int32, int32, int32, bool) {
+	var vGPU, core, memory int32
 	coreKnown := true
 	for _, t := range containers {
 		for _, cd := range t.ContainerDevices {
-			if deviceId != "" && !strings.HasPrefix(cd.UUID, deviceId) {
+			if !matches(cd.UUID) {
 				continue
 			}
 			vGPU = vGPU + 1

@@ -87,13 +87,13 @@ export const buildNodeDeviceAllocations = ({ node, devices = [], containers = []
     .map((device) => {
       const deviceContainers = byDevice.get(device.uuid) || [];
       const records = deviceContainers.flatMap((container) => container.devices.filter((record) => record?.id === device.uuid));
-      const containerCount = containersAvailable
+      const containerCount = containersAvailable && (device.nodeAllocationComplete !== false || deviceContainers.length > 0)
         ? new Set(deviceContainers.map((container) => `${container.podUid}/${container.name}`)).size
         : undefined;
       let allocationStatus = 'partial';
       if (device.unconfigured) allocationStatus = 'unconfigured';
       else if (!containersAvailable) allocationStatus = 'unavailable';
-      else if (!incompleteIdentity && completeAllocation(device, records)) allocationStatus = 'complete';
+      else if (device.nodeAllocationComplete !== false && !incompleteIdentity && completeAllocation(device, records)) allocationStatus = 'complete';
 
       let split = allocationStatus === 'complete'
         ? buildDeviceSplit({ device, containers: deviceContainers })
@@ -130,8 +130,8 @@ export const createNodeDeviceAllocationLoader = ({ getDevices, getContainers, on
     controller = requestController;
     onChange({ entries: [], status: 'loading' });
     const [devicesResult, containersResult] = await Promise.allSettled([
-      Promise.resolve().then(() => getDevices(node.name, requestController.signal)),
-      Promise.resolve().then(() => getContainers(node.uid, requestController.signal)),
+      Promise.resolve().then(() => getDevices(node, requestController.signal)),
+      Promise.resolve().then(() => getContainers(node, requestController.signal)),
     ]);
     if (disposed || current !== generation) return;
     if (devicesResult.status !== 'fulfilled' || !validInventory(devicesResult.value?.list, node)) {

@@ -48,6 +48,8 @@ message GetAllGpusReq {
     string type = 2;
     string node_name = 3;
     string provider = 4;
+    // Together with node_name, scope reservations to this incarnation of the node.
+    string node_uid = 5;
   }
   Filters filters = 1;
 }
@@ -74,6 +76,9 @@ message GPUReply {
   string vendor = 15;
   // MIG profiles the device plugin registered for this GPU.
   repeated MigProfile mig_profiles = 16;
+  // Present for node-scoped allocation queries. When false, used quantities
+  // contain only confirmed reservations and cannot be displayed as totals.
+  optional bool node_allocation_complete = 17;
 }
 
 // One MIG device type and where NVML allows it on the GPU.

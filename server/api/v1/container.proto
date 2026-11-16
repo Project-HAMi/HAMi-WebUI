@@ -48,6 +48,8 @@ message GetAllContainersReq {
   }
   Filters filters = 1;
   PageSize pageSize = 2;
+  // Verify reservations against the node generation identified by both filters.
+  bool use_node_allocation = 3;
 }
 
 message ContainerReply {
@@ -134,6 +136,7 @@ message ContainerStatusDetail {
 
 message ContainersReply {
   repeated ContainerReply items = 1;
+  optional string allocation_node_uid = 2;
 }
 
 message GetContainerReq {

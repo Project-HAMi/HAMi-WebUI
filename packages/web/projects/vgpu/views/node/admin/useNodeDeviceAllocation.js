@@ -6,8 +6,8 @@ export default function useNodeDeviceAllocation(source) {
   const entries = ref([]);
   const status = ref('idle');
   const loader = createNodeDeviceAllocationLoader({
-    getDevices: (name, signal) => nodeApi.getNodeDevices(name, signal),
-    getContainers: (uid, signal) => nodeApi.getNodeAllocatedContainers(uid, signal),
+    getDevices: (node, signal) => nodeApi.getNodeDevices(node, signal),
+    getContainers: (node, signal) => nodeApi.getNodeAllocatedContainers(node, signal),
     onChange: (state) => {
       entries.value = state.entries;
       status.value = state.status;

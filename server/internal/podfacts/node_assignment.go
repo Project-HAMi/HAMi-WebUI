@@ -12,6 +12,7 @@ import (
 // NodeAssignment keeps the node identity and binding evidence seen for one Pod UID.
 type NodeAssignment struct {
 	UID             types.UID
+	nodeBirth       time.Time
 	boundBy         time.Time
 	hasScheduleTime bool
 	// A reservation can be replaced until Kubernetes binds the Pod. HAMi's
@@ -39,7 +40,7 @@ func (a NodeAssignment) Observe(pod *corev1.Pod, node *corev1.Node, allocations 
 	if reserved {
 		second = filterTime(pod)
 	}
-	if a.UID != "" && a.UID != node.UID && (!reserved || !a.reselected(pod, node, second)) {
+	if a.UID != "" && a.UID != node.UID && (!reserved || !a.reservationOnReplacement(pod, node, second)) {
 		return a, true
 	}
 	// Retain a documented stale Filter decision if a later Pod status
@@ -54,11 +55,14 @@ func (a NodeAssignment) Observe(pod *corev1.Pod, node *corev1.Node, allocations 
 		}
 		return a, true
 	}
-	a.UID = node.UID
+	if !bound || a.UID == "" || a.reservedNode != "" {
+		a.reservedAt = second
+	}
+	a.UID, a.nodeBirth = node.UID, node.CreationTimestamp.Time
 	if bound {
-		a.reservedNode, a.reservedAt = "", 0
+		a.reservedNode = ""
 	} else {
-		a.reservedNode, a.reservedAt = node.Name, second
+		a.reservedNode = node.Name
 	}
 	return a, false
 }
@@ -117,14 +121,22 @@ func filterTime(pod *corev1.Pod) int64 {
 	return second
 }
 
-func (a NodeAssignment) reselected(pod *corev1.Pod, node *corev1.Node, second int64) bool {
-	if a.reservedNode == "" || pod.Annotations["hami.io/vgpu-node"] != node.Name {
+func (a NodeAssignment) reservationOnReplacement(pod *corev1.Pod, node *corev1.Node, second int64) bool {
+	if pod.Annotations["hami.io/vgpu-node"] != node.Name {
 		return false
 	}
-	if a.reservedNode != node.Name {
+	if a.reservedNode != "" && a.reservedNode != node.Name {
 		return true
 	}
-	// Bind can succeed by node name without refreshing the allocation. For
-	// same-name replacement require a newer Filter decision after creation.
-	return !node.CreationTimestamp.IsZero() && second > node.CreationTimestamp.Unix() && second > a.reservedAt
+	birth := node.CreationTimestamp
+	if birth.IsZero() || second <= birth.Unix() {
+		return false
+	}
+	// An unbound reservation can receive a fresh Filter decision on the replacement.
+	if a.reservedNode != "" && second > a.reservedAt {
+		return true
+	}
+	// The original Filter decision can also arrive before the new Node event.
+	// A rewritten annotation after Bind cannot move that Pod to another UID.
+	return birth.After(a.nodeBirth) && second == a.reservedAt
 }

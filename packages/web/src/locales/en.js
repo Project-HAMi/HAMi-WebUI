@@ -348,6 +348,8 @@ export default {
       partial: 'Allocation details are incomplete',
       unavailable: 'Allocation data unavailable',
       unconfigured: 'Device not configured; allocation data unavailable',
+      knownMemory: 'Known allocated memory',
+      knownCompute: 'Known allocated compute',
       allocatedMemory: 'Allocated memory',
       allocatedCompute: 'Allocated compute',
       noAllocation: 'No allocations',

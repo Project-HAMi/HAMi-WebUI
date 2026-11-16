@@ -344,6 +344,8 @@ export default {
       partial: '分配明细不完整',
       unavailable: '分配数据不可用',
       unconfigured: '设备未配置，分配信息不可用',
+      knownMemory: '已确认分配显存',
+      knownCompute: '已确认分配算力',
       allocatedMemory: '已分配显存',
       allocatedCompute: '已分配算力',
       noAllocation: '暂无分配',

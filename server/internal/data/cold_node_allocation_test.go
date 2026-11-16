@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/resourceview"
@@ -64,6 +66,17 @@ func TestColdStartAllocationAfterNodeReplacement(t *testing.T) {
 					return ok && entry.InputRevision == factInputRevision(catalog.current, node) &&
 						repo.data.continuity.nodes.snapshot().ready && repo.data.continuity.pods.snapshot().ready
 				})
+				holders, err := repo.NodeHolders(context.Background(), node.Name, string(node.UID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.wantKnown {
+					if len(holders.Containers) != 1 || holders.Containers[0].NodeUID != string(node.UID) || len(holders.UncertainDeviceIDs) != 0 {
+						t.Fatalf("expected verified holder, got %+v", holders)
+					}
+				} else if len(holders.Containers) != 0 || len(holders.UncertainDeviceIDs) != 1 {
+					t.Fatalf("expected unresolved reservation, got %+v", holders)
+				}
 				card := deviceOnTestNode(t, source, node)
 				occupancies := card.EffectiveOccupancies
 				if !tc.wantKnown {
@@ -75,6 +88,49 @@ func TestColdStartAllocationAfterNodeReplacement(t *testing.T) {
 				requireFourGiBAllocation(t, card, pod)
 			})
 		}
+	}
+}
+
+// An unresolved reservation on a reused device alias must not hide a proven
+// reservation on the same card, even if its facts handler is one revision behind.
+func TestMixedNodeHoldersAfterReplacement(t *testing.T) {
+	for _, vendor := range []string{"NVIDIA", "Ascend"} {
+		t.Run(vendor, func(t *testing.T) {
+			node, old := coldAllocationObjects(vendor)
+			node.CreationTimestamp = metav1.NewTime(time.Unix(2000, 0))
+			old.CreationTimestamp = metav1.NewTime(time.Unix(1000, 0))
+			old.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(time.Unix(1500, 0))}}
+			late := old.DeepCopy()
+			late.Name, late.UID, late.ResourceVersion = "late", "late-uid", "14"
+			late.Status.Conditions[0].LastTransitionTime = metav1.NewTime(time.Unix(2100, 0))
+			for k, v := range late.Annotations {
+				if strings.HasSuffix(k, "-devices-allocated") {
+					late.Annotations[k] = strings.Replace(v, "4096", "2048", 1)
+				}
+			}
+			catalog := &mutableCatalog{current: loadedTestCatalog(t)}
+			repo, _ := startResourceTestSource(t, newResourceTestClient(node, old, late), catalog, map[string]string{vendor: ""})
+			awaitContinuity(t, func() bool {
+				_, a := repo.facts.Get(old.UID)
+				_, b := repo.facts.Get(late.UID)
+				repo.mutex.RLock()
+				defer repo.mutex.RUnlock()
+				return a && b && repo.pods[old.UID] != nil && repo.pods[late.UID] != nil
+			})
+			e, _ := repo.facts.Get(late.UID)
+			e.Facts.Metadata.ResourceVersion = "13"
+			repo.facts.PutWithRevision(e.Facts, func() bool { return true }, e.InputRevision, e.Assignment)
+			h, err := repo.NodeHolders(context.Background(), node.Name, string(node.UID))
+			if err != nil || len(h.Containers) != 1 || h.Containers[0].PodUID != string(late.UID) || len(h.UncertainDeviceIDs) != 1 {
+				t.Fatalf("expected only the late-bound container: %+v, %v", h, err)
+			}
+			for alias := range h.UncertainDeviceIDs {
+				n, _, mem, _ := biz.ExactDeviceStatistics(h.Containers, alias)
+				if n != 1 || mem != 2048 {
+					t.Fatalf("verified reservations = %d, %d MiB", n, mem)
+				}
+			}
+		})
 	}
 }
 

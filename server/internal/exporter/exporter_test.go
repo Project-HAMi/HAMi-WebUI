@@ -73,6 +73,8 @@ func (f *fakeNodeRepo) FindDeviceByAliasId(string) (*biz.DeviceInfo, error) {
 }
 
 type fakePodRepo struct {
+	biz.NodeHolderReader
+
 	containers []*biz.Container
 	err        error
 }

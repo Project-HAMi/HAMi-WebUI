@@ -192,3 +192,13 @@ func (l *Ledger) NodeAssignment(uid types.UID) NodeAssignment {
 	defer l.mu.RUnlock()
 	return l.assignments[uid]
 }
+
+// AllocationNodeUID returns the node generation proven for this exact Pod revision.
+func (l *Ledger) AllocationNodeUID(uid types.UID, resourceVersion, inputRevision string) (types.UID, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if f := l.pods[uid]; f != nil && f.Metadata.ResourceVersion == resourceVersion && l.revisions[uid] == inputRevision {
+		return l.assignments[uid].UID, true
+	}
+	return "", false
+}
