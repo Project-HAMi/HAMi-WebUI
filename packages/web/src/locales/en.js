@@ -354,6 +354,7 @@ export default {
       allocatedCompute: 'Allocated compute',
       noAllocation: 'No allocations',
       occupancyUnknown: 'Occupancy unavailable',
+      initReservation: 'Includes an init container reservation',
       knownWorkloads: '{count} known workload | {count} known workloads',
       workloads: '{count} workload | {count} workloads',
       viewOccupancy: 'View occupancy',

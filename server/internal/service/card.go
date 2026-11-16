@@ -35,8 +35,8 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 	// on every call, so calling it per device turned this into an O(devices)
 	// re-scan; at large scale (100+ cards) that alone was seconds of work.
 	var containers []*biz.Container
-	var uncertain map[string]bool
-	statistics := biz.ContainersStatisticsInfo
+	var scoped *biz.NodeHolders
+	var unreadable map[string]bool
 	if filters.NodeUid != "" {
 		if filters.NodeName == "" {
 			return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Node allocation requires nodeName and nodeUid")
@@ -45,8 +45,8 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		if err != nil {
 			return nil, err
 		}
-		statistics = biz.ExactDeviceStatistics
-		containers, uncertain = holders.Containers, holders.UncertainDeviceIDs
+		unreadable = holders.UnreadableDeviceIDs(deviceInfos, filters.NodeName, filters.NodeUid)
+		scoped = &holders
 	} else {
 		containers, err = s.pod.ListAllContainers(ctx)
 		if err != nil {
@@ -73,7 +73,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 			if filters.NodeUid != device.NodeUid || filters.NodeName != device.NodeName {
 				continue
 			}
-			complete := !uncertain[device.AliasId]
+			complete := !scoped.UncertainDeviceIDs[device.AliasId] && !unreadable[device.Id]
 			gpu.NodeAllocationComplete = &complete
 		}
 		gpu.Uuid = device.Id
@@ -89,11 +89,18 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.Vendor = device.Provider
 		gpu.MigProfiles = migProfiles(device.MigProfiles)
 
-		vGPU, core, memory, coreKnown := statistics(containers, device.AliasId)
-		gpu.VgpuUsed = vGPU
-		gpu.CoreUsed = core
+		var coreKnown bool
+		if scoped != nil {
+			reservation := scoped.Reservations[device.AliasId]
+			gpu.VgpuUsed, gpu.CoreUsed, gpu.MemoryUsed = reservation.Slots, reservation.Cores, reservation.MemoryMiB
+			coreKnown = !reservation.CoreUnknown
+			if reservation.HasInit {
+				gpu.HasInitReservation = &reservation.HasInit
+			}
+		} else {
+			gpu.VgpuUsed, gpu.CoreUsed, gpu.MemoryUsed, coreKnown = biz.ContainersStatisticsInfo(containers, device.AliasId)
+		}
 		gpu.CoreUsedKnown = &coreKnown
-		gpu.MemoryUsed = memory
 
 		res.List = append(res.List, gpu)
 	}

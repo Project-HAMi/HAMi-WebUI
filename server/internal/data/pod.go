@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -140,6 +141,7 @@ func (r *podRepo) onAddPod(obj interface{}) {
 }
 
 func (r *podRepo) decodePodInfo(pod *corev1.Pod, node *corev1.Node, snapshot *devicecatalog.Snapshot) *biz.PodInfo {
+	pod = alignNvidiaAllocation(pod, snapshot)
 	nodeUID := ""
 	if node != nil && node.Name == pod.Spec.NodeName {
 		nodeUID = string(node.UID)
@@ -467,7 +469,7 @@ func (r *podRepo) NodeHolders(_ context.Context, name, uid string) (biz.NodeHold
 	if err != nil {
 		return biz.NodeHolders{}, err
 	}
-	result := biz.NodeHolders{UncertainDeviceIDs: make(map[string]bool)}
+	result := biz.NodeHolders{Reservations: make(map[string]biz.DeviceReservation), UncertainDeviceIDs: make(map[string]bool)}
 	snapshot := r.ascend.Snapshot()
 	revision := factInputRevision(snapshot, node)
 	for _, obj := range pods {
@@ -493,18 +495,22 @@ func (r *podRepo) NodeHolders(_ context.Context, name, uid string) (biz.NodeHold
 			r.mutex.Unlock()
 			pod = decoded
 		}
-		assignment, ready := r.facts.AllocationNodeUID(current.UID, current.ResourceVersion, revision)
+		hasInit := len(current.Spec.InitContainers) > 0
+		allocation, ready := r.facts.NodeAllocation(current.UID, current.ResourceVersion, revision, hasInit)
 		if !ready {
 			// A dependent replay may have raced this Pod update. Reuse the
 			// guarded informer path before publishing any allocation totals.
 			r.onFactsPod(current)
-			assignment, ready = r.facts.AllocationNodeUID(current.UID, current.ResourceVersion, revision)
+			allocation, ready = r.facts.NodeAllocation(current.UID, current.ResourceVersion, revision, hasInit)
 			if !ready {
 				return biz.NodeHolders{}, fmt.Errorf("waiting for allocation facts for %s/%s", current.Namespace, current.Name)
 			}
 		}
+		result.UnreadableAllocations = append(result.UnreadableAllocations, allocation.Unreadable...)
+		initDevices := activeInitDevices(current.Spec.InitContainers, pod.Devices, allocation.InitReleased)
+		countedPeaks := addInitReservations(&result, initDevices, allocation, name, uid)
 		for _, container := range pod.Ctrs {
-			if string(assignment) != uid || (container.NodeName != "" && container.NodeName != name) {
+			if string(allocation.UID) != uid || (container.NodeName != "" && container.NodeName != name) {
 				for _, device := range container.ContainerDevices {
 					result.UncertainDeviceIDs[device.UUID] = true
 				}
@@ -513,9 +519,88 @@ func (r *podRepo) NodeHolders(_ context.Context, name, uid string) (biz.NodeHold
 			holder := *r.interpretContainer(snapshot, container)
 			holder.NodeUID = uid
 			result.Containers = append(result.Containers, &holder)
+			for _, d := range holder.ContainerDevices {
+				// The Pod peak already includes concurrent app containers on this card.
+				if countedPeaks[d.UUID] {
+					continue
+				}
+				total := result.Reservations[d.UUID]
+				total.Slots++
+				total.MemoryMiB += d.Usedmem
+				total.Cores += d.Usedcores
+				total.CoreUnknown = total.CoreUnknown || d.CoreAllocationUnknown
+				result.Reservations[d.UUID] = total
+			}
 		}
 	}
 	return result, nil
+}
+
+// The legacy workload list contains app containers only. Keep its links while
+// using scheduler phase peaks for cards shared with an active init container.
+func activeInitDevices(init []corev1.Container, devices biz.PodDevices, released bool) map[string]bool {
+	if len(init) == 0 {
+		return nil
+	}
+	ids := make(map[string]bool)
+	for _, slots := range devices {
+		for i, slot := range slots[:min(len(init), len(slots))] {
+			if released && (init[i].RestartPolicy == nil || *init[i].RestartPolicy != corev1.ContainerRestartPolicyAlways) {
+				continue
+			}
+			for _, d := range slot {
+				ids[d.UUID] = true
+			}
+		}
+	}
+	return ids
+}
+
+func addInitReservations(h *biz.NodeHolders, ids map[string]bool, allocation podfacts.NodeAllocation, name, uid string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	// One card cannot take its peak from two different allocation authorities
+	// or resource names in the same Pod.
+	peaks := make(map[string]*podfacts.Occupancy, len(ids))
+	for i := range allocation.Peaks {
+		peak := &allocation.Peaks[i]
+		id := peak.DeviceID
+		if !ids[id] || string(allocation.UID) != uid || peak.Node != name || string(peak.NodeUID) != uid {
+			continue
+		}
+		if _, duplicate := peaks[id]; duplicate {
+			peaks[id] = nil
+		} else {
+			peaks[id] = peak
+		}
+	}
+	counted := make(map[string]bool, len(ids))
+	for id := range ids {
+		peak := peaks[id]
+		if peak == nil {
+			h.UncertainDeviceIDs[id] = true
+			continue
+		}
+		slots, memory, cores := peak.Quantities["slots"], peak.Quantities["memory"], peak.Quantities["compute"]
+		if slots.Value == nil || memory.Value == nil || slots.Unit != "slots" || memory.Unit != "bytes" {
+			h.UncertainDeviceIDs[id] = true
+			continue
+		}
+		total := h.Reservations[id]
+		total.HasInit = true
+		total.Slots += int32(slots.Value.Value())
+		total.MemoryMiB += int32(memory.Value.Value() / (1 << 20))
+		if cores.Value == nil || cores.Unit != "percent" {
+			total.CoreUnknown = true
+		} else {
+			// Device details report whole percentages, including for fractional Ascend templates.
+			total.Cores += int32(math.Round(cores.Value.AsApproximateFloat64()))
+		}
+		h.Reservations[id] = total
+		counted[id] = true
+	}
+	return counted
 }
 
 func (r *podRepo) FindOne(_ context.Context, podUID string, name string) (*biz.Container, error) {

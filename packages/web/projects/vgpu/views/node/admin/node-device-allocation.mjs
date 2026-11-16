@@ -93,6 +93,7 @@ export const buildNodeDeviceAllocations = ({ node, devices = [], containers = []
       let allocationStatus = 'partial';
       if (device.unconfigured) allocationStatus = 'unconfigured';
       else if (!containersAvailable) allocationStatus = 'unavailable';
+      else if (device.hasInitReservation === true && device.nodeAllocationComplete !== false) allocationStatus = 'initReservation';
       else if (device.nodeAllocationComplete !== false && !incompleteIdentity && completeAllocation(device, records)) allocationStatus = 'complete';
 
       let split = allocationStatus === 'complete'

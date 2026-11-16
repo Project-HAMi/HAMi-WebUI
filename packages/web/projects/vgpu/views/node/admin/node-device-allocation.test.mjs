@@ -286,3 +286,14 @@ test('wrong-node, duplicate or invalid inventory cannot masquerade as an empty n
     loader.dispose();
   }
 });
+
+test('init reservations keep scheduler totals separate from the app workload diagram', () => {
+  for (const apps of [[], [container()]]) {
+    const [entry] = build([device({ hasInitReservation: true, nodeAllocationComplete: true })], apps);
+    assert.equal(entry.allocationStatus, 'initReservation');
+    assert.equal(entry.containerCount, apps.length);
+    assert.equal(entry.split, undefined);
+  }
+  const [ambiguous] = build([device({ hasInitReservation: true, nodeAllocationComplete: false })], []);
+  assert.equal(ambiguous.allocationStatus, 'partial');
+});

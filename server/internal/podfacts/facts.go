@@ -21,6 +21,7 @@ func Extract(pod *corev1.Pod, evidence Evidence, options Options) (*Facts, error
 		return nil, errors.New("pod facts require namespace, name and UID")
 	}
 	result := &Facts{
+		UnreadableAllocations: slices.Clone(evidence.UnreadableAllocations),
 		Metadata: metav1.ObjectMeta{
 			Namespace: pod.Namespace, Name: pod.Name, UID: pod.UID,
 			ResourceVersion: pod.ResourceVersion, DeletionTimestamp: pod.DeletionTimestamp.DeepCopy(),

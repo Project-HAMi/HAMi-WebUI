@@ -350,6 +350,7 @@ export default {
       allocatedCompute: '已分配算力',
       noAllocation: '暂无分配',
       occupancyUnknown: '占用信息不可用',
+      initReservation: '含 Init 容器预留',
       knownWorkloads: '已识别 {count} 个工作负载',
       workloads: '{count} 个工作负载',
       viewOccupancy: '查看占用',

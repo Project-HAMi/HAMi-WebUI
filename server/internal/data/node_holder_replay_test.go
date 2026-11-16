@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider/ascend"
 )
 
@@ -69,13 +70,41 @@ func TestNodeHoldersDuringNodeReplay(t *testing.T) {
 					t.Fatal(err)
 				}
 				if len(got.Containers) != 1 {
-					t.Fatalf("late-bound reservation: got %d holders, want one holder and 2048 MiB", len(got.Containers))
+					t.Fatalf("late-bound reservation: got %d holders, reservations=%v, want one holder and 2048 MiB", len(got.Containers), got.Reservations)
 				}
 				card := got.Containers[0].ContainerDevices[0]
-				if card.Usedmem != 2048 || card.Shape != "soft" || card.CoreAllocationUnknown {
-					t.Fatalf("got %+v, want 2048 MiB with soft allocation and known cores", card)
+				if got.Reservations[card.UUID].MemoryMiB != 2048 || card.Shape != "soft" || card.CoreAllocationUnknown {
+					t.Fatalf("got %+v reservation=%+v, want 2048 MiB with soft allocation and known cores", card, got.Reservations[card.UUID])
 				}
 			})
 		}
+	}
+}
+
+// The legacy NVIDIA encoder omitted CPU positions. Compare both encodings
+// through the holder API so a correct card total cannot hide the wrong owner.
+func TestMixedPodDeviceHolder(t *testing.T) {
+	for _, raw := range []string{"GPU-a,NVIDIA,2048,20:;", ";GPU-a,NVIDIA,2048,20:;"} {
+		t.Run(raw, func(t *testing.T) {
+			node, pod := coldAllocationObjects("NVIDIA")
+			pod.Spec.Containers = append([]corev1.Container{{Name: "cpu"}}, pod.Spec.Containers...)
+			pod.Annotations["hami.io/vgpu-devices-allocated"] = raw
+			catalog := &mutableCatalog{current: loadedTestCatalog(t)}
+			catalog.current.ResourceNames = map[string]devicecatalog.DeviceResourceNames{"NVIDIA": {Count: "nvidia.com/gpu"}}
+			repo, _ := startResourceTestSource(t, newResourceTestClient(node, pod), catalog, map[string]string{"NVIDIA": ""})
+			awaitContinuity(t, func() bool {
+				_, ok := repo.facts.Get(pod.UID)
+				repo.mutex.RLock()
+				defer repo.mutex.RUnlock()
+				return ok && repo.pods[pod.UID] != nil
+			})
+			h, err := repo.NodeHolders(context.Background(), node.Name, string(node.UID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(h.Containers) != 2 || len(h.Containers[0].ContainerDevices) != 0 || len(h.Containers[1].ContainerDevices) != 1 || h.Reservations["GPU-a"].MemoryMiB != 2048 || len(h.UnreadableAllocations) != 0 {
+				t.Fatalf("GPU allocation must belong only to app: %+v", h)
+			}
+		})
 	}
 }

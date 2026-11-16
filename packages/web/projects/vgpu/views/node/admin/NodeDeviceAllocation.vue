@@ -51,7 +51,7 @@
               </div>
             </template>
             <template #footer>
-              <span>{{ occupancyText(entry) }}</span>
+              <span v-if="entry.allocationStatus !== 'initReservation' || entry.containerCount">{{ occupancyText(entry) }}</span>
               <button
                 v-if="entry.containerCount > 0"
                 type="button"

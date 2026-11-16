@@ -79,6 +79,8 @@ message GPUReply {
   // Present for node-scoped allocation queries. When false, used quantities
   // contain only confirmed reservations and cannot be displayed as totals.
   optional bool node_allocation_complete = 17;
+  // An init or sidecar reservation contributes to the node-scoped device totals.
+  optional bool has_init_reservation = 18;
 }
 
 // One MIG device type and where NVML allows it on the GPU.
