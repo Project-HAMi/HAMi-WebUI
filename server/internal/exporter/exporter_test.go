@@ -585,8 +585,8 @@ func TestGenerateDeviceMetricsSeparatesPhysicalAndSchedulableMemory(t *testing.T
 		physicalMB    = 40960
 		usedMB        = 10240
 	)
-	usedQuery := `avg(DCGM_FI_DEV_FB_USED{UUID="GPU-physical-contract"})`
-	totalQuery := `avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-physical-contract"})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-physical-contract"})`
+	usedQuery := `avg(DCGM_FI_DEV_FB_USED{UUID="GPU-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
+	totalQuery := `avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-physical-contract",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
 	generator := newDeviceMetricsTestGenerator(
 		&biz.DeviceInfo{
 			Id:       deviceID,
@@ -651,7 +651,7 @@ func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t 
 			name:     "used without total",
 			deviceID: "GPU-used-only",
 			responses: map[string]*pb.InstantResponse{
-				`avg(DCGM_FI_DEV_FB_USED{UUID="GPU-used-only"})`: instantValue(512),
+				`avg(DCGM_FI_DEV_FB_USED{UUID="GPU-used-only",GPU_I_ID="",GPU_CI_ID=""})`: instantValue(512),
 			},
 			wantPhysicalUsed: true,
 		},
@@ -659,7 +659,7 @@ func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t 
 			name:     "total without used",
 			deviceID: "GPU-total-only",
 			responses: map[string]*pb.InstantResponse{
-				`avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-total-only"})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-total-only"})`: instantValue(40960),
+				`avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-total-only",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-total-only",GPU_I_ID="",GPU_CI_ID=""})`: instantValue(40960),
 			},
 			wantPhysicalSize:  true,
 			wantMemoryScaling: true,
@@ -668,7 +668,7 @@ func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t 
 			name:     "zero total is not capacity",
 			deviceID: "GPU-zero-total",
 			responses: map[string]*pb.InstantResponse{
-				`avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-zero-total"})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-zero-total"})`: instantValue(0),
+				`avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-zero-total",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-zero-total",GPU_I_ID="",GPU_CI_ID=""})`: instantValue(0),
 			},
 		},
 	}
@@ -892,8 +892,8 @@ func TestCommitCyclePrunesPhysicalMemorySeriesWhenTelemetryDisappears(t *testing
 		nodeName   = "node-prune-physical-contract"
 		deviceType = "A100"
 	)
-	usedQuery := `avg(DCGM_FI_DEV_FB_USED{UUID="GPU-prune-physical-contract"})`
-	totalQuery := `avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-prune-physical-contract"})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-prune-physical-contract"})`
+	usedQuery := `avg(DCGM_FI_DEV_FB_USED{UUID="GPU-prune-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
+	totalQuery := `avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-prune-physical-contract",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-prune-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
 	generator := newDeviceMetricsTestGenerator(
 		&biz.DeviceInfo{
 			Id:       deviceID,
