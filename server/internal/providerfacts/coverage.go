@@ -222,6 +222,10 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 		}
 		if node := nodesByUID[n.UID]; node != nil {
 			for key, raw := range node.Annotations {
+				// An owner describes the NVIDIA registration. On its own it cannot confirm inventory.
+				if key == nvidia.RegisterAnnos+"-owner" && observedSources["hami_registration:NVIDIA"] {
+					continue
+				}
 				if raw == "" || (!strings.Contains(key, "register") && key != metax.MetaxSDeviceAnno) {
 					continue
 				}

@@ -13,6 +13,7 @@ import (
 	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
+	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/resourceview"
 )
 
@@ -94,6 +95,37 @@ func TestInventoryContinuityCannotHideMalformedOrUnmappedProviders(t *testing.T)
 	n.Status.Capacity = nil
 	if s := buildProof(); !s.DeviceCoverage.Complete || *s.DeviceCoverage.Total != 0 {
 		t.Fatal("complete empty Node inventory failed to confirm no observable devices")
+	}
+}
+
+func TestNVIDIARegistrationOwnerRequiresRegistration(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		registered bool
+		advertised bool
+		wantCards  int32
+	}{
+		{"owner with registration", true, true, 1},
+		{"registration missing", false, true, 0},
+		{"only owner remains", false, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := testNode()
+			node.Annotations["hami.io/node-nvidia-register-owner"] = "plugin-owner"
+			if !tc.registered {
+				delete(node.Annotations, nvidia.RegisterAnnos)
+			}
+			if !tc.advertised {
+				node.Status.Capacity, node.Status.Allocatable = nil, nil
+			}
+			s := Build([]*corev1.Node{node}, testCatalog(), podfacts.Inventory{}, map[string]labels.Selector{"NVIDIA": labels.Everything()},
+				log.NewHelper(log.NewStdLogger(io.Discard)), time.Time{}, completeTestCoverage("node", "nodes", 1))
+			for _, c := range []*viewv1.Coverage{s.DeviceCoverage, s.Nodes[0].DeviceCoverage} {
+				if c.Observed != tc.wantCards || c.Complete != tc.registered || (c.Total != nil) != tc.registered {
+					t.Errorf("unexpected device coverage %v", c)
+				}
+			}
+		})
 	}
 }
 
