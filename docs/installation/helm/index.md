@@ -406,6 +406,17 @@ The manually managed scrape configuration must collect all of these targets:
   and `mx_*` for MetaX. See the [Hygon DCU/HCU contract](../../providers/hygon.md)
   for HCU HAMi-mode registration and exporter label requirements.
 
+For MetaX C500, the overview reads physical cards registered by the sGPU plugin
+in `metax-tech.com/node-gpu-devices`. A native deployment that only advertises
+a `metax-tech.com/gpu` count does not supply individual card UUIDs.
+
+Preserve mxExporter's native `Hostname`, `uuid`, `deviceId`, `modelName` and
+`die_id` labels on `mx_gpu_state`, `mx_gpu_usage` and the `type="vram"` samples
+of `mx_memory_used` and `mx_memory_total`. Keep all dies in the scrape. The
+overview accepts single-die C500 cards reporting `die_id="0"` and excludes XTT
+system memory and sGPU quotas. Exporter configurations that omit `die_id`
+cannot establish a whole-card reading and produce an identity conflict.
+
 Service names and discovery labels depend on the releases already installed in
 the cluster, so the Chart cannot safely write this external configuration. Raw
 scraping is therefore an advanced, user-managed path.

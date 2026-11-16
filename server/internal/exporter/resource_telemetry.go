@@ -122,15 +122,18 @@ type telemetryBatch struct {
 
 func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 	var plan []telemetryBatch
-	for _, provider := range []string{biz.NvidiaGPUDevice, biz.AscendGPUDevice, biz.HygonHCUDevice, biz.HygonGPUDevice} {
+	for _, provider := range []string{biz.NvidiaGPUDevice, biz.AscendGPUDevice, biz.HygonHCUDevice, biz.HygonGPUDevice, biz.MetaxGPUDevice} {
 		byKey := map[string][]resourceview.Device{}
 		for _, d := range devices {
 			id := d.Identity
 			if d.Kind != "physical" || id.NodeUID == "" || id.Node == "" || id.DeviceID == "" || id.Provider != provider {
 				continue
 			}
+			if provider == biz.MetaxGPUDevice && !metaxC500Candidate(d.Model) {
+				continue
+			}
 			key := id.DeviceID
-			if provider != biz.NvidiaGPUDevice {
+			if provider == biz.AscendGPUDevice || provider == biz.HygonHCUDevice || provider == biz.HygonGPUDevice {
 				key = id.Node
 			}
 			byKey[key] = append(byKey[key], d)
@@ -155,6 +158,9 @@ func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 				for _, spec := range dcgmPhysicalMetrics {
 					families = append(families, spec.LegacyName, spec.CurrentName)
 				}
+			case biz.MetaxGPUDevice:
+				families = []string{metaxState, metaxUtilization, metaxUsed, metaxTotal}
+				filter = fmt.Sprintf("uuid=~%q,type=~%q", strings.Join(ids, "|"), "|vram")
 			case biz.AscendGPUDevice:
 				families = []string{ascendUtilization, "npu_chip_info_hbm_used_memory", "npu_chip_info_hbm_total_memory", "npu_chip_info_used_memory", "npu_chip_info_total_memory"}
 				filter = fmt.Sprintf("node=~%q,v_dev_id=\"\",is_virtual!=\"true\"", strings.Join(ids, "|"))
@@ -183,6 +189,9 @@ func failedReadings(err error) physicalReadings {
 }
 func deviceReadings(d resourceview.Device, samples rawFamilies, at time.Time, born *time.Time, targets map[dcgmTarget]dcgmTargetEvidence) physicalReadings {
 	id := d.Identity
+	if id.Provider == biz.MetaxGPUDevice {
+		return metaxReadings(d, samples, at, born, targets)
+	}
 	if id.Provider == biz.AscendGPUDevice {
 		get := func(name string) dcgmReading { return ascendLabels.reading(name, d, samples[name], at, born, targets) }
 		readings := failedReadings(errDCGMMissing)
@@ -293,6 +302,8 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 				switch provider := batch.devices[0].Identity.Provider; provider {
 				case biz.HygonHCUDevice, biz.HygonGPUDevice:
 					key = sample.Labels["node"] + "\x00" + provider + "-" + sample.Labels["device_id"]
+				case biz.MetaxGPUDevice:
+					key = sample.Labels["uuid"]
 				case biz.AscendGPUDevice:
 					key = sample.Labels["node"] + "\x00" + sample.Labels["vdie_id"]
 				}
@@ -312,6 +323,9 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 				source = strings.ToLower(id.Provider) + "_exporter"
 				key = id.Node + "\x00" + id.DeviceID
 				memoryScale = 1
+			case biz.MetaxGPUDevice:
+				source = "mx_exporter"
+				memoryScale = bytesPerKiB // mxExporter reports VRAM in KiB.
 			case biz.AscendGPUDevice:
 				source = ascendSource
 				key = id.Node + "\x00" + id.DeviceID

@@ -24,7 +24,11 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 	chip := key(biz.AscendGPUDevice, "chip-01")
 	hcu := key(biz.HygonHCUDevice, "HCU-board-01")
 	dcu := key(biz.HygonGPUDevice, "DCU-board-01")
+	metax := key(biz.MetaxGPUDevice, "mx-01")
+	mislabelled := key(biz.MetaxGPUDevice, "mx-02")
 	facts := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 1), Devices: []resourceview.Device{
+		{Identity: metax, Kind: "physical", Model: "sgpu"},
+		{Identity: mislabelled, Kind: "physical", Model: "C500"},
 		{Identity: gpu, Kind: "physical", Model: "H100"}, {Identity: chip, Kind: "physical", Model: "Ascend310P"},
 		{Identity: hcu, Kind: "physical", Model: "HCU-K100_AI"},
 		{Identity: dcu, Kind: "physical", Model: "DCU-Z100L"},
@@ -50,6 +54,7 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 		a := model.Metric{"job": "npu", "instance": "h:8082", "node": "host"}
 		n := model.Metric{"job": "dcgm", "instance": "h:9400", "node": "host"}
 		h := model.Metric{"job": "hygon", "instance": "h:8000", "node": "host"}
+		m := model.Metric{"job": "mx-exporter", "instance": "h:8081"}
 		switch {
 		case strings.Contains(expr, "timestamp(up)"):
 			if unavailable {
@@ -57,6 +62,7 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 			}
 			add("up", a, targetUp)
 			add("up", n, targetUp)
+			add("up", m, targetUp)
 			add("up", h, targetUp)
 		case strings.Contains(expr, "hcu_usedmemory_bytes"):
 			h["minor_number"], h["device_id"], h["hcu_pod_name"] = "0", "board-01", "exclusive"
@@ -70,6 +76,21 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 			add("dcu_utilizationrate", h, 37.5)
 			add("dcu_usedmemory_bytes", h, 123456789)
 			add("dcu_memorycap_bytes", h, 32<<30)
+		case strings.Contains(expr, metaxUtilization):
+			m["Hostname"], m["uuid"], m["deviceId"], m["die_id"], m["modelName"] = "host", "mx-01", "0", "0", "MXC500"
+			add(metaxState, m, 1)
+			for _, pod := range []string{"first", "second"} {
+				m["exported_pod"] = model.LabelValue(pod)
+				add(metaxUtilization, m, 0)
+			}
+			m["type"] = "vram"
+			add(metaxUsed, m, 4*1024*1024)
+			add(metaxTotal, m, 64*1024*1024)
+			m["type"] = "xtt"
+			add(metaxTotal, m, 8*1024*1024)
+			delete(m, "type")
+			m["Hostname"], m["node"], m["uuid"] = "mx-exporter-pod", "host", "mx-02"
+			add(metaxState, m, 1)
 		case strings.Contains(expr, "DCGM_FI_DEV_FB_USED"):
 			n["UUID"] = "GPU-01"
 			add("DCGM_FI_DEV_GPU_UTIL_RATIO", n, .75)
@@ -103,7 +124,7 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	obs := g.DeviceObservations()
-	for id, want := range map[resourceview.DeviceIdentity][3]float64{gpu: {.75, 256 * bytesPerMiB, 1024 * bytesPerMiB}, chip: {0, 128 * bytesPerMiB, 8192 * bytesPerMiB}, hcu: {.10, 4 << 30, 64 << 30}, dcu: {.375, 123456789, 32 << 30}} {
+	for id, want := range map[resourceview.DeviceIdentity][3]float64{metax: {0, 4 * 1024 * bytesPerMiB, 64 * 1024 * bytesPerMiB}, gpu: {.75, 256 * bytesPerMiB, 1024 * bytesPerMiB}, chip: {0, 128 * bytesPerMiB, 8192 * bytesPerMiB}, hcu: {.10, 4 << 30, 64 << 30}, dcu: {.375, 123456789, 32 << 30}} {
 		d := obs[id]
 		for i, q := range []resourceview.Quantity{d.UtilizationRatio, d.MemoryUsedBytes, d.MemoryPhysicalBytes} {
 			value, ok := q.KnownValue()
@@ -114,6 +135,9 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 	}
 	if _, exists := obs[key(biz.AscendGPUDevice, "910C-module")]; exists {
 		t.Fatal("module acquired whole-card telemetry")
+	}
+	if q := obs[mislabelled].UtilizationRatio; q.State == nil || q.State.State != resourceview.Conflict {
+		t.Fatalf("registered UUID with contradictory host labels: %+v", q)
 	}
 	// Callers own their returned quantities, including nested evidence.
 	obs[gpu].UtilizationRatio.Value.Set(0)
@@ -126,7 +150,10 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 	if err := g.refreshResourceSnapshot(context.Background(), query); !errors.Is(err, errTelemetryQuery) {
 		t.Fatal("wrong query outage", err)
 	}
-	for _, d := range g.DeviceObservations() {
+	for id, d := range g.DeviceObservations() {
+		if id == mislabelled {
+			continue // It has never supplied a trustworthy reading.
+		}
 		if d.UtilizationRatio.State.State != resourceview.Stale || !d.UtilizationRatio.State.ObservedAt.AsTime().Equal(original) {
 			t.Fatal("old data promoted or retimestamped")
 		}
