@@ -9,16 +9,7 @@
     <detail-page-state :status="detailStatus" @retry="retryDetail">
       <template #loading>
         <block-box class="node-block" :title="$t('card.detail.detailInfo')" variant="detail">
-          <div class="card-detail">
-            <div class="card-detail-left">
-              <div class="basic-info-row">
-                <div v-for="label in [$t('card.node'), dt('card.model'), $t('card.splitMode.label'), $t('card.detail.gpuTemperature'), $t('card.detail.gpuPower')]" :key="label" class="basic-info-card">
-                  <div class="basic-info-title"><LoadingValue :height="28" width="100px" /></div>
-                  <div class="basic-info-subtitle">{{ label }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <DeviceFacts loading :readings="sensorReadings" />
         </block-box>
         <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')" variant="detail">
           <div class="resource-overview-layout">
@@ -55,57 +46,13 @@
         </div>
       </template>
     <block-box class="node-block" :title="$t('card.detail.detailInfo')" variant="detail">
-      <div class="card-detail">
-        <div class="card-detail-left">
-          <div class="basic-info-row">
-            <div class="basic-info-card">
-              <RouterLink
-                v-if="nodeDetailLocation"
-                :to="nodeDetailLocation"
-                class="basic-info-title basic-info-node-link"
-              >
-                <span class="text">{{ detail.nodeName || '--' }}</span>
-                <span class="basic-info-share">
-                  <svg-icon icon="jump" />
-                </span>
-              </RouterLink>
-              <div v-else class="basic-info-title">
-                <span class="text">{{ detail.nodeName || '--' }}</span>
-              </div>
-              <div class="basic-info-subtitle">{{ $t('card.node') }}</div>
-            </div>
-            <div class="basic-info-card">
-              <div class="basic-info-title">
-                <VendorMark v-if="detail.type" :vendor="detail.vendor">
-                  <svg-icon :icon="fallbackModelIcon" class="gpu-type-icon" />
-                </VendorMark>
-                {{ detail.type || '--' }}
-                <UnconfiguredTag v-if="detail.unconfigured" />
-              </div>
-              <div class="basic-info-subtitle">{{ dt('card.model') }}</div>
-            </div>
-            <div class="basic-info-card">
-              <div class="basic-info-title">
-                <svg-icon v-if="splitModeIcon" :icon="splitModeIcon" class="split-mode-icon" aria-hidden="true" />
-                {{ splitModeText }}
-              </div>
-              <div class="basic-info-subtitle">{{ $t('card.splitMode.label') }}</div>
-            </div>
-            <div class="basic-info-card">
-              <div class="basic-info-title">
-                {{ basicTemperatureText }}
-              </div>
-              <div class="basic-info-subtitle">{{ $t('card.detail.gpuTemperature') }}</div>
-            </div>
-            <div class="basic-info-card">
-              <div class="basic-info-title">
-                {{ basicPowerText }}
-              </div>
-              <div class="basic-info-subtitle">{{ $t('card.detail.gpuPower') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <DeviceFacts
+        :device="detail"
+        :node-location="nodeDetailLocation"
+        :mode="splitModeText"
+        :mode-icon="splitModeIcon"
+        :readings="sensorReadings"
+      />
     </block-box>
 
     <block-box class="resource-overview-block" :title="$t('card.detail.resourceOverview')" variant="detail">
@@ -341,7 +288,7 @@
 <script setup lang="jsx">
 import PageHeader from '@/components/PageHeader.vue';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
-import { RouterLink, useRoute } from 'vue-router';
+import { useRoute } from 'vue-router';
 import BlockBox from '@/components/BlockBox.vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import LoadingValue from '~/vgpu/components/LoadingValue.vue';
@@ -381,14 +328,13 @@ import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 import { getAllocationSlotDisplay } from './allocation-slot-display.mjs';
-import UnconfiguredTag from './components/UnconfiguredTag.vue';
+import DeviceFacts from './components/DeviceFacts.vue';
 import deviceConfigApi from '~/vgpu/api/deviceConfig';
 import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
 import { cardHealthDisplay } from './card-health.mjs';
-import VendorMark from '~/vgpu/components/VendorMark.vue';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import taskApi from '~/vgpu/api/task';
 
@@ -451,8 +397,6 @@ const nodeDetailLocation = computed(() =>
     nodeName: detail.value?.nodeName,
   }),
 );
-// Keep the legacy AWS model mark for entries without a recognised inventory provider.
-const fallbackModelIcon = computed(() => /^AWS(?:NEURON)?(?:[^a-z]|$)/i.test(detail.value?.type || '') ? 'gpu-aws' : 'vgpu-card');
 
 const headerHealth = ref(null);
 watch(detail, async (card, _, onCleanup) => {
@@ -516,11 +460,6 @@ const memoryAllocationQueries = buildMemoryAllocationQueries({
 const memoryUsageQueries = buildMemoryUsageQueries({
   selector: cardMetricSelector,
 });
-
-const basicPowerText = computed(() =>
-  formatOptionalTelemetry(readReadyMetricField(telemetryNow.value[1], 'used'), 'W'));
-const basicTemperatureText = computed(() =>
-  formatOptionalTelemetry(readReadyMetricField(telemetryNow.value[0], 'used'), '℃'));
 
 const _gaugeConfigBase = [
   {
@@ -721,6 +660,15 @@ const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value
 // The current readings do not depend on the chart range.
 const telemetryNow = useInstantVector(lineTools.map(({ query }) => ({ query })), renderCardQuery);
 
+const sensorReadings = computed(() => lineTools.map(({ seriesNameKey, unit }, index) => {
+  const state = telemetryNow.value[index];
+  return {
+    key: seriesNameKey,
+    loading: !state || state.status === REQUEST_STATUS.LOADING,
+    text: formatOptionalTelemetry(readReadyMetricField(state, 'used'), unit),
+  };
+}));
+
 const lineToolsView = computed(() =>
   lineTools.map((item, index) => {
     const state = telemetryTrend.value[index];
@@ -785,115 +733,6 @@ watch(
 </script>
 
 <style scoped lang="scss">
-.card-detail {
-  display: flex;
-  width: 100%;
-  height: 100%;
-
-  ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .card-detail-left {
-    width: 100%;
-  }
-
-  .basic-info-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .basic-info-card {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    justify-content: center;
-    min-width: 0;
-    gap: 2px;
-    padding: 15px 20px;
-    border-radius: 8px;
-    background: #f5f7fa;
-    border: 0;
-    overflow-x: hidden;
-  }
-
-  .basic-info-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    min-width: 0;
-    font-size: 16px;
-    font-weight: 500;
-    color: #324558;
-    line-height: 28px;
-    cursor: default;
-
-    .text {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-
-  .basic-info-share {
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .basic-info-node-link {
-    align-self: flex-start;
-    max-width: 100%;
-    border-radius: 3px;
-    cursor: pointer;
-    text-decoration: none;
-    transition: color 0.2s ease;
-
-    .text {
-      text-decoration: underline;
-      text-decoration-color: transparent;
-      text-underline-offset: 3px;
-      transition: text-decoration-color 0.2s ease;
-    }
-
-    .basic-info-share {
-      transition: color 0.2s ease;
-    }
-
-    &:hover,
-    &:focus-visible {
-      color: var(--el-color-primary);
-
-      .text {
-        text-decoration-color: currentColor;
-      }
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--el-color-primary);
-      outline-offset: 2px;
-    }
-  }
-
-  .basic-info-subtitle {
-    color: #939ea9;
-    font-size: 12px;
-    line-height: 20px;
-  }
-
-.split-mode-icon {
-  width: 18px;
-  height: 18px;
-}
-
-.gpu-type-icon {
-  width: 16px;
-  height: 16px;
-  color: #64748b;
-}
-}
-
 .resource-overview-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
