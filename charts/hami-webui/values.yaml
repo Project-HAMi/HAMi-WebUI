@@ -42,8 +42,7 @@ image:
   digest: "sha256:963d644a6a5ccfc47dc3c04d76186ccb307b45b86de8dc95427ff1104bcd65d2"
 
 # Image pull secrets for the WebUI image, given as names or as {name: ...}
-# references. They are attached to the service account when `serviceAccount.create`
-# is enabled, and to the WebUI Pod otherwise.
+# references. They are set on the WebUI Pod.
 imagePullSecrets: []
 # - my-registry-secret
 # - name: my-other-registry-secret

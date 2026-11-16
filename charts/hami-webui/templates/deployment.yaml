@@ -45,7 +45,7 @@ spec:
         app.kubernetes.io/component: "hami-webui"
     spec:
       serviceAccountName: {{ include "hami-webui.serviceAccountName" . }}
-      {{- with and (not .Values.serviceAccount.create) (include "hami-webui.imagePullSecrets" .) }}
+      {{- with include "hami-webui.imagePullSecrets" . }}
       imagePullSecrets:
         {{- . | nindent 8 }}
       {{- end }}
