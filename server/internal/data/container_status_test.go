@@ -166,7 +166,7 @@ func TestPodInventoryKeepsContainerOutcomesUntilWholePodTerminates(t *testing.T)
 				if len(containers) != 2 || containers[0].Name != "worker" || containers[0].Status != outcome.status || containers[1].Status != biz.ContainerStatusSuccess {
 					t.Fatalf("container state must match names, with active Pod outcomes retained: %#v", containers)
 				}
-				count, cores, memory, _ := biz.ContainersStatisticsInfo(containers, "")
+				count, cores, memory, _ := biz.ContainersStatisticsInfo(containers, "GPU-1")
 				if count != 2 || cores != 20 || memory != 2048 {
 					t.Fatalf("state classification changed active allocation accounting: %d, %d, %d", count, cores, memory)
 				}
@@ -187,7 +187,7 @@ func TestPodInventoryKeepsContainerOutcomesUntilWholePodTerminates(t *testing.T)
 			if len(containers) != 0 {
 				t.Fatalf("terminal Pod must leave active inventory: %#v", containers)
 			}
-			count, cores, memory, _ := biz.ContainersStatisticsInfo(containers, "")
+			count, cores, memory, _ := biz.ContainersStatisticsInfo(containers, "GPU-1")
 			if count != 0 || cores != 0 || memory != 0 {
 				t.Fatal("terminal Pod allocations are still counted")
 			}

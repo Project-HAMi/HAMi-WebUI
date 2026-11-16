@@ -417,3 +417,17 @@ func TestWorkloadAllocationMatchesRequestRegardlessOfContainerKind(t *testing.T)
 		t.Fatalf("allocation and request for one container = %v, %v", reply, err)
 	}
 }
+
+func TestWorkloadDeviceFilterKeepsNumberedDevicesApart(t *testing.T) {
+	for _, prefix := range []string{"n-cambricon-mlu-", "n-metax-"} {
+		onTen := workloadTestContainer("on-ten", biz.ContainerStatusSuccess)
+		onTen.ContainerDevices = biz.ContainerDevices{{UUID: prefix + "10", Usedcores: 100, Usedmem: 81920}}
+		svc := workloadTestService([]*biz.Container{onTen})
+		for device, want := range map[string]int32{prefix + "1": 0, prefix + "10": 1} {
+			result, err := svc.ListWorkloads(context.Background(), &pb.ListWorkloadsRequest{Filters: &pb.ListWorkloadsRequest_Filters{DeviceId: device}})
+			if err != nil || result.Total != want {
+				t.Fatalf("%s: %v %v, want %d rows", device, result, err, want)
+			}
+		}
+	}
+}

@@ -3,6 +3,7 @@ package exporter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -1297,7 +1298,7 @@ func TestGenerateContainerMetricsPreservesMissingAndIdleUsage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			generator := &MetricsGenerator{
 				nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{{
-					Id: deviceID, Type: deviceType, Provider: biz.NvidiaGPUDevice, NodeName: nodeName,
+					Id: deviceID, AliasId: deviceID, Type: deviceType, Provider: biz.NvidiaGPUDevice, NodeName: nodeName,
 				}}}, log.NewStdLogger(io.Discard)),
 				podUsecase: biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{{
 					Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
@@ -1406,4 +1407,34 @@ func TestNonAscendContainerAllocationIsKnown(t *testing.T) {
 	labels := []string{nodeName, biz.NvidiaGPUDevice, "A100", deviceID, podName, container, namespace, container + ":" + podUID}
 	assertTrackedGaugeValue(t, generator, HamiContainerVcoreAllocated, labels, 0)
 	assertTrackedGaugeValue(t, generator, HamiContainerVcoreAllocationKnown, labels, 1)
+}
+
+func TestGenerateContainerMetricsKeepsNumberedDevicesApart(t *testing.T) {
+	const nodeName, deviceType, podName, container, namespace, podUID = "n", "MLU370", "train", "worker", "research", "pod-uid"
+	device := func(index int) *biz.DeviceInfo {
+		alias := fmt.Sprintf("n-cambricon-mlu-%d", index)
+		return &biz.DeviceInfo{Id: "MLU-" + alias, AliasId: alias, Type: deviceType, Provider: biz.CambriconGPUDevice, NodeName: nodeName, Index: index}
+	}
+	generator := &MetricsGenerator{
+		nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{
+			device(1), device(10), {Id: "no-alias", Type: deviceType, NodeName: nodeName},
+		}}, log.NewStdLogger(io.Discard)),
+		podUsecase: biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{{
+			Name: container, PodName: podName, PodUID: podUID, Namespace: namespace,
+			ContainerDevices: biz.ContainerDevices{{UUID: "n-cambricon-mlu-10", Vendor: biz.CambriconGPUDevice, Usedcores: 100, Usedmem: 81920}},
+		}}}, log.NewStdLogger(io.Discard)),
+		monitorService: &fakeInstantQuerier{},
+		log:            log.NewHelper(log.NewStdLogger(io.Discard)),
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(generator) })
+
+	if err := generator.GenerateContainerMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateContainerMetrics() error = %v", err)
+	}
+	labels := func(id string) []string {
+		return []string{nodeName, biz.CambriconGPUDevice, deviceType, id, podName, container, namespace, container + ":" + podUID}
+	}
+	assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels("MLU-n-cambricon-mlu-1"), false)
+	assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels("no-alias"), false)
+	assertTrackedGaugeValue(t, generator, HamiContainerVmemoryAllocated, labels("MLU-n-cambricon-mlu-10"), 81920)
 }

@@ -525,6 +525,9 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
 		}
+		if device.AliasId == "" {
+			continue
+		}
 		for _, c := range containers {
 			if err := ctx.Err(); err != nil {
 				return s.recordFatalError(err)
@@ -535,7 +538,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			var provider string = ""
 			coreAllocationKnown := true
 			for _, cd := range c.ContainerDevices {
-				if device.AliasId != "" && !strings.HasPrefix(cd.UUID, device.AliasId) {
+				if cd.UUID != device.AliasId {
 					continue
 				}
 				vGPU = vGPU + 1

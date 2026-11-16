@@ -191,7 +191,7 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 				continue
 			}
 
-			if filters.DeviceId != "" && !strings.HasPrefix(deviceID, filters.DeviceId) {
+			if filters.DeviceId != "" && deviceID != filters.DeviceId {
 				continue
 			}
 
