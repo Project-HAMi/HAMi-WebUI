@@ -22,8 +22,12 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 	}
 	gpu := key(biz.NvidiaGPUDevice, "GPU-01")
 	chip := key(biz.AscendGPUDevice, "chip-01")
+	hcu := key(biz.HygonHCUDevice, "HCU-board-01")
+	dcu := key(biz.HygonGPUDevice, "DCU-board-01")
 	facts := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 1), Devices: []resourceview.Device{
 		{Identity: gpu, Kind: "physical", Model: "H100"}, {Identity: chip, Kind: "physical", Model: "Ascend310P"},
+		{Identity: hcu, Kind: "physical", Model: "HCU-K100_AI"},
+		{Identity: dcu, Kind: "physical", Model: "DCU-Z100L"},
 		{Identity: key(biz.AscendGPUDevice, "910C-module"), Kind: "unknown", Model: "Ascend910C"},
 	}}
 	f := &sequenceFacts{available: []resourceview.Snapshot{facts, facts, facts}}
@@ -45,6 +49,7 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 		}
 		a := model.Metric{"job": "npu", "instance": "h:8082", "node": "host"}
 		n := model.Metric{"job": "dcgm", "instance": "h:9400", "node": "host"}
+		h := model.Metric{"job": "hygon", "instance": "h:8000", "node": "host"}
 		switch {
 		case strings.Contains(expr, "timestamp(up)"):
 			if unavailable {
@@ -52,6 +57,19 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 			}
 			add("up", a, targetUp)
 			add("up", n, targetUp)
+			add("up", h, targetUp)
+		case strings.Contains(expr, "hcu_usedmemory_bytes"):
+			h["minor_number"], h["device_id"], h["hcu_pod_name"] = "0", "board-01", "exclusive"
+			add("hcu_utilizationrate", h, 10)
+			add("hcu_usedmemory_bytes", h, 4<<30)
+			add("hcu_memorycap_bytes", h, 64<<30)
+			h["vhcu_minor_number"] = "42"
+			add("vhcu_utilizationrate", h, 40)
+		case strings.Contains(expr, "dcu_usedmemory_bytes"):
+			h["minor_number"], h["device_id"] = "1", "board-01"
+			add("dcu_utilizationrate", h, 37.5)
+			add("dcu_usedmemory_bytes", h, 123456789)
+			add("dcu_memorycap_bytes", h, 32<<30)
 		case strings.Contains(expr, "DCGM_FI_DEV_FB_USED"):
 			n["UUID"] = "GPU-01"
 			add("DCGM_FI_DEV_GPU_UTIL_RATIO", n, .75)
@@ -85,7 +103,7 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	obs := g.DeviceObservations()
-	for id, want := range map[resourceview.DeviceIdentity][3]float64{gpu: {.75, 256 * bytesPerMiB, 1024 * bytesPerMiB}, chip: {0, 128 * bytesPerMiB, 8192 * bytesPerMiB}} {
+	for id, want := range map[resourceview.DeviceIdentity][3]float64{gpu: {.75, 256 * bytesPerMiB, 1024 * bytesPerMiB}, chip: {0, 128 * bytesPerMiB, 8192 * bytesPerMiB}, hcu: {.10, 4 << 30, 64 << 30}, dcu: {.375, 123456789, 32 << 30}} {
 		d := obs[id]
 		for i, q := range []resourceview.Quantity{d.UtilizationRatio, d.MemoryUsedBytes, d.MemoryPhysicalBytes} {
 			value, ok := q.KnownValue()
@@ -240,5 +258,57 @@ func TestDCGMMemoryRejectsConflictingDeviceIdentityAcrossAliases(t *testing.T) {
 	free.Labels["device"] = "nvidia0"
 	if got := deviceReadings(card, rows, at, nil, targets).total; got.err != nil || got.selection.Value != 100 {
 		t.Fatalf("absent optional identity must not invalidate a confirmed UUID: %v", got)
+	}
+}
+
+func TestDCUReadingRequiresCurrentNodeAndUnambiguousBoardSerial(t *testing.T) {
+	at := time.Unix(1760000000, 0)
+	created := at.Add(-time.Minute)
+	card := resourceview.Device{Identity: resourceview.DeviceIdentity{Provider: biz.HygonGPUDevice, Node: "worker", NodeUID: "new", DeviceID: "DCU-board-A"}}
+	targets := map[dcgmTarget]dcgmTargetEvidence{{Job: "hygon", Instance: "node:8000"}: {}, {Job: "hygon", Instance: "duplicate:8000"}: {}}
+	sample := func(serial string) dcgmSample {
+		return dcgmSample{Value: 0, SampleAt: at, Labels: map[string]string{"__name__": "dcu_utilizationrate", "node": "worker", "job": "hygon", "instance": "node:8000", "minor_number": "1", "device_id": serial}}
+	}
+	read := func(card resourceview.Device, rows ...dcgmSample) physicalReadings {
+		return deviceReadings(card, rawFamilies{"dcu_utilizationrate": rows}, at, &created, targets)
+	}
+	if r := read(card, sample("board-A")); r.util.err != nil || r.util.selection.Value != 0 || !errors.Is(r.used.err, errDCGMMissing) || !errors.Is(r.total.err, errDCGMMissing) {
+		t.Fatalf("observed zero and missing memory: %+v", r)
+	}
+	for _, id := range []string{"1", "DCU-1", "DCU-N/A", "DCU-"} {
+		candidate := card
+		candidate.Identity.DeviceID = id
+		if r := read(candidate, sample(strings.TrimPrefix(id, "DCU-"))); !errors.Is(r.util.err, errDCGMMissing) {
+			t.Errorf("ambiguous registration %q: %v", id, r.util.err)
+		}
+	}
+	for _, node := range []string{"", "another-worker"} {
+		other := sample("board-A")
+		other.Labels["node"] = node
+		if r := read(card, other); !errors.Is(r.util.err, errDCGMMissing) {
+			t.Errorf("node %q: %v", node, r.util.err)
+		}
+	}
+	relabeled := sample("board-A")
+	relabeled.Labels["exported_node"] = "original-worker"
+	if r := read(card, relabeled); !errors.Is(r.util.err, errDCGMAmbiguous) {
+		t.Errorf("conflicting exporter and target nodes: %v", r.util.err)
+	}
+	old := sample("board-A")
+	old.SampleAt = created.Add(-time.Second)
+	if r := read(card, old); !errors.Is(r.util.err, errDCGMStale) {
+		t.Errorf("previous same-name node: %v", r.util.err)
+	}
+	second := sample("board-A")
+	second.Labels["instance"] = "duplicate:8000"
+	if r := read(card, sample("board-A"), second); !errors.Is(r.util.err, errDCGMAmbiguous) {
+		t.Errorf("two active sources for board: %v", r.util.err)
+	}
+	for _, v := range []float64{-1, 101} {
+		invalid := sample("board-A")
+		invalid.Value = v
+		if r := read(card, invalid); !errors.Is(r.util.err, errDCGMInvalid) {
+			t.Errorf("stored invalid percent %v: %v", v, r.util.err)
+		}
 	}
 }
