@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -282,14 +283,8 @@ func matchesUnifiedWorkloadScope(item *pb.ContainerReply, filters *pb.ListWorklo
 		(filters.NodeUid != "" && filters.NodeUid != item.NodeUid) {
 		return false
 	}
-	if filters.DeviceId != "" {
-		matched := false
-		for _, device := range item.DeviceIds {
-			matched = matched || strings.HasPrefix(device, filters.DeviceId)
-		}
-		if !matched {
-			return false
-		}
+	if filters.DeviceId != "" && !slices.Contains(item.DeviceIds, filters.DeviceId) {
+		return false
 	}
 	priority := strings.TrimSpace(filters.Priority)
 	if priority != "" {

@@ -2,7 +2,6 @@ package biz
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -150,12 +149,17 @@ func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 	return uc.repo.ListAll(ctx)
 }
 
-func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32, bool) {
+// ContainersStatisticsInfo totals allocations for a registered device alias.
+// NVIDIA MIG allocations already carry the parent GPU ID at this layer.
+func ContainersStatisticsInfo(containers []*Container, deviceID string) (int32, int32, int32, bool) {
+	if deviceID == "" {
+		return 0, 0, 0, false
+	}
 	var vGPU, core, memory int32
 	coreKnown := true
 	for _, t := range containers {
 		for _, cd := range t.ContainerDevices {
-			if deviceId != "" && !strings.HasPrefix(cd.UUID, deviceId) {
+			if cd.UUID != deviceID {
 				continue
 			}
 			vGPU = vGPU + 1

@@ -254,6 +254,9 @@ func (r *nodeRepo) ListAllDevices(context.Context) ([]*biz.DeviceInfo, error) {
 }
 
 func (r *nodeRepo) FindDeviceByAliasId(aliasId string) (*biz.DeviceInfo, error) {
+	if aliasId == "" {
+		return nil, errors.New("empty device alias")
+	}
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	for _, node := range r.nodes {

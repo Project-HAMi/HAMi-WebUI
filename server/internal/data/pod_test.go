@@ -464,7 +464,7 @@ func TestAscendAllocationsFollowTheCurrentConfigurationWithoutRedecoding(t *test
 	if !device.CoreAllocationUnknown || device.CoreReason != ascend.ReasonCatalogUnavailable || device.Vendor != biz.AscendGPUDevice || device.Usedmem != 16384 {
 		t.Fatalf("before the configuration is readable: %+v", device)
 	}
-	if _, _, _, known := biz.ContainersStatisticsInfo(containers, ""); known {
+	if _, _, _, known := biz.ContainersStatisticsInfo(containers, "B3-0"); known {
 		t.Fatal("device totals claimed a known compute share")
 	}
 
@@ -592,6 +592,29 @@ func TestMigReservationsStayOnNVIDIAGPUs(t *testing.T) {
 	}
 	if got := devices["DCU"][0][0]; got.Shape != "" || got.Template != "" || got.MigPlacement != (biz.MigPlacement{}) {
 		t.Fatalf("DCU device took the NVIDIA reservation: %+v", got)
+	}
+}
+
+// HAMi records MIG allocations under the parent UUID. The runtime MIG UUID
+// identifies the instance and must not receive a second allocation.
+func TestLegacyAndCurrentMigAllocationsCountOnlyOnTheirParent(t *testing.T) {
+	const parent = "GPU-d3697c57-5d63-3b19-86b7-50a19a6e7618"
+	const instance = "MIG-22e229c7-c4db-5893-8e61-3b444976638e"
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			util.AssignedNodeAnnotations:     "node-1",
+			"hami.io/vgpu-devices-allocated": parent + "[0-3],NVIDIA,10240,14:;" + parent + ",NVIDIA,40960,50:",
+			nvidia.MigAllocationsAnnotation:  `[{"containerIndex":1,"deviceIndex":0,"gpuUUID":"` + parent + `","profile":"3g.40gb","placement":{"start":0,"size":4},"migUUID":"` + instance + `","gpuInstanceID":2,"computeInstanceID":0}]`,
+		}},
+		Spec: corev1.PodSpec{NodeName: "node-1", Containers: []corev1.Container{{Name: "a"}, {Name: "b"}}},
+	}
+	slots := bizPodDevices(nvidia.ReadAllocations(pod, map[string]string{parent: nvidia.ModeMig}), mustDecodePodDevices(t, pod))[biz.NvidiaGPUDevice]
+	containers := []*biz.Container{{ContainerDevices: slots[0]}, {ContainerDevices: slots[1]}}
+	if count, _, mem, _ := biz.ContainersStatisticsInfo(containers, parent); count != 2 || mem != 51200 {
+		t.Fatalf("parent: got %d allocations and %d MiB, want 2 and 51200", count, mem)
+	}
+	if count, _, _, _ := biz.ContainersStatisticsInfo(containers, instance); count != 0 {
+		t.Fatalf("MIG instance received %d duplicate allocations", count)
 	}
 }
 
