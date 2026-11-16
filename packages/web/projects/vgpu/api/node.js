@@ -51,24 +51,31 @@ class nodeApi {
     return request(this.getNodeList(data));
   }
 
-  getNodeDevices(nodeName, signal) {
-    return request({
+  async getNodeDevices({ name: nodeName, uid: nodeUid }, signal) {
+    const reply = await request({
       url: apiPrefix + '/v1/gpus',
       method: 'POST',
-      data: { filters: { nodeName } },
+      data: { filters: { nodeName, nodeUid } },
       errorFeedback: 'inline',
       signal,
     });
+    // Older servers can ignore the UID filter and return name-only reservations.
+    if (!reply?.list?.every(device => typeof device?.nodeAllocationComplete === 'boolean')) {
+      throw new Error('Node-scoped device allocations are unavailable');
+    }
+    return reply;
   }
 
-  getNodeAllocatedContainers(nodeUid, signal) {
-    return request({
+  async getNodeAllocatedContainers({ name: nodeName, uid: nodeUid }, signal) {
+    const reply = await request({
       url: apiPrefix + '/v1/containers',
       method: 'POST',
-      data: { filters: { nodeUid } },
+      data: { filters: { nodeName, nodeUid }, useNodeAllocation: true },
       errorFeedback: 'inline',
       signal,
     });
+    if (reply?.allocationNodeUid !== nodeUid) throw new Error('Node-scoped holders are unavailable');
+    return reply;
   }
 }
 

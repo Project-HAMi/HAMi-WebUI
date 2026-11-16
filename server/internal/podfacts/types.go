@@ -36,10 +36,15 @@ const (
 	NoAcceleratorEvidence Candidate = "no_accelerator_evidence"
 )
 
+// UnreadableAllocation identifies cards touched by a damaged source. An empty
+// DeviceID means any card from this provider may be affected.
+type UnreadableAllocation struct{ Provider, DeviceID string }
+
 type Facts struct {
-	Metadata metav1.ObjectMeta // informer identity, deletion timestamp and allocation node annotation
-	NodeName string
-	Terminal bool
+	UnreadableAllocations []UnreadableAllocation `json:"-"`
+	Metadata              metav1.ObjectMeta      // informer identity, deletion timestamp and allocation node annotation
+	NodeName              string
+	Terminal              bool
 	// HAMi v2.11 releases ordinary init reservations together and keeps restartable sidecars.
 	InitUsageReleased  bool
 	hasInitReservation bool // this UID has had a decodable HAMi allocation
@@ -122,7 +127,8 @@ type AllocationSet struct {
 
 // Evidence binds decoded allocations to the informer Pod snapshot.
 type Evidence struct {
-	Allocations []AllocationSnapshot
+	UnreadableAllocations []UnreadableAllocation
+	Allocations           []AllocationSnapshot
 }
 type Issue struct {
 	Field  string

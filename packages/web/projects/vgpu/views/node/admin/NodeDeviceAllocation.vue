@@ -51,7 +51,7 @@
               </div>
             </template>
             <template #footer>
-              <span>{{ occupancyText(entry) }}</span>
+              <span v-if="entry.allocationStatus !== 'initReservation' || entry.containerCount">{{ occupancyText(entry) }}</span>
               <button
                 v-if="entry.containerCount > 0"
                 type="button"
@@ -151,15 +151,17 @@ const knownAllocation = (entry) => {
   if (entry.allocationStatus === 'unconfigured') return [];
   const memory = readAllocationNumber(entry.device.memoryUsed);
   const compute = readAllocationNumber(entry.device.coreUsed);
+  const partial = entry.device.nodeAllocationComplete === false;
+  if (partial && !(readAllocationNumber(entry.device.vgpuUsed) > 0)) return [];
   const values = [];
-  if (memory !== undefined) values.push({ key: 'memory', label: 'node.allocation.allocatedMemory', text: memoryText(memory) });
+  if (memory !== undefined) values.push({ key: 'memory', label: partial ? 'node.allocation.knownMemory' : 'node.allocation.allocatedMemory', text: memoryText(memory) });
   if (entry.device.coreUsedKnown === true && compute !== undefined) {
     const occupied = readAllocationNumber(entry.device.vgpuUsed) !== 0 || entry.containerCount > 0;
     const unlimited = compute === 0 && occupied && allocationsOf(entry).some((allocation) =>
       allocation.allocationShape === 'soft' && allocation.allocatedCoresKnown === true
         && readAllocationNumber(allocation.allocatedCores) === 0);
     if (compute > 0 || !occupied || unlimited) {
-      values.push({ key: 'compute', label: 'node.allocation.allocatedCompute', text: unlimited ? t('common.notLimited') : `${numberText(compute)}%` });
+      values.push({ key: 'compute', label: partial ? 'node.allocation.knownCompute' : 'node.allocation.allocatedCompute', text: unlimited ? t('common.notLimited') : `${numberText(compute)}%` });
     }
   }
   return values;

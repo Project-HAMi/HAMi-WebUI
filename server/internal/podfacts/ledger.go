@@ -145,6 +145,7 @@ func Clone(f *Facts) *Facts {
 		return nil
 	}
 	out := *f
+	out.UnreadableAllocations = slices.Clone(f.UnreadableAllocations)
 	out.Metadata = *f.Metadata.DeepCopy()
 	out.CandidateEvidence = append([]string(nil), f.CandidateEvidence...)
 	out.Issues = append([]Issue(nil), f.Issues...)
@@ -191,4 +192,27 @@ func (l *Ledger) NodeAssignment(uid types.UID) NodeAssignment {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.assignments[uid]
+}
+
+// NodeAllocation reads the assignment and release state from the same immutable
+// Pod revision. Only callers accounting for init containers need phase peaks.
+func (l *Ledger) NodeAllocation(uid types.UID, version, inputRevision string, includePeaks bool) (NodeAllocation, bool) {
+	l.mu.RLock()
+	f, assignment, revision := l.pods[uid], l.assignments[uid], l.revisions[uid]
+	l.mu.RUnlock()
+	if f == nil || f.Metadata.ResourceVersion != version || revision != inputRevision {
+		return NodeAllocation{}, false
+	}
+	a := NodeAllocation{UID: assignment.UID, InitReleased: f.InitUsageReleased, Unreadable: slices.Clone(f.UnreadableAllocations)}
+	if includePeaks {
+		a.Peaks = EffectiveOccupancies(f)
+	}
+	return a, true
+}
+
+type NodeAllocation struct {
+	Unreadable   []UnreadableAllocation
+	UID          types.UID
+	InitReleased bool
+	Peaks        []Occupancy
 }

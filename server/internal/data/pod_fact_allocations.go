@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	viewv1 "vgpu/api/observability/v1"
+	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
 	"vgpu/internal/provider/ascend"
@@ -36,6 +37,7 @@ func factString(value string) *string {
 }
 
 func (r *podRepo) hamiFactEvidence(pod *corev1.Pod, node *corev1.Node, catalog *devicecatalog.Snapshot) (podfacts.Evidence, podfacts.Options) {
+	pod = alignNvidiaAllocation(pod, catalog)
 	result := podfacts.Evidence{}
 	options := podfacts.Options{}
 	for name := range r.schedulingResourceNames {
@@ -107,10 +109,18 @@ func (r *podRepo) hamiFactEvidence(pod *corev1.Pod, node *corev1.Node, catalog *
 		source.HasAllocationEvidence = strings.Trim(pod.Annotations[key], ";:") != ""
 		valid, complete := allocationLayout(pod.Annotations[key], len(names))
 		source.Complete = complete
-		if !valid || failed[kind] {
-			source.Source.State, source.Source.Reason = resourceview.Unknown, "unverified"
-			source.Complete = false
+		countKey := ""
+		if catalog.Loaded() {
+			switch kind {
+			case util.NvidiaGPUDevice:
+				countKey = catalog.ResourceNames[kind].Count
+			case util.CambriconGPUDevice:
+				if catalog.Cambricon != nil {
+					countKey = catalog.Cambricon.ResourceCountName
+				}
+			}
 		}
+		checkAllocationRows(&result, &source, pod, kind, countKey, pod.Annotations[key], valid && !failed[kind])
 		// This is the source's concrete resource type, not an inferred Kubernetes
 		// extended-resource name. E2b must establish that mapping independently.
 		options.ResourceNames = append(options.ResourceNames, corev1.ResourceName(kind))
@@ -180,10 +190,7 @@ func (r *podRepo) hamiFactEvidence(pod *corev1.Pod, node *corev1.Node, catalog *
 		valid, complete := allocationLayout(raw, len(names))
 		source.Complete = complete
 		slots, decodedOK := npu[word]
-		if !valid || !decodedOK {
-			source.Source.State, source.Source.Reason = resourceview.Unknown, "unverified"
-			source.Complete = false
-		}
+		checkAllocationRows(&result, &source, pod, biz.AscendGPUDevice, models[word].ResourceName, raw, valid && decodedOK)
 		options.ResourceNames = append(options.ResourceNames, corev1.ResourceName(word))
 		for slot, devices := range slots {
 			if slot >= len(names) {
@@ -227,6 +234,46 @@ func (r *podRepo) hamiFactEvidence(pod *corev1.Pod, node *corev1.Node, catalog *
 	sort.Slice(result.Allocations, func(i, j int) bool { return result.Allocations[i].Source.Source < result.Allocations[j].Source.Source })
 	return result, options
 }
+
+// Empty CPU positions vary by HAMi version. A positive device request
+// needs an allocation row at the corresponding container position.
+func checkAllocationRows(e *podfacts.Evidence, source *podfacts.AllocationSnapshot, pod *corev1.Pod, provider, countKey, raw string, valid bool) {
+	rows := strings.Split(raw, ";")
+	for _, slot := range requestedSlots(pod, countKey) {
+		if slot >= len(rows) || strings.Trim(rows[slot], ":") == "" {
+			// The missing device cannot be scoped to a particular card or phase.
+			e.UnreadableAllocations = append(e.UnreadableAllocations, podfacts.UnreadableAllocation{Provider: provider})
+			break
+		}
+	}
+	if !valid {
+		e.UnreadableAllocations = append(e.UnreadableAllocations, unreadableAllocations(provider, raw)...)
+		source.Source.State, source.Source.Reason = resourceview.Unknown, "unverified"
+		source.Complete = false
+	}
+}
+
+// The source is incomplete. Use its identifiers only to locate affected cards.
+func unreadableAllocations(provider, raw string) []podfacts.UnreadableAllocation {
+	if provider == util.MetaxGPUDevice || provider == util.MetaxSGPUDevice {
+		provider = biz.MetaxGPUDevice
+	}
+	var hints []podfacts.UnreadableAllocation
+	for _, record := range strings.FieldsFunc(raw, func(r rune) bool { return r == ':' || r == ';' }) {
+		id, _, ok := strings.Cut(record, ",")
+		if !ok || id == "" {
+			return []podfacts.UnreadableAllocation{{Provider: provider}}
+		}
+		if provider == biz.NvidiaGPUDevice {
+			if parent, legacy := nvidia.LegacyMigUUID(id); legacy {
+				id = parent
+			}
+		}
+		hints = append(hints, podfacts.UnreadableAllocation{Provider: provider, DeviceID: id})
+	}
+	return hints
+}
+
 func newFactAllocationSnapshot(pod *corev1.Pod, kind string) podfacts.AllocationSnapshot {
 	source := &viewv1.SourceState{Source: "hami_annotation:" + kind, State: resourceview.Known}
 	// Allocation context may precede binding. A conflicting bound node is not an

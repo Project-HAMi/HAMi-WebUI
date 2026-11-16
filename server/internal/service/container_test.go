@@ -107,6 +107,8 @@ func TestGetAllContainersMarksUnknownAscendCoreAllocation(t *testing.T) {
 }
 
 type containerTestPodRepo struct {
+	biz.NodeHolderReader
+
 	containers []*biz.Container
 }
 

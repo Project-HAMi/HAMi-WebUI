@@ -2,10 +2,13 @@ package biz
 
 import (
 	"context"
-	"github.com/go-kratos/kratos/v2/log"
-	k8stypes "k8s.io/apimachinery/pkg/types"
 	"strings"
 	"time"
+
+	"github.com/go-kratos/kratos/v2/log"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+
+	"vgpu/internal/podfacts"
 )
 
 type Container struct {
@@ -45,16 +48,67 @@ type ContainerStatusDetail struct {
 }
 
 type PodInfo struct {
-	Namespace string
-	Name      string
-	UID       k8stypes.UID
-	NodeID    string
-	Devices   PodDevices
-	CtrIDs    []string
-	Ctrs      []*Container
+	AllocationRevision string // Node and catalog used to decode Devices and Ctrs.
+	ResourceVersion    string
+	Namespace          string
+	Name               string
+	UID                k8stypes.UID
+	NodeID             string
+	Devices            PodDevices
+	CtrIDs             []string
+	Ctrs               []*Container
 }
 
+type DeviceReservation struct {
+	Slots, Cores, MemoryMiB int32
+	CoreUnknown, HasInit    bool
+}
+
+// NodeHolders contains only allocations attributable to the requested Node UID.
+// An ambiguous reservation prevents the affected device from reporting a total.
+type NodeHolders struct {
+	Reservations          map[string]DeviceReservation
+	Containers            []*Container
+	UncertainDeviceIDs    map[string]bool
+	UnreadableAllocations []podfacts.UnreadableAllocation
+}
+
+// UnreadableDeviceIDs resolves hints against the current registration. If a
+// damaged record cannot identify a card, any card of that provider on this
+// node may be affected. Return public IDs so equal aliases across vendors stay separate.
+func (h NodeHolders) UnreadableDeviceIDs(devices []*DeviceInfo, node, uid string) map[string]bool {
+	if len(h.UnreadableAllocations) == 0 {
+		return nil
+	}
+	byProvider := map[string]map[string]string{}
+	for _, d := range devices {
+		if d.NodeName != node || d.NodeUid != uid {
+			continue
+		}
+		if byProvider[d.Provider] == nil {
+			byProvider[d.Provider] = map[string]string{}
+		}
+		byProvider[d.Provider][d.AliasId] = d.Id
+	}
+	affected := map[string]bool{}
+	for _, hint := range h.UnreadableAllocations {
+		aliases := byProvider[hint.Provider]
+		if id, ok := aliases[hint.DeviceID]; ok && hint.DeviceID != "" {
+			affected[id] = true
+			continue
+		}
+		for _, id := range aliases {
+			affected[id] = true
+		}
+	}
+	return affected
+}
+
+type NodeHolderReader interface {
+	NodeHolders(ctx context.Context, name, uid string) (NodeHolders, error)
+}
 type PodRepo interface {
+	NodeHolderReader
 	ListAll(context.Context) ([]*Container, error)
 	FindOne(context.Context, string, string) (*Container, error)
 }
@@ -66,6 +120,10 @@ type PodUseCase struct {
 
 func NewPodUseCase(repo PodRepo, logger log.Logger) *PodUseCase {
 	return &PodUseCase{repo: repo, log: log.NewHelper(logger)}
+}
+
+func (uc *PodUseCase) NodeHolders(ctx context.Context, name, uid string) (NodeHolders, error) {
+	return uc.repo.NodeHolders(ctx, name, uid)
 }
 
 func (uc *PodUseCase) ListAllContainers(ctx context.Context) ([]*Container, error) {
@@ -93,9 +151,7 @@ func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 }
 
 func ContainersStatisticsInfo(containers []*Container, deviceId string) (int32, int32, int32, bool) {
-	var vGPU int32 = 0
-	var core int32 = 0
-	var memory int32 = 0
+	var vGPU, core, memory int32
 	coreKnown := true
 	for _, t := range containers {
 		for _, cd := range t.ContainerDevices {

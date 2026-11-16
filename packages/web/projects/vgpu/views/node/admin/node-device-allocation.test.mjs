@@ -143,6 +143,17 @@ test('unknown modes, unconfigured devices and unavailable holders remain visible
   assert.equal(entry.split, undefined);
 });
 
+test('an uncertain node assignment keeps the card and any confirmed holders without declaring the card free', () => {
+  const [old] = build([device({ nodeAllocationComplete: false, vgpuUsed: 0, memoryUsed: 0, coreUsed: 0 })], []);
+  assert.equal(old.allocationStatus, 'partial');
+  assert.equal(old.containerCount, undefined);
+  assert.equal(old.split, undefined);
+  const [mixed] = build([device({ nodeAllocationComplete: false })], [container()]);
+  assert.equal(mixed.allocationStatus, 'partial');
+  assert.equal(mixed.containerCount, 1);
+  assert.equal(mixed.containers[0].podUid, 'pod-a');
+});
+
 test('MIG with missing placement cannot fall back to a made-up memory layout', () => {
   const [entry] = build([device({ mode: 'mig' })], [container({ devices: [allocation({ allocationShape: 'mig' })] })]);
   assert.equal(entry.allocationStatus, 'partial');
@@ -274,4 +285,15 @@ test('wrong-node, duplicate or invalid inventory cannot masquerade as an empty n
     assert.deepEqual(state, { entries: [], status: 'error' });
     loader.dispose();
   }
+});
+
+test('init reservations keep scheduler totals separate from the app workload diagram', () => {
+  for (const apps of [[], [container()]]) {
+    const [entry] = build([device({ hasInitReservation: true, nodeAllocationComplete: true })], apps);
+    assert.equal(entry.allocationStatus, 'initReservation');
+    assert.equal(entry.containerCount, apps.length);
+    assert.equal(entry.split, undefined);
+  }
+  const [ambiguous] = build([device({ hasInitReservation: true, nodeAllocationComplete: false })], []);
+  assert.equal(ambiguous.allocationStatus, 'partial');
 });

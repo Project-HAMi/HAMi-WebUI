@@ -4753,7 +4753,7 @@ const allocationDeviceIDs = Array.from({ length: 8 }, (_, index) => `GPU-c4ac69$
 
 function nodeAllocationFixture(count = 8) {
   const devices = allocationDeviceIDs.slice(0, count).map((uuid) => ({
-    uuid, nodeUid: allocationNode.uid, nodeName: allocationNode.name,
+    uuid, nodeUid: allocationNode.uid, nodeName: allocationNode.name, nodeAllocationComplete: true,
     type: 'NVIDIA-A100-SXM4-80GB-with-a-long-inventory-model-name', vendor: 'NVIDIA',
     mode: 'hami-core', unconfigured: false, health: true,
     vgpuUsed: 2, vgpuTotal: 10, memoryUsed: 12288, memoryTotal: 81920,
@@ -4792,15 +4792,15 @@ async function installNodeAllocationFixture(page, state) {
   } }))
   await page.route('**/v1/containers', (route) => route.fulfill({
     status: state.containerStatus ?? 200,
-    json: state.containerPayload ?? { code: 0, items: state.containers, total: state.containers.length },
+    json: state.containerPayload ?? { code: 0, allocationNodeUid: allocationNode.uid, items: state.containers, total: state.containers.length },
   }))
   return requests
 }
 
 function assertNodeAllocationRequests(requests) {
   assert.deepEqual(requests.map(({ path }) => path).sort(), ['/containers', '/gpus'], 'Node allocation must use two batch requests without per-device detail or workload requests')
-  assert.deepEqual(requests.find(({ path }) => path === '/gpus').body, { filters: { nodeName: allocationNode.name } })
-  assert.deepEqual(requests.find(({ path }) => path === '/containers').body, { filters: { nodeUid: allocationNode.uid } })
+  assert.deepEqual(requests.find(({ path }) => path === '/gpus').body, { filters: { nodeName: allocationNode.name, nodeUid: allocationNode.uid } })
+  assert.deepEqual(requests.find(({ path }) => path === '/containers').body, { filters: { nodeName: allocationNode.name, nodeUid: allocationNode.uid }, useNodeAllocation: true })
 }
 
 test('node device allocation uses two node-scoped batches and shows at most four devices initially', async() => {
@@ -5079,8 +5079,9 @@ test('node device allocation never turns failed or incomplete holder data into f
   try {
     for (const scenario of [
       { label: 'failed request', status: 503, payload: { code: 503, message: 'holder snapshot temporarily unavailable' }, text: 'Allocation data unavailable' },
+      { label: 'older server ignores allocation scope', status: 200, payload: { items: state.containers }, text: 'Allocation data unavailable' },
       { label: 'missing items field', status: 200, payload: { code: 0 }, text: 'Allocation data unavailable' },
-      { label: 'empty list despite inventory allocations', status: 200, payload: { code: 0, items: [], total: 0 }, text: 'Allocation details are incomplete' },
+      { label: 'empty list despite inventory allocations', status: 200, payload: { code: 0, allocationNodeUid: allocationNode.uid, items: [], total: 0 }, text: 'Allocation details are incomplete' },
     ]) {
       state.containerStatus = scenario.status
       state.containerPayload = scenario.payload
@@ -5132,6 +5133,19 @@ test('node device allocation never turns failed or incomplete holder data into f
     await page.keyboard.press('Escape')
     await drawer.waitFor({ state: 'hidden' })
     Object.assign(state, nodeAllocationFixture(1))
+    Object.assign(state.devices[0], { nodeAllocationComplete: false, vgpuUsed: 1, memoryUsed: 2048 })
+    state.containers = [state.containers[0]]
+    state.containers[0].devices[0].allocatedMem = 2048
+    await section.getByRole('button', { name: 'Refresh device allocation', exact: true }).click()
+    await card.getByText('Known allocated memory', { exact: true }).waitFor()
+    assert.equal(await card.getByText('2 GiB', { exact: true }).count(), 1)
+    assert.equal(await card.locator('.split-meter__track').count(), 0)
+    await card.getByRole('button', { name: /View occupancy for/ }).click()
+    await drawer.waitFor()
+    assert.equal(await drawer.locator('a[href*="/workloads/"]').count(), 1)
+    await page.keyboard.press('Escape')
+    await drawer.waitFor({ state: 'hidden' })
+    state.devices[0].nodeAllocationComplete = true
     Object.assign(state.devices[0], { vgpuUsed: 0, memoryUsed: 0, coreUsed: 0 })
     state.containers = []
     await section.getByRole('button', { name: 'Refresh device allocation', exact: true }).click()
