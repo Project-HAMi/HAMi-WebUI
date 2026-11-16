@@ -122,7 +122,7 @@ type telemetryBatch struct {
 
 func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 	var plan []telemetryBatch
-	for _, provider := range []string{biz.NvidiaGPUDevice, biz.AscendGPUDevice} {
+	for _, provider := range []string{biz.NvidiaGPUDevice, biz.AscendGPUDevice, biz.HygonHCUDevice, biz.HygonGPUDevice} {
 		byKey := map[string][]resourceview.Device{}
 		for _, d := range devices {
 			id := d.Identity
@@ -130,7 +130,7 @@ func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 				continue
 			}
 			key := id.DeviceID
-			if provider == biz.AscendGPUDevice {
+			if provider != biz.NvidiaGPUDevice {
 				key = id.Node
 			}
 			byKey[key] = append(byKey[key], d)
@@ -150,19 +150,29 @@ func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 			}
 			var families []string
 			filter := fmt.Sprintf("UUID=~%q,GPU_I_ID=\"\",GPU_CI_ID=\"\"", strings.Join(ids, "|"))
-			if provider == biz.NvidiaGPUDevice {
+			switch provider {
+			case biz.NvidiaGPUDevice:
 				for _, spec := range dcgmPhysicalMetrics {
 					families = append(families, spec.LegacyName, spec.CurrentName)
 				}
-			} else {
+			case biz.AscendGPUDevice:
 				families = []string{ascendUtilization, "npu_chip_info_hbm_used_memory", "npu_chip_info_hbm_total_memory", "npu_chip_info_used_memory", "npu_chip_info_total_memory"}
 				filter = fmt.Sprintf("node=~%q,v_dev_id=\"\",is_virtual!=\"true\"", strings.Join(ids, "|"))
+			case biz.HygonHCUDevice, biz.HygonGPUDevice:
+				util, used, total := hygonMetricNames(provider)
+				families = []string{util, used, total}
+				filter = fmt.Sprintf("node=~%q", strings.Join(ids, "|"))
 			}
 			sort.Strings(families)
 			plan = append(plan, telemetryBatch{families, "{" + filter + "}", rows})
 		}
 	}
 	return plan
+}
+
+func hygonMetricNames(provider string) (utilization, used, total string) {
+	prefix := strings.ToLower(provider)
+	return prefix + "_utilizationrate", prefix + "_usedmemory_bytes", prefix + "_memorycap_bytes"
 }
 
 type physicalReadings struct{ util, used, total dcgmReading }
@@ -174,13 +184,21 @@ func failedReadings(err error) physicalReadings {
 func deviceReadings(d resourceview.Device, samples rawFamilies, at time.Time, born *time.Time, targets map[dcgmTarget]dcgmTargetEvidence) physicalReadings {
 	id := d.Identity
 	if id.Provider == biz.AscendGPUDevice {
-		get := func(name string) dcgmReading { return ascendReading(name, d, samples[name], at, born, targets) }
+		get := func(name string) dcgmReading { return ascendLabels.reading(name, d, samples[name], at, born, targets) }
 		readings := failedReadings(errDCGMMissing)
 		readings.util = get(ascendUtilization)
 		if used, total := ascendMemoryFamilies(d.Model); used != "" {
-			readings.used, readings.total = ascendMemoryPair(get(used), get(total))
+			readings.used, readings.total = ascendLabels.memoryPair(get(used), get(total))
 		}
 		return readings
+	}
+	if id.Provider == biz.HygonHCUDevice || id.Provider == biz.HygonGPUDevice {
+		utilName, usedName, totalName := hygonMetricNames(id.Provider)
+		schema := hygonLabels
+		schema.utilization = utilName
+		get := func(name string) dcgmReading { return schema.reading(name, d, samples[name], at, born, targets) }
+		used, total := schema.memoryPair(get(usedName), get(totalName))
+		return physicalReadings{get(utilName), used, total}
 	}
 	get := func(name string) dcgmReading {
 		spec := dcgmPhysicalMetrics[name]
@@ -272,7 +290,10 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 		for family, rows := range raw {
 			for _, sample := range rows {
 				key := sample.Labels["UUID"]
-				if batch.devices[0].Identity.Provider == biz.AscendGPUDevice {
+				switch provider := batch.devices[0].Identity.Provider; provider {
+				case biz.HygonHCUDevice, biz.HygonGPUDevice:
+					key = sample.Labels["node"] + "\x00" + provider + "-" + sample.Labels["device_id"]
+				case biz.AscendGPUDevice:
 					key = sample.Labels["node"] + "\x00" + sample.Labels["vdie_id"]
 				}
 				if byID[key] == nil {
@@ -285,7 +306,13 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 			id := device.Identity
 			source := "dcgm"
 			key := id.DeviceID
-			if id.Provider == biz.AscendGPUDevice {
+			memoryScale := float64(bytesPerMiB)
+			switch id.Provider {
+			case biz.HygonHCUDevice, biz.HygonGPUDevice:
+				source = strings.ToLower(id.Provider) + "_exporter"
+				key = id.Node + "\x00" + id.DeviceID
+				memoryScale = 1
+			case biz.AscendGPUDevice:
 				source = ascendSource
 				key = id.Node + "\x00" + id.DeviceID
 			}
@@ -296,8 +323,8 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 			old := previous[id]
 			observations[id] = resourceview.DeviceObservation{
 				UtilizationRatio:    observationQuantity(r.util, .01, "ratio", source, old.UtilizationRatio, at),
-				MemoryUsedBytes:     observationQuantity(r.used, bytesPerMiB, "bytes", source, old.MemoryUsedBytes, at),
-				MemoryPhysicalBytes: observationQuantity(r.total, bytesPerMiB, "bytes", source, old.MemoryPhysicalBytes, at),
+				MemoryUsedBytes:     observationQuantity(r.used, memoryScale, "bytes", source, old.MemoryUsedBytes, at),
+				MemoryPhysicalBytes: observationQuantity(r.total, memoryScale, "bytes", source, old.MemoryPhysicalBytes, at),
 			}
 		}
 	}

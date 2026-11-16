@@ -5,19 +5,20 @@ import (
 	"testing"
 	"time"
 
+	"vgpu/internal/biz"
 	"vgpu/internal/resourceview"
 )
 
 func TestAscendPhysicalCopiesRequireOneFreshChipAndTarget(t *testing.T) {
 	at := time.Now().UTC()
-	device := resourceview.Device{Identity: resourceview.DeviceIdentity{Node: "node", DeviceID: "chip"}, Model: "Ascend910B2"}
+	device := resourceview.Device{Identity: resourceview.DeviceIdentity{Provider: biz.AscendGPUDevice, Node: "node", DeviceID: "chip"}, Model: "Ascend910B2"}
 	sample := func(pod string) dcgmSample {
 		return dcgmSample{SampleAt: at, Value: 50, Labels: map[string]string{"__name__": ascendUtilization, "node": "node", "job": "npu", "instance": "npu:8082", "model_name": device.Model, "vdie_id": "chip", "id": "0", "pod_name": pod}}
 	}
 	evidence := map[dcgmTarget]dcgmTargetEvidence{{Job: "npu", Instance: "npu:8082"}: {TargetLabels: map[string]string{"node": "node"}}, {Job: "npu", Instance: "second:8082"}: {TargetLabels: map[string]string{"node": "node"}}}
 
 	read := func(created *time.Time, samples ...dcgmSample) dcgmReading {
-		return ascendReading(ascendUtilization, device, samples, at, created, evidence)
+		return ascendLabels.reading(ascendUtilization, device, samples, at, created, evidence)
 	}
 	first, second := sample("p1"), sample("p2")
 	if got := read(nil, first, second); got.err != nil || got.selection.Value != 50 {
@@ -89,18 +90,18 @@ func TestAscendMemoryPairRejectsDifferentTimeAndOverCapacity(t *testing.T) {
 	now := time.Now()
 	used := dcgmReading{selection: dcgmSelection{SampleAt: now, Value: 1}}
 	total := dcgmReading{selection: dcgmSelection{SampleAt: now.Add(-time.Minute), Value: 8}}
-	if u, c := ascendMemoryPair(used, total); !errors.Is(u.err, errDCGMAmbiguous) || !errors.Is(c.err, errDCGMAmbiguous) {
+	if u, c := ascendLabels.memoryPair(used, total); !errors.Is(u.err, errDCGMAmbiguous) || !errors.Is(c.err, errDCGMAmbiguous) {
 		t.Fatalf("mixed times: %v %v", u, c)
 	}
 	total.selection.SampleAt = now
 	used.selection.Labels = map[string]string{"model_name": "910B2"}
 	total.selection.Labels = map[string]string{"model_name": "910B3"}
-	if u, c := ascendMemoryPair(used, total); !errors.Is(u.err, errDCGMAmbiguous) || !errors.Is(c.err, errDCGMAmbiguous) {
+	if u, c := ascendLabels.memoryPair(used, total); !errors.Is(u.err, errDCGMAmbiguous) || !errors.Is(c.err, errDCGMAmbiguous) {
 		t.Fatalf("mixed models: %v %v", u, c)
 	}
 	total.selection.Labels = used.selection.Labels
 	used.selection.Value = 9
-	if u, c := ascendMemoryPair(used, total); !errors.Is(u.err, errDCGMInvalid) || !errors.Is(c.err, errDCGMInvalid) {
+	if u, c := ascendLabels.memoryPair(used, total); !errors.Is(u.err, errDCGMInvalid) || !errors.Is(c.err, errDCGMInvalid) {
 		t.Fatalf("used > total: %v %v", u, c)
 	}
 }
