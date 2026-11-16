@@ -72,9 +72,47 @@ func mergeMeasurement(current, next Quantity) Quantity {
 // missing value on one alias may be filled by another, but the two operands
 // of a memory ratio must have been sampled together on at least one alias.
 func (g PhysicalGroup) Observation(read func(Device) DeviceObservation) DeviceObservation {
+	primary, fallback := g.reportingMembers()
+	out := reconcileObservations(primary, read)
+	if len(fallback) == 0 {
+		return out
+	}
+
+	// The remaining registrations are DCU aliases of this same HCU board.
+	// Select memory as one pair so a handover never mixes two exporters.
+	needUtil := needsFallback(out.UtilizationRatio)
+	needMemory := needsFallback(out.MemoryUsedBytes, out.MemoryPhysicalBytes)
+	if needUtil || needMemory {
+		legacy := reconcileObservations(fallback, read)
+		if needUtil && legacy.UtilizationRatio.Value != nil {
+			out.UtilizationRatio = legacy.UtilizationRatio
+		}
+		if needMemory && legacy.MemoryUsedBytes.Value != nil && legacy.MemoryPhysicalBytes.Value != nil {
+			out.MemoryUsedBytes, out.MemoryPhysicalBytes = legacy.MemoryUsedBytes, legacy.MemoryPhysicalBytes
+		}
+	}
+	return out
+}
+
+// Conflicting or inapplicable primary fields must retain their diagnosis.
+func needsFallback(fields ...Quantity) bool {
+	missing := false
+	for _, field := range fields {
+		switch field.State.GetState() {
+		case Known:
+		case Unknown, Stale:
+			missing = true
+		default:
+			return false
+		}
+	}
+	return missing
+}
+
+func reconcileObservations(members []Device, read func(Device) DeviceObservation) DeviceObservation {
 	var out DeviceObservation
 	paired := false
-	for _, member := range g.Members {
+	for _, member := range members {
 		sample := read(member)
 		used, capacity := measurement(sample.MemoryUsedBytes, "bytes"), measurement(sample.MemoryPhysicalBytes, "bytes")
 		out.UtilizationRatio = mergeMeasurement(out.UtilizationRatio, measurement(sample.UtilizationRatio, "ratio"))

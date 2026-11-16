@@ -11,7 +11,7 @@ import (
 
 // PhysicalGroup represents one physical device on one incarnation of a Node.
 // The first member is its deterministic link/metric identity. Different
-// providers share a group only when both prove the same physical UUID.
+// providers share a group only with a proven hardware identity.
 type PhysicalGroup struct {
 	NodeUID types.UID
 	UUID    string
@@ -81,6 +81,11 @@ func GroupPhysicalDevices(snapshot Snapshot) PhysicalInventory {
 		key, exists := keys[id]
 		if !exists {
 			key = physicalKey{nodeUID: id.NodeUID, provider: id.Provider, device: id.DeviceID}
+			// HCU and legacy DCU registrations can coexist after an upgrade. The
+			// same serial on this incarnation of the node identifies one board.
+			if serial, ok := id.HygonBoardSerial(); ok && id.Provider == "DCU" {
+				key = physicalKey{nodeUID: id.NodeUID, provider: "HCU", device: "HCU-" + serial}
+			}
 		}
 		if d.UUID != nil && *d.UUID != "" && d.States["uuid"].GetState() == Known {
 			if key.uuid != "" && key.uuid != *d.UUID {
@@ -93,9 +98,23 @@ func GroupPhysicalDevices(snapshot Snapshot) PhysicalInventory {
 	for id := range conflicting {
 		delete(keys, id)
 	}
+	hcuNodes := map[types.UID]bool{}
+	for id := range keys {
+		if id.Provider == "HCU" {
+			hcuNodes[id.NodeUID] = true
+		}
+	}
 	groups := map[physicalKey][]Device{}
 	for _, d := range snapshot.Devices {
 		if key, ok := keys[d.Identity]; ok && d.Kind == "physical" && d.States["kind"].GetState() == Known {
+			// A legacy slot alone cannot prove an additional physical board
+			// when the current plugin also registers boards on the node.
+			if d.Identity.Provider == "DCU" && hcuNodes[d.Identity.NodeUID] && key.uuid == "" {
+				if _, identified := d.Identity.HygonBoardSerial(); !identified {
+					missingOnNode[d.Identity.NodeUID] = true
+					continue
+				}
+			}
 			groups[key] = append(groups[key], d)
 			continue
 		}
@@ -109,7 +128,15 @@ func GroupPhysicalDevices(snapshot Snapshot) PhysicalInventory {
 
 	out := PhysicalInventory{UnresolvedOnNode: missingOnNode, IncompleteNodes: missingNode, IncompleteDevices: missingDevice || len(missingOnNode) > 0}
 	for key, members := range groups {
-		slices.SortFunc(members, compareDevices)
+		slices.SortFunc(members, func(a, b Device) int {
+			if key.provider == "HCU" && a.Identity.Provider != b.Identity.Provider {
+				if a.Identity.Provider == "HCU" {
+					return -1
+				}
+				return 1
+			}
+			return compareDevices(a, b)
+		})
 		out.Groups = append(out.Groups, PhysicalGroup{NodeUID: key.nodeUID, UUID: key.uuid, Members: members})
 	}
 	slices.SortFunc(out.Groups, func(a, b PhysicalGroup) int { return compareDevices(a.Members[0], b.Members[0]) })
@@ -137,9 +164,32 @@ func hasAcceleratorResource(node Node) bool {
 	return false
 }
 
+// When both generations register a board, prefer the current HCU registration
+// for display and telemetry. Keep every registration for allocation accounting.
+func (g PhysicalGroup) reportingMembers() (primary, fallback []Device) {
+	if len(g.Members) < 2 {
+		return g.Members, nil
+	}
+	for _, member := range g.Members {
+		switch member.Identity.Provider {
+		case "HCU":
+			primary = append(primary, member)
+		case "DCU":
+			fallback = append(fallback, member)
+		default:
+			return g.Members, nil
+		}
+	}
+	if len(primary) == 0 || len(fallback) == 0 {
+		return g.Members, nil
+	}
+	return primary, fallback
+}
+
 // Model resolves the model across registrations for the same physical device.
 func (group PhysicalGroup) Model() (string, *viewv1.FieldState) {
-	model, state := agreedField(group.Members, func(d *Device) (*string, *viewv1.FieldState) {
+	primary, _ := group.reportingMembers()
+	model, state := agreedField(primary, func(d *Device) (*string, *viewv1.FieldState) {
 		if d.Model == "" {
 			return nil, d.States["model"]
 		}
@@ -153,7 +203,8 @@ func (group PhysicalGroup) Model() (string, *viewv1.FieldState) {
 
 // Health reports the agreed health status across the device's registrations.
 func (group PhysicalGroup) Health() (*bool, *viewv1.FieldState) {
-	return agreedField(group.Members, func(d *Device) (*bool, *viewv1.FieldState) {
+	primary, _ := group.reportingMembers()
+	return agreedField(primary, func(d *Device) (*bool, *viewv1.FieldState) {
 		return d.Healthy, d.States["health"]
 	})
 }
