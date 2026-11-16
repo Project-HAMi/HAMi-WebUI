@@ -2357,7 +2357,7 @@ test('detail loading shells follow each page layout and container breakpoints', 
     { name: 'node', route: 'nodes/node-1?nodeName=node-1', api: /\/v1\/node\?/, charts: 2, legendCounts: [2, 2], shells: '.node-overview-panel',
       groups: { '.node-overview-panel': 2, '.node-system-resource-cards > li': 2 } },
     { name: 'card', route: 'accelerators/gpu-1', api: /\/v1\/gpu\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
-      groups: { '.basic-info-row > .basic-info-card': 5, '.resource-overview-cards > li': 2 } },
+      groups: { '.fact-identities > .fact': 2, '.device-facts__grid > .fact': 2, '.fact--sensors > .fact__sensor': 2, '.resource-overview-cards > li': 2 } },
     { name: 'workload', route: 'workloads/pod-1/containers/worker', api: /\/v1\/container\?/,
       charts: 2, legendCounts: [0, 0], shells: '.basic-info-block, .workload-overview', groups: { '.basic-info-cards > .basic-info-card': 4, '.workload-overview .row-card': 5 } },
   ]
@@ -2376,7 +2376,11 @@ test('detail loading shells follow each page layout and container breakpoints', 
         await page.route(fixture.api, async(route) => {
           const response = await route.fetch()
           await gate
-          await route.fulfill({ response })
+          if (fixture.name === 'card') {
+            await route.fulfill({ response, json: { ...await response.json(), mode: 'hami-core' } })
+          } else {
+            await route.fulfill({ response })
+          }
         })
         const configure = async({ width, collapsed = false }) => {
           await page.setViewportSize({ width, height: 1000 })
@@ -2463,6 +2467,11 @@ test('detail loading shells follow each page layout and container breakpoints', 
           await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
           for (const [index, viewport] of viewports.entries()) {
             await configure(viewport)
+            if (fixture.name === 'card') {
+              const mode = page.locator('.fact__mode > span').filter({ hasText: 'HAMi-core' })
+              const lines = await mode.evaluate(el => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight))
+              assert.equal(lines, 1, `Split mode wraps at ${viewport.width}px in ${locale}`)
+            }
             const resolved = await geometry()
             assert.deepEqual(resolved.shells, pending[index].shells, `${fixture.name} ${locale} ${viewport.width}: known panel geometry changes after loading`)
             assert.deepEqual(resolved.filterSpacing, pending[index].filterSpacing, `${fixture.name}: time controls change spacing after loading`)
@@ -2471,6 +2480,14 @@ test('detail loading shells follow each page layout and container breakpoints', 
                 // Content can wrap after it arrives; compare row membership rather than guessing its height.
                 assert.equal(box.y === 0, pending[index].groups[selector][card].y === 0,
                   `${fixture.name} ${viewport.width}: ${selector} ${card} changes row after loading`)
+                // The model and node share the available width according to their names.
+                // Preserve the outside edges of that pair as the placeholders resolve.
+                if (selector === '.fact-identities > .fact' && boxes[0].y === boxes[1].y) {
+                  const was = pending[index].groups[selector][card]
+                  const edge = (rect) => card === 0 ? rect.x : rect.x + rect.width
+                  assert.ok(Math.abs(edge(box) - edge(was)) <= 1, 'Device identity group shifted after loading')
+                  continue
+                }
                 for (const field of ['x', 'width']) {
                   assert.ok(Math.abs(box[field] - pending[index].groups[selector][card][field]) <= 1,
                     `${fixture.name} ${locale} ${viewport.width}: ${selector} ${card} ${field} differs between loading ${pending[index].groups[selector][card][field]} and ready ${box[field]}`)
