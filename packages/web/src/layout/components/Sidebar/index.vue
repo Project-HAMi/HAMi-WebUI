@@ -52,13 +52,26 @@
           <span class="side-label" :aria-hidden="collapsed">{{ $t('common.collapseSidebar') }}</span>
         </button>
       </t-tooltip>
+      <t-tooltip :content="$t('about.title')" :disabled="!collapsed" placement="right">
+        <button ref="aboutButton" type="button" class="side-about" :aria-label="$t('about.title')" aria-haspopup="dialog" @click="aboutOpen = true">
+          <span class="side-icon">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 11v5m0-9v.2" />
+            </svg>
+          </span>
+          <span class="side-label" :aria-hidden="collapsed">{{ $t('about.navLabel') }}</span>
+        </button>
+      </t-tooltip>
     </div>
+    <AboutPanel :visible="aboutOpen" @close="closeAbout" />
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { useRoute } from 'vue-router';
+import AboutPanel from '~/vgpu/components/AboutPanel.vue';
 import Logo from '@/layout/components/TopBar/logo.vue';
 import LangSelect from '@/components/LangSelect/index.vue';
 
@@ -70,6 +83,14 @@ defineProps({
 });
 
 defineEmits(['toggle']);
+
+const aboutOpen = ref(false);
+const aboutButton = ref(null);
+const closeAbout = async () => {
+  aboutOpen.value = false;
+  await nextTick();
+  requestAnimationFrame(() => aboutButton.value?.focus({ preventScroll: true }));
+};
 
 const route = useRoute();
 

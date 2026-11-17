@@ -24,6 +24,7 @@
   }
 
   .side-link,
+  .side-about,
   .side-toggle {
     display: flex;
     align-items: center;
@@ -93,11 +94,12 @@
     flex-direction: column;
     gap: 4px;
     flex-shrink: 0;
-    margin: 8px 12px 12px;
+    margin: 8px 12px var(--app-frame-inset);
     padding-top: 8px;
     border-top: 1px solid #e4ebf1;
   }
 
+  .side-about svg,
   .side-toggle svg {
     stroke: currentColor;
     stroke-width: 1.5;
@@ -112,6 +114,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar .side-link,
+  .sidebar .side-about,
   .sidebar .side-toggle,
   .sidebar .side-label {
     transition: none;
