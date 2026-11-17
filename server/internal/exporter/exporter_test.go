@@ -105,10 +105,10 @@ func TestTaskUsageQueriesDistinguishMissingFailureAndIdle(t *testing.T) {
 		read func(*MetricsGenerator) (float32, error)
 	}{
 		{name: "compute", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+			return generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1")
 		}},
 		{name: "memory", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.taskMemoryUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+			return generator.taskMemoryUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1")
 		}},
 	}
 
@@ -143,8 +143,8 @@ func TestTaskUsageQueriesDistinguishMissingFailureAndIdle(t *testing.T) {
 func TestCambriconTaskQueriesMatchAnyModel(t *testing.T) {
 	querier := &fakeInstantQuerier{responses: []*pb.InstantResponse{{}, {}}}
 	generator := &MetricsGenerator{monitorService: querier}
-	_, _ = generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
-	_, _ = generator.taskMemoryUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1", 0)
+	_, _ = generator.taskCoreUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1")
+	_, _ = generator.taskMemoryUsed(context.Background(), biz.CambriconGPUDevice, "research", "train", "worker", "pod-uid", "MLU-1", "node-1")
 
 	want := []string{
 		`avg(mlu_utilization * on(uuid) group_right mlu_container{namespace="research",pod="train",container="worker",type=~".+[.]smlu[.]vcore"})`,
@@ -161,10 +161,10 @@ func TestAscendTaskUsageIsUnsupported(t *testing.T) {
 		read func(*MetricsGenerator) (float32, error)
 	}{
 		{name: "compute", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.taskCoreUsed(context.Background(), biz.AscendGPUDevice, "research", "train", "worker", "pod-uid", "ascend-1", "node-1", 0)
+			return generator.taskCoreUsed(context.Background(), biz.AscendGPUDevice, "research", "train", "worker", "pod-uid", "ascend-1", "node-1")
 		}},
 		{name: "memory", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.taskMemoryUsed(context.Background(), biz.AscendGPUDevice, "research", "train", "worker", "pod-uid", "ascend-1", "node-1", 0)
+			return generator.taskMemoryUsed(context.Background(), biz.AscendGPUDevice, "research", "train", "worker", "pod-uid", "ascend-1", "node-1")
 		}},
 	}
 
@@ -1183,7 +1183,7 @@ func TestNvidiaContainerCoreMetrics(t *testing.T) {
 			fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: tt.raw}}}}}
 			generator := &MetricsGenerator{monitorService: fake}
 
-			used, util, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 0, tt.allocated)
+			used, util, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", tt.allocated)
 			if err != nil {
 				t.Fatalf("containerCoreMetrics() error = %v", err)
 			}
@@ -1215,7 +1215,7 @@ func TestNvidiaContainerCoreMetricsRejectsNonFiniteValues(t *testing.T) {
 			fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: tt.raw}}}}}
 			generator := &MetricsGenerator{monitorService: fake}
 
-			_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 0, 50)
+			_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 50)
 			if !errors.Is(err, errNoMetricData) {
 				t.Fatalf("expected errNoMetricData, got %v", err)
 			}
@@ -1227,7 +1227,7 @@ func TestContainerCoreMetricsRejectsZeroAllocation(t *testing.T) {
 	fake := &fakeInstantQuerier{}
 	generator := &MetricsGenerator{monitorService: fake}
 
-	_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 0, 0)
+	_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 0)
 	if !errors.Is(err, errInvalidCoreCapacity) {
 		t.Fatalf("expected errInvalidCoreCapacity, got %v", err)
 	}
@@ -1260,7 +1260,7 @@ func TestContainerCoreMetricsKeepsLegacyProviderConversions(t *testing.T) {
 			}}
 			generator := &MetricsGenerator{monitorService: fake}
 
-			used, util, err := generator.containerCoreMetrics(context.Background(), tt.provider, "research", "train", "worker", "pod-uid", "device-1", "node-1", 0, tt.allocated)
+			used, util, err := generator.containerCoreMetrics(context.Background(), tt.provider, "research", "train", "worker", "pod-uid", "device-1", "node-1", tt.allocated)
 			if err != nil {
 				t.Fatalf("containerCoreMetrics() error = %v", err)
 			}
@@ -1437,4 +1437,22 @@ func TestGenerateContainerMetricsKeepsNumberedDevicesApart(t *testing.T) {
 	assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels("MLU-n-cambricon-mlu-1"), false)
 	assertGaugeTracked(t, generator, HamiContainerVgpuAllocated, labels("no-alias"), false)
 	assertTrackedGaugeValue(t, generator, HamiContainerVmemoryAllocated, labels("MLU-n-cambricon-mlu-10"), 81920)
+}
+
+func TestSGPUTaskQueriesResolvePhysicalUUID(t *testing.T) {
+	queries := &fakeInstantQuerier{}
+	g := &MetricsGenerator{monitorService: queries}
+	ctx := context.Background()
+	if _, err := g.taskCoreUsed(ctx, metax.MetaxSGPUDevice, "ns", "pod", "worker", "pod-uid", "GPU-B", "node"); !errors.Is(err, errNoMetricData) {
+		t.Errorf("core usage: got %v, want unavailable", err)
+	}
+	if _, err := g.taskMemoryUsed(ctx, metax.MetaxSGPUDevice, "ns", "pod", "worker", "pod-uid", "GPU-B", "node"); !errors.Is(err, errNoMetricData) {
+		t.Errorf("memory usage: got %v, want unavailable", err)
+	}
+	for i, metric := range []string{"mx_sgpu_usage", "mx_sgpu_used_memory"} {
+		want := fmt.Sprintf(`avg(%s{Hostname="node", exported_namespace="ns", exported_pod="pod", exported_container="worker"} and on(Hostname, deviceId) mx_gpu_state{Hostname="node", uuid="GPU-B"})`, metric)
+		if queries.queries[i] != want {
+			t.Errorf("query = %s, want %s", queries.queries[i], want)
+		}
+	}
 }

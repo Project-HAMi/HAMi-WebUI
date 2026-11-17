@@ -478,7 +478,7 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, conta
 				}
 			}
 
-			taskCoreUsed, err := s.taskCoreUsed(ctx, metax.MetaxGPUDevice, c.Namespace, c.PodName, c.Name, c.PodUID, deviceUUID, nodeName, -1)
+			taskCoreUsed, err := s.taskCoreUsed(ctx, metax.MetaxGPUDevice, c.Namespace, c.PodName, c.Name, c.PodUID, deviceUUID, nodeName)
 			if err == nil {
 				used := float64(taskCoreUsed)
 				util := math.NaN()
@@ -565,13 +565,13 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			s.set(HamiContainerVcoreAllocationKnown, allocationKnown, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			if coreAllocationKnown {
 				s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
-				used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index, core)
+				used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, core)
 				if err == nil {
 					s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 					s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 				}
 			}
-			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.Index)
+			taskMemoryUsed, err := s.taskMemoryUsed(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName)
 			if err == nil {
 				switch provider {
 				case biz.CambriconGPUDevice:
@@ -711,7 +711,7 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 	return s.queryRequiredInstantVal(ctx, query)
 }
 
-func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
+func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -729,12 +729,18 @@ func (s *MetricsGenerator) taskCoreUsed(ctx context.Context, provider, namespace
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})", deviceUUID, namespace, pod, container)
 	case metax.MetaxSGPUDevice:
-		query = fmt.Sprintf("avg(mx_sgpu_usage{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
-			hostname, deviceIndex, namespace, pod, container)
+		query = metaxSGPUTaskQuery("mx_sgpu_usage", hostname, deviceUUID, namespace, pod, container)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
 	return s.queryRequiredInstantVal(ctx, query)
+}
+
+// Resolve the physical UUID from current exporter samples. A Node update is not
+// required when an sGPU's metrics arrive after its registration.
+func metaxSGPUTaskQuery(metric, hostname, deviceUUID, namespace, pod, container string) string {
+	return fmt.Sprintf("avg(%s{Hostname=%q, exported_namespace=%q, exported_pod=%q, exported_container=%q} and on(Hostname, deviceId) mx_gpu_state{Hostname=%q, uuid=%q})",
+		metric, hostname, namespace, pod, container, hostname, deviceUUID)
 }
 
 func nvidiaTaskCoreUsedQuery(deviceUUID, namespace, pod, container string) string {
@@ -772,12 +778,12 @@ func hcuTaskQuery(metric, window, deviceUUID, node, namespace, pod, container st
 // For NVIDIA and HCU, used estimates active allocated compute in vCore percentage points
 // and excludes elastic borrowing; util is allocated-compute activity (0-100), not
 // physical-card utilization.
-func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int, allocatedCore int32) (float64, float64, error) {
+func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, allocatedCore int32) (float64, float64, error) {
 	if allocatedCore <= 0 {
 		return 0, 0, errInvalidCoreCapacity
 	}
 
-	taskCoreUsed, err := s.taskCoreUsed(ctx, provider, namespace, pod, container, podUUID, deviceUUID, hostname, deviceIndex)
+	taskCoreUsed, err := s.taskCoreUsed(ctx, provider, namespace, pod, container, podUUID, deviceUUID, hostname)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -815,7 +821,7 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 	return used, util, nil
 }
 
-func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, deviceIndex int) (float32, error) {
+func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -831,8 +837,7 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	case metax.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\", type=\"vram\"})", deviceUUID, namespace, pod, container)
 	case metax.MetaxSGPUDevice:
-		query = fmt.Sprintf("avg(mx_sgpu_used_memory{Hostname=\"%s\", deviceId=\"%d\", exported_namespace=\"%s\", exported_pod=\"%s\", exported_container=\"%s\"})",
-			hostname, deviceIndex, namespace, pod, container)
+		query = metaxSGPUTaskQuery("mx_sgpu_used_memory", hostname, deviceUUID, namespace, pod, container)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}

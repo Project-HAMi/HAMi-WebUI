@@ -36,7 +36,7 @@ type sDeviceInfo struct {
 	Healthy       bool   `json:"healthy"`
 }
 
-type deviceLables struct {
+type deviceLabels struct {
 	deviceId  uint
 	driver    string
 	modelName string
@@ -60,36 +60,27 @@ func (m *Metax) GetProvider() string {
 }
 
 func (m *Metax) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
-	var err error
-	var deviceInfos []*util.DeviceInfo
-
-	deviceLableMap := m.getDeviceLabelsFromPrometheus(node)
-	if len(deviceLableMap) == 0 {
-		m.log.Warnf("device labels of node %s is empty, check remote mx-export or prometheus available", node.Name)
-		return deviceInfos, nil
-	}
-
 	deviceCnt, _ := node.Status.Capacity.Name(corev1.ResourceName(MeteaxDevice), resource.DecimalSI).AsInt64()
 	if deviceCnt == 0 {
-		// get sdevice info from  annotation "metax-tech.com/node-gpu-devices"
+		// sGPU registrations identify each card before mx-exporter is scraped.
 		sdeviceListEncode, ok := node.Annotations[MetaxSDeviceAnno]
 		if !ok {
-			m.log.Warnf("%s node cloud not get %s annotation", node.Name, MetaxSDeviceAnno)
-			return deviceInfos, nil
+			m.log.Warnf("%s node missing %s annotation", node.Name, MetaxSDeviceAnno)
+			return nil, nil
 		}
 
-		var sDeviceList []*sDeviceInfo
+		var sDeviceList []sDeviceInfo
 		err := json.Unmarshal([]byte(sdeviceListEncode), &sDeviceList)
 		if err != nil {
 			m.log.Warnf("%s node unmarshal sdevice info with %s failed", node.Name, MetaxSDeviceAnno)
-			return deviceInfos, err
+			return nil, err
 		}
 
-		return m.convertSDevice2Device(sDeviceList, deviceLableMap), nil
+		return m.convertSDevice2Device(sDeviceList, m.getDeviceLabelsFromPrometheus(node)), nil
 	}
 
-	for uuid, deviceLabels := range deviceLableMap {
-
+	var deviceInfos []*util.DeviceInfo
+	for uuid, deviceLabels := range m.getDeviceLabelsFromPrometheus(node) {
 		deviceInfos = append(deviceInfos, &util.DeviceInfo{
 			ID:      uuid,
 			AliasId: node.Name + "-metax-" + fmt.Sprint(deviceLabels.deviceId),
@@ -103,16 +94,20 @@ func (m *Metax) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 		})
 	}
 
-	return deviceInfos, err
+	return deviceInfos, nil
 }
 
-func (m *Metax) convertSDevice2Device(sDeviceList []*sDeviceInfo, lablesMap map[string]*deviceLables) []*util.DeviceInfo {
+func (m *Metax) convertSDevice2Device(sDeviceList []sDeviceInfo, labelsByUUID map[string]*deviceLabels) []*util.DeviceInfo {
 	var deviceInfos []*util.DeviceInfo
 
 	for _, sDevice := range sDeviceList {
+		if sDevice.Uuid == "" {
+			continue
+		}
 
 		deviceInfo := &util.DeviceInfo{
 			ID:      sDevice.Uuid,
+			AliasId: sDevice.Uuid,
 			Count:   sDevice.TotalDevCount,
 			Devmem:  sDevice.TotalVRam, // MB
 			Devcore: sDevice.TotalCompute,
@@ -120,11 +115,17 @@ func (m *Metax) convertSDevice2Device(sDeviceList []*sDeviceInfo, lablesMap map[
 			Health:  sDevice.Healthy,
 		}
 
-		if deviceLalels, ok := lablesMap[sDevice.Uuid]; ok {
-			deviceInfo.Index = deviceLalels.deviceId
-			deviceInfo.AliasId = sDevice.Uuid
-			deviceInfo.Driver = deviceLalels.driver
-			deviceInfo.Type = deviceLalels.modelName
+		// Some plugin versions register the sharing mode in the model field.
+		if sDevice.Model != "sgpu" && sDevice.Model != "native" {
+			deviceInfo.Type = sDevice.Model
+		}
+
+		if sample, ok := labelsByUUID[sDevice.Uuid]; ok {
+			deviceInfo.Index = sample.deviceId
+			deviceInfo.Driver = sample.driver
+			if sample.modelName != "" {
+				deviceInfo.Type = sample.modelName
+			}
 		}
 
 		deviceInfos = append(deviceInfos, deviceInfo)
@@ -156,8 +157,8 @@ func (m *Metax) getDeviceMemoryFromPrometheus(node *corev1.Node, deviceUUID stri
 	return totalMem
 }
 
-func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) map[string]*deviceLables {
-	labelsMap := make(map[string]*deviceLables)
+func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) map[string]*deviceLabels {
+	labelsMap := make(map[string]*deviceLabels)
 
 	query := fmt.Sprintf("mx_gpu_state{Hostname=\"%s\"}", node.Name)
 	res, err := m.prom.Query(context.Background(), query)
@@ -179,7 +180,7 @@ func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) map[string]*dev
 		}
 
 		deviceIdStr := string(sample.Metric["deviceId"])
-		deviceId, err := strconv.Atoi(deviceIdStr)
+		deviceId, err := strconv.ParseUint(deviceIdStr, 10, strconv.IntSize)
 		if err != nil {
 			m.log.Warnf("Convert deviceId string %s to integer failed", deviceIdStr)
 			continue
@@ -187,7 +188,7 @@ func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) map[string]*dev
 
 		deviceStatus, _ := strconv.Atoi(sample.Value.String())
 
-		labelsMap[uuid] = &deviceLables{
+		labelsMap[uuid] = &deviceLabels{
 			deviceId:  uint(deviceId),
 			driver:    string(sample.Metric["driver_version"]),
 			modelName: string(sample.Metric["modelName"]),
