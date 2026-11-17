@@ -222,6 +222,10 @@ export default {
     overviewMemUsageRateDescription:
       'Total physical memory in use ÷ total physical memory. Only cards with both values are included.',
     memUsageRateDescription: 'Used physical memory divided by total physical memory.',
+    migMemoryMissing: 'No whole-GPU reading or usable MIG instance memory samples.',
+    migInstancesUsed: 'MIG instance usage',
+    migInstancesUsedHelp: 'Total memory used by the reporting GPU instances.',
+    migInstancesUsageHelp: 'Usage across reporting GPU instances, as a share of their combined memory ({total}).',
     metricHelpLabel: 'View metric definition for {metric}',
     metricNoData: 'No metric data',
     metricInvalid: 'Invalid metric value',

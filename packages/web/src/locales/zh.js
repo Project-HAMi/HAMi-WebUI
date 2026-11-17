@@ -220,6 +220,10 @@ export default {
     overviewMemUsageRateDescription:
       '已用物理显存 ÷ 物理显存总量。只统计两项数据都可用的卡。',
     memUsageRateDescription: '已用物理显存 ÷ 物理显存总量。',
+    migMemoryMissing: '暂无整卡读数，也没有可汇总的 MIG 实例显存读数。',
+    migInstancesUsed: 'MIG 实例已用',
+    migInstancesUsedHelp: '已上报的 GPU 实例合计使用的显存。',
+    migInstancesUsageHelp: '按已上报的 GPU 实例合计，占这组实例总显存（{total}）的比例。',
     metricHelpLabel: '查看{metric}指标说明',
     metricNoData: '暂无指标数据',
     metricInvalid: '指标值无效',

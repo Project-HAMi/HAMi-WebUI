@@ -193,17 +193,19 @@
                   <div class="resource-card-footer-item">
                     <div class="resource-card-footer-title">
                       <span class="resource-card-footer-label">
-                        {{ $t('dashboard.used') }}
+                        {{ migInstanceMemory ? $t('dashboard.migInstancesUsed') : $t('dashboard.used') }}
                       </span>
                       <metric-help
-                        :description="$t('dashboard.memUsageRateDescription')"
-                        :help-label="$t('dashboard.metricHelpLabel', { metric: $t('dashboard.memUsageRate') })"
+                        :description="memoryUsageHelp"
+                        :help-label="$t('dashboard.metricHelpLabel', { metric: $t(migInstanceMemory ? 'dashboard.migInstancesUsed' : 'dashboard.memUsageRate') })"
                       />
                     </div>
                     <div class="resource-card-footer-value">
                       <span class="resource-card-footer-reading">
                         <span class="resource-card-footer-metric">{{ memoryUsageUsedText }}</span>
-                        (<span class="resource-card-footer-percent">{{ memoryUsagePercentText }}</span>)
+                        <span v-if="!migInstanceMemory || migInstanceMemory.percent !== undefined">
+                          (<span class="resource-card-footer-percent">{{ memoryUsagePercentText }}</span>)
+                        </span>
                       </span>
                       <t-progress
                         v-if="memoryUsagePercentProgress !== undefined"
@@ -296,7 +298,7 @@ import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { ref, watch, computed } from 'vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 import useRangeVector from '~/vgpu/hooks/useRangeVector';
-import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
+import { METRIC_STATUS, readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import {
   isLowerBound,
   isNothingCounted,
@@ -334,6 +336,7 @@ import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
+import { migInstanceMemoryQuery, sumMigInstanceMemory } from './mig-instance-memory.mjs';
 import { cardHealthDisplay } from './card-health.mjs';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import taskApi from '~/vgpu/api/task';
@@ -588,9 +591,32 @@ const memoryAllocUsedText = computed(() =>
         gaugeConfig.value?.[1]?.unit,
       ),
 );
-const memoryUsageUsedText = computed(() =>
-  formatUsedValue(readGaugeField(3, 'used'), gaugeConfig.value?.[3]?.unit),
+// Only look up GI readings when this MIG card lacks a usable whole-GPU memory pair.
+const migMemoryUuid = computed(() =>
+  detail.value?.mode === 'mig' && gaugeConfig.value?.[3]?.status === METRIC_STATUS.MISSING
+    ? detailCardUuid.value : undefined,
 );
+const { data: migInstanceMemory, status: migMemoryStatus } = useDetailResource({
+  source: migMemoryUuid,
+  initialData: null,
+  request: async (uuid) => {
+    const result = await cardApi.getInstantVector({ query: migInstanceMemoryQuery(uuid) });
+    return sumMigInstanceMemory(result.data ?? [], uuid);
+  },
+  classify: result => result ? REQUEST_STATUS.READY : REQUEST_STATUS.MISSING,
+});
+const memoryUsageHelp = computed(() => {
+  if (!migInstanceMemory.value) {
+    return t(migMemoryUuid.value && migMemoryStatus.value === REQUEST_STATUS.MISSING
+      ? 'dashboard.migMemoryMissing' : 'dashboard.memUsageRateDescription');
+  }
+  const { totalGiB, percent } = migInstanceMemory.value;
+  return percent === undefined ? t('dashboard.migInstancesUsedHelp')
+    : t('dashboard.migInstancesUsageHelp', { total: formatUsedValue(totalGiB, 'GiB') });
+});
+const memoryUsageUsedText = computed(() => formatUsedValue(
+  migInstanceMemory.value?.usedGiB ?? readGaugeField(3, 'used'), gaugeConfig.value?.[3]?.unit,
+));
 
 const computeAllocPercentRaw = computed(() => {
   if (detail.value?.isExternal) return undefined;
@@ -601,7 +627,7 @@ const memoryAllocPercentRaw = computed(() => {
   return readGaugeField(1, 'percent');
 });
 const computeUsagePercentRaw = computed(() => readGaugeField(2, 'percent'));
-const memoryUsagePercentRaw = computed(() => readGaugeField(3, 'percent'));
+const memoryUsagePercentRaw = computed(() => migInstanceMemory.value ? migInstanceMemory.value.percent : readGaugeField(3, 'percent'));
 
 const clampPercent = (v) => Math.max(0, Math.min(100, v));
 const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
