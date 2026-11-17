@@ -46,6 +46,7 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 
 <style lang="scss" scoped>
 .page {
+  --app-frame-inset: 8px;
   display: flex;
   flex-direction: row;
   padding: 0;
@@ -55,6 +56,7 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 }
 
 .page-aside {
+  margin: 0;
   position: relative;
   flex-shrink: 0;
   padding: 0;
@@ -67,7 +69,7 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 .page-main {
   display: flex;
   flex-direction: column;
-  padding: 8px !important;
+  padding: var(--app-frame-inset) !important;
   background-color: #f5f7fa;
   box-sizing: border-box;
   overflow: hidden;

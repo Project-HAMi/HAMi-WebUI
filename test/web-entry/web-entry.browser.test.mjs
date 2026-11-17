@@ -1125,6 +1125,30 @@ test('unknown routes render a local, responsive HAMi page', async(t) => {
   })
 }, { timeout: 60_000 })
 
+test('Escape dismisses the full version before closing the About dialog', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage()
+  const fullVersion = 'v2.11.0+test.123'
+  try {
+    await page.route('**/api/vgpu/v1/about', route => route.fulfill({
+      json: { checkedAt: '2026-11-17T12:00:00Z', kubernetesVersion: fullVersion },
+    }))
+    await page.goto(`${target}${deepRoute}`)
+    await page.locator('.side-about').click()
+    const version = page.getByRole('button', { name: fullVersion, exact: true })
+    const hint = page.getByRole('tooltip').filter({ hasText: fullVersion })
+    await version.focus()
+    await hint.waitFor()
+    await page.keyboard.press('Escape')
+    await hint.waitFor({ state: 'hidden' })
+    assert.equal(await version.evaluate(el => el === document.activeElement), true)
+    await page.keyboard.press('Escape')
+    await page.locator('.about-dialog').waitFor({ state: 'hidden' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('browser language selects English without leaking active Chinese UI text', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })

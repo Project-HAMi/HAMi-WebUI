@@ -10,12 +10,31 @@ import metax from '@/icons/svg/gpu-metax.svg?url';
 import cambricon from '@/assets/vendor/cambricon.png';
 import hygon from '@/assets/vendor/hygon.png';
 
+import amd from '@/assets/vendor/amd.png';
+import mthreads from '@/assets/vendor/mthreads.png';
+import iluvatar from '@/assets/vendor/iluvatar.png';
+import enflame from '@/assets/vendor/enflame.png';
+import kunlunxin from '@/assets/vendor/kunlunxin.png';
+import aws from '@/icons/svg/gpu-aws.svg?url';
+import biren from '@/assets/vendor/biren.png';
+import vastai from '@/assets/vendor/vastai.png';
+import tecorigin from '@/assets/vendor/tecorigin.png';
+
 const marks = new Map([
   ['NVIDIA', nvidia],
   ['Ascend', ascend],
   ['Metax', metax],
   ['MLU', cambricon],
   ['Hygon', hygon],
+  ['AMD', amd],
+  ['Mthreads', mthreads],
+  ['Iluvatar', iluvatar],
+  ['Enflame', enflame],
+  ['Kunlunxin', kunlunxin],
+  ['AWS', aws],
+  ['Biren', biren],
+  ['Vastai', vastai],
+  ['Tecorigin', tecorigin],
 ]);
 </script>
 
