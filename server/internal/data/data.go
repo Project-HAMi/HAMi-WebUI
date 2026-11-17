@@ -21,6 +21,7 @@ var ProviderSet = wire.NewSet(
 	NewNodeProviders,
 	NewNodeRepo,
 	NewPodRepo,
+	NewClusterRepo,
 	NewPodFactsLedger,
 	NewResourceSnapshotSource,
 	wire.Bind(new(biz.PodRepo), new(*podRepo)),

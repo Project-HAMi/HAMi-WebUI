@@ -4,6 +4,7 @@ PNPM ?= pnpm
 DOCKER ?= docker
 DOCKER_IMAGE ?= hami-webui
 VERSION ?= dev
+COMMIT ?=
 PLATFORM ?=
 DOCKER_PLATFORM_FLAG := $(if $(strip $(PLATFORM)),--platform $(PLATFORM),)
 
@@ -70,4 +71,4 @@ verify: lint test verify-vite-env build build-web-entry
 # are published only by .github/workflows/release.yaml.
 .PHONY: build-image
 build-image:
-	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) -t $(DOCKER_IMAGE):$(VERSION) .
+	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) --build-arg VERSION="$(VERSION)" --build-arg COMMIT="$(COMMIT)" -t $(DOCKER_IMAGE):$(VERSION) .

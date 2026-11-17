@@ -46,6 +46,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	workload *service.WorkloadService,
 	deviceConfig *service.DeviceConfigService,
 	overview *service.OverviewService,
+	about *service.AboutService,
 	gatherer prometheus.Gatherer,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
@@ -75,6 +76,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterWorkloadHTTPServer(srv, workload)
 	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
 	pb.RegisterOverviewHTTPServer(srv, overview)
+	v1.RegisterAboutHTTPServer(srv, about)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})))
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {

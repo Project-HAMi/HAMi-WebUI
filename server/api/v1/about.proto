@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "protoc-gen-openapiv2/options/annotations.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service About {
+  rpc GetAbout (GetAboutReq) returns (AboutReply) {
+    option (google.api.http) = {
+      get: "/v1/about"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Read the WebUI build and the versions of the components it depends on";
+    };
+  }
+}
+
+message GetAboutReq {}
+
+message AboutReply {
+  WebUIBuild webui = 1;
+  HamiVersions hami = 2;
+  // Kubelet versions of the accelerator nodes WebUI lists.
+  repeated KubeletVersion kubelets = 3;
+  PrometheusStatus prometheus = 4;
+  string checked_at = 5;
+  // API server version; empty when it cannot be read.
+  string kubernetes_version = 6;
+  DeviceSources device_sources = 7;
+}
+
+message WebUIBuild {
+  string version = 1;
+  string commit = 2;
+}
+
+// State is ok, missing (no hami_build_info series) or unavailable (Prometheus query failed).
+message HamiVersions {
+  string state = 1;
+  // HAMi minor versions this WebUI release supports, such as 2.10.
+  repeated string supported = 2;
+  repeated HamiVersion versions = 3;
+  repeated HamiComponent components = 4;
+}
+
+message HamiVersion {
+  string version = 1;
+  string revision = 2;
+  string build_date = 3;
+  // Support is supported, unsupported or development (not a release tag).
+  string support = 4;
+  repeated HamiTarget targets = 5;
+}
+
+message HamiTarget {
+  string job = 1;
+  string instance = 2;
+  string pod = 3;
+  // hami-scheduler or hami-device-plugin; empty when no single component Pod matches the target.
+  string component = 4;
+  // UID of the matched Pod, the identity Pods are counted by.
+  string pod_uid = 5;
+}
+
+// Pods found by the HAMi chart's app.kubernetes.io/component label.
+message HamiComponent {
+  string name = 1;
+  string namespace = 2;
+  int32 pods = 3;
+  int32 ready = 4;
+  int32 nodes = 5;
+  int32 restarts = 6;
+}
+
+message KubeletVersion {
+  string version = 1;
+  int32 nodes = 2;
+}
+
+message PrometheusStatus {
+  bool reachable = 1;
+  // Last fully successful refresh of the WebUI metrics that Prometheus holds; empty when absent.
+  string metrics_refreshed_at = 2;
+  // From /api/v1/status/buildinfo; empty when the server does not report it.
+  string version = 3;
+  // The refresh-time query failed, as opposed to finding no WebUI metrics.
+  bool refresh_query_failed = 4;
+}
+
+
+// Observations from the Pod cache and Prometheus active scrape targets.
+message DeviceSources {
+  repeated DevicePlugin plugins = 1;
+  repeated DeviceExporter exporters = 2;
+  repeated string checked_keys = 3;
+  bool plugins_checked = 4;
+  bool exporters_checked = 5;
+}
+
+message DevicePlugin {
+  string id = 1;
+  string vendor = 2;
+  string version = 3;
+  int32 pods = 4;
+  int32 ready = 5;
+}
+
+message DeviceExporter {
+  string id = 1;
+  string vendor = 2;
+  string version = 3;
+  int32 targets = 4;
+  int32 up = 5;
+}

@@ -8,18 +8,16 @@ import (
 	"github.com/go-kratos/kratos/v2/transport/grpc"
 	"github.com/go-kratos/kratos/v2/transport/http"
 	"os"
+	"vgpu/internal/buildinfo"
 	"vgpu/internal/conf"
 	"vgpu/internal/exporter"
 
 	_ "go.uber.org/automaxprocs"
 )
 
-// go build -ldflags "-X main.Version=x.y.z"
 var (
 	// Name is the name of the compiled software.
 	Name string
-	// Version is the version of the compiled software.
-	Version string
 	// flagconf is the config flag.
 	flagconf string
 
@@ -52,7 +50,7 @@ func newApp(ctx context.Context, logger log.Logger, gs *grpc.Server, hs *http.Se
 		kratos.Context(ctx),
 		kratos.ID(id),
 		kratos.Name(Name),
-		kratos.Version(Version),
+		kratos.Version(buildinfo.Version),
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
 		kratos.Server(
