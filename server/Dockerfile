@@ -36,9 +36,12 @@ RUN go mod download
 # Generate and build. verify-mod fails if generation would require silently
 # rewriting go.mod or go.sum.
 COPY . .
+ARG VERSION=dev
+ARG COMMIT=
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    make generate verify-mod build-linux TARGET_ARCH=${TARGETARCH} DIRS=server
+    make generate verify-mod build-linux TARGET_ARCH=${TARGETARCH} DIRS=server \
+      VERSION="${VERSION}" COMMIT="${COMMIT}"
 
 FROM debian:bookworm-20260824-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 

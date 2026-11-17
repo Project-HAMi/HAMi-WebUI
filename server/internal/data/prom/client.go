@@ -17,9 +17,10 @@ import (
 )
 
 type Client struct {
-	client  api.Client
-	timeout time.Duration
-	log     *log.Helper
+	client     api.Client
+	httpClient *http.Client
+	timeout    time.Duration
+	log        *log.Helper
 }
 
 type TLSConfig struct {
@@ -159,17 +160,19 @@ func NewClient(address string, timeout time.Duration, config HTTPConfig, logger 
 	}
 
 	// WithTimeout only bounds evaluation on the server; this bounds the whole request.
+	httpClient := &http.Client{Transport: roundTripper, Timeout: timeout}
 	client, err := api.NewClient(api.Config{
 		Address: address,
-		Client:  &http.Client{Transport: roundTripper, Timeout: timeout},
+		Client:  httpClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create Prometheus client: %w", err)
 	}
 	return &Client{
-		client:  client,
-		timeout: timeout,
-		log:     log.NewHelper(log.With(logger, "module", "prometheus-client")),
+		client:     client,
+		httpClient: httpClient,
+		timeout:    timeout,
+		log:        log.NewHelper(log.With(logger, "module", "prometheus-client")),
 	}, nil
 }
 

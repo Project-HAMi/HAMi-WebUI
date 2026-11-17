@@ -5,6 +5,8 @@ DOCKER_IMAGE ?= hami-webui-backend
 CMD_PATH ?= ./cmd/
 BUILD_PATH ?= ./build/
 VERSION ?= dev
+COMMIT ?=
+GO_LDFLAGS = -X vgpu/internal/buildinfo.Version=$(VERSION) -X vgpu/internal/buildinfo.Commit=$(COMMIT)
 PLATFORM ?=
 DOCKER_PLATFORM_FLAG := $(if $(strip $(PLATFORM)),--platform $(PLATFORM),)
 DIRS ?= $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard $(CMD_PATH)*/main.go)))))
@@ -104,7 +106,7 @@ build-linux:
 	@echo "Building for GOOS=linux GOARCH=$(TARGET_ARCH)"
 	@set -e; for dir in $(DIRS); \
 	do \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) go build -mod=readonly -trimpath -o "$(BUILD_PATH)$$dir" "$(CMD_PATH)$$dir"; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) go build -mod=readonly -trimpath -ldflags "$(GO_LDFLAGS)" -o "$(BUILD_PATH)$$dir" "$(CMD_PATH)$$dir"; \
 		echo "Built $$dir for Linux/$(TARGET_ARCH)"; \
 	done
 
@@ -114,7 +116,7 @@ build-local: generate
 	@mkdir -p "$(BUILD_PATH)"
 	@set -e; for dir in $(DIRS); \
 	do \
-		go build -mod=readonly -trimpath -o "$(BUILD_PATH)$$dir" "$(CMD_PATH)$$dir"; \
+		go build -mod=readonly -trimpath -ldflags "$(GO_LDFLAGS)" -o "$(BUILD_PATH)$$dir" "$(CMD_PATH)$$dir"; \
 		echo "Built $$dir"; \
 	done
 
@@ -127,7 +129,7 @@ build-web-entry:
 # are published only by ../.github/workflows/release.yaml.
 .PHONY: build-image
 build-image:
-	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) -t $(DOCKER_IMAGE):$(VERSION) .
+	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) --build-arg VERSION="$(VERSION)" --build-arg COMMIT="$(COMMIT)" -t $(DOCKER_IMAGE):$(VERSION) .
 
 .PHONY: save-image
 save-image:

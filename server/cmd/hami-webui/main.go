@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"vgpu/internal/buildinfo"
 	"vgpu/internal/conf"
 	"vgpu/internal/exporter"
 	"vgpu/internal/webentry"
@@ -39,8 +40,6 @@ const (
 var (
 	// Name is the name of the compiled software.
 	Name string
-	// Version is the version of the compiled software.
-	Version string
 
 	id, _ = os.Hostname()
 )
@@ -207,7 +206,7 @@ func newApp(
 		kratos.Context(ctx),
 		kratos.ID(id),
 		kratos.Name(Name),
-		kratos.Version(Version),
+		kratos.Version(buildinfo.Version),
 		kratos.Metadata(map[string]string{}),
 		kratos.Logger(logger),
 		kratos.Server(hs, mc, ws),

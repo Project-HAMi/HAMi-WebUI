@@ -97,9 +97,11 @@ COPY server/go.mod server/go.sum ./
 RUN go mod download
 
 COPY server/ ./
+ARG VERSION=dev
+ARG COMMIT=
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    make generate verify-mod build-linux TARGET_ARCH=${TARGETARCH} DIRS=hami-webui
+    make generate verify-mod build-linux TARGET_ARCH=${TARGETARCH} DIRS=hami-webui VERSION="${VERSION}" COMMIT="${COMMIT}"
 
 FROM scratch AS unified
 

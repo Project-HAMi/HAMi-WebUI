@@ -162,6 +162,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       candidate_tag: ${{ steps.source.outputs.candidate_tag }}
+      build_version: ${{ steps.source.outputs.build_version }}
     steps:
       - name: Checkout main without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -188,6 +189,7 @@ jobs:
           {
             echo "source_sha=${source_sha}"
             echo "candidate_tag=${candidate_tag}"
+            echo "build_version=git-${source_sha:0:12}"
           } >>"${GITHUB_OUTPUT}"
 
       - name: Require public unified image repositories
@@ -247,6 +249,9 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
+          build-args: |
+            VERSION=${{ needs.candidate-preflight.outputs.build_version }}
+            COMMIT=${{ needs.candidate-preflight.outputs.source_sha }}
           tags: |
             projecthami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }}
             ghcr.io/project-hami/hami-webui:${{ needs.candidate-preflight.outputs.candidate_tag }}
