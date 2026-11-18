@@ -2,7 +2,6 @@ package exporter
 
 import (
 	"strconv"
-
 	"time"
 
 	"vgpu/internal/biz"
@@ -12,11 +11,11 @@ import (
 // The node exporters expose physical measurements under vendor-specific labels.
 // Pod labels can repeat a chip reading; accept copies only when the physical
 // identity, scrape, target and value agree.
-type nodeMetricLabels struct{ deviceID, index, pci, model, utilization string }
+type nodeMetricLabels struct{ deviceID, index, entity, model, utilization string }
 
 var (
 	ascendLabels = nodeMetricLabels{"vdie_id", "id", "pcie_bus_info", "model_name", ascendUtilization}
-	hygonLabels  = nodeMetricLabels{deviceID: "device_id", index: "minor_number", pci: "pcieBus_number", model: "name"}
+	hygonLabels  = nodeMetricLabels{deviceID: "device_id", index: "minor_number", entity: "pcieBus_number", model: "name"}
 )
 
 func (schema nodeMetricLabels) reading(name string, device resourceview.Device, samples []dcgmSample, at time.Time, nodeCreated *time.Time, targets map[dcgmTarget]dcgmTargetEvidence) dcgmReading {
@@ -34,7 +33,14 @@ func (schema nodeMetricLabels) reading(name string, device resourceview.Device, 
 	var rejected error
 	for _, sample := range samples {
 		labels := sample.Labels
-		if labels["__name__"] != name || labels[schema.deviceID] != exportedID || labels["node"] != id.Node {
+		if labels["__name__"] != name || labels[schema.deviceID] != exportedID {
+			continue
+		}
+		if id.Provider == biz.MetaxGPUDevice {
+			if (name == metaxUsed || name == metaxTotal) && labels["type"] != "vram" {
+				continue
+			}
+		} else if labels["node"] != id.Node {
 			continue
 		}
 		// A template's own VDev ID identifies a different entity. The named chip
@@ -68,7 +74,8 @@ func (schema nodeMetricLabels) reading(name string, device resourceview.Device, 
 			return dcgmReading{err: errDCGMAmbiguous}
 		}
 		if evidence.Ambiguous || dcgmConfirmTargetAndNode(labels, evidence.TargetLabels, source, id.Node) != nil ||
-			(id.Provider == biz.AscendGPUDevice && !ascendModelsCompatible(device.Model, labels[schema.model])) {
+			(id.Provider == biz.AscendGPUDevice && !ascendModelsCompatible(device.Model, labels[schema.model])) ||
+			(id.Provider == biz.MetaxGPUDevice && !metaxChipMatches(device, labels)) {
 			return dcgmReading{err: errDCGMAmbiguous}
 		}
 		chip, err := strconv.Atoi(labels[schema.index])
@@ -76,7 +83,7 @@ func (schema nodeMetricLabels) reading(name string, device resourceview.Device, 
 			return dcgmReading{err: errDCGMInvalid}
 		}
 		if !result.SampleAt.IsZero() && (source != result.Source || !sample.SampleAt.Equal(result.SampleAt) ||
-			sample.Value != result.Value || labels[schema.index] != result.Labels[schema.index] || labels[schema.pci] != result.Labels[schema.pci] || labels[schema.model] != result.Labels[schema.model]) {
+			sample.Value != result.Value || labels[schema.index] != result.Labels[schema.index] || labels[schema.entity] != result.Labels[schema.entity] || labels[schema.model] != result.Labels[schema.model]) {
 			return dcgmReading{err: errDCGMAmbiguous}
 		}
 		result = dcgmSelection{Value: sample.Value, Source: source, Node: id.Node, RawName: name, SampleAt: sample.SampleAt, Labels: labels}
@@ -97,8 +104,7 @@ func (schema nodeMetricLabels) memoryPair(used, total dcgmReading) (dcgmReading,
 	}
 	if used.err == nil && total.err == nil {
 		u, t := used.selection, total.selection
-		if u.Source != t.Source || !u.SampleAt.Equal(t.SampleAt) || u.Labels[schema.index] != t.Labels[schema.index] || u.Labels[schema.pci] != t.Labels[schema.pci] ||
-			(u.Labels[schema.model] != "" && t.Labels[schema.model] != "" && u.Labels[schema.model] != t.Labels[schema.model]) {
+		if !schema.sameCollection(u, t) {
 			return dcgmReading{err: errDCGMAmbiguous}, dcgmReading{err: errDCGMAmbiguous}
 		}
 		if u.Value > t.Value {
@@ -106,4 +112,9 @@ func (schema nodeMetricLabels) memoryPair(used, total dcgmReading) (dcgmReading,
 		}
 	}
 	return used, total
+}
+
+func (schema nodeMetricLabels) sameCollection(a, b dcgmSelection) bool {
+	return a.Source == b.Source && a.SampleAt.Equal(b.SampleAt) && a.Labels[schema.index] == b.Labels[schema.index] && a.Labels[schema.entity] == b.Labels[schema.entity] &&
+		(a.Labels[schema.model] == "" || b.Labels[schema.model] == "" || a.Labels[schema.model] == b.Labels[schema.model])
 }
