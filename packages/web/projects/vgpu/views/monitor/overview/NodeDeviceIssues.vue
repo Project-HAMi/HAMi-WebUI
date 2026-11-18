@@ -4,24 +4,14 @@
       {{ status === 'loading' ? t('loading') : status === 'error' ? t('unavailable') : status === 'partial' ? t('partial') : t('empty') }}
     </p>
     <template v-else>
-      <p v-if="status === 'partial'" class="issue-partial" role="status">{{ coverageNote || t('partial') }}</p>
-      <div v-if="summary.incidents.length && summary.cordonedNodes.length" class="issue-filters" role="group" :aria-label="t('filter')">
-        <button v-for="kind in kinds" :key="kind" type="button" :aria-pressed="section === kind" @click="selectSection(kind)">
-          {{ sectionLabel(kind) }} <span>{{ summary[kind].length }}</span>
-        </button>
-      </div>
-      <p v-else class="issue-section-heading">
-        {{ sectionLabel(section) }} <span>{{ rows.length }}</span>
-      </p>
-
-      <div ref="scrollArea" class="issue-scroll" tabindex="0" role="region" :aria-label="sectionLabel(section)">
+      <div ref="scrollArea" class="issue-scroll" tabindex="0" role="region" :aria-label="t('incidents')">
         <table class="issue-list">
-          <thead><tr><th scope="col" class="issue-name">{{ t('node') }}</th><th scope="col">{{ t(section === 'incidents' ? 'issueStatus' : 'status') }}</th></tr></thead>
+          <thead><tr><th scope="col" class="issue-name">{{ t('node') }}</th><th scope="col">{{ t('issueStatus') }}</th></tr></thead>
           <tbody v-for="(row, index) in pageRows" :key="row.node">
             <tr class="issue-group__heading">
               <th scope="row" class="issue-name">
-                <RouterLink v-if="row.to" class="issue-node vgpu-resource-link" :to="row.to"><span>{{ row.node }}</span></RouterLink>
-                <span v-else class="issue-node">{{ row.node }}</span>
+                <TextPlus v-if="row.to" class="issue-node" :text="row.node" :to="row.to" tooltip="overflow" :tooltip-append-to="tooltipContainer" />
+                <span v-else>{{ row.node }}</span>
               </th>
               <td>
                 <div class="issue-status-cell">
@@ -31,9 +21,6 @@
                     </span>
                     <span v-if="row.devices.length" class="issue-status">
                       <svg-icon icon="status-unschedulable" aria-hidden="true" />{{ deviceStatusLabel(row) }}
-                    </span>
-                    <span v-if="section === 'cordonedNodes'" class="issue-status">
-                      <PauseCircleIcon aria-hidden="true" />{{ t('paused') }}
                     </span>
                   </div>
                   <button v-if="hasDetails(row)" type="button" class="issue-disclosure"
@@ -73,7 +60,6 @@
                     </div>
                   </div>
                   <div v-if="inventory(row)" class="issue-detail-field"><span class="issue-field-label">{{ t('nodeDevices') }}</span><span class="issue-field-value">{{ inventory(row) }}</span></div>
-                  <div v-if="row.cordoned && section === 'incidents'" class="issue-detail-field"><span class="issue-field-label">{{ t('scheduling') }}</span><span class="issue-field-value">{{ t('paused') }}</span></div>
                 </div>
               </td>
             </tr>
@@ -92,38 +78,32 @@
 <script setup>
 import { computed, nextTick, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, PauseCircleIcon } from 'tdesign-icons-vue-next';
+import TextPlus from '@/components/TextPlus.vue';
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon } from 'tdesign-icons-vue-next';
 import { isCount, visibleDeviceGroups } from './node-device-issues.mjs';
 
 const props = defineProps({
   summary: { type: Object, required: true },
   status: { type: String, default: 'loading' },
-  coverageNote: { type: String, default: '' },
 });
 const { t: translate } = useI18n();
 const t = (key, ...args) => translate(`dashboard.issueList.${key}`, ...args);
-const kinds = ['incidents', 'cordonedNodes'];
-function sectionLabel(kind) {
-  return t(kind === 'cordonedNodes' && props.status === 'partial' ? 'paused' : kind);
-}
 const pageSize = 5;
 const initialDeviceLimit = 3;
 const deviceStep = 10;
-const preferredSection = ref('incidents');
-const section = computed(() => props.summary[preferredSection.value].length ? preferredSection.value :
-  props.summary.incidents.length ? 'incidents' : 'cordonedNodes');
-const rows = computed(() => props.summary[section.value]);
+const rows = computed(() => props.summary.incidents);
 const hasRows = computed(() => rows.value.length > 0);
 const page = ref(1);
 const pages = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize)));
 const currentPage = computed(() => Math.min(page.value, pages.value));
 const pageRows = computed(() => rows.value.slice((currentPage.value - 1) * pageSize, currentPage.value * pageSize));
 const scrollArea = ref(null);
+const tooltipContainer = computed(() => scrollArea.value?.closest('.overview-issues-popup'));
 const idPrefix = useId();
 const detailsId = index => idPrefix + '-devices-' + index;
 
 function inventory(row) {
-  const item = row.notReady || row.cordoned;
+  const item = row.notReady;
   if (!item) return '';
   if (!isCount(item.deviceCount)) return item.model || '';
   return item.model ? t('inventoryWithModel', { count: item.deviceCount, model: item.model }, item.deviceCount)
@@ -140,7 +120,7 @@ function deviceStatusLabel(row) {
   return known && row.affectedDevices > 0 ? t('affected', row.affectedDevices) : t('deviceIssue');
 }
 function hasDetails(row) {
-  return row.devices.some(hasDeviceDetail) || Boolean(inventory(row)) || Boolean(row.cordoned && section.value === 'incidents');
+  return row.devices.some(hasDeviceDetail) || Boolean(inventory(row));
 }
 function toggleLabel(row) {
   return t(expanded.value === row.node ? 'collapseNode' : 'expandNode', { node: row.node });
@@ -165,10 +145,6 @@ async function collapse(event) {
   await nextTick();
   if (hadFocus) controls.querySelector('button')?.focus({ preventScroll: true });
 }
-function selectSection(kind) {
-  preferredSection.value = kind;
-  page.value = 1;
-}
 async function turnPage(delta, event) {
   const button = event.currentTarget;
   const hadFocus = document.activeElement === button;
@@ -190,7 +166,7 @@ watch(pageRows, async () => {
   (nextGroup?.querySelector('a, button') || area).focus({ preventScroll: true });
 });
 watch(pages, n => { if (page.value > n) page.value = n; });
-watch([section, currentPage], () => {
+watch(currentPage, () => {
   expanded.value = null;
   deviceLimit.value = initialDeviceLimit;
   if (scrollArea.value) scrollArea.value.scrollTop = 0;
@@ -198,18 +174,13 @@ watch([section, currentPage], () => {
 </script>
 
 <style scoped>
-.issue-partial { margin: 0 var(--issue-inline-inset) 8px; color: #576777; font-size: 12px; }
 .node-issues { display: flex; flex-direction: column; min-height: 0; color: #324558; font-size: 12px; line-height: 16px; }
-.issue-filters, .issue-section-heading { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 0 var(--issue-inline-inset) 8px; margin: 0; }
 .node-issues button { font: inherit; cursor: pointer; }
-.issue-filters button { min-height: 24px; padding: 4px 8px; border: 0; border-radius: 5px; color: #566778; background: transparent; }
-.issue-filters button:hover, .issue-pager button:hover:enabled { background: #f1f4f7; }
-.issue-filters button[aria-pressed='true'] { background: #eaf0f7; color: #28435d; font-weight: 600; }
-.issue-filters button span, .issue-section-heading span { margin-inline-start: 2px; font-variant-numeric: tabular-nums; }
+.issue-pager button:hover:enabled { background: #f1f4f7; }
 .issue-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--app-scrollbar-thumb, #cbd5e1) transparent; scroll-padding-block: 8px; }
 .issue-list { width: calc(100% - 2 * var(--issue-inline-inset)); margin: 0 var(--issue-inline-inset); border-collapse: separate; border-spacing: 0; table-layout: fixed; text-align: left; }
 .issue-list thead th { position: sticky; top: 0; z-index: 1; padding: 4px 0; background: white; border-bottom: 1px solid #e3e9ef; color: #65768a; font-size: 11px; font-weight: 500; text-align: left; }
-.issue-list .issue-name { width: 37%; padding-inline-end: 10px; box-sizing: border-box; }
+.issue-list .issue-name { overflow-wrap: anywhere; width: max(37%, min(130px, 48%)); padding-inline-end: 10px; box-sizing: border-box; }
 .issue-group__heading > :is(th, td) { height: 40px; padding: 4px 0; vertical-align: middle; box-sizing: border-box; text-align: left; }
 .issue-list tbody + tbody .issue-group__heading > * { border-top: 1px solid #edf1f5; }
 .issue-status-cell { display: grid; grid-template-columns: minmax(0, 1fr) 28px; column-gap: 4px; align-items: center; }
@@ -217,7 +188,7 @@ watch([section, currentPage], () => {
 .issue-disclosure:hover, .issue-disclosure[aria-expanded='true'] { color: #2b4055; background: #f1f4f7; }
 .issue-disclosure .t-icon { font-size: 15px; }
 .issue-disclosure[aria-expanded='true'] .t-icon { transform: rotate(180deg); }
-.issue-node { color: #26394c; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.issue-node { font-size: 13px; vertical-align: middle; }
 .issue-statuses { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .issue-status { display: inline-flex; align-items: center; gap: 6px; color: #526476; }
 .issue-status :is(.svg-icon, .t-icon) { flex: none; font-size: 16px; }

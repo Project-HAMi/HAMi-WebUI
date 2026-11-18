@@ -11,7 +11,8 @@
         :text="text"
         :mode="mode"
         :tooltip-class="tooltipClass"
-        tooltip="always"
+        :tooltip-append-to="tooltipAppendTo"
+        :tooltip="tooltip"
       />
     </component>
   </div>
@@ -28,6 +29,8 @@ defineProps({
     type: String,
     default: 'middle',
   },
+  tooltip: { type: String, default: 'always' },
+  tooltipAppendTo: Object,
   tooltipClass: {
     type: String,
     default: 'vgpu-long-text-tooltip',

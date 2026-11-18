@@ -5,7 +5,6 @@
       <OverviewIssuesPopover
         :issues="deviceInsights.issues"
         :status="issueStatus"
-        :coverage-gap="inventoryState.data?.issueCoverageGap"
         @details-visible="issueDetailsOpen = $event"
       />
     </header>

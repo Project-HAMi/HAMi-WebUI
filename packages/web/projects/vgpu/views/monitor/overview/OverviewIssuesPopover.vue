@@ -4,7 +4,6 @@
     v-model:visible="open"
     trigger="click"
     placement="bottom-right"
-    destroy-on-close
     :popper-options="popperOptions"
     overlay-class-name="overview-issues-popup"
     overlay-inner-class-name="overview-issues-surface"
@@ -13,23 +12,25 @@
       ref="trigger"
       type="button"
       class="issues-trigger"
-      :aria-label="`${panelTitle} · ${label}`"
+      :aria-label="panelTitle === label ? label : `${panelTitle} · ${label}`"
+      :title="label"
       :aria-expanded="open"
       :aria-controls="open ? panelId : undefined"
       aria-haspopup="dialog"
       @keydown.esc="dismiss"
     >
-      <svg-icon v-if="count > 0" icon="status-unschedulable" aria-hidden="true" />
-      <span>{{ label }}</span>
+      <svg-icon icon="status-unschedulable" aria-hidden="true" />
+      <span class="issues-trigger__label">{{ label }}</span>
+      <span v-if="count" class="issues-trigger__compact" aria-hidden="true">{{ count }}</span>
       <ChevronDownIcon class="issues-trigger__chevron" aria-hidden="true" />
     </button>
     <template #content>
       <section
+        v-if="open"
         :id="panelId"
         ref="panel"
         class="issues-panel"
         role="dialog"
-        :inert="!open"
         :aria-labelledby="titleId"
         tabindex="-1"
         @keydown.esc.stop.prevent="dismiss"
@@ -41,7 +42,7 @@
             <CloseIcon aria-hidden="true" />
           </button>
         </div>
-        <NodeDeviceIssues :summary="summary" :status="status" :coverage-note="coverageNote" />
+        <NodeDeviceIssues :summary="summary" status="ready" />
       </section>
     </template>
   </t-popup>
@@ -62,7 +63,7 @@
     </span>
   </t-tooltip>
   <span v-else-if="status !== 'empty'" ref="staticStatus" class="issues-state" role="status" tabindex="-1">
-    {{ status === 'partial' ? coverageNote : status === 'loading' ? t('loading') : t('unavailable') }}
+    {{ status === 'loading' ? t('loading') : t('unavailable') }}
   </span>
 </template>
 
@@ -77,16 +78,15 @@ const emit = defineEmits(['details-visible']);
 const props = defineProps({
   issues: { type: Array, default: () => [] },
   status: { type: String, default: 'loading' },
-  coverageGap: { type: String, default: '' },
 });
 const { t: translate } = useI18n();
 const t = (key, ...args) => translate(`dashboard.issueSummary.${key}`, ...args);
 const summary = computed(() => summarizeNodeIssues(props.issues));
 const count = computed(() => summary.value.incidents.length);
-const view = computed(() => count.value || summary.value.cordonedNodes.length ? 'details' : props.status);
-const panelTitle = computed(() => count.value ? translate('dashboard.nodeDeviceIssues') : t('pausedTitle'));
-const label = computed(() => count.value ? t('count', count.value) : t('paused'));
-const coverageNote = computed(() => props.status === 'partial' ? t(props.coverageGap || 'partial') : '');
+const hasRows = computed(() => count.value > 0);
+const view = computed(() => hasRows.value ? 'details' : props.status);
+const panelTitle = computed(() => translate('dashboard.nodeDeviceIssues'));
+const label = computed(() => t('count', count.value));
 const hintHovered = ref(false);
 const hintFocused = ref(false);
 function clearHint() {
@@ -139,7 +139,7 @@ function dismiss() {
 
 function handleTab(event) {
   // The popup is attached to body. Resume the page's tab order at its trigger.
-  const stops = panel.value.querySelectorAll('button:enabled, a[href], [tabindex="0"]');
+  const stops = Array.from(panel.value.querySelectorAll('button:enabled, a[href], summary, [tabindex="0"]')).filter(element => element.getClientRects().length);
   if (event.shiftKey && (event.target === panel.value || event.target === stops[0])) {
     event.preventDefault();
     dismiss();
@@ -169,9 +169,14 @@ function handleTab(event) {
   font-size: 13px;
   font-weight: 500;
   line-height: 1.4;
-  white-space: nowrap;
+  max-inline-size: 100%;
+  text-align: start;
+  overflow-wrap: anywhere;
 }
-.issues-trigger .svg-icon { flex: none; font-size: 16px; }
+.issues-trigger .t-icon,
+.issues-trigger .svg-icon { flex-shrink: 0; }
+.issues-trigger .svg-icon { font-size: 16px; }
+.issues-trigger__compact { display: none; }
 .issues-healthy {
   display: inline-flex;
   align-items: center;
@@ -182,7 +187,13 @@ function handleTab(event) {
 }
 :global(.overview-healthy-tooltip) { --td-comp-margin-l: 4px; }
 .issues-healthy .t-icon { font-size: 16px; }
-.issues-state { padding-inline: 6px; color: #697886; font-size: 13px; font-weight: 400; }
+.issues-state { overflow-wrap: anywhere; padding-inline: 6px; color: #697886; font-size: 13px; font-weight: 400; }
+@container overview (max-width: 160px) {
+  .issues-trigger { gap: 3px; padding-inline: 3px; }
+  .issues-trigger .issues-trigger__compact { display: inline-flex; white-space: nowrap; }
+  .issues-trigger__label { display: none; }
+  .issues-state { padding-inline: 0; line-height: 1.4; }
+}
 .issues-trigger:hover,
 .issues-trigger[aria-expanded='true'],
 .issues-panel__close:hover { background: #f1f4f7; }
@@ -227,6 +238,7 @@ function handleTab(event) {
   background: #fff;
   border-radius: 10px 10px 0 0;
 }
+.issues-panel > :deep(.node-issues) { flex: 1; min-height: 0; }
 .issues-panel h2 {
   margin: 0;
   color: #1d2b3a;

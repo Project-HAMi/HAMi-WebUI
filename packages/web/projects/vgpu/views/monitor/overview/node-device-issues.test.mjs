@@ -12,26 +12,23 @@ test('counts unready nodes and unhealthy devices once, without counting paused s
     { kind: 'deviceUnhealthy', node: 'second', deviceId: 'gpu-1' },
     { kind: 'nodeCordoned', node: 'maintenance', deviceCount: 6 },
   ];
-  const { incidents, cordonedNodes, count } = summarizeNodeIssues(issues);
-  assert.equal(count, 3);
+  const { incidents } = summarizeNodeIssues(issues);
   assert.deepEqual(incidents.map(row => [row.node, row.affectedDevices]), [['mixed', 1], ['second', 1]]);
   assert.equal(incidents[0].to.params.uid, 'uid-mixed');
   assert.equal(incidents[0].devices.length, 1);
-  assert.equal(incidents[0].cordoned.kind, 'nodeCordoned');
-  assert.deepEqual(cordonedNodes.map(row => row.node), ['maintenance']);
 });
 
 test('aggregate counts survive without generating a device ID or inferring node health', () => {
-  const { incidents, cordonedNodes, count } = summarizeNodeIssues([
+  const { incidents } = summarizeNodeIssues([
     { kind: 'deviceUnhealthy', node: 'node-1', model: 'A', deviceCount: 12 },
     { kind: 'nodeCordoned', node: 'node-2', deviceCount: 48 },
     { kind: 'unknownHealth', node: 'other' },
   ]);
-  assert.equal(count, 12);
+  assert.equal(incidents.length, 1);
+  assert.equal(incidents[0].affectedDevices, 12);
   assert.equal(incidents[0].devices[0].deviceId, undefined);
   assert.equal(incidents[0].notReady, null);
   assert.equal(incidents[0].to, null);
-  assert.equal(cordonedNodes[0].affectedDevices, 0);
 });
 
 test('each visible device stays under its reported model as more issues are opened', () => {
