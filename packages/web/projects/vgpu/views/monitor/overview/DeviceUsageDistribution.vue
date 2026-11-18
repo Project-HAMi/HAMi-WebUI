@@ -50,31 +50,34 @@
               <template v-if="group[metric].bins || group[metric].dots.length">
                 <div v-if="group[metric].bins" class="histogram">
                   <template v-for="(bin, index) in group[metric].bins" :key="index">
-                    <button v-if="bin.length" type="button" class="bin"
-                      :aria-label="bucketLabel(group, metric, index)" :title="isSelected(group.model, metric, index) ? t('collapseAgain') : bucketLabel(group, metric, index)"
+                    <UsageMark v-if="bin.length" class="bin"
+                      :text="t('readingCount', { value: bucketRange(index), count: groupCount(bin) })"
+                      :disabled="isSelected(group.model, metric, index)"
+                      :aria-label="bucketLabel(group, metric, index)"
                       :aria-expanded="isSelected(group.model, metric, index)"
                       :aria-controls="isSelected(group.model, metric, index) ? detailsId : undefined"
                       @click="openList($event, group.model, metric, index)">
                       <span class="bar-fill" :style="{ height: (bin.length / maxBinCount * 100) + '%' }"></span>
-                    </button>
+                    </UsageMark>
                     <span v-else class="empty-bin"></span>
                   </template>
                 </div>
                 <div v-else class="dot-chart" :style="{ '--lanes': group[metric].lanes }">
-                  <button v-for="dot in group[metric].dots" :key="dot.value" class="dot" type="button"
+                  <UsageMark v-for="dot in group[metric].dots" :key="dot.value" class="dot"
+                    :text="formatRate(dot.value)"
+                    :disabled="isSelected(group.model, metric, 'reading', dot.value)"
                     :class="{ 'label-before': dot.value > 50 }"
                     :style="{ left: dot.value + '%', '--lane': dot.lane }"
-                    :title="isSelected(group.model, metric, 'reading', dot.value) ? t('collapseAgain') : dotLabel(group, metric, dot)"
                     :aria-label="dotLabel(group, metric, dot)" :aria-expanded="isSelected(group.model, metric, 'reading', dot.value)"
                     :aria-controls="isSelected(group.model, metric, 'reading', dot.value) ? detailsId : undefined"
                     @click="openList($event, group.model, metric, 'reading', dot.value)">
                     <span v-if="dot.cards.length > 1" class="dot-value" aria-hidden="true">{{ groupCount(dot.cards) }}</span>
-                  </button>
+                  </UsageMark>
                 </div>
               </template>
-              <div v-if="group[metric].missing.length" class="cell-notes">
-                <button type="button" class="missing-count"
-                  :title="isSelected(group.model, metric, 'missing') ? t('collapseAgain') : missingLabel(group, metric)" :aria-label="missingLabel(group, metric)"
+              <div v-if="metrics.some(key => group[key].missing.length)" class="cell-notes">
+                <button v-if="group[metric].missing.length" type="button" class="missing-count"
+                  :aria-label="missingLabel(group, metric)"
                   :aria-expanded="isSelected(group.model, metric, 'missing')"
                   :aria-controls="isSelected(group.model, metric, 'missing') ? detailsId : undefined"
                   @click="openList($event, group.model, metric, 'missing')">
@@ -143,9 +146,10 @@
 </template>
 
 <script setup>
+import UsageMark from './UsageMark.vue';
 import VendorMark from '../../../components/VendorMark.vue';
 import { gpuVendor } from '../../../metrics/vendor-colors.mjs';
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import Block from './Block.vue';
@@ -218,6 +222,8 @@ const dotLabel = (group, metric, dot) => [
 const missingCount = (n) => t('missing', { n }, n);
 const missingLabel = (group, metric) => [metricLabel(group, metric), missingCount(group[metric].missing.length)].join(' · ');
 
+const activeTooltip = shallowRef(null);
+provide('deviceUsageTooltip', activeTooltip);
 const selection = ref(null);
 const detailsId = useId();
 const distributionRoot = ref(null);
@@ -246,11 +252,13 @@ function handleOutsideClick(event) {
 
 onMounted(() => {
   document.addEventListener('click', handleOutsideClick, true);
+  document.addEventListener('keydown', dismissTooltip, true);
   chartResizeObserver = new ResizeObserver(positionDetailPointer);
   chartResizeObserver.observe(distributionRoot.value);
 });
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleOutsideClick, true);
+  document.removeEventListener('keydown', dismissTooltip, true);
   chartResizeObserver?.disconnect();
 });
 watch(selection, value => {
@@ -331,6 +339,7 @@ function isSelected(model, metric, filter, reading) {
   return Boolean(current && current.model === model && current.metric === metric && current.filter === filter && current.reading === reading);
 }
 async function openList(event, model, metric, filter, reading) {
+  activeTooltip.value = null;
   if (isSelected(model, metric, filter, reading)) return closeList();
   opener = event.currentTarget;
   selection.value = { model, metric, filter, reading };
@@ -341,14 +350,23 @@ async function openList(event, model, metric, filter, reading) {
     detailHeading.value?.scrollIntoView({ block: 'nearest' });
   }
 }
+// A hovered mark need not have keyboard focus. Dismiss its tooltip before
+// Escape reaches the focused detail panel or another page control.
+function dismissTooltip(event) {
+  if (event.key !== 'Escape' || !activeTooltip.value) return;
+  activeTooltip.value = null;
+  event.stopPropagation();
+}
 function dismissSelection(event) {
   if (!selection.value) return;
   event.stopPropagation();
   closeList();
 }
+// Restore focus while the selected mark still suppresses its tooltip.
 function closeList() {
-  selection.value = null;
+  activeTooltip.value = null;
   opener?.focus({ preventScroll: true });
+  selection.value = null;
 }
 </script>
 
@@ -388,10 +406,10 @@ function closeList() {
 .model-label > :first-child { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .gpu-count { color: #697886; font-variant-numeric: tabular-nums; font-size: 11px; }
 .metric-heading, .metric-cell { min-width: 0; padding-inline: 9px; }
-.metric-cell { align-self: stretch; display: flex; flex-direction: column; justify-content: flex-start; }
+.metric-cell { align-self: stretch; display: flex; flex-direction: column; justify-content: flex-end; }
 .mobile-heading { display: none; }
-.gpu-distribution button { font-family: inherit; }
-.gpu-distribution button:focus-visible, .details-scroll:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+:deep(.gpu-distribution button) { font-family: inherit; }
+:deep(.gpu-distribution button:focus-visible), :deep(.details-scroll:focus-visible) { outline: 2px solid var(--mark); outline-offset: 2px; }
 .histogram, .dot-chart {
   height: 28px;
   box-sizing: border-box;
@@ -400,7 +418,7 @@ function closeList() {
   background: linear-gradient(90deg, transparent calc(50% - .5px), #edf1f5 50%, transparent calc(50% + .5px));
 }
 .histogram { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); align-items: end; }
-.bin {
+:deep(.bin) {
   position: relative;
   display: flex;
   align-items: flex-end;
@@ -412,24 +430,23 @@ function closeList() {
   cursor: pointer;
 }
 .bar-fill { width: 84%; min-height: 2px; background: var(--mark); opacity: .78; border-radius: 2px 2px 0 0; }
-.bin:hover, .bin[aria-expanded='true'] { background-color: #f2f7ff; }
-.bin:hover .bar-fill, .bin:focus-visible .bar-fill, .bin[aria-expanded='true'] .bar-fill { opacity: 1; }
+:deep(.bin:hover .bar-fill), :deep(.bin:focus-visible .bar-fill), :deep(.bin[aria-expanded='true'] .bar-fill) { opacity: 1; }
 .dot-chart { position: relative; height: max(28px, calc(var(--lanes) * 18px + 1px)); }
-.dot { display: grid; place-items: center; position: absolute; bottom: calc(var(--lane) * 18px); width: 18px; height: 18px; transform: translateX(-50%); padding: 0; border: 0; border-radius: 50%; color: #506478; background: transparent; font: inherit; cursor: pointer; }
-.dot::after { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--mark); }
+:deep(.dot) { display: grid; place-items: center; position: absolute; bottom: calc(var(--lane) * 18px); width: 18px; height: 18px; transform: translateX(-50%); padding: 0; border: 0; border-radius: 50%; color: #506478; background: transparent; font: inherit; cursor: pointer; }
+:deep(.dot::after) { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--mark); }
 .dot-value { font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
 .dot-chart .dot-value { position: absolute; left: 100%; white-space: nowrap; }
-.dot-chart .label-before .dot-value { left: auto; right: 100%; }
-.dot:hover::after, .dot:focus-visible::after, .dot[aria-expanded='true']::after { box-shadow: 0 0 0 2px #dae9ff; }
-.cell-notes { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; padding-top: 4px; margin-top: auto; color: #697886; font-size: 11px; }
-.missing-count, .detail-action { color: #506478; font-size: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
-.missing-count { margin-inline-start: auto; color: #697886; text-align: right; }
-.missing-count:hover, .missing-count[aria-expanded='true'] { color: var(--mark); }
-.has-selection .bin[aria-expanded='false'] .bar-fill,
-.has-selection .dot[aria-expanded='false']::after { background: #a2aebc; opacity: 1; }
-.has-selection .bin[aria-expanded='false']:hover { background: #f2f4f6; }
-.has-selection .dot[aria-expanded='false']:hover::after { box-shadow: 0 0 0 2px #e4e9ef; }
-.has-selection .missing-count[aria-expanded='false']:hover { color: #405367; }
+:deep(.dot-chart .label-before .dot-value) { left: auto; right: 100%; }
+:deep(.dot:hover::after), :deep(.dot:focus-visible::after), :deep(.dot[aria-expanded='true']::after) { box-shadow: 0 0 0 2px #dae9ff; }
+.cell-notes { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-height: 18px; padding-top: 4px; color: #697886; font-size: 11px; }
+:deep(.missing-count), :deep(.detail-action) { color: #506478; font-size: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+:deep(.missing-count) { margin-inline-start: auto; color: #697886; text-align: right; padding: 1px 4px; border-radius: 3px; }
+:deep(.missing-count:is(:hover, :focus-visible)), :deep(.missing-count[aria-expanded='true']) { color: var(--mark); }
+:deep(:is(.bin, .missing-count):is(:hover, :focus-visible, [aria-expanded='true'])) { background-color: #f2f7ff; }
+:deep(.has-selection .bin[aria-expanded='false'] .bar-fill), :deep(.has-selection .dot[aria-expanded='false']::after) { background: #a2aebc; opacity: 1; }
+:deep(.has-selection :is(.bin, .missing-count)[aria-expanded='false']:is(:hover, :focus-visible)) { background-color: #f2f4f6; }
+:deep(.has-selection .dot[aria-expanded='false']:is(:hover, :focus-visible)::after) { box-shadow: 0 0 0 2px #e4e9ef; }
+:deep(.has-selection .missing-count[aria-expanded='false']:is(:hover, :focus-visible)) { color: #405367; }
 .detail-collapse { display: inline-flex; align-items: center; align-self: flex-start; gap: 3px; min-height: 24px; margin-top: -3px; }
 .detail-collapse .t-icon { font-size: 14px; }
 .model-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }

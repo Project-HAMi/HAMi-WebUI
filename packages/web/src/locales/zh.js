@@ -226,8 +226,9 @@ export default {
       modelRange: '第 {start}–{end} 个，共 {total} 个型号', modelPagination: 'GPU 型号分页',
       device: '设备 ID', node: '节点', devices: '设备明细',
       belowRange: '低于 {end}', openRange: '{start} 至不足 {end}', closedRange: '{start} 至 {end}（含 {end}）',
+      readingCount: '{value}：{count}',
       detailDescription: '{model} 的{metric}，{value}，{count}',
-      close: '收起', collapseAgain: '再次点击收起明细', previous: '上一页', next: '下一页', loading: '加载中…',
+      close: '收起', previous: '上一页', next: '下一页', loading: '加载中…',
       unavailable: '暂时无法获取 GPU 使用数据', empty: '暂无 GPU 设备',
     },
     issueList: {
