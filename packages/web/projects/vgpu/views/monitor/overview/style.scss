@@ -1,7 +1,14 @@
 .content-body:has(> .home-layout) {
   --overview-header-height: 40px;
   scroll-padding-block-start: var(--overview-header-height);
+
+  @media (max-width: 560px) {
+    // The issue indicator can wrap below the sticky title.
+    scroll-padding-block-start: 64px;
+  }
 }
+
+.home-layout { container: overview / inline-size; }
 
 .home {
   --inventory-columns: minmax(420px, 2fr) minmax(0, 3fr);
@@ -21,7 +28,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 2px 12px;
     min-height: var(--overview-header-height);
     padding-right: 12px;
     background: #fff;
@@ -233,4 +241,11 @@
     > .extra { margin-inline-start: auto; }
   }
 
+}
+
+@container overview (max-width: 240px) {
+  .home-page-title {
+    padding-inline-end: 0;
+    font-size: 15px;
+  }
 }

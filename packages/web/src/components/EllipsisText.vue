@@ -7,6 +7,7 @@
     :content="text"
     :show-after="300"
     :popper-class="tooltipClass"
+    :append-to="tooltipAppendTo"
     :trigger="focusable ? ['hover', 'focus'] : 'hover'"
   >
     <span
@@ -56,6 +57,7 @@ const props = defineProps({
     type: String,
     default: 'overflow', // 'none' | 'always' | 'overflow'
   },
+  tooltipAppendTo: Object,
   tooltipClass: {
     type: String,
     default: 'vgpu-long-text-tooltip',
@@ -94,7 +96,7 @@ const tooltipEnabled = computed(() => {
   if (!props.text) return false;
   if (props.tooltip === 'none') return false;
   if (props.tooltip === 'always') return true;
-  return isOverflow.value;
+  return displayText.value !== props.text || isOverflow.value;
 });
 
 // scrollWidth and clientWidth are whole pixels, so they miss a text the browser cuts by a fraction of one.
@@ -107,7 +109,8 @@ const isCutByFraction = (el) => {
 const checkOverflow = () => {
   const el = textRef.value;
   if (!el) return;
-  isOverflow.value = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth || isCutByFraction(el);
+  const clippedLines = props.lines > 1 && el.scrollHeight > el.clientHeight;
+  isOverflow.value = clippedLines || el.scrollWidth > el.clientWidth || isCutByFraction(el);
 };
 
 let ro;

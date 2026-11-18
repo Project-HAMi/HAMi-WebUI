@@ -4178,7 +4178,7 @@ test('overview details fetch verified device links on demand and keep missing re
   const target = await startWebEntry({})
   const page = await browser.newPage({ locale: 'en-US' })
   let lists = 0
-  const node = { name: 'worker', uid: 'worker-uid', ready: true, schedulable: true, physicalDevices: 8 }
+  const node = { name: 'training-prod-h100-sxm5-80gb-us-central1-a-worker-00000001', uid: 'worker-uid', ready: true, schedulable: true, physicalDevices: 8 }
   const devices = Array.from({ length: 8 }, (_, i) => ({
     node: node.name, provider: 'NVIDIA', deviceId: `gpu-${i}`, model: 'A100', healthy: i > 0,
     utilizationRatio: 0, memoryUsageRatio: i === 0 ? null : 0.5
@@ -4204,17 +4204,33 @@ test('overview details fetch verified device links on demand and keep missing re
     await compute.locator('.dot-chart button').click()
     const details = distribution.locator('.device-list')
     await details.getByRole('link', { name: 'gpu-0', exact: true }).waitFor()
-    assert.equal(await details.getByRole('link', { name: 'worker', exact: true }).count(), 1)
+    assert.equal(await details.getByRole('link', { name: node.name, exact: true }).count(), 1)
     assert.equal(await details.getByRole('link', { name: /^gpu-/ }).count(), 8)
     assert.equal(lists, 1)
     await page.locator('.home-page-title > span').click()
     await details.waitFor({ state: 'detached' })
-    await page.locator('.issues-trigger').click()
+    await page.setViewportSize({ width: 320, height: 568 })
+    const trigger = page.locator('.issues-trigger')
+    const bounds = await trigger.boundingBox()
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 320, 'The issue trigger must fit before clicking or scrolling')
+    await trigger.click()
     const issues = page.getByRole('dialog')
-    await issues.getByRole('link', { name: 'worker', exact: true }).waitFor()
+    await issues.getByRole('link', { name: node.name, exact: true }).waitFor()
     assert.match(await issues.innerText(), /1.*GPU/i)
     await page.keyboard.press('Escape')
     await issues.waitFor({ state: 'hidden' })
+    await trigger.click()
+    await issues.getByRole('link', { name: node.name, exact: true }).waitFor()
+    assert.ok(await issues.evaluate(el => el === document.activeElement), 'Reopening during dismissal must restore the dialog and focus')
+    await issues.getByRole('link', { name: node.name, exact: true }).hover()
+    const hint = page.getByRole('tooltip').filter({ hasText: node.name })
+    await hint.waitFor()
+    await waitUntil(() => hint.evaluate(el => {
+      const box = el.getBoundingClientRect()
+      return box.left >= 0 && box.right <= innerWidth &&
+        box.top >= 0 && box.bottom <= innerHeight &&
+        el.contains(document.elementFromPoint(box.right - 6, box.bottom - 6))
+    }), 'The full name must be visible above the dialog and fit the narrow viewport')
   } finally {
     await page.close()
   }
@@ -4275,7 +4291,7 @@ test('overview retains keyboard focus when a refresh removes a reading or an inc
   }
 })
 
-test('overview issue status opens details only for affected or paused nodes', async() => {
+test('overview issue status opens details only for unhealthy devices or unready nodes', async() => {
   const target = await startWebEntry({})
   const page = await browser.newPage({ locale: 'en-US' })
   const header = page.locator('.home-page-title')
@@ -4337,16 +4353,17 @@ test('overview issue status opens details only for affected or paused nodes', as
     await checkStatic('Status unavailable')
     await page.waitForLoadState('networkidle')
 
-    for (const [nodeComplete, deviceComplete, text] of [
-      [false, false, 'Inventory incomplete'],
-      [false, true, 'Node inventory incomplete'],
-      [true, false, 'Device inventory incomplete'],
+    // Coverage gaps are not evidence of a node or device fault.
+    for (const [nodeComplete, deviceComplete] of [
+      [false, false],
+      [false, true],
+      [true, false],
     ]) {
       await nextSnapshot(snapshot([node], [gpu], nodeComplete, deviceComplete))
-      await checkStatic(text)
+      await checkHealthy('No node or device issues detected')
     }
     await nextSnapshot(snapshot([node], [{ ...gpu, healthy: null }]))
-    await checkStatic('Status incomplete')
+    await checkHealthy('No node or device issues detected')
     await nextSnapshot(snapshot([node], [{ ...gpu, healthy: false }]))
     await trigger.getByText('1 node with issues', { exact: true }).waitFor()
     assert.equal(await dialog.count(), 0)
@@ -4355,7 +4372,7 @@ test('overview issue status opens details only for affected or paused nodes', as
     assert.equal(await header.locator('[tabindex="0"], button').count(), 0)
 
     await nextSnapshot(snapshot([node], [gpu]))
-    await checkHealthy('No node or device issues')
+    await checkHealthy('No node or device issues detected')
     // Both cards and their unready node constitute a single affected node.
     await nextSnapshot(snapshot([{ ...node, ready: false, schedulable: false }], [
       { ...gpu, healthy: false }, { ...gpu, deviceId: 'gpu-2', healthy: false },
@@ -4370,8 +4387,12 @@ test('overview issue status opens details only for affected or paused nodes', as
     assert.equal((await header.boundingBox()).y, headerY)
     assert.equal((await trigger.boundingBox()).y, triggerY)
     await trigger.getByText('1 node with issues', { exact: true }).click()
-    await dialog.getByText('Device inventory incomplete', { exact: true }).waitFor()
-    assert.equal(await dialog.getByRole('link', { name: 'worker', exact: true }).count(), 1)
+    await dialog.waitFor()
+    assert.doesNotMatch(await dialog.innerText(), /inventory incomplete/i)
+    const nodeLink = dialog.getByRole('link', { name: 'worker', exact: true })
+    await nodeLink.hover()
+    await page.clock.runFor(500)
+    assert.equal(await page.getByRole('tooltip').filter({ hasText: /^worker$/ }).count(), 0, 'A fully visible node name needs no tooltip')
     assert.match(await dialog.innerText(), /2 unhealthy GPUs/)
     await waitUntil(() => legacyReads > 0, 'Opening issue details should resolve device links')
 
@@ -4390,21 +4411,19 @@ test('overview issue status opens details only for affected or paused nodes', as
     await nextSnapshot(snapshot([node], [gpu]))
     await dialog.waitFor({ state: 'hidden' })
     assert.ok(await isFocused(healthy), 'Return focus from the recovered incident to the healthy indicator')
-    await checkHealthy('No node or device issues')
+    await checkHealthy('No node or device issues detected')
     await page.locator('.gpu-distribution').getByText('1 GPU without data').first().waitFor()
     await nextSnapshot(snapshot([{ ...node, schedulable: false }], [gpu]))
-    await trigger.getByText('Scheduling paused', { exact: true }).click()
-    await dialog.getByRole('link', { name: 'worker', exact: true }).waitFor()
-    await page.keyboard.press('Escape')
-    await dialog.waitFor({ state: 'hidden' })
-    assert.ok(await isFocused(trigger))
+    await checkHealthy('No node or device issues detected')
+    assert.equal(await page.getByRole('link', { name: 'Temporarily Unschedulable: 1', exact: true }).count(), 1,
+      'Paused scheduling remains in the node summary, without becoming an incident')
     await nextSnapshot(snapshot([], []))
     assert.ok(await header.evaluate(el => el.contains(document.activeElement)), 'Retain focus at the title when the trigger disappears')
 
     reply = snapshot([node], [gpu])
     await page.context().addCookies([{ name: 'language', value: 'zh', url: target }])
     await page.reload({ waitUntil: 'networkidle' })
-    await checkHealthy('节点与设备暂无异常')
+    await checkHealthy('未发现节点与设备异常')
   } finally {
     pendingLookup?.resolve()
     initialResponse.resolve()

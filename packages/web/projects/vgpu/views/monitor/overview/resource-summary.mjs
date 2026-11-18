@@ -16,15 +16,10 @@ export function readResourceInventory(reply) {
   const nodeByName = new Map(nodes.map(node => [node.name, node]));
   const readings = [];
   const issues = [];
-  let issueCoverageGap = '';
-  if (!nodeCoverage.complete) issueCoverageGap = deviceCoverage.complete ? 'nodeInventory' : 'inventory';
-  else if (!deviceCoverage.complete) issueCoverageGap = 'deviceInventory';
   for (const node of nodes) {
     const identity = { node: node.name, nodeUid: node.uid, deviceCount: node.physicalDevices,
       model: node.models?.length === 1 ? node.models[0] : '' };
     if (node.ready === false) issues.push({ ...identity, kind: 'nodeNotReady' });
-    if (node.schedulable === false) issues.push({ ...identity, kind: 'nodeCordoned' });
-    if (node.ready == null || node.schedulable == null) issueCoverageGap ||= 'partial';
   }
   for (const device of devices) {
     if (device.healthy === true) health.healthy++;
@@ -35,7 +30,6 @@ export function readResourceInventory(reply) {
     const identity = { key: physicalDeviceKey(device), model, provider: device.provider,
       node: device.node, nodeUid: nodeByName.get(device.node)?.uid };
     if (device.healthy === false) issues.push({ ...identity, kind: 'deviceUnhealthy', deviceId: device.deviceId });
-    else if (device.healthy == null) issueCoverageGap ||= 'partial';
     readings.push({ ...identity, id: device.deviceId,
       compute: device.utilizationRatio == null ? null : device.utilizationRatio * 100,
       memory: device.memoryUsageRatio == null ? null : device.memoryUsageRatio * 100 });
@@ -43,8 +37,7 @@ export function readResourceInventory(reply) {
   const models = physicalModelDistribution(devices, deviceCoverage);
   return {
     nodes, models, devices: readings, issues,
-    issueStatus: issueCoverageGap ? 'partial' : nodes.length || devices.length ? 'ready' : 'empty',
-    issueCoverageGap,
+    issueStatus: nodes.length || devices.length ? 'ready' : 'empty',
     usageStatus: deviceCoverage.complete || devices.length ? 'ready' : 'error',
     summary: {
       nodes: { ...nodeInventory, schedulable: nodeInventory.count === undefined ? undefined : schedulable,
