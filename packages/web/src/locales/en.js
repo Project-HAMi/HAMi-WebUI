@@ -227,8 +227,9 @@ export default {
       modelRange: 'Models {start}–{end} of {total}', modelPagination: 'GPU model pages',
       device: 'Device ID', node: 'Node', devices: 'Device readings',
       belowRange: 'Below {end}', openRange: '{start} to under {end}', closedRange: '{start} to {end} inclusive',
+      readingCount: '{value}: {count}',
       detailDescription: '{model}, {metric}, {value}, {count}',
-      close: 'Collapse', collapseAgain: 'Click again to collapse details', previous: 'Previous', next: 'Next', loading: 'Loading…',
+      close: 'Collapse', previous: 'Previous', next: 'Next', loading: 'Loading…',
       unavailable: 'GPU usage data is unavailable', empty: 'No GPU devices',
     },
     issueList: {
