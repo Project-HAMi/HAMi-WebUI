@@ -1,0 +1,35 @@
+{
+  "snapshotAt": "2023-11-14T22:13:20Z",
+  "nodes": [],
+  "devices": [],
+  "nodeCoverage": {
+    "entity": "node",
+    "observed": 0,
+    "total": 0,
+    "complete": true,
+    "sources": [
+      {
+        "source": "shared_node_informer",
+        "state": "known",
+        "reason": "",
+        "params": {}
+      }
+    ],
+    "fields": {}
+  },
+  "deviceCoverage": {
+    "entity": "device",
+    "observed": 0,
+    "total": 0,
+    "complete": true,
+    "sources": [
+      {
+        "source": "shared_node_informer",
+        "state": "known",
+        "reason": "",
+        "params": {}
+      }
+    ],
+    "fields": {}
+  }
+}

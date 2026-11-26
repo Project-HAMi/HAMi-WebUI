@@ -1,0 +1,6 @@
+{
+  "code": 404,
+  "reason": "RESOURCE_GPU_NOT_FOUND",
+  "message": "Accelerator device was not found",
+  "metadata": {}
+}

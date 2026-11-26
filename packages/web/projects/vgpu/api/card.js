@@ -67,14 +67,21 @@ class cardApi {
     return moduleRegistration ? card : {};
   }
 
-  getCardDetail(params, signal) {
-    return request({
-      url: apiPrefix + '/v1/gpu',
-      method: 'get',
-      errorFeedback: 'inline',
-      params,
-      signal,
-    });
+  async getCardDetail(params, signal) {
+    try {
+      return await request({
+        url: apiPrefix + '/v1/gpu',
+        method: 'get',
+        errorFeedback: 'inline',
+        params,
+        signal,
+      });
+    } catch (error) {
+      if (error.response?.status === 404 && error.response.data?.reason === 'RESOURCE_GPU_NOT_FOUND') {
+        return {};
+      }
+      throw error;
+    }
   }
 
   getRangeVector(data) {

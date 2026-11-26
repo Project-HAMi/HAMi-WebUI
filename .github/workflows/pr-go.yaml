@@ -32,6 +32,7 @@ jobs:
             go:
               - 'server/**'
               - 'scripts/verify-toolchain-versions.sh'
+              - 'test/contracts/http-goldens/**'
               - '.github/workflows/pr-go.yaml'
 
   # `make generate` (proto + wire) is mandatory before build/vet/test because

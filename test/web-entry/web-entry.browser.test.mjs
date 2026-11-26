@@ -756,35 +756,29 @@ before(async() => {
       const requestKey = `gpu:${uid}`
       countBackendRequest(requestKey)
       await waitForResponseGate(requestKey)
-      payload = uid === 'gpu-missing'
-        ? {
-            uuid: '',
-            nodeName: '',
-            type: '',
-            vgpuUsed: 0,
-            vgpuTotal: 0,
-            coreUsed: 0,
-            coreTotal: 0,
-            memoryUsed: 0,
-            memoryTotal: 0,
-            nodeUid: '',
-            health: false,
-            mode: ''
-          }
-        : {
-            uuid: uid,
-            nodeName: 'node-1',
-            type: 'NVIDIA',
-            vgpuUsed: 0,
-            vgpuTotal: 1,
-            coreUsed: 0,
-            coreTotal: 100,
-            memoryUsed: 0,
-            memoryTotal: 16_384,
-            nodeUid: 'node-1',
-            health: true,
-            mode: ''
-          }
+      if (uid === 'gpu-missing') {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          code: 404,
+          reason: 'RESOURCE_GPU_NOT_FOUND',
+          message: 'Accelerator device was not found'
+        }))
+        return
+      }
+      payload = {
+        uuid: uid,
+        nodeName: 'node-1',
+        type: 'NVIDIA',
+        vgpuUsed: 0,
+        vgpuTotal: 1,
+        coreUsed: 0,
+        coreTotal: 100,
+        memoryUsed: 0,
+        memoryTotal: 16_384,
+        nodeUid: 'node-1',
+        health: true,
+        mode: ''
+      }
     } else if (pathname === '/v1/node') {
       const uid = requestURL.searchParams.get('uid') ?? ''
       const requestKey = `node:${uid}`

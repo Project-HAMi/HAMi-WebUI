@@ -407,6 +407,9 @@ const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
       taskApi.getWorkloads({ filters: { deviceId: split.uuid }, page: 1, pageSize: 100 }),
     ]);
     if (generation !== workloadSplitGeneration) return;
+    if (!card || typeof card !== 'object' || !card.uuid) {
+      throw new Error('Device not found');
+    }
     const page = parseDeviceSplitPage(workloads, 100);
     split.device = { ...card, uuid: split.uuid };
     split.containers = page.items;
