@@ -67,11 +67,13 @@ class cardApi {
     return moduleRegistration ? card : {};
   }
 
-  getCardDetail(params) {
+  getCardDetail(params, signal) {
     return request({
       url: apiPrefix + '/v1/gpu',
       method: 'get',
+      errorFeedback: 'inline',
       params,
+      signal,
     });
   }
 

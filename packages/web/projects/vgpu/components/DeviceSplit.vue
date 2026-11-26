@@ -106,7 +106,7 @@
             <span class="split-part__label">{{ labelOf(block) }}</span>
           </span>
           <span
-            v-if="split.free"
+            v-if="split.free && split.freeKnown !== false"
             class="split-strip__rest"
             :style="{ width: stripWidth(split.free / Math.max(split.total, split.used)) }"
           >
@@ -178,6 +178,8 @@ import { buildWorkloadDetailLocation, formatWorkloadName } from '~/vgpu/views/ta
 const props = defineProps({
   device: { type: Object, required: true },
   containers: { type: Array, default: () => [] },
+  totalContainers: { type: Number, default: undefined },
+  truncated: { type: Boolean, default: false },
   highlight: { type: Object, default: undefined },
   status: { type: String, default: 'ready' },
   showDevice: { type: Boolean, default: false },
@@ -195,9 +197,15 @@ const active = ref('');
 const split = computed(() => {
   if (!props.showChart && !props.showSummary) {
     const holders = collectHolders(props.device, props.containers, props.highlight);
-    return { holders, kind: splitKind(props.device, holders) };
+    return { holders, kind: splitKind(props.device, holders), truncated: props.truncated };
   }
-  return buildDeviceSplit({ device: props.device, containers: props.containers, highlight: props.highlight });
+  return buildDeviceSplit({
+    device: props.device,
+    containers: props.containers,
+    highlight: props.highlight,
+    totalContainers: props.totalContainers,
+    truncated: props.truncated,
+  });
 });
 const openCells = computed(() => (split.value.cells || []).filter((cell) => cell.state !== 'used'));
 const modeText = computed(() => {
@@ -315,6 +323,15 @@ const summary = computed(() => {
       ? t('card.split.memoryUsed', { used: memoryText(value.used), total: memoryText(value.total) })
       : t('card.split.memoryUnknown') });
     if (value.over) parts.push({ text: t('card.split.memoryOver', { size: memoryText(value.over) }), warning: true });
+  }
+  if (value.truncated) {
+    parts.push({
+      text: t('card.split.truncatedNotice', {
+        loaded: value.holders.length,
+        total: value.totalContainers ?? `${value.holders.length}+`,
+      }),
+      warning: true,
+    });
   }
   return parts;
 });

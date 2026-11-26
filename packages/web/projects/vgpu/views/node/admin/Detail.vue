@@ -274,7 +274,7 @@ const {
   retry: retryDetail,
 } = useDetailResource({
   source: nodeSource,
-  request: (uid) => nodeApi.getInventoryNode(uid),
+  request: (uid, signal) => nodeApi.getInventoryNode(uid, signal),
   classify: (payload, uid) =>
     classifyDetailPayload(payload, {
       identityKeys: ['uid', 'name'],

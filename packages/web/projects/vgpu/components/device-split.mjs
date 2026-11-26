@@ -85,7 +85,7 @@ const fitting = (profiles, occupied) => profiles.map((profile) => {
 
 // MIG devices are drawn in the placement space the plugin registered, one
 // lane per set of instances that do not overlap.
-export const buildMigSplit = (device, holders) => {
+export const buildMigSplit = (device, holders, { truncated = false } = {}) => {
   const profiles = migProfiles(device);
   const registered = profiles.reduce((widest, profile) => profile.placements.reduce(
     (edge, placement) => Math.max(edge, placement.start + placement.size), widest,
@@ -106,7 +106,8 @@ export const buildMigSplit = (device, holders) => {
     });
   const occupied = Array(slots).fill(false);
   blocks.forEach((block) => covers(block.placement).forEach((slot) => { occupied[slot] = true; }));
-  const fits = fitting(profiles, occupied);
+  const completeProfiles = profiles.length > 0 && !truncated;
+  const fits = completeProfiles ? fitting(profiles, occupied) : [];
   const usable = Array(slots).fill(false);
   fits.forEach((fit) => fit.open.forEach((placement) => covers(placement).forEach((slot) => { usable[slot] = true; })));
   return {
@@ -116,31 +117,35 @@ export const buildMigSplit = (device, holders) => {
     blocks,
     // The rows read in the order the slices are drawn.
     holders: blocks,
-    // Without registered profiles, nothing tells whether a free slot can take an instance.
+    // Without registered profiles or full container visibility, open slots remain unknown.
     cells: occupied.map((used, slot) => {
       if (used) return { slot, state: 'used' };
-      if (!profiles.length) return { slot, state: 'unknown' };
+      if (!completeProfiles) return { slot, state: 'unknown' };
       return { slot, state: usable[slot] ? 'open' : 'stranded' };
     }),
-    fits: profiles.length
+    fits: completeProfiles
       ? fits.filter((fit) => fit.count > 0).map(({ name, count }) => ({ name, count }))
       : undefined,
     overlapping: laneEnds.length > 1,
     beyondRegistered: registered > 0 && reach > registered,
+    truncated,
   };
 };
 
 // Templates and whole cards are fixed parts of the device memory.
-export const buildMemorySplit = (device, holders) => {
+export const buildMemorySplit = (device, holders, { truncated = false } = {}) => {
   const total = positive(device.memoryTotal);
   const used = holders.reduce((sum, holder) => sum + holder.memoryMiB, 0);
   const scale = Math.max(total, used);
+  const freeKnown = !truncated && total > 0;
   return {
     kind: 'memory',
     total,
     used,
-    free: Math.max(total - used, 0),
+    free: truncated ? 0 : Math.max(total - used, 0),
+    freeKnown,
     over: total ? Math.max(used - total, 0) : 0,
+    truncated,
     blocks: holders.map((holder) => ({ ...holder, share: scale ? holder.memoryMiB / scale : 0 })),
   };
 };
@@ -158,7 +163,7 @@ const meter = (total, parts) => {
 
 // HAMi-core shares the whole device: each holder has a memory and a compute
 // quota, and nothing is carved out.
-export const buildSharedSplit = (device, holders) => ({
+export const buildSharedSplit = (device, holders, { truncated = false } = {}) => ({
   kind: 'shared',
   memory: meter(positive(device.memoryTotal), holders.map((holder) => ({
     key: holder.key, value: holder.memoryMiB, current: holder.current,
@@ -169,6 +174,7 @@ export const buildSharedSplit = (device, holders) => ({
   unlimited: holders.filter((holder) => holder.coresKnown && holder.cores === 0).length,
   holderCount: holders.length,
   limit: positive(device.vgpuTotal),
+  truncated,
 });
 
 export const splitKind = (device, holders) => {
@@ -179,13 +185,40 @@ export const splitKind = (device, holders) => {
   return 'memory';
 };
 
-export const buildDeviceSplit = ({ device = {}, containers = [], highlight } = {}) => {
+export const parseDeviceSplitPage = (result, pageSize = 100) => {
+  if (!result || typeof result !== 'object' || Array.isArray(result) || !Array.isArray(result.items)) {
+    throw new TypeError('Invalid container split payload');
+  }
+  const items = result.items;
+  const hasTotalField = result.total !== undefined && result.total !== null && result.total !== '';
+  const parsedTotal = hasTotalField ? Number(result.total) : NaN;
+  const hasValidTotal = Number.isFinite(parsedTotal) && parsedTotal >= items.length;
+  const totalContainers = hasValidTotal ? parsedTotal : undefined;
+  const truncated = hasValidTotal ? parsedTotal > items.length : items.length >= pageSize;
+  return { items, totalContainers, truncated };
+};
+
+export const buildDeviceSplit = ({
+  device = {},
+  containers = [],
+  highlight,
+  totalContainers,
+  truncated = false,
+} = {}) => {
+  const parsedTotal = Number(totalContainers);
+  const hasKnownTotal = Number.isFinite(parsedTotal) && parsedTotal >= containers.length;
+  const isTruncated = Boolean(truncated || (Number.isFinite(parsedTotal) && parsedTotal > containers.length));
   const holders = collectHolders(device, containers, highlight);
   const kind = splitKind(device, holders);
   const split = {
     mig: buildMigSplit,
     shared: buildSharedSplit,
     memory: buildMemorySplit,
-  }[kind](device, holders);
-  return { holders, ...split };
+  }[kind](device, holders, { truncated: isTruncated });
+  return {
+    holders,
+    ...split,
+    truncated: isTruncated,
+    totalContainers: hasKnownTotal ? parsedTotal : undefined,
+  };
 };

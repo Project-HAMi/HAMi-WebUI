@@ -22,11 +22,13 @@ class taskApi {
     });
   }
 
-  getTaskDetail(params) {
+  getTaskDetail(params, signal) {
     return request({
       url: apiPrefix +  '/v1/container',
       method: 'get',
+      errorFeedback: 'inline',
       params,
+      signal,
     });
   }
 

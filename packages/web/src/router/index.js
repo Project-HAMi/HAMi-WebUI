@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { pick, uniqBy } from 'lodash';
 import { getBasePath } from '@/utils/base-path.mjs';
+import { safeStorage } from '@/utils/safe-storage.mjs';
 /* Layout */
 import Layout from '@/layout';
 /* Router Modules */
@@ -53,7 +54,8 @@ router.beforeEach((to) => {
 });
 
 router.afterEach((to) => {
-  const history = JSON.parse(localStorage.getItem('history')) || [];
+  const stored = safeStorage.getJson('route-history', []);
+  const history = Array.isArray(stored) ? [...stored] : [];
   if (to.path !== '/home') {
     history.unshift(to);
   }
@@ -61,7 +63,7 @@ router.afterEach((to) => {
     .slice(0, 7)
     .map((item) => pick(item, ['path', 'meta']));
 
-  localStorage.setItem('history', JSON.stringify(newData));
+  safeStorage.setJson('route-history', newData);
 });
 
 export default router;

@@ -525,6 +525,7 @@ export default {
       unallocated: '{size} unallocated',
       sharedBy: 'Shared by {count} of {limit}',
       sharedByCount: 'Shared by {count}',
+      truncatedNotice: 'Showing first {loaded} of {total} holders; remaining capacity unknown',
       strandedLegend: 'Hatched area cannot fit an instance',
       separator: ', ',
       listSeparator: ' or ',

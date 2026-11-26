@@ -137,3 +137,29 @@ test('a failed refresh remains visible after an empty successful result', () => 
   assert.equal(state.refreshing, false);
   assert.equal(state.refreshError, error);
 });
+
+test('switching entityKey clears prior ready data and isolates errors', () => {
+  const state = createRequestState({ uuid: '' }, { entityKey: 'gpu-a' });
+  const reqA = startRequest(state, { entityKey: 'gpu-a' });
+  resolveRequest(state, {
+    data: { uuid: 'gpu-a', memoryTotal: 16384 },
+    requestId: reqA,
+    entityKey: 'gpu-a',
+  });
+  assert.equal(state.status, REQUEST_STATUS.READY);
+  assert.equal(state.data.uuid, 'gpu-a');
+
+  const reqB = startRequest(state, { entityKey: 'gpu-b' });
+  assert.equal(state.status, REQUEST_STATUS.LOADING);
+  assert.equal(state.hasResolved, false);
+  assert.deepEqual(state.data, {});
+
+  rejectRequest(state, new Error('not found'), {
+    requestId: reqB,
+    entityKey: 'gpu-b',
+    status: REQUEST_STATUS.MISSING,
+  });
+  assert.equal(state.status, REQUEST_STATUS.MISSING);
+  assert.deepEqual(state.data, {});
+  assert.equal(state.refreshError, null);
+});

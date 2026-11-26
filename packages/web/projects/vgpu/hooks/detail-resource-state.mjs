@@ -54,16 +54,20 @@ export const classifyDetailPayload = (
   return REQUEST_STATUS.INVALID;
 };
 
-export const startDetailResourceRequest = (state, initialData) => {
+export const startDetailResourceRequest = (
+  state,
+  initialData,
+  { entityKey } = {},
+) => {
   state.data = initialData;
   state.hasResolved = false;
   state.refreshing = false;
-  return startRequest(state, { hasResolved: false });
+  return startRequest(state, { hasResolved: false, entityKey });
 };
 
 export const resolveDetailResourceRequest = (
   state,
-  { data, status, requestId, initialData },
+  { data, status, requestId, entityKey, initialData },
 ) => {
   if (!isLatestRequest(state, requestId)) return false;
 
@@ -71,8 +75,12 @@ export const resolveDetailResourceRequest = (
     data: status === REQUEST_STATUS.READY ? data : initialData,
     status,
     requestId,
+    entityKey,
   });
 };
 
-export const rejectDetailResourceRequest = (state, error, requestId) =>
-  rejectRequest(state, error, { hasResolved: false, requestId });
+export const rejectDetailResourceRequest = (
+  state,
+  error,
+  { requestId, entityKey } = {},
+) => rejectRequest(state, error, { hasResolved: false, requestId, entityKey });

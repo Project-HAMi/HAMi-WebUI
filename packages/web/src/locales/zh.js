@@ -521,6 +521,7 @@ export default {
       unallocated: '未分配 {size}',
       sharedBy: '共享 {count} / {limit}',
       sharedByCount: '共享 {count}',
+      truncatedNotice: '仅加载前 {loaded} / {total} 个持有者，空闲容量暂无法确认',
       strandedLegend: '斜纹区域无法放置实例',
       separator: '，',
       listSeparator: ' 或 ',

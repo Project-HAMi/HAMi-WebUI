@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildDeviceSplit, collectHolders } from './device-split.mjs';
+import { buildDeviceSplit, collectHolders, parseDeviceSplitPage } from './device-split.mjs';
 
 // An A100 as HAMi's plugin registers it: 8 slices, 1g only in 0-6, 7g spans all 8.
 const a100 = {
@@ -156,4 +156,51 @@ test('an idle device keeps its mode and a workload without identity is never cur
   const [holder] = collectHolders({ uuid: 'G' }, [{ devices: [{ id: 'G' }] }], {});
   assert.equal(holder.current, false);
   assert.deepEqual(collectHolders({ uuid: 'G' }, [{ devices: [{ id: 'other' }, null] }]), []);
+});
+
+test('truncated holder pages never claim unallocated free memory or open MIG slots', () => {
+  const memSplit = buildDeviceSplit({
+    device: { uuid: 'B3-0', mode: 'template', memoryTotal: 65536 },
+    containers: [
+      container('p1', 'a', [{ id: 'B3-0', allocationShape: 'template', allocatedMem: 16384 }]),
+    ],
+    totalContainers: 120,
+  });
+  assert.equal(memSplit.truncated, true);
+  assert.equal(memSplit.freeKnown, false);
+  assert.equal(memSplit.free, 0);
+  assert.equal(memSplit.totalContainers, 120);
+
+  const migSplit = buildDeviceSplit({
+    device: a100,
+    containers: [container('p1', 'train', [mig('GPU-A', '3g.20gb', 0, 4)])],
+    totalContainers: 105,
+  });
+  assert.equal(migSplit.truncated, true);
+  assert.equal(migSplit.fits, undefined);
+  assert.ok(migSplit.cells.slice(4).every((cell) => cell.state === 'unknown'));
+});
+
+test('parseDeviceSplitPage validates shape and marks full pages truncated when total is missing or stale', () => {
+  assert.throws(() => parseDeviceSplitPage([]), TypeError);
+  assert.throws(() => parseDeviceSplitPage({}), TypeError);
+
+  assert.deepEqual(
+    parseDeviceSplitPage({ items: [{ id: 1 }], total: 1 }, 100),
+    { items: [{ id: 1 }], totalContainers: 1, truncated: false },
+  );
+  assert.deepEqual(
+    parseDeviceSplitPage({ items: [{ id: 1 }], total: 120 }, 100),
+    { items: [{ id: 1 }], totalContainers: 120, truncated: true },
+  );
+
+  const fullPage = Array.from({ length: 100 }, (_, i) => ({ id: i }));
+  assert.deepEqual(
+    parseDeviceSplitPage({ items: fullPage }, 100),
+    { items: fullPage, totalContainers: undefined, truncated: true },
+  );
+  assert.deepEqual(
+    parseDeviceSplitPage({ items: fullPage, total: 50 }, 100),
+    { items: fullPage, totalContainers: undefined, truncated: true },
+  );
 });
