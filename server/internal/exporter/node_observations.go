@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"vgpu/internal/biz"
+	"vgpu/internal/provider/hygon"
 	"vgpu/internal/resourceview"
 )
 
@@ -23,7 +24,7 @@ func (schema nodeMetricLabels) reading(name string, device resourceview.Device, 
 	exportedID := id.DeviceID
 	if id.Provider == biz.HygonHCUDevice || id.Provider == biz.HygonGPUDevice {
 		var ok bool
-		exportedID, ok = id.HygonBoardSerial()
+		exportedID, ok = hygon.BoardSerial(id.Provider, id.DeviceID)
 		if !ok {
 			return dcgmReading{err: errDCGMMissing}
 		}

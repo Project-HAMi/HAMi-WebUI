@@ -18,8 +18,17 @@ type DeviceIdentity struct {
 	NodeUID                  types.UID
 }
 
+// PhysicalAssociation lets a provider declare hardware-level board identity
+// and generation precedence without leaking vendor names into resourceview.
+type PhysicalAssociation struct {
+	Domain   string // shared hardware family on a node (empty if standalone)
+	BoardKey string // proven same-board key within Domain (empty if slot-only/unidentified)
+	Priority int    // higher priority wins for display/telemetry within the same PhysicalGroup
+}
+
 type Device struct {
 	Identity                                 DeviceIdentity
+	Physical                                 PhysicalAssociation
 	Kind                                     string // physical, instance or logical; never derived from a slot count
 	ParentIdentity                           *DeviceIdentity
 	UUID                                     *string // populated only with proven physical UUID evidence

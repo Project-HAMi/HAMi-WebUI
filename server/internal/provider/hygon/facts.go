@@ -9,6 +9,19 @@ import (
 	"vgpu/internal/provider/util"
 )
 
+// BoardSerial extracts the hardware board serial shared by HCU/DCU registrations and exporters.
+// Legacy index-only DCU registrations (all digits or "N/A") return false.
+func BoardSerial(provider, deviceID string) (string, bool) {
+	if provider != "HCU" && provider != "DCU" {
+		return "", false
+	}
+	serial, ok := strings.CutPrefix(deviceID, provider+"-")
+	if !ok || serial == "" || serial == "N/A" || (provider == "DCU" && strings.Trim(serial, "0123456789") == "") {
+		return "", false
+	}
+	return serial, true
+}
+
 // RegistrationFacts handles only the Kubernetes registration and verified
 // allocation ID conversion. It never needs a telemetry-provided physical UUID.
 func RegistrationFacts(raw, node string, hcu bool) ([]util.RegistrationDevice, error) {

@@ -37,16 +37,3 @@ func ParseDeviceID(id string) ([3]string, error) {
 	copy(result[:], parts)
 	return result, nil
 }
-
-// HygonBoardSerial is the identity shared by the registration and exporter.
-// Old DCU plugins could register a node-local index instead of a board serial.
-func (id DeviceIdentity) HygonBoardSerial() (string, bool) {
-	if id.Provider != "HCU" && id.Provider != "DCU" {
-		return "", false
-	}
-	serial, ok := strings.CutPrefix(id.DeviceID, id.Provider+"-")
-	if !ok || serial == "" || serial == "N/A" || (id.Provider == "DCU" && strings.Trim(serial, "0123456789") == "") {
-		return "", false
-	}
-	return serial, true
-}
