@@ -86,15 +86,18 @@ if [[ "$(awk 'NF { count++ } END { print count + 0 }' <<<"${legacy_digest_images
   exit 1
 fi
 
+host_arch="$(docker info --format '{{.Architecture}}' | sed -e 's/^x86_64$/amd64/' -e 's/^aarch64$/arm64/')"
+host_platform="linux/${host_arch}"
+
 paste <(printf '%s\n' "${legacy_digest_images}") <(printf '%s\n' "${legacy_images}") |
   while IFS=$'\t' read -r digest_image runtime_image; do
-    docker pull "${digest_image}"
+    docker pull --platform "${host_platform}" "${digest_image}"
     docker tag "${digest_image}" "${runtime_image}"
   done
 
 image_reference="${image_repository}:${image_tag}"
 if ! docker image inspect "${image_reference}" >/dev/null 2>&1; then
-  docker pull "${image_reference}"
+  docker pull --platform "${host_platform}" "${image_reference}"
 fi
 all_images="${legacy_images}"$'\n'"${image_reference}"
 
@@ -115,7 +118,14 @@ while IFS= read -r image; do
     echo "test image was not prepared locally: ${image}" >&2
     exit 1
   fi
-  kind load docker-image --name "${cluster_name}" "${image}"
+  if docker save --help 2>&1 | grep -q -- '--platform'; then
+    image_archive="${work_dir}/image.tar"
+    docker save --platform "${host_platform}" -o "${image_archive}" "${image}"
+    kind load image-archive --name "${cluster_name}" "${image_archive}"
+    rm -f "${image_archive}"
+  else
+    kind load docker-image --name "${cluster_name}" "${image}"
+  fi
 done <<<"${all_images}"
 
 helm install "${release_name}" "${legacy_chart}" \

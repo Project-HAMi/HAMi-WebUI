@@ -1151,6 +1151,62 @@ for invalid in 'ascend.annotationlessPodMode=guess' 'hami.deviceConfig.namespace
   fi
 done
 
+# Minimal RBAC hard gate: render with shipped defaults (before upgrade mutation) and verify
+# exact least-privilege RBAC objects, namespaces, subjects, roleRefs, and no aggregationRule.
+all_default_manifests="$(helm template test "${work_dir}/hami-webui" --namespace hami-webui-test --set dcgm-exporter.enabled=false)"
+python3 - "${all_default_manifests}" <<'PY'
+import sys
+import yaml
+
+docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d is not None]
+assert all(isinstance(d, dict) for d in docs), "All rendered Kubernetes manifests must be YAML mappings"
+for d in docs:
+    assert "aggregationRule" not in d, f"{d.get('kind')} {d.get('metadata', {}).get('name')} must not define aggregationRule"
+
+by_kind = {}
+for d in docs:
+    by_kind.setdefault(d.get("kind"), []).append(d)
+
+sas = by_kind.get("ServiceAccount", [])
+assert len(sas) == 1, f"Expected 1 ServiceAccount, got {sas}"
+sa_meta = sas[0].get("metadata", {})
+assert sa_meta.get("name") == "test-hami-webui" and sa_meta.get("namespace") == "hami-webui-test", f"Unexpected ServiceAccount: {sa_meta}"
+expected_subjects = [{"kind": "ServiceAccount", "name": sa_meta["name"], "namespace": sa_meta["namespace"]}]
+
+crs = by_kind.get("ClusterRole", [])
+assert len(crs) == 1 and crs[0].get("metadata", {}).get("name") == "hami-webui-reader", f"Unexpected ClusterRoles: {crs}"
+allowed_cr = {("nodes", ("get", "list", "watch")), ("pods", ("get", "list", "watch")), ("events", ("list",))}
+cr_rules = crs[0].get("rules", [])
+for rule in cr_rules:
+    assert set(rule.keys()) == {"apiGroups", "resources", "verbs"}, f"ClusterRole unexpected rule keys: {rule}"
+    assert rule["apiGroups"] == [""], f"ClusterRole unexpected apiGroups: {rule}"
+    resources, verbs = tuple(rule["resources"]), tuple(rule["verbs"])
+    assert len(resources) == 1 and (resources[0], verbs) in allowed_cr, f"ClusterRole widened permissions: {rule}"
+assert len(cr_rules) == len(allowed_cr), f"ClusterRole rule count mismatch: {cr_rules}"
+
+crbs = by_kind.get("ClusterRoleBinding", [])
+assert len(crbs) == 1, f"Expected 1 ClusterRoleBinding, got {crbs}"
+assert crbs[0].get("roleRef") == {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "hami-webui-reader"}, f"Unexpected ClusterRoleBinding roleRef: {crbs[0]}"
+assert crbs[0].get("subjects") == expected_subjects, f"Unexpected ClusterRoleBinding subjects: {crbs[0]}"
+
+roles = by_kind.get("Role", [])
+assert len(roles) == 1, f"Expected 1 Role, got {roles}"
+role_meta = roles[0].get("metadata", {})
+assert role_meta.get("name") == "test-hami-webui-device-config" and role_meta.get("namespace") == "kube-system", f"Unexpected Role metadata: {role_meta}"
+role_rules = roles[0].get("rules", [])
+assert len(role_rules) == 1, f"device-config Role expected 1 rule, got {role_rules}"
+cm_rule = role_rules[0]
+assert set(cm_rule.keys()) == {"apiGroups", "resources", "resourceNames", "verbs"}, f"device-config Role unexpected rule keys: {cm_rule}"
+assert cm_rule["apiGroups"] == [""] and cm_rule["resources"] == ["configmaps"] and cm_rule["resourceNames"] == ["hami-scheduler-device"] and cm_rule["verbs"] == ["get", "list", "watch"], f"device-config Role widened permissions: {cm_rule}"
+
+rbs = by_kind.get("RoleBinding", [])
+assert len(rbs) == 1, f"Expected 1 RoleBinding, got {rbs}"
+rb_meta = rbs[0].get("metadata", {})
+assert rb_meta.get("name") == "test-hami-webui-device-config" and rb_meta.get("namespace") == "kube-system", f"Unexpected RoleBinding namespace/name: {rb_meta}"
+assert rbs[0].get("roleRef") == {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "test-hami-webui-device-config"}, f"Unexpected RoleBinding roleRef: {rbs[0]}"
+assert rbs[0].get("subjects") == expected_subjects, f"Unexpected RoleBinding subjects: {rbs[0]}"
+PY
+
 # Simulate --reuse-values from a release without scheduling or device configuration blocks.
 awk '
   /^(scheduling|hami|ascend):$/ { skip = 1; next }
@@ -1166,4 +1222,4 @@ fi
 expect_device_config "${diagnostic_upgrade_render}" 'enabled: true' 'name: "hami-scheduler-device"' 'annotationless_pod_mode: "unknown"'
 expect_device_config "$(render_template templates/device-config-rbac.yaml)" 'namespace: kube-system' 'resourceNames: [ "hami-scheduler-device" ]'
 
-echo "Chart lint, single-container, migration, image reference, scheduling and device configuration checks passed."
+echo "Chart lint, single-container, migration, image reference, scheduling, RBAC and device configuration checks passed."

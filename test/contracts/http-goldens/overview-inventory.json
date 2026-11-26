@@ -1,0 +1,75 @@
+{
+  "snapshotAt": "2023-11-14T22:13:20Z",
+  "nodes": [
+    {
+      "name": "node-1",
+      "uid": "node-uid-1",
+      "ready": true,
+      "schedulable": true,
+      "models": [
+        "NVIDIA A100"
+      ],
+      "physicalDevices": 1
+    }
+  ],
+  "devices": [
+    {
+      "node": "node-1",
+      "provider": "NVIDIA",
+      "deviceId": "GPU-1",
+      "model": "NVIDIA A100",
+      "healthy": true,
+      "utilizationRatio": 0.42,
+      "memoryUsageRatio": 0.25
+    }
+  ],
+  "nodeCoverage": {
+    "entity": "node",
+    "observed": 1,
+    "total": 1,
+    "complete": true,
+    "sources": [
+      {
+        "source": "shared_node_informer",
+        "state": "known",
+        "reason": "",
+        "params": {}
+      }
+    ],
+    "fields": {
+      "ready": {
+        "entity": "",
+        "known": 1,
+        "stale": 0,
+        "unknown": 0,
+        "conflict": 0,
+        "notApplicable": 0,
+        "reasons": {}
+      },
+      "schedulable": {
+        "entity": "",
+        "known": 1,
+        "stale": 0,
+        "unknown": 0,
+        "conflict": 0,
+        "notApplicable": 0,
+        "reasons": {}
+      }
+    }
+  },
+  "deviceCoverage": {
+    "entity": "device",
+    "observed": 1,
+    "total": 1,
+    "complete": true,
+    "sources": [
+      {
+        "source": "shared_node_informer",
+        "state": "known",
+        "reason": "",
+        "params": {}
+      }
+    ],
+    "fields": {}
+  }
+}
