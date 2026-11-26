@@ -84,7 +84,7 @@ generate-proto: check-proto-tools
 	kratos proto client .
 
 .PHONY: generate-wire
-generate-wire:
+generate-wire: generate-proto
 	@set -eu; for dir in $(WIRE_DIRS); \
 	do \
 		(cd "$(CMD_PATH)$$dir" && wire .); \
@@ -124,6 +124,11 @@ build-local: generate
 build-web-entry:
 	@mkdir -p "$(BUILD_PATH)"
 	go build -mod=readonly -trimpath -o "$(BUILD_PATH)web-entry" ./cmd/web-entry
+
+.PHONY: build-hami-webui
+build-hami-webui: generate
+	@mkdir -p "$(BUILD_PATH)"
+	go build -mod=readonly -trimpath -o "$(BUILD_PATH)hami-webui" ./cmd/hami-webui
 
 # This target creates one local development image. Stable multi-platform images
 # are published only by ../.github/workflows/release.yaml.

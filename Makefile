@@ -54,6 +54,10 @@ verify-vite-env:
 build-web-entry:
 	$(MAKE) -C server build-web-entry
 
+.PHONY: build-hami-webui
+build-hami-webui:
+	$(MAKE) -C server build-hami-webui
+
 .PHONY: test-web-entry-contract
 test-web-entry-contract:
 	$(PNPM) run test:web-entry-contract
@@ -61,6 +65,10 @@ test-web-entry-contract:
 .PHONY: test-web-entry-browser
 test-web-entry-browser:
 	$(PNPM) run test:web-entry-browser
+
+.PHONY: test-unified-smoke
+test-unified-smoke:
+	$(PNPM) run test:unified-smoke
 
 .PHONY: verify
 verify: lint test verify-vite-env build build-web-entry
