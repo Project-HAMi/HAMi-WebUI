@@ -99,3 +99,66 @@ test('an invalid source becomes invalid without issuing a request', async () => 
   assert.equal(calls, 0);
   assert.equal(state.status.value, REQUEST_STATUS.INVALID);
 });
+
+test('switching entities clears ready data and isolates late rejections', async () => {
+  const source = ref('gpu-a');
+  const requests = new Map();
+  const state = useDetailResource({
+    source,
+    request: (key) => new Promise((resolve, reject) => {
+      requests.set(key, { resolve, reject });
+    }),
+    classify: (payload, key) => classifyDetailPayload(payload, {
+      identityKeys: ['uuid'],
+      expectedIdentity: { uuid: key },
+    }),
+  });
+
+  requests.get('gpu-a').resolve({ uuid: 'gpu-a', label: 'A' });
+  await flushPromises();
+  assert.equal(state.status.value, REQUEST_STATUS.READY);
+  assert.equal(state.data.value.uuid, 'gpu-a');
+
+  source.value = 'gpu-b';
+  await nextTick();
+  assert.equal(state.status.value, REQUEST_STATUS.LOADING);
+  assert.deepEqual(state.data.value, {});
+
+  requests.get('gpu-b').reject(new Error('gpu-b failed'));
+  await flushPromises();
+  assert.equal(state.status.value, REQUEST_STATUS.ERROR);
+  assert.deepEqual(state.data.value, {});
+});
+
+test('switching entities aborts the in-flight AbortSignal and suppresses abort rejections', async () => {
+  const source = ref('gpu-a');
+  const signals = new Map();
+  const requests = new Map();
+  const state = useDetailResource({
+    source,
+    request: (key, signal) => new Promise((resolve, reject) => {
+      signals.set(key, signal);
+      requests.set(key, { resolve, reject });
+    }),
+    classify: (payload, key) => classifyDetailPayload(payload, {
+      identityKeys: ['uuid'],
+      expectedIdentity: { uuid: key },
+    }),
+  });
+
+  assert.equal(signals.get('gpu-a').aborted, false);
+  source.value = 'gpu-b';
+  await nextTick();
+  assert.equal(signals.get('gpu-a').aborted, true);
+  assert.equal(signals.get('gpu-b').aborted, false);
+
+  requests.get('gpu-b').resolve({ uuid: 'gpu-b' });
+  await flushPromises();
+  assert.equal(state.status.value, REQUEST_STATUS.READY);
+  assert.equal(state.data.value.uuid, 'gpu-b');
+
+  requests.get('gpu-a').reject(new DOMException('Aborted', 'AbortError'));
+  await flushPromises();
+  assert.equal(state.status.value, REQUEST_STATUS.READY);
+  assert.equal(state.data.value.uuid, 'gpu-b');
+});

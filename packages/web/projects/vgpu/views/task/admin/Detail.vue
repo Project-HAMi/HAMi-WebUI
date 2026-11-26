@@ -238,6 +238,8 @@
         show-device
         :device="split.device"
         :containers="split.containers"
+        :total-containers="split.totalContainers"
+        :truncated="split.truncated"
         :status="split.status"
         :highlight="splitHighlight"
         @retry="loadDeviceSplit(split)"
@@ -314,6 +316,7 @@ import {
 } from '~/vgpu/components/tooltip-policy.mjs';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
+import { parseDeviceSplitPage } from '~/vgpu/components/device-split.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
 import {
   buildTaskContainerResourceQueries,
@@ -337,7 +340,7 @@ const {
 } = useDetailResource({
   source: requestedIdentity,
   isValidSource: ({ name, podUid } = {}) => Boolean(name && podUid),
-  request: ({ name, podUid }) => taskApi.getTaskDetail({ name, podUid }),
+  request: ({ name, podUid }, signal) => taskApi.getTaskDetail({ name, podUid }, signal),
   classify: (payload, identity) => classifyDetailPayload(payload, {
     identityKeys: ['name', 'podUid'],
     expectedIdentity: identity,
@@ -396,14 +399,19 @@ const splitHighlight = computed(() => ({ podUid: detail.value?.podUid, container
 let workloadSplitGeneration = 0;
 const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
   split.status = 'loading';
+  split.totalContainers = undefined;
+  split.truncated = false;
   try {
     const [card, workloads] = await Promise.all([
       cardApi.getCardDetail({ uid: split.uuid }),
       taskApi.getWorkloads({ filters: { deviceId: split.uuid }, page: 1, pageSize: 100 }),
     ]);
     if (generation !== workloadSplitGeneration) return;
+    const page = parseDeviceSplitPage(workloads, 100);
     split.device = { ...card, uuid: split.uuid };
-    split.containers = Array.isArray(workloads?.items) ? workloads.items : [];
+    split.containers = page.items;
+    split.totalContainers = page.totalContainers;
+    split.truncated = page.truncated;
     split.status = 'ready';
   } catch {
     if (generation === workloadSplitGeneration) split.status = 'error';
@@ -412,7 +420,7 @@ const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
 watch([() => detail.value?.podUid, splitDeviceIds], ([podUid, uuids]) => {
   const generation = ++workloadSplitGeneration;
   deviceSplits.value = podUid
-    ? uuids.map((uuid) => ({ uuid, device: { uuid }, containers: [], status: 'loading' }))
+    ? uuids.map((uuid) => ({ uuid, device: { uuid }, containers: [], totalContainers: undefined, truncated: false, status: 'loading' }))
     : [];
   deviceSplits.value.forEach((split) => loadDeviceSplit(split, generation));
 }, { immediate: true });

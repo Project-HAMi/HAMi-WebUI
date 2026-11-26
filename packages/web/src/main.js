@@ -1,7 +1,6 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import router from './router';
-import store from './store';
 import installElementPlus from './plugins/element';
 import installTDesign from './plugins/tdesign';
 import './plugins/echarts';
@@ -21,4 +20,4 @@ installElementPlus(app);
 installTDesign(app);
 installIcons(app);
 
-app.use(store).use(router).use(Confirm).use(Message).mount('#app');
+app.use(router).use(Confirm).use(Message).mount('#app');

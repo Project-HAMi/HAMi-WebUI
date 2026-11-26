@@ -30,13 +30,14 @@ class nodeApi {
     });
   }
 
-  async getInventoryNode(uid) {
+  async getInventoryNode(uid, signal) {
     try {
       const reply = await request({
         url: apiPrefix + '/v1/node',
         method: 'GET',
         params: { uid, useResourceInventory: true },
         errorFeedback: 'inline',
+        signal,
       });
       return requireInventoryCoverage(reply, 'device');
     } catch (error) {

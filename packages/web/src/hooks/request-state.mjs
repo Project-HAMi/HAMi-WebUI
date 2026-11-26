@@ -6,8 +6,16 @@ export const REQUEST_STATUS = Object.freeze({
   ERROR: 'error',
 });
 
-export const createRequestState = (data) => ({
+const cloneFallbackData = (value) => {
+  if (Array.isArray(value)) return [];
+  if (value && typeof value === 'object') return {};
+  return value;
+};
+
+export const createRequestState = (data, { entityKey } = {}) => ({
   data,
+  initialData: cloneFallbackData(data),
+  entityKey,
   status: REQUEST_STATUS.LOADING,
   hasResolved: false,
   refreshing: false,
@@ -18,10 +26,22 @@ export const createRequestState = (data) => ({
 
 export const startRequest = (
   state,
-  { hasResolved = state.hasResolved } = {},
+  { hasResolved = state.hasResolved, entityKey } = {},
 ) => {
   state.requestId += 1;
-  if (hasResolved) {
+  const entityChanged =
+    entityKey !== undefined &&
+    state.entityKey !== undefined &&
+    entityKey !== state.entityKey;
+  if (entityKey !== undefined) {
+    state.entityKey = entityKey;
+  }
+  if (entityChanged) {
+    state.data = cloneFallbackData(state.initialData ?? state.data);
+    state.hasResolved = false;
+    state.refreshing = false;
+    state.status = REQUEST_STATUS.LOADING;
+  } else if (hasResolved) {
     state.refreshing = true;
   } else {
     state.status = REQUEST_STATUS.LOADING;
@@ -41,6 +61,13 @@ export const resolveRequest = (state, options = {}) => {
   ) {
     return false;
   }
+  if (
+    options.entityKey !== undefined &&
+    state.entityKey !== undefined &&
+    options.entityKey !== state.entityKey
+  ) {
+    return false;
+  }
   if (Object.prototype.hasOwnProperty.call(options, 'data')) {
     state.data = options.data;
   }
@@ -56,16 +83,26 @@ export const rejectRequest = (
   state,
   error,
   {
-    hasResolved = state.hasResolved,
+    hasResolved,
     requestId,
+    entityKey,
     status = REQUEST_STATUS.ERROR,
   } = {},
 ) => {
   if (requestId !== undefined && !isLatestRequest(state, requestId)) {
     return false;
   }
+  if (
+    entityKey !== undefined &&
+    state.entityKey !== undefined &&
+    entityKey !== state.entityKey
+  ) {
+    return false;
+  }
+  const keepResolved =
+    hasResolved !== undefined ? hasResolved : state.hasResolved;
   state.refreshing = false;
-  if (hasResolved) {
+  if (keepResolved) {
     state.refreshError = error;
   } else {
     state.status = status;

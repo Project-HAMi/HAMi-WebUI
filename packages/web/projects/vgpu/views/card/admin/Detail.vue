@@ -229,7 +229,15 @@
       <template v-if="detail.mode === 'mig'" #extra>
         <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
       </template>
-      <DeviceSplit :device="detail" :containers="cardContainers" :status="splitStatus" :show-shared-count="false" @retry="loadSplit" />
+      <DeviceSplit
+        :device="detail"
+        :containers="cardContainers"
+        :total-containers="splitTotal"
+        :truncated="splitTruncated"
+        :status="splitStatus"
+        :show-shared-count="false"
+        @retry="loadSplit"
+      />
     </block-box>
 
     <block-box v-if="npuSpecVisible" class="npu-spec-block" :title="$t('card.deviceConfig.title')" variant="detail">
@@ -339,6 +347,7 @@ import NpuAllocationOption from './components/NpuAllocationOption.vue';
 import { migInstanceMemoryQuery, sumMigInstanceMemory } from './mig-instance-memory.mjs';
 import { cardHealthDisplay } from './card-health.mjs';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
+import { parseDeviceSplitPage } from '~/vgpu/components/device-split.mjs';
 import taskApi from '~/vgpu/api/task';
 
 const route = useRoute();
@@ -351,7 +360,7 @@ const {
   retry: retryDetail,
 } = useDetailResource({
   source: routeCardUuid,
-  request: (uuid) => cardApi.getCardDetail({ uid: uuid }),
+  request: (uuid, signal) => cardApi.getCardDetail({ uid: uuid }, signal),
   classify: (payload, uuid) =>
     classifyDetailPayload(payload, {
       identityKeys: ['uuid'],
@@ -373,17 +382,24 @@ const detailCardUuid = computed(() =>
 // Plugins that register no split mode leave nothing to lay out.
 const splitVisible = computed(() => Boolean(isDetailReady.value && getSplitModeKey(detail.value?.mode)));
 const cardContainers = ref([]);
+const splitTotal = ref(undefined);
+const splitTruncated = ref(false);
 const splitStatus = ref('loading');
 let splitGeneration = 0;
 const loadSplit = async () => {
   const generation = ++splitGeneration;
   const uuid = detailCardUuid.value;
   splitStatus.value = 'loading';
+  splitTotal.value = undefined;
+  splitTruncated.value = false;
   if (!uuid || !splitVisible.value) return;
   try {
     const result = await taskApi.getWorkloads({ filters: { deviceId: uuid }, page: 1, pageSize: 100 });
     if (generation !== splitGeneration) return;
-    cardContainers.value = Array.isArray(result?.items) ? result.items : [];
+    const page = parseDeviceSplitPage(result, 100);
+    cardContainers.value = page.items;
+    splitTotal.value = page.totalContainers;
+    splitTruncated.value = page.truncated;
     splitStatus.value = 'ready';
   } catch {
     if (generation === splitGeneration) splitStatus.value = 'error';
@@ -599,8 +615,8 @@ const migMemoryUuid = computed(() =>
 const { data: migInstanceMemory, status: migMemoryStatus } = useDetailResource({
   source: migMemoryUuid,
   initialData: null,
-  request: async (uuid) => {
-    const result = await cardApi.getInstantVector({ query: migInstanceMemoryQuery(uuid) });
+  request: async (uuid, signal) => {
+    const result = await cardApi.getInstantVector({ query: migInstanceMemoryQuery(uuid) }, signal);
     return sumMigInstanceMemory(result.data ?? [], uuid);
   },
   classify: result => result ? REQUEST_STATUS.READY : REQUEST_STATUS.MISSING,

@@ -101,7 +101,7 @@ test('a successful empty detail is missing rather than ready', () => {
 test('retry returns an error state to a clean loading state', () => {
   const state = createRequestState({});
   const firstRequest = startDetailResourceRequest(state, {});
-  rejectDetailResourceRequest(state, new Error('unavailable'), firstRequest);
+  rejectDetailResourceRequest(state, new Error('unavailable'), { requestId: firstRequest });
 
   assert.equal(state.status, REQUEST_STATUS.ERROR);
 
