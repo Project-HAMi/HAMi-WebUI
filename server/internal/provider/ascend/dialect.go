@@ -13,15 +13,37 @@ import (
 	"vgpu/internal/resourceview"
 )
 
-type inventoryDialect struct{}
+type inventoryDialect struct {
+	annotationlessPolicy string
+}
 
 // NewDialect returns the InventoryDialect for Huawei Ascend NPU nodes.
 func NewDialect() provider.InventoryDialect {
 	return inventoryDialect{}
 }
 
+// NewAllocationDialect returns the AllocationDialect for Huawei Ascend NPU Pods.
+func NewAllocationDialect(annotationlessPolicy string) provider.AllocationDialect {
+	return inventoryDialect{annotationlessPolicy: annotationlessPolicy}
+}
+
 func (inventoryDialect) Name() string        { return AscendDevice }
 func (inventoryDialect) SelectorKey() string { return AscendDevice }
+
+func (inventoryDialect) CatalogResourceNames(catalog *devicecatalog.Snapshot) []corev1.ResourceName {
+	if catalog == nil || !catalog.Loaded() {
+		return nil
+	}
+	var names []corev1.ResourceName
+	for _, model := range catalog.Ascend {
+		for _, name := range []string{model.ResourceName, model.ResourceMemoryName, model.ResourceCoreName} {
+			if name != "" {
+				names = append(names, corev1.ResourceName(name))
+			}
+		}
+	}
+	return names
+}
 
 func (inventoryDialect) OwnsResource(name string, catalog *devicecatalog.Snapshot) bool {
 	if catalog == nil {

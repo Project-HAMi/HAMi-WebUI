@@ -26,11 +26,49 @@ func NewDCUDialect() provider.InventoryDialect {
 	return inventoryDialect{hcu: false}
 }
 
+// NewHCUAllocationDialect returns the AllocationDialect for Hygon HCU Pods.
+func NewHCUAllocationDialect() provider.AllocationDialect {
+	return inventoryDialect{hcu: true}
+}
+
+// NewDCUAllocationDialect returns the AllocationDialect for legacy Hygon DCU Pods.
+func NewDCUAllocationDialect() provider.AllocationDialect {
+	return inventoryDialect{hcu: false}
+}
+
 func (d inventoryDialect) Name() string {
 	if d.hcu {
 		return HygonHCUDevice
 	}
 	return HygonDCUDevice
+}
+
+func (inventoryDialect) CatalogResourceNames(_ *devicecatalog.Snapshot) []corev1.ResourceName {
+	return nil
+}
+
+func (d inventoryDialect) ExtractPodAllocations(ctx provider.PodAllocationContext) provider.PodAllocationResult {
+	kind := HygonDCUDevice
+	key := util.SupportDevices[HygonDCUDevice]
+	if key == "" {
+		key = "hami.io/dcu-devices-allocated"
+	}
+	decodeContainer := func(rawSlot, nodeName string) (util.ContainerDevices, error) {
+		return util.DecodeDCUContainerDevices(rawSlot, "", nodeName)
+	}
+	if d.hcu {
+		kind = HygonHCUDevice
+		key = util.SupportDevices[HygonHCUDevice]
+		if key == "" {
+			key = "hami.io/hcu-devices-allocated"
+		}
+		decodeContainer = nil
+	}
+	return provider.DecodeStandardPodAllocation(ctx, provider.StandardAllocationSpec{
+		Kind:            kind,
+		AnnotationKey:   key,
+		DecodeContainer: decodeContainer,
+	})
 }
 
 func (d inventoryDialect) SelectorKey() string {
