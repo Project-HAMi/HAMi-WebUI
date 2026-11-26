@@ -205,3 +205,23 @@ func TestMThreadsResourceOnlyNode(t *testing.T) {
 		}
 	}
 }
+
+func TestHygonHCUAndDCUOverlapGroupsViaPhysicalAssociation(t *testing.T) {
+	node := testNode()
+	node.Annotations = map[string]string{
+		hygon.HCURegisterAnnos: "HCU-board-A,4,65536,100,HCU-K100,0,true:",
+		hygon.RegisterAnnos:    "DCU-board-A,4,32768,100,DCU-Z100,0,true:DCU-0,4,32768,100,DCU-Z100,0,true:",
+	}
+	selectors := map[string]labels.Selector{"HCU": labels.Everything(), "DCU": labels.Everything()}
+	snap := Build([]*corev1.Node{node}, testCatalog(), podfacts.Inventory{}, selectors, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil)
+	inv := resourceview.GroupPhysicalDevices(snap)
+	if !inv.UnresolvedOnNode[node.UID] {
+		t.Fatal("expected slot-only DCU-0 to be flagged unresolved while HCU is active")
+	}
+	if len(inv.Groups) != 1 || len(inv.Groups[0].Members) != 2 || inv.Groups[0].Members[0].Identity.Provider != "HCU" {
+		t.Fatalf("expected 1 grouped HCU+DCU board preferring HCU first, got %+v", inv.Groups)
+	}
+	if model, _ := inv.Groups[0].Model(); model != "HCU-K100" {
+		t.Fatalf("model = %q, want HCU-K100", model)
+	}
+}

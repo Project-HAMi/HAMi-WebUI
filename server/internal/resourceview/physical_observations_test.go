@@ -59,18 +59,30 @@ func TestGroupObservationRequiresPairedMeasurements(t *testing.T) {
 	}
 }
 
-func TestHygonRegistrationOverlap(t *testing.T) {
-	device := func(provider, serial, node string) Device {
-		return Device{Identity: DeviceIdentity{Provider: provider, DeviceID: provider + "-" + serial, Node: node, NodeUID: types.UID(node)}, Kind: "physical", Model: provider + "-K100", States: map[string]*pb.FieldState{"kind": {State: Known}, "model": {State: Known}}}
+func TestMultiGenerationRegistrationOverlap(t *testing.T) {
+	device := func(provider, boardKey, id, node string, priority int) Device {
+		return Device{
+			Identity: DeviceIdentity{Provider: provider, DeviceID: id, Node: node, NodeUID: types.UID(node)},
+			Physical: PhysicalAssociation{Domain: "board", BoardKey: boardKey, Priority: priority},
+			Kind:     "physical",
+			Model:    provider + "-Model",
+			States:   map[string]*pb.FieldState{"kind": {State: Known}, "model": {State: Known}},
+		}
 	}
-	current := device("HCU", "board-A", "n1")
-	legacy := device("DCU", "board-A", "n1")
-	current.UtilizationRatio = reading(".1", "ratio", "hcu_exporter", 100)
-	legacy.UtilizationRatio = reading(".9", "ratio", "dcu_exporter", 100)
-	rows := []Device{legacy, device("DCU", "board-B", "n1"), device("DCU", "board-A", "n2"), device("DCU", "0", "n1"), current}
+	current := device("Gen2", "board-A", "Gen2-board-A", "n1", 1)
+	legacy := device("Gen1", "board-A", "Gen1-board-A", "n1", 0)
+	current.UtilizationRatio = reading(".1", "ratio", "gen2_exporter", 100)
+	legacy.UtilizationRatio = reading(".9", "ratio", "gen1_exporter", 100)
+	rows := []Device{
+		legacy,
+		device("Gen1", "board-B", "Gen1-board-B", "n1", 0),
+		device("Gen1", "board-A", "Gen1-board-A", "n2", 0),
+		device("Gen1", "", "Gen1-0", "n1", 0),
+		current,
+	}
 	inventory := GroupPhysicalDevices(Snapshot{Nodes: []Node{{Name: "n1", UID: "n1"}, {Name: "n2", UID: "n2"}}, Devices: rows})
 	if !inventory.UnresolvedOnNode["n1"] {
-		t.Fatal("legacy slot under dual registration counted as an identified card")
+		t.Fatal("slot-only registration under higher-priority generation counted as an identified card")
 	}
 	groups := inventory.Groups
 	if len(groups) != 3 {
@@ -82,26 +94,32 @@ func TestHygonRegistrationOverlap(t *testing.T) {
 		}
 		model, _ := g.Model()
 		r := g.Observation(func(d Device) DeviceObservation { return DeviceObservation{UtilizationRatio: d.UtilizationRatio} })
-		if v, ok := r.UtilizationRatio.KnownValue(); !ok || v != .1 || g.Members[0].Identity != current.Identity || model != "HCU-K100" {
+		if v, ok := r.UtilizationRatio.KnownValue(); !ok || v != .1 || g.Members[0].Identity != current.Identity || model != "Gen2-Model" {
 			t.Fatalf("overlap: %s, %+v, %+v", model, g, r)
 		}
 		return
 	}
-	t.Fatal("matching HCU and DCU board serials did not group")
+	t.Fatal("matching multi-generation board serials did not group")
 }
 
-func TestHygonUpgradeObservation(t *testing.T) {
-	current := Device{Identity: DeviceIdentity{Provider: "HCU", DeviceID: "HCU-board-A", Node: "node", NodeUID: "uid"}}
-	legacy := Device{Identity: DeviceIdentity{Provider: "DCU", DeviceID: "DCU-board-A", Node: "node", NodeUID: "uid"}}
-	hcu := DeviceObservation{
-		UtilizationRatio:    reading("0", "ratio", "hcu_exporter", 100),
-		MemoryUsedBytes:     reading("0", "bytes", "hcu_exporter", 100),
-		MemoryPhysicalBytes: reading("64", "bytes", "hcu_exporter", 100),
+func TestGenerationUpgradeObservation(t *testing.T) {
+	current := Device{
+		Identity: DeviceIdentity{Provider: "Gen2", DeviceID: "Gen2-board-A", Node: "node", NodeUID: "uid"},
+		Physical: PhysicalAssociation{Domain: "board", BoardKey: "board-A", Priority: 1},
 	}
-	dcu := DeviceObservation{
-		UtilizationRatio:    reading(".75", "ratio", "dcu_exporter", 100),
-		MemoryUsedBytes:     reading("12", "bytes", "dcu_exporter", 100),
-		MemoryPhysicalBytes: reading("32", "bytes", "dcu_exporter", 100),
+	legacy := Device{
+		Identity: DeviceIdentity{Provider: "Gen1", DeviceID: "Gen1-board-A", Node: "node", NodeUID: "uid"},
+		Physical: PhysicalAssociation{Domain: "board", BoardKey: "board-A", Priority: 0},
+	}
+	gen2 := DeviceObservation{
+		UtilizationRatio:    reading("0", "ratio", "gen2_exporter", 100),
+		MemoryUsedBytes:     reading("0", "bytes", "gen2_exporter", 100),
+		MemoryPhysicalBytes: reading("64", "bytes", "gen2_exporter", 100),
+	}
+	gen1 := DeviceObservation{
+		UtilizationRatio:    reading(".75", "ratio", "gen1_exporter", 100),
+		MemoryUsedBytes:     reading("12", "bytes", "gen1_exporter", 100),
+		MemoryPhysicalBytes: reading("32", "bytes", "gen1_exporter", 100),
 	}
 	conflict := unavailableMeasurement("ratio", Conflict, "ambiguous_source_or_identity")
 	for _, tc := range []struct {
@@ -109,15 +127,15 @@ func TestHygonUpgradeObservation(t *testing.T) {
 		current, legacy               DeviceObservation
 		wantUtil, wantUsed, wantTotal string
 	}{
-		{"fresh HCU zero wins", hcu, dcu, "hcu_exporter", "hcu_exporter", "hcu_exporter"},
-		{"old collector only", DeviceObservation{}, dcu, "dcu_exporter", "dcu_exporter", "dcu_exporter"},
-		{"partial HCU memory switches both operands", DeviceObservation{UtilizationRatio: hcu.UtilizationRatio, MemoryPhysicalBytes: hcu.MemoryPhysicalBytes}, dcu, "hcu_exporter", "dcu_exporter", "dcu_exporter"},
-		{"missing HCU compute", DeviceObservation{MemoryUsedBytes: hcu.MemoryUsedBytes, MemoryPhysicalBytes: hcu.MemoryPhysicalBytes}, dcu, "dcu_exporter", "hcu_exporter", "hcu_exporter"},
-		{"partial pairs stay separate", DeviceObservation{MemoryPhysicalBytes: hcu.MemoryPhysicalBytes}, DeviceObservation{MemoryUsedBytes: dcu.MemoryUsedBytes}, "", "", "hcu_exporter"},
-		{"conflicting HCU compute", DeviceObservation{UtilizationRatio: conflict}, dcu, "", "dcu_exporter", "dcu_exporter"},
-		{"stale HCU falls back", AgeObservation(hcu, time.Unix(200, 0), time.Second), dcu, "dcu_exporter", "dcu_exporter", "dcu_exporter"},
-		{"conflicting HCU memory", DeviceObservation{MemoryUsedBytes: unavailableMeasurement("bytes", Conflict, "ambiguous_source_or_identity")}, dcu, "dcu_exporter", "", ""},
-		{"stale DCU cannot fill gap", DeviceObservation{}, AgeObservation(dcu, time.Unix(200, 0), time.Second), "", "", ""},
+		{"fresh Gen2 zero wins", gen2, gen1, "gen2_exporter", "gen2_exporter", "gen2_exporter"},
+		{"old collector only", DeviceObservation{}, gen1, "gen1_exporter", "gen1_exporter", "gen1_exporter"},
+		{"partial Gen2 memory switches both operands", DeviceObservation{UtilizationRatio: gen2.UtilizationRatio, MemoryPhysicalBytes: gen2.MemoryPhysicalBytes}, gen1, "gen2_exporter", "gen1_exporter", "gen1_exporter"},
+		{"missing Gen2 compute", DeviceObservation{MemoryUsedBytes: gen2.MemoryUsedBytes, MemoryPhysicalBytes: gen2.MemoryPhysicalBytes}, gen1, "gen1_exporter", "gen2_exporter", "gen2_exporter"},
+		{"partial pairs stay separate", DeviceObservation{MemoryPhysicalBytes: gen2.MemoryPhysicalBytes}, DeviceObservation{MemoryUsedBytes: gen1.MemoryUsedBytes}, "", "", "gen2_exporter"},
+		{"conflicting Gen2 compute", DeviceObservation{UtilizationRatio: conflict}, gen1, "", "gen1_exporter", "gen1_exporter"},
+		{"stale Gen2 falls back", AgeObservation(gen2, time.Unix(200, 0), time.Second), gen1, "gen1_exporter", "gen1_exporter", "gen1_exporter"},
+		{"conflicting Gen2 memory", DeviceObservation{MemoryUsedBytes: unavailableMeasurement("bytes", Conflict, "ambiguous_source_or_identity")}, gen1, "gen1_exporter", "", ""},
+		{"stale Gen1 cannot fill gap", DeviceObservation{}, AgeObservation(gen1, time.Unix(200, 0), time.Second), "", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			read := func(d Device) DeviceObservation {

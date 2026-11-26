@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
+	"vgpu/internal/provider/internal/hamiwire"
 )
 
 const (
@@ -107,41 +108,7 @@ func DecodeNodeDevices(str string, log *log.Helper) ([]*DeviceInfo, error) {
 	return retval, nil
 }
 
-// deviceSegment is one "id,type,memory,cores" allocation; HAMi may append optional fields after these.
-type deviceSegment struct {
-	id, devType string
-	mem, cores  int32
-}
-
-func parseDeviceSegment(val string) (deviceSegment, error) {
-	fields := strings.Split(val, ",")
-	if len(fields) < 4 {
-		return deviceSegment{}, fmt.Errorf("allocation %q has fewer than 4 fields", val)
-	}
-	if fields[0] == "" || fields[1] == "" {
-		return deviceSegment{}, fmt.Errorf("allocation %q has no device id or type", val)
-	}
-	mem, err := parseNonNegativeInt32(fields[2])
-	if err != nil {
-		return deviceSegment{}, fmt.Errorf("allocation %q memory: %w", val, err)
-	}
-	cores, err := parseNonNegativeInt32(fields[3])
-	if err != nil {
-		return deviceSegment{}, fmt.Errorf("allocation %q cores: %w", val, err)
-	}
-	return deviceSegment{id: fields[0], devType: fields[1], mem: mem, cores: cores}, nil
-}
-
-func parseNonNegativeInt32(s string) (int32, error) {
-	v, err := strconv.ParseInt(s, 10, 32)
-	if err != nil {
-		return 0, err
-	}
-	if v < 0 {
-		return 0, fmt.Errorf("negative value %d", v)
-	}
-	return int32(v), nil
-}
+type deviceSegment = hamiwire.AllocationSegment
 
 // coresOrWholeCard keeps the current reading of a zero core request as the whole card.
 func coresOrWholeCard(cores int32) int32 {
@@ -151,22 +118,19 @@ func coresOrWholeCard(cores int32) int32 {
 	return cores
 }
 
-// decodeSegments reads one container's allocations; only the empty segment after a trailing separator is skipped.
+// decodeSegments reads one container's allocations; only empty segments are skipped.
 func decodeSegments(str string, build func(i int, seg deviceSegment) (ContainerDevice, error)) (ContainerDevices, error) {
-	contdev := ContainerDevices{}
-	for i, val := range strings.Split(str, OneContainerMultiDeviceSplitSymbol) {
-		if val == "" {
-			continue
-		}
-		seg, err := parseDeviceSegment(val)
+	parsed, err := hamiwire.DecodeContainerAllocations(str)
+	if err != nil {
+		return ContainerDevices{}, err
+	}
+	contdev := make(ContainerDevices, 0, len(parsed))
+	for _, seg := range parsed {
+		dev, err := build(seg.Idx, seg)
 		if err != nil {
 			return ContainerDevices{}, err
 		}
-		dev, err := build(i, seg)
-		if err != nil {
-			return ContainerDevices{}, err
-		}
-		dev.RecordedCores = seg.cores
+		dev.RecordedCores = seg.Cores
 		contdev = append(contdev, dev)
 	}
 	return contdev, nil
@@ -175,32 +139,32 @@ func decodeSegments(str string, build func(i int, seg deviceSegment) (ContainerD
 // DecodeContainerDevices decodes the container devices from a string.
 func DecodeContainerDevices(str, priority string) (ContainerDevices, error) {
 	return decodeSegments(str, func(i int, seg deviceSegment) (ContainerDevice, error) {
-		return ContainerDevice{Idx: i, UUID: seg.id, Type: seg.devType, Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores), Priority: priority}, nil
+		return ContainerDevice{Idx: i, UUID: seg.ID, Type: seg.DevType, Usedmem: seg.Mem, Usedcores: coresOrWholeCard(seg.Cores), Priority: priority}, nil
 	})
 }
 
 func DecodeDCUContainerDevices(str, priority, nodeName string) (ContainerDevices, error) {
 	return decodeSegments(str, func(i int, seg deviceSegment) (ContainerDevice, error) {
-		parts := strings.Split(seg.id, "-")
+		parts := strings.Split(seg.ID, "-")
 		if len(parts) < 2 || parts[1] == "" {
-			return ContainerDevice{}, fmt.Errorf("invalid DCU device id %q", seg.id)
+			return ContainerDevice{}, fmt.Errorf("invalid DCU device id %q", seg.ID)
 		}
-		uuid := seg.id
+		uuid := seg.ID
 		if len(parts) == 2 && parts[0] == "DCU" {
 			if minor, err := strconv.Atoi(parts[1]); err == nil && minor >= 0 {
 				uuid = fmt.Sprintf("%s-dcu-%d", nodeName, minor)
 			}
 		}
 		return ContainerDevice{
-			Idx: i, UUID: uuid, Type: seg.devType,
-			Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores), Priority: priority,
+			Idx: i, UUID: uuid, Type: seg.DevType,
+			Usedmem: seg.Mem, Usedcores: coresOrWholeCard(seg.Cores), Priority: priority,
 		}, nil
 	})
 }
 
 func DecodeMetaxContainerDevices(str string) (ContainerDevices, error) {
 	return decodeSegments(str, func(i int, seg deviceSegment) (ContainerDevice, error) {
-		return ContainerDevice{Idx: i, UUID: seg.id, Type: seg.devType, Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores)}, nil
+		return ContainerDevice{Idx: i, UUID: seg.ID, Type: seg.DevType, Usedmem: seg.Mem, Usedcores: coresOrWholeCard(seg.Cores)}, nil
 	})
 }
 

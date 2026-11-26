@@ -78,7 +78,7 @@ func (g PhysicalGroup) Observation(read func(Device) DeviceObservation) DeviceOb
 		return out
 	}
 
-	// The remaining registrations are DCU aliases of this same HCU board.
+	// The remaining registrations are lower-priority aliases of this same board.
 	// Select memory as one pair so a handover never mixes two exporters.
 	needUtil := needsFallback(out.UtilizationRatio)
 	needMemory := needsFallback(out.MemoryUsedBytes, out.MemoryPhysicalBytes)

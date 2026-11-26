@@ -26,8 +26,8 @@ type PhysicalInventory struct {
 }
 
 type physicalKey struct {
-	nodeUID                types.UID
-	uuid, provider, device string
+	nodeUID                                 types.UID
+	uuid, domain, boardKey, provider, device string
 }
 
 // GroupPhysicalDevices applies the same identity rules to the public inventory
@@ -80,11 +80,10 @@ func GroupPhysicalDevices(snapshot Snapshot) PhysicalInventory {
 		}
 		key, exists := keys[id]
 		if !exists {
-			key = physicalKey{nodeUID: id.NodeUID, provider: id.Provider, device: id.DeviceID}
-			// HCU and legacy DCU registrations can coexist after an upgrade. The
-			// same serial on this incarnation of the node identifies one board.
-			if serial, ok := id.HygonBoardSerial(); ok && id.Provider == "DCU" {
-				key = physicalKey{nodeUID: id.NodeUID, provider: "HCU", device: "HCU-" + serial}
+			if d.Physical.Domain != "" && d.Physical.BoardKey != "" {
+				key = physicalKey{nodeUID: id.NodeUID, domain: d.Physical.Domain, boardKey: d.Physical.BoardKey}
+			} else {
+				key = physicalKey{nodeUID: id.NodeUID, provider: id.Provider, device: id.DeviceID}
 			}
 		}
 		if d.UUID != nil && *d.UUID != "" && d.States["uuid"].GetState() == Known {
@@ -98,19 +97,30 @@ func GroupPhysicalDevices(snapshot Snapshot) PhysicalInventory {
 	for id := range conflicting {
 		delete(keys, id)
 	}
-	hcuNodes := map[types.UID]bool{}
-	for id := range keys {
-		if id.Provider == "HCU" {
-			hcuNodes[id.NodeUID] = true
+
+	maxDomainPriority := map[types.UID]map[string]int{}
+	for _, d := range snapshot.Devices {
+		id := d.Identity
+		if _, ok := keys[id]; !ok || d.Physical.Domain == "" {
+			continue
+		}
+		perNode := maxDomainPriority[id.NodeUID]
+		if perNode == nil {
+			perNode = map[string]int{}
+			maxDomainPriority[id.NodeUID] = perNode
+		}
+		if prev, seen := perNode[d.Physical.Domain]; !seen || d.Physical.Priority > prev {
+			perNode[d.Physical.Domain] = d.Physical.Priority
 		}
 	}
+
 	groups := map[physicalKey][]Device{}
 	for _, d := range snapshot.Devices {
 		if key, ok := keys[d.Identity]; ok && d.Kind == "physical" && d.States["kind"].GetState() == Known {
-			// A legacy slot alone cannot prove an additional physical board
-			// when the current plugin also registers boards on the node.
-			if d.Identity.Provider == "DCU" && hcuNodes[d.Identity.NodeUID] && key.uuid == "" {
-				if _, identified := d.Identity.HygonBoardSerial(); !identified {
+			// A slot-only registration cannot prove an additional physical board
+			// when a higher-priority generation also registers boards on the node.
+			if d.Physical.Domain != "" && d.Physical.BoardKey == "" && key.uuid == "" {
+				if maxP, hasDomain := maxDomainPriority[d.Identity.NodeUID][d.Physical.Domain]; hasDomain && maxP > d.Physical.Priority {
 					missingOnNode[d.Identity.NodeUID] = true
 					continue
 				}
@@ -129,13 +139,7 @@ func GroupPhysicalDevices(snapshot Snapshot) PhysicalInventory {
 	out := PhysicalInventory{UnresolvedOnNode: missingOnNode, IncompleteNodes: missingNode, IncompleteDevices: missingDevice || len(missingOnNode) > 0}
 	for key, members := range groups {
 		slices.SortFunc(members, func(a, b Device) int {
-			if key.provider == "HCU" && a.Identity.Provider != b.Identity.Provider {
-				if a.Identity.Provider == "HCU" {
-					return -1
-				}
-				return 1
-			}
-			return compareDevices(a, b)
+			return cmp.Or(cmp.Compare(b.Physical.Priority, a.Physical.Priority), compareDevices(a, b))
 		})
 		out.Groups = append(out.Groups, PhysicalGroup{NodeUID: key.nodeUID, UUID: key.uuid, Members: members})
 	}
@@ -164,23 +168,26 @@ func hasAcceleratorResource(node Node) bool {
 	return false
 }
 
-// When both generations register a board, prefer the current HCU registration
-// for display and telemetry. Keep every registration for allocation accounting.
+// When multiple generations register the same physical board, prefer the highest-priority
+// registration for display and telemetry while retaining all members for allocations.
 func (g PhysicalGroup) reportingMembers() (primary, fallback []Device) {
 	if len(g.Members) < 2 {
 		return g.Members, nil
 	}
-	for _, member := range g.Members {
-		switch member.Identity.Provider {
-		case "HCU":
-			primary = append(primary, member)
-		case "DCU":
-			fallback = append(fallback, member)
-		default:
-			return g.Members, nil
+	maxPriority := g.Members[0].Physical.Priority
+	for _, member := range g.Members[1:] {
+		if member.Physical.Priority > maxPriority {
+			maxPriority = member.Physical.Priority
 		}
 	}
-	if len(primary) == 0 || len(fallback) == 0 {
+	for _, member := range g.Members {
+		if member.Physical.Priority == maxPriority {
+			primary = append(primary, member)
+		} else {
+			fallback = append(fallback, member)
+		}
+	}
+	if len(fallback) == 0 {
 		return g.Members, nil
 	}
 	return primary, fallback

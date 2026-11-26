@@ -398,6 +398,14 @@ func registrationDeviceFact(node *corev1.Node, catalog *devicecatalog.Snapshot, 
 	if provider == "HCU" {
 		row.Identity.DeviceID = device.AliasId
 	}
+	if provider == "HCU" || provider == "DCU" {
+		serial, _ := hygon.BoardSerial(provider, row.Identity.DeviceID)
+		priority := 0
+		if provider == "HCU" {
+			priority = 1
+		}
+		row.Physical = resourceview.PhysicalAssociation{Domain: "hygon-board", BoardKey: serial, Priority: priority}
+	}
 	row.States["configured"] = unknown("device_config", "device", "missing_config")
 	row.States["resource"] = unknown("device_config", "device", "missing_config")
 	if catalog.Loaded() {
