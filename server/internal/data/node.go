@@ -89,6 +89,9 @@ func (r *nodeRepo) updateLocalNodes() {
 		select {
 		case <-r.nodeNotify:
 		}
+		r.mutex.RLock()
+		prevNodes := r.nodes
+		r.mutex.RUnlock()
 		n := map[k8stypes.UID]*biz.Node{}
 		for _, p := range r.providers {
 			nodes, err := r.nodeLister.List(p.selector)
@@ -104,6 +107,15 @@ func (r *nodeRepo) updateLocalNodes() {
 				devices, err := p.FetchDevices(node)
 				if err != nil {
 					r.log.Warnf("list devices info error: %s", err)
+					if errors.Is(err, util.ErrTelemetryUnavailable) {
+						if prev := prevNodes[node.UID]; prev != nil {
+							for _, d := range prev.Devices {
+								if d.Provider == p.GetProvider() {
+									n[node.UID].Devices = append(n[node.UID].Devices, d)
+								}
+							}
+						}
+					}
 					continue
 				}
 				for _, device := range devices {

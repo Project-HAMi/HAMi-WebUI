@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
+	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
@@ -129,12 +132,81 @@ func (r *capacityTestNodeRepo) FindDeviceByAliasId(aliasID string) (*biz.DeviceI
 
 type capacityTestPodRepo struct {
 	biz.NodeHolderReader
+	containers []*biz.Container
+	err        error
 }
 
-func (*capacityTestPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
-	return nil, nil
+func (r *capacityTestPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
+	return r.containers, r.err
 }
 
 func (*capacityTestPodRepo) FindOne(context.Context, string, string) (*biz.Container, error) {
 	return nil, nil
+}
+
+func TestGetGPUValidationNotFoundAndLargeScaleAggregation(t *testing.T) {
+	dev := &biz.DeviceInfo{
+		Id:       "GPU-LARGE",
+		AliasId:  "GPU-LARGE",
+		Count:    200,
+		Devmem:   81920,
+		Devcore:  100,
+		NodeName: "node-a",
+		NodeUid:  "node-uid-a",
+		Provider: biz.NvidiaGPUDevice,
+	}
+	containers := make([]*biz.Container, 0, 150)
+	for i := 0; i < 150; i++ {
+		containers = append(containers, &biz.Container{
+			Name:     fmt.Sprintf("worker-%d", i),
+			PodUID:   fmt.Sprintf("pod-%d", i),
+			NodeName: "node-a",
+			NodeUID:  "node-uid-a",
+			ContainerDevices: biz.ContainerDevices{{
+				UUID:      "GPU-LARGE",
+				Usedcores: 1,
+				Usedmem:   256,
+			}},
+		})
+	}
+	nodeRepo := &capacityTestNodeRepo{
+		nodes:   []*biz.Node{{Name: "node-a", Uid: "node-uid-a", Devices: []*biz.DeviceInfo{dev}}},
+		devices: []*biz.DeviceInfo{dev},
+	}
+	podRepo := &capacityTestPodRepo{containers: containers}
+	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
+	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
+	summaryUsecase := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
+	nodeService := NewNodeService(nodeUsecase, podUsecase, summaryUsecase, nil)
+	cardService := NewCardService(nodeUsecase, podUsecase)
+
+	if _, err := cardService.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "   "}); kratoserrors.FromError(err).GetCode() != 400 {
+		t.Fatalf("expected 400 INVALID_ARGUMENT, got %v", err)
+	}
+	if _, err := cardService.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "GPU-MISSING"}); kratoserrors.FromError(err).GetCode() != 404 || kratoserrors.FromError(err).GetReason() != "RESOURCE_GPU_NOT_FOUND" {
+		t.Fatalf("expected 404 RESOURCE_GPU_NOT_FOUND, got %v", err)
+	}
+
+	// Verify server-side aggregation beyond 100 containers across GetGPU, GetAllGPUs, GetGPUSummary, and GetAllNodes.
+	gpu, err := cardService.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "GPU-LARGE"})
+	if err != nil || gpu.VgpuUsed != 150 || gpu.CoreUsed != 150 || gpu.MemoryUsed != 150*256 {
+		t.Fatalf("GetGPU large aggregation mismatch: err=%v gpu=%+v", err, gpu)
+	}
+	gpus, err := cardService.GetAllGPUs(context.Background(), &pb.GetAllGpusReq{})
+	if err != nil || len(gpus.List) != 1 || gpus.List[0].VgpuUsed != 150 || gpus.List[0].CoreUsed != 150 || gpus.List[0].MemoryUsed != 150*256 {
+		t.Fatalf("GetAllGPUs large aggregation mismatch: err=%v list=%+v", err, gpus)
+	}
+	summary, err := nodeService.GetSummary(context.Background(), &pb.GetSummaryReq{})
+	if err != nil || summary.VgpuUsed != 150 || summary.CoreUsed != 150 || summary.MemoryUsed != 150*256 {
+		t.Fatalf("GetSummary large aggregation mismatch: err=%v summary=%+v", err, summary)
+	}
+	nodes, err := nodeService.GetAllNodes(context.Background(), &pb.GetAllNodesReq{})
+	if err != nil || len(nodes.List) != 1 || nodes.List[0].GetVgpuUsed() != 150 || nodes.List[0].GetCoreUsed() != 150 || nodes.List[0].GetMemoryUsed() != 150*256 {
+		t.Fatalf("GetAllNodes large aggregation mismatch: err=%v nodes=%+v", err, nodes)
+	}
+
+	podRepo.err = errors.New("container store failed")
+	if _, err := cardService.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "GPU-LARGE"}); err == nil {
+		t.Fatal("expected GetGPU to propagate ListAll error")
+	}
 }

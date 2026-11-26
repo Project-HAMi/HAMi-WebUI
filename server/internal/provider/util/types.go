@@ -16,7 +16,12 @@ limitations under the License.
 
 package util
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
+
+var ErrTelemetryUnavailable = errors.New("telemetry unavailable")
 
 const (
 	AssignedNodeAnnotations = "hami.io/vgpu-node"

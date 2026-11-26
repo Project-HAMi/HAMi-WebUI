@@ -82,6 +82,11 @@ func (r *podRepo) onFactsDelete(obj interface{}) {
 		obj = tombstone.Obj
 	}
 	if pod, ok := obj.(*corev1.Pod); ok && pod != nil {
+		if r.podLister != nil {
+			if current, err := r.podLister.Pods(pod.Namespace).Get(pod.Name); err == nil && current != nil && current.UID == pod.UID {
+				return
+			}
+		}
 		r.facts.Delete(pod.UID)
 	}
 }

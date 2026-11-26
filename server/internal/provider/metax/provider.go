@@ -76,11 +76,16 @@ func (m *Metax) FetchDevices(node *corev1.Node) ([]*util.DeviceInfo, error) {
 			return nil, err
 		}
 
-		return m.convertSDevice2Device(sDeviceList, m.getDeviceLabelsFromPrometheus(node)), nil
+		labelsByUUID, _ := m.getDeviceLabelsFromPrometheus(node)
+		return m.convertSDevice2Device(sDeviceList, labelsByUUID), nil
 	}
 
+	labelsByUUID, err := m.getDeviceLabelsFromPrometheus(node)
+	if err != nil {
+		return nil, err
+	}
 	var deviceInfos []*util.DeviceInfo
-	for uuid, deviceLabels := range m.getDeviceLabelsFromPrometheus(node) {
+	for uuid, deviceLabels := range labelsByUUID {
 		deviceInfos = append(deviceInfos, &util.DeviceInfo{
 			ID:      uuid,
 			AliasId: node.Name + "-metax-" + fmt.Sprint(deviceLabels.deviceId),
@@ -157,20 +162,20 @@ func (m *Metax) getDeviceMemoryFromPrometheus(node *corev1.Node, deviceUUID stri
 	return totalMem
 }
 
-func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) map[string]*deviceLabels {
+func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) (map[string]*deviceLabels, error) {
 	labelsMap := make(map[string]*deviceLabels)
 
 	query := fmt.Sprintf("mx_gpu_state{Hostname=\"%s\"}", node.Name)
 	res, err := m.prom.Query(context.Background(), query)
 	if err != nil {
 		m.log.Warnf("Failed to query %s: %v", query, err)
-		return labelsMap
+		return nil, fmt.Errorf("%w: %v", util.ErrTelemetryUnavailable, err)
 	}
 
 	resVec, ok := res.(model.Vector)
 	if !ok {
 		m.log.Warnf("Unexpect result type: %v", res)
-		return labelsMap
+		return nil, fmt.Errorf("%w: unexpected prometheus result type %T", util.ErrTelemetryUnavailable, res)
 	}
 
 	for _, sample := range resVec {
@@ -196,5 +201,5 @@ func (m *Metax) getDeviceLabelsFromPrometheus(node *corev1.Node) map[string]*dev
 		}
 	}
 
-	return labelsMap
+	return labelsMap, nil
 }

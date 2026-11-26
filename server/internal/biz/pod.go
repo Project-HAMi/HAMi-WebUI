@@ -149,6 +149,31 @@ func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 	return uc.repo.ListAll(ctx)
 }
 
+// AggregateDeviceReservations totals container allocations across all device
+// aliases in a single O(C) pass.
+func AggregateDeviceReservations(containers []*Container) map[string]DeviceReservation {
+	res := make(map[string]DeviceReservation)
+	for _, ctr := range containers {
+		if ctr == nil {
+			continue
+		}
+		for _, cd := range ctr.ContainerDevices {
+			if cd.UUID == "" {
+				continue
+			}
+			entry := res[cd.UUID]
+			entry.Slots++
+			entry.Cores += cd.Usedcores
+			entry.MemoryMiB += cd.Usedmem
+			if cd.CoreAllocationUnknown {
+				entry.CoreUnknown = true
+			}
+			res[cd.UUID] = entry
+		}
+	}
+	return res
+}
+
 // ContainersStatisticsInfo totals allocations for a registered device alias.
 // NVIDIA MIG allocations already carry the parent GPU ID at this layer.
 func ContainersStatisticsInfo(containers []*Container, deviceID string) (int32, int32, int32, bool) {

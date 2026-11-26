@@ -2,11 +2,14 @@ package data
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	listers "k8s.io/client-go/listers/core/v1"
 
 	viewv1 "vgpu/api/observability/v1"
@@ -22,6 +25,7 @@ type resourceSnapshotSource struct {
 	pods       *podfacts.Ledger
 	catalog    devicecatalog.Source
 	selectors  map[string]labels.Selector
+	captures   *CaptureStore
 	log        *log.Helper
 }
 
@@ -32,12 +36,23 @@ func NewResourceSnapshotSource(data *Data, providers []nodeProvider, logger log.
 	for _, p := range providers {
 		selectors[p.GetProvider()] = p.selector
 	}
-	return &resourceSnapshotSource{continuity: data.continuity, nodes: data.informers.Core().V1().Nodes().Lister(), pods: pods, catalog: catalog, selectors: selectors, log: log.NewHelper(logger)}
+	return &resourceSnapshotSource{continuity: data.continuity, nodes: data.informers.Core().V1().Nodes().Lister(), pods: pods, catalog: catalog, selectors: selectors, captures: NewCaptureStore(), log: log.NewHelper(logger)}
 }
 
 func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Snapshot, error) {
-	if err := ctx.Err(); err != nil {
+	capture, err := r.Capture(ctx)
+	if err != nil {
 		return resourceview.Snapshot{}, err
+	}
+	return cloneResourcesSnapshot(capture.Resources), nil
+}
+
+// Capture builds and publishes an immutable generation-stamped ClusterCapture
+// while preserving Pod RV continuity lag protections (lagging Pods remain
+// visible with degraded AllocationCoverage rather than disappearing).
+func (r *resourceSnapshotSource) Capture(ctx context.Context) (*ClusterCapture, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	var nodeTracker, podTracker *informerContinuity
 	if r.continuity != nil {
@@ -46,7 +61,7 @@ func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Sna
 	nodeProof, podProof := nodeTracker.snapshot(), podTracker.snapshot()
 	nodes, err := r.nodes.List(labels.Everything())
 	if err != nil {
-		return resourceview.Snapshot{}, err
+		return nil, err
 	}
 	catalog := r.catalog.Snapshot()
 	pods := r.pods.AllocationSnapshot()
@@ -61,6 +76,7 @@ func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Sna
 	// An informer gap has cluster scope. A Pod with stale derived facts only
 	// affects its bound or preassigned nodes, unless neither can be identified.
 	pendingNodes := make(map[string]bool)
+	stalePods := make(map[types.UID]bool)
 	for _, entry := range pods.Entries {
 		f := entry.Facts
 		podObjects = append(podObjects, &f.Metadata)
@@ -77,6 +93,7 @@ func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Sna
 			revision = missingNode
 		}
 		if entry.InputRevision != revision {
+			stalePods[f.Metadata.UID] = true
 			pendingNodes[name] = true // an empty name means the scope is unknown
 			if assigned != "" {
 				pendingNodes[assigned] = true
@@ -86,6 +103,11 @@ func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Sna
 	nodeCoverage := continuityCoverage("node", "shared_node_informer", nodeProof, nodeObjects, nodeTracker.unchanged(nodeProof))
 	pods.Coverage = continuityCoverage("pod", "shared_pod_informer", podProof, podObjects, podTracker.unchanged(podProof))
 	out := providerfacts.Build(nodes, catalog, pods, r.selectors, r.log, time.Now(), nodeCoverage)
+	if len(stalePods) > 0 {
+		out.VerifiedBindings = slices.DeleteFunc(out.VerifiedBindings, func(b resourceview.VerifiedDeviceBinding) bool {
+			return stalePods[b.PodUID]
+		})
+	}
 	for i := range out.Devices {
 		d := &out.Devices[i]
 		if pendingNodes[""] || pendingNodes[d.Identity.Node] {
@@ -112,7 +134,11 @@ func (r *resourceSnapshotSource) Snapshot(ctx context.Context) (resourceview.Sna
 			incompleteCoverage(out.Devices[i].AllocationCoverage, "source_changed_during_snapshot")
 		}
 	}
-	return out, nil
+	catalogRV := ""
+	if catalog != nil {
+		catalogRV = fmt.Sprintf("%p", catalog)
+	}
+	return r.captures.Publish(catalogRV, out, pods, out.At), nil
 }
 func incompleteCoverage(c *viewv1.Coverage, reason string) {
 	if c == nil {
