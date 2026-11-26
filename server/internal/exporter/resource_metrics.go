@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
@@ -95,7 +96,7 @@ func (c *resourceMetricCollector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 		observation := group.Observation(func(member resourceview.Device) resourceview.DeviceObservation {
-			return resourceview.AgeObservation(observations[member.Identity], now, dcgmMaxSampleAge)
+			return resourceview.AgeObservation(observations[member.Identity], now, provider.TelemetryMaxSampleAge)
 		})
 		for name, quantity := range map[string]resourceview.Quantity{"device_utilization_ratio": observation.UtilizationRatio, "device_memory_used_bytes": observation.MemoryUsedBytes, "device_memory_physical_bytes": observation.MemoryPhysicalBytes} {
 			if value, known := quantity.KnownValue(); known && quantity.State.Source != "" {

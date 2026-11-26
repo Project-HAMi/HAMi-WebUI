@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	viewv1 "vgpu/api/observability/v1"
+	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
@@ -153,7 +154,7 @@ func TestMetricIdentitiesMatchPhysicalInventoryWhenProvidersShareAnUUID(t *testi
 	snapshot := resourceview.Snapshot{At: at, Nodes: []resourceview.Node{{Name: "host", UID: "uid"}}, Devices: []resourceview.Device{second, first}}
 	g := &MetricsGenerator{physicalGroups: resourceview.GroupPhysicalDevices(snapshot).Groups, resourceSnapshot: &snapshot, observations: resourceview.DeviceObservations{}, now: func() time.Time { return at }}
 	known := func(v float64, source string) resourceview.Quantity {
-		return observationQuantity(dcgmReading{selection: dcgmSelection{Value: v, SampleAt: at, Source: dcgmTarget{Job: "exporter", Instance: "node"}}}, 1, "ratio", source, resourceview.Quantity{}, at)
+		return observationQuantity(provider.TelemetryReading{Selection: provider.TelemetrySelection{Value: v, SampleAt: at, Source: provider.TelemetryTarget{Job: "exporter", Instance: "node"}}}, 1, "ratio", source, resourceview.Quantity{}, at)
 	}
 	g.observations[second.Identity] = resourceview.DeviceObservation{UtilizationRatio: known(.25, "dcgm")}
 	registry := prometheus.NewPedanticRegistry()
@@ -218,8 +219,8 @@ func scrapePhysicalLabels(t *testing.T, cards ...resourceview.Device) map[string
 	at := time.Now()
 	id := cards[0].Identity
 	snapshot := resourceview.Snapshot{At: at, Nodes: []resourceview.Node{{Name: id.Node, UID: id.NodeUID}}, Devices: cards}
-	busy := observationQuantity(dcgmReading{selection: dcgmSelection{Value: .83, SampleAt: at,
-		Source: dcgmTarget{Job: "exporter", Instance: "worker"}}}, 1, "ratio", "exporter", resourceview.Quantity{}, at)
+	busy := observationQuantity(provider.TelemetryReading{Selection: provider.TelemetrySelection{Value: .83, SampleAt: at,
+		Source: provider.TelemetryTarget{Job: "exporter", Instance: "worker"}}}, 1, "ratio", "exporter", resourceview.Quantity{}, at)
 	g := &MetricsGenerator{now: func() time.Time { return at }, resourceSnapshot: &snapshot, physicalGroups: resourceview.GroupPhysicalDevices(snapshot).Groups,
 		observations: resourceview.DeviceObservations{id: {UtilizationRatio: busy}}}
 	reg := prometheus.NewPedanticRegistry()

@@ -12,7 +12,9 @@ import (
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
+	"vgpu/internal/provider"
 	"vgpu/internal/provider/metax"
+	"vgpu/internal/provider/registry"
 	providerutil "vgpu/internal/provider/util"
 	"vgpu/internal/resourceview"
 	"vgpu/internal/service"
@@ -33,6 +35,7 @@ const (
 	defaultGenerateTimeout  = 60 * time.Second
 	bytesPerKiB             = 1024
 	bytesPerMiB             = bytesPerKiB * 1024
+	dcgmWholeGPUMatchers    = `GPU_I_ID="",GPU_CI_ID=""`
 )
 
 var (
@@ -113,10 +116,18 @@ type MetricsGenerator struct {
 	now func() time.Time
 
 	resourceSource   resourceview.SnapshotSource
+	telemetryDialects []provider.TelemetryDialect
 	observationsMu   sync.RWMutex
 	resourceSnapshot *resourceview.Snapshot
 	physicalGroups   []resourceview.PhysicalGroup
 	observations     resourceview.DeviceObservations
+}
+
+func (s *MetricsGenerator) activeTelemetryDialects() []provider.TelemetryDialect {
+	if len(s.telemetryDialects) > 0 {
+		return s.telemetryDialects
+	}
+	return registry.DefaultTelemetryDialects()
 }
 
 func (s *MetricsGenerator) clockNow() time.Time {

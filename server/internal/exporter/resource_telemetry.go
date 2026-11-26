@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -12,27 +13,21 @@ import (
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/types"
 
-	"vgpu/internal/biz"
+	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
-const dcgmMaxSampleAge = 5 * time.Minute
 const sampleTimePrefix = "hami_webui_original_timestamp_"
 
 var errTelemetryQuery = errors.New("physical telemetry query failed")
 
-type dcgmReading struct {
-	selection dcgmSelection
-	err       error
-}
-type rawFamilies map[string][]dcgmSample
 type queryAtFunc func(context.Context, string, time.Time) (model.Value, error)
 
 // Apply timestamp directly to each raw selector. An expression such as
 // timestamp(label_replace(selector, ...)) reports the query evaluation time.
 // Distinct names on the timestamp rows let families share one round trip even
 // when two raw families have identical labels.
-func queryFamilies(ctx context.Context, query queryAtFunc, families []string, filter string, at time.Time) (rawFamilies, error) {
+func queryFamilies(ctx context.Context, query queryAtFunc, families []string, filter string, at time.Time) (provider.TelemetryRawFamilies, error) {
 	var parts []string
 	for _, family := range families {
 		selector := family + filter
@@ -52,12 +47,12 @@ func queryFamilies(ctx context.Context, query queryAtFunc, families []string, fi
 	byName := map[string]*pair{}
 	for _, r := range rows {
 		if r == nil || r.Histogram != nil {
-			return nil, errDCGMInvalid
+			return nil, provider.ErrTelemetryInvalid
 		}
 		name := string(r.Metric[model.MetricNameLabel])
 		family, isTime := strings.CutPrefix(name, sampleTimePrefix)
 		if family == "" {
-			return nil, errDCGMInvalid
+			return nil, provider.ErrTelemetryInvalid
 		}
 		p := byName[family]
 		if p == nil {
@@ -73,9 +68,9 @@ func queryFamilies(ctx context.Context, query queryAtFunc, families []string, fi
 			p.values = append(p.values, r)
 		}
 	}
-	result := rawFamilies{}
+	result := provider.TelemetryRawFamilies{}
 	for name, p := range byName {
-		samples, err := dcgmSamplesWithTimes(name, p.values, p.timestamps)
+		samples, err := provider.TelemetrySamplesWithTimes(name, p.values, p.timestamps)
 		if err != nil {
 			return nil, err
 		}
@@ -84,26 +79,26 @@ func queryFamilies(ctx context.Context, query queryAtFunc, families []string, fi
 	return result, nil
 }
 
-func targetEvidence(samples []dcgmSample, at time.Time) map[dcgmTarget]dcgmTargetEvidence {
-	result := map[dcgmTarget]dcgmTargetEvidence{}
+func targetEvidence(samples []provider.TelemetrySample, at time.Time) map[provider.TelemetryTarget]provider.TelemetryTargetEvidence {
+	result := map[provider.TelemetryTarget]provider.TelemetryTargetEvidence{}
 	for _, s := range samples {
 		l := s.Labels
-		target := dcgmTarget{Cluster: l["cluster"], Job: l["job"], Instance: l["instance"]}
+		target := provider.TelemetryTarget{Cluster: l["cluster"], Job: l["job"], Instance: l["instance"]}
 		if target.Job == "" || target.Instance == "" {
 			continue
 		}
 		if _, seen := result[target]; seen {
-			result[target] = dcgmTargetEvidence{Ambiguous: true}
+			result[target] = provider.TelemetryTargetEvidence{Ambiguous: true}
 			continue
 		}
-		evidence := dcgmTargetEvidence{TargetLabels: l}
+		evidence := provider.TelemetryTargetEvidence{TargetLabels: l}
 		switch {
 		case s.SampleAt.IsZero() || s.SampleAt.After(at) || (s.Value != 0 && s.Value != 1):
-			evidence.Unavailable = errDCGMInvalid
-		case at.Sub(s.SampleAt) > dcgmMaxSampleAge:
-			evidence.Unavailable = errDCGMStale
+			evidence.Unavailable = provider.ErrTelemetryInvalid
+		case at.Sub(s.SampleAt) > provider.TelemetryMaxSampleAge:
+			evidence.Unavailable = provider.ErrTelemetryStale
 		case s.Value == 0:
-			evidence.Unavailable = errTargetDown
+			evidence.Unavailable = provider.ErrTelemetryTargetDown
 		}
 		result[target] = evidence
 	}
@@ -115,26 +110,28 @@ func targetEvidence(samples []dcgmSample, at time.Time) map[dcgmTarget]dcgmTarge
 const telemetryIDsPerQuery = 64
 
 type telemetryBatch struct {
+	dialect  provider.TelemetryDialect
 	families []string
 	filter   string
 	devices  []resourceview.Device
 }
 
-func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
+func telemetryPlan(devices []resourceview.Device, dialects []provider.TelemetryDialect) []telemetryBatch {
 	var plan []telemetryBatch
-	for _, provider := range []string{biz.NvidiaGPUDevice, biz.AscendGPUDevice, biz.HygonHCUDevice, biz.HygonGPUDevice, biz.MetaxGPUDevice} {
+	for _, dialect := range dialects {
+		if dialect == nil {
+			continue
+		}
+		providerName := dialect.ProviderName()
 		byKey := map[string][]resourceview.Device{}
 		for _, d := range devices {
 			id := d.Identity
-			if d.Kind != "physical" || id.NodeUID == "" || id.Node == "" || id.DeviceID == "" || id.Provider != provider {
+			if d.Kind != "physical" || id.NodeUID == "" || id.Node == "" || id.DeviceID == "" || id.Provider != providerName {
 				continue
 			}
-			if provider == biz.MetaxGPUDevice && !metaxC500Candidate(d.Model) {
+			key, ok := dialect.BatchKey(d)
+			if !ok {
 				continue
-			}
-			key := id.DeviceID
-			if provider == biz.AscendGPUDevice || provider == biz.HygonHCUDevice || provider == biz.HygonGPUDevice {
-				key = id.Node
 			}
 			byKey[key] = append(byKey[key], d)
 		}
@@ -151,84 +148,13 @@ func telemetryPlan(devices []resourceview.Device) []telemetryBatch {
 				ids = append(ids, regexp.QuoteMeta(key))
 				rows = append(rows, byKey[key]...)
 			}
-			var families []string
-			filter := fmt.Sprintf("UUID=~%q,%s", strings.Join(ids, "|"), dcgmWholeGPUMatchers)
-			switch provider {
-			case biz.NvidiaGPUDevice:
-				for _, spec := range dcgmPhysicalMetrics {
-					families = append(families, spec.LegacyName, spec.CurrentName)
-				}
-			case biz.MetaxGPUDevice:
-				families = []string{metaxState, metaxUtilization, metaxUsed, metaxTotal}
-				filter = fmt.Sprintf("uuid=~%q,type=~%q", strings.Join(ids, "|"), "|vram")
-			case biz.AscendGPUDevice:
-				families = []string{ascendUtilization, "npu_chip_info_hbm_used_memory", "npu_chip_info_hbm_total_memory", "npu_chip_info_used_memory", "npu_chip_info_total_memory"}
-				filter = fmt.Sprintf("node=~%q,v_dev_id=\"\",is_virtual!=\"true\"", strings.Join(ids, "|"))
-			case biz.HygonHCUDevice, biz.HygonGPUDevice:
-				util, used, total := hygonMetricNames(provider)
-				families = []string{util, used, total}
-				filter = fmt.Sprintf("node=~%q", strings.Join(ids, "|"))
-			}
-			sort.Strings(families)
-			plan = append(plan, telemetryBatch{families, "{" + filter + "}", rows})
+			families, filter := dialect.QuerySpec(ids)
+			sortedFamilies := slices.Clone(families)
+			sort.Strings(sortedFamilies)
+			plan = append(plan, telemetryBatch{dialect: dialect, families: sortedFamilies, filter: "{" + filter + "}", devices: rows})
 		}
 	}
 	return plan
-}
-
-func hygonMetricNames(provider string) (utilization, used, total string) {
-	prefix := strings.ToLower(provider)
-	return prefix + "_utilizationrate", prefix + "_usedmemory_bytes", prefix + "_memorycap_bytes"
-}
-
-type physicalReadings struct{ util, used, total dcgmReading }
-
-func failedReadings(err error) physicalReadings {
-	r := dcgmReading{err: err}
-	return physicalReadings{r, r, r}
-}
-func deviceReadings(d resourceview.Device, samples rawFamilies, at time.Time, born *time.Time, targets map[dcgmTarget]dcgmTargetEvidence) physicalReadings {
-	id := d.Identity
-	if id.Provider == biz.MetaxGPUDevice {
-		return metaxReadings(d, samples, at, born, targets)
-	}
-	if id.Provider == biz.AscendGPUDevice {
-		get := func(name string) dcgmReading { return ascendLabels.reading(name, d, samples[name], at, born, targets) }
-		readings := failedReadings(errDCGMMissing)
-		readings.util = get(ascendUtilization)
-		if used, total := ascendMemoryFamilies(d.Model); used != "" {
-			readings.used, readings.total = ascendLabels.memoryPair(get(used), get(total))
-		}
-		return readings
-	}
-	if id.Provider == biz.HygonHCUDevice || id.Provider == biz.HygonGPUDevice {
-		utilName, usedName, totalName := hygonMetricNames(id.Provider)
-		schema := hygonLabels
-		schema.utilization = utilName
-		get := func(name string) dcgmReading { return schema.reading(name, d, samples[name], at, born, targets) }
-		used, total := schema.memoryPair(get(usedName), get(totalName))
-		return physicalReadings{get(utilName), used, total}
-	}
-	get := func(name string) dcgmReading {
-		spec := dcgmPhysicalMetrics[name]
-		var rows []dcgmSample
-		for _, family := range []string{spec.LegacyName, spec.CurrentName} {
-			for _, sample := range samples[family] {
-				if born == nil || !sample.SampleAt.Before(*born) {
-					rows = append(rows, sample)
-				}
-			}
-		}
-		value, err := selectDCGMPhysical(spec, id.DeviceID, id.Node, at, dcgmMaxSampleAge, rows, targets)
-		return dcgmReading{value, err}
-	}
-	result := physicalReadings{util: get("DCGM_FI_DEV_GPU_UTIL"), used: get("DCGM_FI_DEV_FB_USED")}
-	free := get("DCGM_FI_DEV_FB_FREE")
-	result.total.err = errors.Join(result.used.err, free.err)
-	if result.total.err == nil {
-		result.total.selection, result.total.err = dcgmPhysicalMemoryTotal(result.used.selection, free.selection)
-	}
-	return result
 }
 
 func (s *MetricsGenerator) refreshResources(parent context.Context) {
@@ -272,9 +198,9 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 	for _, node := range snapshot.Nodes {
 		born[node.UID] = node.CreatedAt
 	}
-	plan := telemetryPlan(snapshot.Devices)
+	plan := telemetryPlan(snapshot.Devices, s.activeTelemetryDialects())
 	var errs []error
-	var targets map[dcgmTarget]dcgmTargetEvidence
+	var targets map[provider.TelemetryTarget]provider.TelemetryTargetEvidence
 	var targetErr error
 	if len(plan) > 0 {
 		up, err := queryFamilies(ctx, query, []string{"up"}, "", at)
@@ -286,7 +212,7 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 		}
 	}
 	for _, batch := range plan {
-		raw := rawFamilies{}
+		raw := provider.TelemetryRawFamilies{}
 		batchErr := targetErr
 		if batchErr == nil {
 			raw, batchErr = queryFamilies(ctx, query, batch.families, batch.filter, at)
@@ -295,50 +221,30 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 			}
 		}
 		// Index by the exporter's entity before resolving per-field aliases.
-		byID := map[string]rawFamilies{}
+		byID := map[string]provider.TelemetryRawFamilies{}
 		for family, rows := range raw {
 			for _, sample := range rows {
-				key := sample.Labels["UUID"]
-				switch provider := batch.devices[0].Identity.Provider; provider {
-				case biz.HygonHCUDevice, biz.HygonGPUDevice:
-					key = sample.Labels["node"] + "\x00" + provider + "-" + sample.Labels["device_id"]
-				case biz.MetaxGPUDevice:
-					key = sample.Labels["uuid"]
-				case biz.AscendGPUDevice:
-					key = sample.Labels["node"] + "\x00" + sample.Labels["vdie_id"]
-				}
+				key := batch.dialect.SampleKey(sample.Labels)
 				if byID[key] == nil {
-					byID[key] = rawFamilies{}
+					byID[key] = provider.TelemetryRawFamilies{}
 				}
 				byID[key][family] = append(byID[key][family], sample)
 			}
 		}
+		source := batch.dialect.SourceName()
+		memoryScale := batch.dialect.MemoryScale()
 		for _, device := range batch.devices {
 			id := device.Identity
-			source := "dcgm"
-			key := id.DeviceID
-			memoryScale := float64(bytesPerMiB)
-			switch id.Provider {
-			case biz.HygonHCUDevice, biz.HygonGPUDevice:
-				source = strings.ToLower(id.Provider) + "_exporter"
-				key = id.Node + "\x00" + id.DeviceID
-				memoryScale = 1
-			case biz.MetaxGPUDevice:
-				source = "mx_exporter"
-				memoryScale = bytesPerKiB // mxExporter reports VRAM in KiB.
-			case biz.AscendGPUDevice:
-				source = ascendSource
-				key = id.Node + "\x00" + id.DeviceID
-			}
-			r := failedReadings(batchErr)
+			key := batch.dialect.DeviceKey(device)
+			r := provider.FailedPhysicalReadings(batchErr)
 			if batchErr == nil {
-				r = deviceReadings(device, byID[key], at, born[id.NodeUID], targets)
+				r = batch.dialect.ReadDevice(device, byID[key], at, born[id.NodeUID], targets)
 			}
 			old := previous[id]
 			observations[id] = resourceview.DeviceObservation{
-				UtilizationRatio:    observationQuantity(r.util, .01, "ratio", source, old.UtilizationRatio, at),
-				MemoryUsedBytes:     observationQuantity(r.used, memoryScale, "bytes", source, old.MemoryUsedBytes, at),
-				MemoryPhysicalBytes: observationQuantity(r.total, memoryScale, "bytes", source, old.MemoryPhysicalBytes, at),
+				UtilizationRatio:    observationQuantity(r.Util, .01, "ratio", source, old.UtilizationRatio, at),
+				MemoryUsedBytes:     observationQuantity(r.Used, memoryScale, "bytes", source, old.MemoryUsedBytes, at),
+				MemoryPhysicalBytes: observationQuantity(r.Total, memoryScale, "bytes", source, old.MemoryPhysicalBytes, at),
 			}
 		}
 	}

@@ -85,3 +85,14 @@ func DefaultAllocationDialects(cfg AllocationConfig) []provider.AllocationDialec
 		ascend.NewAllocationDialect(cfg.AscendAnnotationlessPolicy),
 	}
 }
+
+// DefaultTelemetryDialects returns all built-in vendor TelemetryDialects.
+func DefaultTelemetryDialects() []provider.TelemetryDialect {
+	return []provider.TelemetryDialect{
+		nvidia.NewTelemetryDialect(),
+		ascend.NewTelemetryDialect(),
+		hygon.NewHCUTelemetryDialect(),
+		hygon.NewDCUTelemetryDialect(),
+		metax.NewTelemetryDialect(),
+	}
+}

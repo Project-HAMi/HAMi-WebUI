@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	viewv1 "vgpu/api/observability/v1"
+	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
@@ -31,7 +32,7 @@ func (s *MetricsGenerator) DeviceObservations() resourceview.DeviceObservations 
 	result := make(resourceview.DeviceObservations, len(published))
 	now := s.clockNow()
 	for identity, observation := range published {
-		result[identity] = resourceview.AgeObservation(observation, now, dcgmMaxSampleAge)
+		result[identity] = resourceview.AgeObservation(observation, now, provider.TelemetryMaxSampleAge)
 	}
 	return result
 }
@@ -40,11 +41,11 @@ func unknownObservation(unit, source, reason string) resourceview.Quantity {
 	return resourceview.Quantity{Unit: unit, State: &viewv1.FieldState{State: resourceview.Unknown, Reason: reason, Source: source, Scope: "device"}}
 }
 
-func observationQuantity(reading dcgmReading, scale float64, unit, source string, previous resourceview.Quantity, now time.Time) resourceview.Quantity {
-	if reading.err != nil {
-		if errors.Is(reading.err, errTelemetryQuery) && previous.Value != nil && previous.State != nil && previous.State.ObservedAt != nil {
+func observationQuantity(reading provider.TelemetryReading, scale float64, unit, source string, previous resourceview.Quantity, now time.Time) resourceview.Quantity {
+	if reading.Err != nil {
+		if errors.Is(reading.Err, errTelemetryQuery) && previous.Value != nil && previous.State != nil && previous.State.ObservedAt != nil {
 			at := previous.State.ObservedAt.AsTime()
-			if !at.After(now) && now.Sub(at) <= dcgmMaxSampleAge {
+			if !at.After(now) && now.Sub(at) <= provider.TelemetryMaxSampleAge {
 				stale := previous.DeepCopy()
 				stale.State.State, stale.State.Reason = resourceview.Stale, "query_failed"
 				return stale
@@ -52,22 +53,22 @@ func observationQuantity(reading dcgmReading, scale float64, unit, source string
 		}
 		result := unknownObservation(unit, source, "sample_missing")
 		switch {
-		case errors.Is(reading.err, errTelemetryQuery):
+		case errors.Is(reading.Err, errTelemetryQuery):
 			result.State.Reason = "query_failed"
-		case errors.Is(reading.err, errTargetDown):
+		case errors.Is(reading.Err, provider.ErrTelemetryTargetDown):
 			result.State.Reason = "target_down"
-		case errors.Is(reading.err, errDCGMStale):
+		case errors.Is(reading.Err, provider.ErrTelemetryStale):
 			result.State.Reason = "sample_expired"
-		case errors.Is(reading.err, errDCGMInvalid):
+		case errors.Is(reading.Err, provider.ErrTelemetryInvalid):
 			result.State.Reason = "invalid_sample"
-		case errors.Is(reading.err, errDCGMAmbiguous):
+		case errors.Is(reading.Err, provider.ErrTelemetryAmbiguous):
 			result.State.State, result.State.Reason = resourceview.Conflict, "ambiguous_source_or_identity"
 		}
 		return result
 	}
 
-	value := reading.selection.Value * scale
-	if !dcgmFinite(value) || value < 0 || reading.selection.SampleAt.IsZero() {
+	value := reading.Selection.Value * scale
+	if !provider.TelemetryFinite(value) || value < 0 || reading.Selection.SampleAt.IsZero() {
 		return unknownObservation(unit, source, "invalid_sample")
 	}
 	// The resource API represents bytes as int64. A malformed fractional or
@@ -75,13 +76,13 @@ func observationQuantity(reading dcgmReading, scale float64, unit, source string
 	// and rounding it would silently change the observation's value.
 	if unit == "bytes" && (math.Trunc(value) != value || value >= 0x1p63) {
 		result := unknownObservation(unit, source, "invalid_sample")
-		result.State.ObservedAt = timestamppb.New(reading.selection.SampleAt)
-		result.State.Params = map[string]string{"expected": "nonnegative_int64_bytes", "rawName": reading.selection.RawName}
+		result.State.ObservedAt = timestamppb.New(reading.Selection.SampleAt)
+		result.State.Params = map[string]string{"expected": "nonnegative_int64_bytes", "rawName": reading.Selection.RawName}
 		return result
 	}
 	quantity, err := resource.ParseQuantity(strconv.FormatFloat(value, 'f', -1, 64))
 	if err != nil {
 		return unknownObservation(unit, source, "invalid_sample")
 	}
-	return resourceview.Quantity{Value: &quantity, Unit: unit, State: &viewv1.FieldState{State: resourceview.Known, Source: source, Scope: "device", ObservedAt: timestamppb.New(reading.selection.SampleAt), Params: map[string]string{"job": reading.selection.Source.Job, "instance": reading.selection.Source.Instance, "cluster": reading.selection.Source.Cluster, "rawName": reading.selection.RawName}}}
+	return resourceview.Quantity{Value: &quantity, Unit: unit, State: &viewv1.FieldState{State: resourceview.Known, Source: source, Scope: "device", ObservedAt: timestamppb.New(reading.Selection.SampleAt), Params: map[string]string{"job": reading.Selection.Source.Job, "instance": reading.Selection.Source.Instance, "cluster": reading.Selection.Source.Cluster, "rawName": reading.Selection.RawName}}}
 }

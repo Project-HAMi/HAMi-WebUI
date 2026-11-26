@@ -11,6 +11,9 @@ import (
 	"github.com/prometheus/common/model"
 
 	"vgpu/internal/biz"
+	"vgpu/internal/provider"
+	"vgpu/internal/provider/hygon"
+	"vgpu/internal/provider/nvidia"
 	"vgpu/internal/resourceview"
 )
 
@@ -76,21 +79,21 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 			add("dcu_utilizationrate", h, 37.5)
 			add("dcu_usedmemory_bytes", h, 123456789)
 			add("dcu_memorycap_bytes", h, 32<<30)
-		case strings.Contains(expr, metaxUtilization):
+		case strings.Contains(expr, "mx_gpu_usage"):
 			m["Hostname"], m["uuid"], m["deviceId"], m["die_id"], m["modelName"] = "host", "mx-01", "0", "0", "MXC500"
-			add(metaxState, m, 1)
+			add("mx_gpu_state", m, 1)
 			for _, pod := range []string{"first", "second"} {
 				m["exported_pod"] = model.LabelValue(pod)
-				add(metaxUtilization, m, 0)
+				add("mx_gpu_usage", m, 0)
 			}
 			m["type"] = "vram"
-			add(metaxUsed, m, 4*1024*1024)
-			add(metaxTotal, m, 64*1024*1024)
+			add("mx_memory_used", m, 4*1024*1024)
+			add("mx_memory_total", m, 64*1024*1024)
 			m["type"] = "xtt"
-			add(metaxTotal, m, 8*1024*1024)
+			add("mx_memory_total", m, 8*1024*1024)
 			delete(m, "type")
 			m["Hostname"], m["node"], m["uuid"] = "mx-exporter-pod", "host", "mx-02"
-			add(metaxState, m, 1)
+			add("mx_gpu_state", m, 1)
 		case strings.Contains(expr, "DCGM_FI_DEV_FB_USED"):
 			n["UUID"] = "GPU-01"
 			add("DCGM_FI_DEV_GPU_UTIL_RATIO", n, .75)
@@ -107,14 +110,14 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 			a["model_name"] = "Ascend310P"
 			for _, pod := range []string{"first", "second"} {
 				a["pod_name"] = model.LabelValue(pod)
-				add(ascendUtilization, a, 0)
+				add("npu_chip_info_utilization", a, 0)
 			}
 			add("npu_chip_info_used_memory", a, 128)
 			add("npu_chip_info_total_memory", a, 8192)
 			add("npu_chip_info_hbm_used_memory", a, 3000)
 			add("npu_chip_info_hbm_total_memory", a, 4096)
 			a["v_dev_id"] = "1"
-			add(ascendUtilization, a, 99)
+			add("npu_chip_info_utilization", a, 99)
 		default:
 			t.Fatalf("unrecognized selector %s", expr)
 		}
@@ -182,9 +185,9 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 }
 func TestTimestampMismatchAndDuplicateTargets(t *testing.T) {
 	now := time.Now().UTC()
-	target := dcgmSample{Labels: map[string]string{"job": "j", "instance": "i"}, Value: 1, SampleAt: now}
-	targets := targetEvidence([]dcgmSample{target, target}, now)
-	if !targets[dcgmTarget{Job: "j", Instance: "i"}].Ambiguous {
+	target := provider.TelemetrySample{Labels: map[string]string{"job": "j", "instance": "i"}, Value: 1, SampleAt: now}
+	targets := targetEvidence([]provider.TelemetrySample{target, target}, now)
+	if !targets[provider.TelemetryTarget{Job: "j", Instance: "i"}].Ambiguous {
 		t.Fatal("duplicate target marked usable")
 	}
 	query := func(context.Context, string, time.Time) (model.Value, error) {
@@ -192,7 +195,7 @@ func TestTimestampMismatchAndDuplicateTargets(t *testing.T) {
 			{Metric: model.Metric{"__name__": sampleTimePrefix + "up", "instance": "b"}, Value: 1794661258}}, nil
 	}
 	_, err := queryFamilies(context.Background(), query, []string{"up"}, "", now)
-	if !errors.Is(err, errDCGMInvalid) {
+	if !errors.Is(err, provider.ErrTelemetryInvalid) {
 		t.Fatalf("mismatched original timestamp (%v)", err)
 	}
 }
@@ -261,29 +264,30 @@ func TestTelemetryEvaluationSharesPrometheusMillisecondBoundary(t *testing.T) {
 
 func TestDCGMMemoryRejectsConflictingDeviceIdentityAcrossAliases(t *testing.T) {
 	at := time.Unix(1_760_000_000, 0)
-	target := dcgmTarget{Job: "dcgm", Instance: "host:9400"}
-	targets := map[dcgmTarget]dcgmTargetEvidence{target: {}}
+	dialect := nvidia.NewTelemetryDialect()
+	target := provider.TelemetryTarget{Job: "dcgm", Instance: "host:9400"}
+	targets := map[provider.TelemetryTarget]provider.TelemetryTargetEvidence{target: {}}
 	card := resourceview.Device{Identity: resourceview.DeviceIdentity{Node: "host", DeviceID: "GPU-01", Provider: biz.NvidiaGPUDevice}}
-	sample := func(name string, value float64) dcgmSample {
-		return dcgmSample{Value: value, SampleAt: at, Labels: map[string]string{
+	sample := func(name string, value float64) provider.TelemetrySample {
+		return provider.TelemetrySample{Value: value, SampleAt: at, Labels: map[string]string{
 			"__name__": name, "UUID": "GPU-01", "node": "host", "job": target.Job, "instance": target.Instance,
 		}}
 	}
 	used := sample("DCGM_FI_DEV_FB_USED", 40)
 	alias := sample("DCGM_FI_DEV_FB_USED_BYTES", 40*bytesPerMiB)
 	free := sample("DCGM_FI_DEV_FB_FREE", 60)
-	rows := rawFamilies{used.Labels["__name__"]: {used}, alias.Labels["__name__"]: {alias}, free.Labels["__name__"]: {free}}
+	rows := provider.TelemetryRawFamilies{used.Labels["__name__"]: {used}, alias.Labels["__name__"]: {alias}, free.Labels["__name__"]: {free}}
 	for _, field := range []string{"device", "gpu", "modelName", "DRIVER_VERSION"} {
 		// Only the non-preferred used-memory alias carries this identity field.
 		used.Labels[field], free.Labels[field] = "first", "second"
-		if got := deviceReadings(card, rows, at, nil, targets).total; !errors.Is(got.err, errDCGMAmbiguous) {
+		if got := dialect.ReadDevice(card, rows, at, nil, targets).Total; !errors.Is(got.Err, provider.ErrTelemetryAmbiguous) {
 			t.Fatalf("combined conflicting %s: %v", field, got)
 		}
 		delete(used.Labels, field)
 		delete(free.Labels, field)
 	}
 	free.Labels["device"] = "nvidia0"
-	if got := deviceReadings(card, rows, at, nil, targets).total; got.err != nil || got.selection.Value != 100 {
+	if got := dialect.ReadDevice(card, rows, at, nil, targets).Total; got.Err != nil || got.Selection.Value != 100 {
 		t.Fatalf("absent optional identity must not invalidate a confirmed UUID: %v", got)
 	}
 }
@@ -291,51 +295,52 @@ func TestDCGMMemoryRejectsConflictingDeviceIdentityAcrossAliases(t *testing.T) {
 func TestDCUReadingRequiresCurrentNodeAndUnambiguousBoardSerial(t *testing.T) {
 	at := time.Unix(1760000000, 0)
 	created := at.Add(-time.Minute)
+	dialect := hygon.NewDCUTelemetryDialect()
 	card := resourceview.Device{Identity: resourceview.DeviceIdentity{Provider: biz.HygonGPUDevice, Node: "worker", NodeUID: "new", DeviceID: "DCU-board-A"}}
-	targets := map[dcgmTarget]dcgmTargetEvidence{{Job: "hygon", Instance: "node:8000"}: {}, {Job: "hygon", Instance: "duplicate:8000"}: {}}
-	sample := func(serial string) dcgmSample {
-		return dcgmSample{Value: 0, SampleAt: at, Labels: map[string]string{"__name__": "dcu_utilizationrate", "node": "worker", "job": "hygon", "instance": "node:8000", "minor_number": "1", "device_id": serial}}
+	targets := map[provider.TelemetryTarget]provider.TelemetryTargetEvidence{{Job: "hygon", Instance: "node:8000"}: {}, {Job: "hygon", Instance: "duplicate:8000"}: {}}
+	sample := func(serial string) provider.TelemetrySample {
+		return provider.TelemetrySample{Value: 0, SampleAt: at, Labels: map[string]string{"__name__": "dcu_utilizationrate", "node": "worker", "job": "hygon", "instance": "node:8000", "minor_number": "1", "device_id": serial}}
 	}
-	read := func(card resourceview.Device, rows ...dcgmSample) physicalReadings {
-		return deviceReadings(card, rawFamilies{"dcu_utilizationrate": rows}, at, &created, targets)
+	read := func(card resourceview.Device, rows ...provider.TelemetrySample) provider.PhysicalReadings {
+		return dialect.ReadDevice(card, provider.TelemetryRawFamilies{"dcu_utilizationrate": rows}, at, &created, targets)
 	}
-	if r := read(card, sample("board-A")); r.util.err != nil || r.util.selection.Value != 0 || !errors.Is(r.used.err, errDCGMMissing) || !errors.Is(r.total.err, errDCGMMissing) {
+	if r := read(card, sample("board-A")); r.Util.Err != nil || r.Util.Selection.Value != 0 || !errors.Is(r.Used.Err, provider.ErrTelemetryMissing) || !errors.Is(r.Total.Err, provider.ErrTelemetryMissing) {
 		t.Fatalf("observed zero and missing memory: %+v", r)
 	}
 	for _, id := range []string{"1", "DCU-1", "DCU-N/A", "DCU-"} {
 		candidate := card
 		candidate.Identity.DeviceID = id
-		if r := read(candidate, sample(strings.TrimPrefix(id, "DCU-"))); !errors.Is(r.util.err, errDCGMMissing) {
-			t.Errorf("ambiguous registration %q: %v", id, r.util.err)
+		if r := read(candidate, sample(strings.TrimPrefix(id, "DCU-"))); !errors.Is(r.Util.Err, provider.ErrTelemetryMissing) {
+			t.Errorf("ambiguous registration %q: %v", id, r.Util.Err)
 		}
 	}
 	for _, node := range []string{"", "another-worker"} {
 		other := sample("board-A")
 		other.Labels["node"] = node
-		if r := read(card, other); !errors.Is(r.util.err, errDCGMMissing) {
-			t.Errorf("node %q: %v", node, r.util.err)
+		if r := read(card, other); !errors.Is(r.Util.Err, provider.ErrTelemetryMissing) {
+			t.Errorf("node %q: %v", node, r.Util.Err)
 		}
 	}
 	relabeled := sample("board-A")
 	relabeled.Labels["exported_node"] = "original-worker"
-	if r := read(card, relabeled); !errors.Is(r.util.err, errDCGMAmbiguous) {
-		t.Errorf("conflicting exporter and target nodes: %v", r.util.err)
+	if r := read(card, relabeled); !errors.Is(r.Util.Err, provider.ErrTelemetryAmbiguous) {
+		t.Errorf("conflicting exporter and target nodes: %v", r.Util.Err)
 	}
 	old := sample("board-A")
 	old.SampleAt = created.Add(-time.Second)
-	if r := read(card, old); !errors.Is(r.util.err, errDCGMStale) {
-		t.Errorf("previous same-name node: %v", r.util.err)
+	if r := read(card, old); !errors.Is(r.Util.Err, provider.ErrTelemetryStale) {
+		t.Errorf("previous same-name node: %v", r.Util.Err)
 	}
 	second := sample("board-A")
 	second.Labels["instance"] = "duplicate:8000"
-	if r := read(card, sample("board-A"), second); !errors.Is(r.util.err, errDCGMAmbiguous) {
-		t.Errorf("two active sources for board: %v", r.util.err)
+	if r := read(card, sample("board-A"), second); !errors.Is(r.Util.Err, provider.ErrTelemetryAmbiguous) {
+		t.Errorf("two active sources for board: %v", r.Util.Err)
 	}
 	for _, v := range []float64{-1, 101} {
 		invalid := sample("board-A")
 		invalid.Value = v
-		if r := read(card, invalid); !errors.Is(r.util.err, errDCGMInvalid) {
-			t.Errorf("stored invalid percent %v: %v", v, r.util.err)
+		if r := read(card, invalid); !errors.Is(r.Util.Err, provider.ErrTelemetryInvalid) {
+			t.Errorf("stored invalid percent %v: %v", v, r.Util.Err)
 		}
 	}
 }
