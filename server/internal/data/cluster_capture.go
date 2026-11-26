@@ -33,6 +33,10 @@ type ClusterCapture struct {
 func cloneResourcesSnapshot(resources resourceview.Snapshot) resourceview.Snapshot {
 	resources.Nodes = slices.Clone(resources.Nodes)
 	resources.Devices = slices.Clone(resources.Devices)
+	for i := range resources.Devices {
+		resources.Devices[i].BindingAliases = slices.Clone(resources.Devices[i].BindingAliases)
+		resources.Devices[i].ResourceKeys = slices.Clone(resources.Devices[i].ResourceKeys)
+	}
 	resources.VerifiedBindings = slices.Clone(resources.VerifiedBindings)
 	return resources
 }

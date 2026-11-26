@@ -10,9 +10,7 @@ import (
 	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
-	"vgpu/internal/provider/hygon"
-	"vgpu/internal/provider/metax"
-	"vgpu/internal/provider/nvidia"
+	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
@@ -52,17 +50,14 @@ func completeCoverage(c *viewv1.Coverage, complete bool) {
 	}
 }
 func deviceAllocationSource(d resourceview.Device) string {
-	switch d.Identity.Provider {
-	case "NVIDIA", "DCU", "HCU":
-		return "hami_annotation:" + d.Identity.Provider
-	case "Ascend":
-		if d.Model != "" {
-			return "hami_annotation:" + d.Model
-		}
-	case "Metax":
-		return "hami_annotation:Metax-SGPU"
+	src := d.AllocationSource
+	if src == "" {
+		src = d.Identity.Provider
 	}
-	return ""
+	if src == "" {
+		return ""
+	}
+	return "hami_annotation:" + src
 }
 
 // On a mixed node, a request proved to belong exclusively to another
@@ -70,7 +65,7 @@ func deviceAllocationSource(d resourceview.Device) string {
 // Unmapped keys, including opaque claims, still need conservative treatment.
 type nodeAllocationSources map[string]map[string]bool // annotation source -> confirmed resource keys
 
-func (s nodeAllocationSources) add(d resourceview.Device, catalog *devicecatalog.Snapshot) {
+func (s nodeAllocationSources) add(d resourceview.Device) {
 	source := deviceAllocationSource(d)
 	if source == "" {
 		return
@@ -79,28 +74,14 @@ func (s nodeAllocationSources) add(d resourceview.Device, catalog *devicecatalog
 		s[source] = map[string]bool{}
 	}
 	key := d.Resource
-	if key == "" || s[source][key] {
+	if key == "" {
 		return
 	}
 	keys := s[source]
 	keys[key] = true
-	if !catalog.Loaded() {
-		return
-	}
-	var memory, compute string
-	if d.Identity.Provider == "Ascend" {
-		m := catalog.Ascend[d.Model]
-		memory, compute = m.ResourceMemoryName, m.ResourceCoreName
-	} else {
-		names, ok := catalog.ResourceNames[strings.TrimPrefix(source, "hami_annotation:")]
-		if !ok && d.Identity.Provider == "HCU" {
-			names = catalog.ResourceNames["DCU"]
-		}
-		memory, compute = names.Memory, names.Compute
-	}
-	for _, name := range []string{memory, compute} {
-		if name != "" {
-			keys[name] = true
+	for _, rk := range d.ResourceKeys {
+		if rk != "" {
+			keys[rk] = true
 		}
 	}
 }
@@ -116,7 +97,7 @@ func (s nodeAllocationSources) canRequest(source, resource string) bool {
 	}
 	return true // opaque or missing resource key
 }
-func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory, nodeEvidence *viewv1.Coverage, bindingIndex map[deviceKey]int) {
+func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory, nodeEvidence *viewv1.Coverage, bindingIndex map[deviceKey]deviceBinding, dialects []provider.InventoryDialect) {
 	// Inventory and allocation checks only need the affected node and allocation source.
 	nodesByUID := make(map[types.UID]*corev1.Node, len(nodes))
 	for _, node := range nodes {
@@ -135,7 +116,7 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 		if sourcesByNode[id.NodeUID] == nil {
 			sourcesByNode[id.NodeUID] = nodeAllocationSources{}
 		}
-		sourcesByNode[id.NodeUID].add(d, catalog)
+		sourcesByNode[id.NodeUID].add(d)
 		devicesByNode[id.NodeUID] = append(devicesByNode[id.NodeUID], i)
 	}
 	podsByNode := make(map[string][]*podfacts.Facts)
@@ -211,28 +192,20 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 		}
 		if node := nodesByUID[n.UID]; node != nil {
 			for key, raw := range node.Annotations {
-				if raw == "" || (!strings.Contains(key, "register") && key != metax.MetaxSDeviceAnno) {
+				if raw == "" {
 					continue
 				}
-				recognized := key == nvidia.RegisterAnnos || key == hygon.RegisterAnnos || key == hygon.HCURegisterAnnos || key == metax.MetaxSDeviceAnno || strings.HasPrefix(key, "hami.io/node-register-Ascend")
-				for _, word := range catalog.AscendCommonWords() {
-					recognized = recognized || key == "hami.io/node-register-"+word
+				recognized := false
+				for _, dialect := range dialects {
+					if dialect == nil || !dialect.OwnsRegistrationAnnotation(key, catalog) {
+						continue
+					}
+					recognized = true
+					if !observedSources["hami_registration:"+dialect.Name()] {
+						scopeComplete = false
+					}
 				}
-				expectedSource := "hami_registration:Ascend"
-				switch key {
-				case nvidia.RegisterAnnos:
-					expectedSource = "hami_registration:NVIDIA"
-				case hygon.RegisterAnnos:
-					expectedSource = "hami_registration:DCU"
-				case hygon.HCURegisterAnnos:
-					expectedSource = "hami_registration:HCU"
-				case metax.MetaxSDeviceAnno:
-					expectedSource = "hami_registration:Metax"
-				}
-				if recognized && !observedSources[expectedSource] {
-					scopeComplete = false
-				}
-				if strings.HasPrefix(key, "hami.io/") && !recognized {
+				if strings.HasPrefix(key, "hami.io/") && strings.Contains(key, "register") && !recognized {
 					scopeComplete = false
 				}
 			}
@@ -250,7 +223,7 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 	completeCoverage(global, globalComplete)
 	out.DeviceCoverage = global
 }
-func allocationSourceIssue(d resourceview.Device, bindingIndex map[deviceKey]int, sources nodeAllocationSources, pods []*podfacts.Facts) string {
+func allocationSourceIssue(d resourceview.Device, bindingIndex map[deviceKey]deviceBinding, sources nodeAllocationSources, pods []*podfacts.Facts) string {
 	sourceName := deviceAllocationSource(d)
 	reason := ""
 	for _, f := range pods {
@@ -306,12 +279,11 @@ func allocationSourceIssue(d resourceview.Device, bindingIndex map[deviceKey]int
 					needsRecord = false
 				}
 				for _, record := range set.Records {
-					id := recordLookupDeviceID(sourceName, record)
-					if record.NodeUID != d.Identity.NodeUID || record.Node != d.Identity.Node || id == "" {
+					if record.NodeUID != d.Identity.NodeUID || record.Node != d.Identity.Node {
 						reason = "unmatched_allocation_identity"
 						continue
 					}
-					if _, matched := bindingIndex[deviceKey{record.NodeUID, record.Node, sourceName, id}]; !matched {
+					if _, matched := lookupDeviceBinding(bindingIndex, sourceName, record); !matched {
 						reason = "unmatched_allocation_identity"
 					}
 				}

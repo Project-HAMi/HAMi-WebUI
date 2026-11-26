@@ -19,12 +19,7 @@ import (
 	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
-	"vgpu/internal/provider/ascend"
-	"vgpu/internal/provider/hygon"
-	"vgpu/internal/provider/metax"
-	"vgpu/internal/provider/mlu"
-	"vgpu/internal/provider/nvidia"
-	"vgpu/internal/provider/util"
+	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
@@ -46,58 +41,25 @@ func coverage(entity, source string, observed int) *viewv1.Coverage {
 
 // Build assembles a detached Kubernetes inventory. Node continuity and allocator
 // completeness are checked independently. A nil proof leaves coverage unknown.
-func Build(nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory, selectors map[string]labels.Selector, logger *log.Helper, at time.Time, nodeEvidence *viewv1.Coverage) resourceview.Snapshot {
+func Build(nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory, selectors map[string]labels.Selector, logger *log.Helper, at time.Time, nodeEvidence *viewv1.Coverage, dialects []provider.InventoryDialect) resourceview.Snapshot {
 	out := resourceview.Snapshot{At: at, Nodes: []resourceview.Node{}, Devices: []resourceview.Device{}}
 	for _, node := range nodes {
 		if node == nil || node.Name == "" || node.UID == "" {
 			continue
 		}
-		fact := nodeFact(node, catalog)
+		fact := nodeFact(node, catalog, dialects)
 
-		selected := func(provider string) bool {
-			selector, ok := selectors[provider]
-			return ok && selector.Matches(labels.Set(node.Labels))
-		}
-		if selected("NVIDIA") {
-			if raw, present := node.Annotations[nvidia.RegisterAnnos]; present {
-				records, err := nvidia.RegistrationFacts(raw, logger)
-				appendRegistrationFacts(&out, &fact, node, catalog, "NVIDIA", "nvidia", "NVIDIA", records, err)
+		for _, dialect := range dialects {
+			if dialect == nil {
+				continue
 			}
-		}
-		if selected("HCU") {
-			if raw, present := node.Annotations[hygon.HCURegisterAnnos]; present {
-				records, err := hygon.RegistrationFacts(raw, node.Name, true)
-				appendRegistrationFacts(&out, &fact, node, catalog, "HCU", "hygon", "HCU", records, err)
+			selected := true
+			if key := dialect.SelectorKey(); key != "" {
+				selector, ok := selectors[key]
+				selected = ok && selector != nil && selector.Matches(labels.Set(node.Labels))
 			}
-		}
-		if selected("DCU") {
-			if raw, present := node.Annotations[hygon.RegisterAnnos]; present {
-				records, err := hygon.RegistrationFacts(raw, node.Name, false)
-				appendRegistrationFacts(&out, &fact, node, catalog, "DCU", "hygon", "DCU", records, err)
-			}
-		}
-		if selected("Metax") {
-			if raw, present := node.Annotations[metax.MetaxSDeviceAnno]; present {
-				records, err := metax.SGPURegistrationFacts(raw)
-				appendRegistrationFacts(&out, &fact, node, catalog, "Metax", "metax", "Metax-SGPU", records, err)
-			}
-		}
-		if selected("Ascend") {
-			present := false
-			for key := range node.Annotations {
-				if strings.HasPrefix(key, "hami.io/node-register-Ascend") {
-					present = true
-				}
-			}
-			for _, word := range catalog.AscendCommonWords() {
-				if _, ok := node.Annotations["hami.io/node-register-"+word]; ok {
-					present = true
-				}
-			}
-			if present {
-				records, err := ascend.RegistrationFacts(node, catalog)
-				appendRegistrationFacts(&out, &fact, node, catalog, "Ascend", "huawei", "Ascend", records, err)
-			}
+			inv := dialect.ExtractNode(node, catalog, selected, logger, at)
+			appendDialectInventory(&out, &fact, inv)
 		}
 
 		out.Nodes = append(out.Nodes, fact)
@@ -118,10 +80,10 @@ func Build(nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.
 	if nodeEvidence == nil {
 		nodeEvidence = coverage("node", "shared_node_informer", len(out.Nodes))
 	}
-	applySnapshotCoverage(&out, nodes, catalog, pods, nodeEvidence, bindingIndex)
+	applySnapshotCoverage(&out, nodes, catalog, pods, nodeEvidence, bindingIndex, dialects)
 	return out
 }
-func nodeFact(node *corev1.Node, catalog *devicecatalog.Snapshot) resourceview.Node {
+func nodeFact(node *corev1.Node, catalog *devicecatalog.Snapshot, dialects []provider.InventoryDialect) resourceview.Node {
 	schedulable := !node.Spec.Unschedulable
 	f := resourceview.Node{
 		UID: node.UID, Name: node.Name, Schedulable: &schedulable, SystemInfo: node.Status.NodeInfo,
@@ -154,12 +116,12 @@ func nodeFact(node *corev1.Node, catalog *devicecatalog.Snapshot) resourceview.N
 	}
 	names := map[corev1.ResourceName]bool{}
 	for name := range node.Status.Capacity {
-		if acceleratorResource(string(name), catalog) {
+		if acceleratorResource(string(name), catalog, dialects) {
 			names[name] = true
 		}
 	}
 	for name := range node.Status.Allocatable {
-		if acceleratorResource(string(name), catalog) {
+		if acceleratorResource(string(name), catalog, dialects) {
 			names[name] = true
 		}
 	}
@@ -186,19 +148,14 @@ func nodeFact(node *corev1.Node, catalog *devicecatalog.Snapshot) resourceview.N
 	}
 	return f
 }
-func acceleratorResource(name string, catalog *devicecatalog.Snapshot) bool {
+func acceleratorResource(name string, catalog *devicecatalog.Snapshot, dialects []provider.InventoryDialect) bool {
 	if !strings.Contains(name, "/") || strings.Contains(name, corev1.ResourceDefaultNamespacePrefix) {
 		return false
 	}
-	switch name {
-	case "mthreads.com/gpu", "mthreads.com/vgpu", "mthreads.com/sgpu-core", "mthreads.com/sgpu-memory", "nvidia.com/gpu", "nvidia.com/gpu.shared", "amd.com/gpu":
-		return true
-	}
-	if strings.HasPrefix(name, "nvidia.com/mig-") || strings.HasPrefix(name, "amd.com/gpu-") {
-		return true
-	}
-	if strings.HasPrefix(name, mlu.CambriconResourcePrefix) && (strings.HasSuffix(name, mlu.CambriconCoreResource) || strings.HasSuffix(name, mlu.CambriconMemResource)) {
-		return true
+	for _, dialect := range dialects {
+		if dialect != nil && dialect.OwnsResource(name, catalog) {
+			return true
+		}
 	}
 	if !catalog.Loaded() {
 		return false
@@ -211,11 +168,7 @@ func acceleratorResource(name string, catalog *devicecatalog.Snapshot) bool {
 			return true
 		}
 	}
-	if model := catalog.Cambricon; model != nil && (name == model.ResourceCountName || name == model.ResourceMemoryName || name == model.ResourceCoreName) {
-		return true
-	}
-	_, _, configured := catalog.AscendResource(name)
-	return configured
+	return false
 }
 func percentShare(q resourceview.Quantity) resourceview.Quantity {
 	q = q.DeepCopy()
@@ -263,58 +216,85 @@ type deviceKey struct {
 	node, source, id string
 }
 
-func buildDeviceBindingIndex(devices []resourceview.Device) map[deviceKey]int {
-	index := make(map[deviceKey]int, len(devices))
-	for i, device := range devices {
-		id := device.Identity
-		if id.NodeUID == "" || id.Node == "" || id.DeviceID == "" {
+type deviceBinding struct {
+	index     int
+	allowRaw  bool
+	ambiguous bool
+}
+
+func buildDeviceBindingIndex(devices []resourceview.Device) map[deviceKey]deviceBinding {
+	index := make(map[deviceKey]deviceBinding, len(devices))
+	for i := range devices {
+		id := devices[i].Identity
+		source := deviceAllocationSource(devices[i])
+		if id.NodeUID == "" || id.Node == "" || source == "" || id.DeviceID == "" {
 			continue
 		}
-		source := deviceAllocationSource(device)
-		if source == "" {
-			continue
-		}
-		index[deviceKey{id.NodeUID, id.Node, source, id.DeviceID}] = i
-		if id.Provider == "DCU" {
-			if raw, ok := strings.CutPrefix(id.DeviceID, "DCU-"); ok {
-				if minor, err := strconv.Atoi(raw); err == nil && minor >= 0 {
-					index[deviceKey{id.NodeUID, id.Node, source, id.Node + "-dcu-" + strconv.Itoa(minor)}] = i
-				}
+		entry := deviceBinding{index: i, allowRaw: devices[i].RequireVerifiedRawBinding}
+		record := func(alias string) {
+			if alias == "" {
+				return
 			}
+			k := deviceKey{id.NodeUID, id.Node, source, alias}
+			if existing, exists := index[k]; exists {
+				if existing.index != i {
+					existing.ambiguous = true
+					index[k] = existing
+				}
+				return
+			}
+			index[k] = entry
+		}
+		record(id.DeviceID)
+		for _, alias := range devices[i].BindingAliases {
+			record(alias)
 		}
 	}
 	return index
 }
 
-func recordLookupDeviceID(source string, record podfacts.Allocation) string {
-	if record.DeviceID == "" && source == "hami_annotation:Metax-SGPU" {
-		return record.RawDeviceID
+func lookupDeviceBinding(index map[deviceKey]deviceBinding, source string, record podfacts.Allocation) (int, bool) {
+	if record.NodeUID == "" {
+		return -1, false
 	}
-	return record.DeviceID
+	if record.DeviceID != "" {
+		b, ok := index[deviceKey{record.NodeUID, record.Node, source, record.DeviceID}]
+		return b.index, ok && !b.ambiguous
+	}
+	if record.RawDeviceID != "" {
+		if b, ok := index[deviceKey{record.NodeUID, record.Node, source, record.RawDeviceID}]; ok && !b.ambiguous && b.allowRaw {
+			return b.index, true
+		}
+	}
+	return -1, false
 }
 
-func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory, index map[deviceKey]int) {
+const resolvedDeviceIndexPrefix = "\x00idx:"
+
+func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory, index map[deviceKey]deviceBinding) {
 	for _, entry := range pods.Entries {
 		f := entry.Facts
 		if f == nil || f.Terminal {
 			continue
 		}
 		occupancies := entry.Occupancies
-		matchedMetaX := false
+		type resolvedRecord struct {
+			c, s, r int
+			idx     int
+		}
+		var resolved []resolvedRecord
+		needsRewrite := false
 		for ci, c := range f.Containers {
 			for si, set := range c.Allocations {
 				if set.Source == nil || set.Source.State != resourceview.Known {
 					continue
 				}
 				for ri, record := range set.Records {
-					lookupID := recordLookupDeviceID(set.Source.Source, record)
-					if record.NodeUID == "" || lookupID == "" {
-						continue
-					}
-					idx, exists := index[deviceKey{record.NodeUID, record.Node, set.Source.Source, lookupID}]
+					idx, exists := lookupDeviceBinding(index, set.Source.Source, record)
 					if !exists {
 						continue
 					}
+					canonicalID := out.Devices[idx].Identity.DeviceID
 					out.VerifiedBindings = append(out.VerifiedBindings, resourceview.VerifiedDeviceBinding{
 						PodUID:      f.Metadata.UID,
 						Container:   c.Key.Name,
@@ -323,26 +303,38 @@ func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory, inde
 						RawDeviceID: record.RawDeviceID,
 						Device:      out.Devices[idx].Identity,
 					})
-					if set.Source.Source == "hami_annotation:Metax-SGPU" && record.DeviceID == "" {
-						if !matchedMetaX {
-							f = podfacts.Clone(f)
-							matchedMetaX = true
-						}
-						f.Containers[ci].Allocations[si].Records[ri].DeviceID = record.RawDeviceID
+					resolved = append(resolved, resolvedRecord{ci, si, ri, idx})
+					if record.DeviceID != canonicalID || index[deviceKey{record.NodeUID, record.Node, set.Source.Source, canonicalID}].ambiguous {
+						needsRewrite = true
 					}
 				}
 			}
 		}
-		if matchedMetaX {
+		if needsRewrite {
+			f = podfacts.Clone(f)
+			for _, item := range resolved {
+				f.Containers[item.c].Allocations[item.s].Records[item.r].DeviceID = resolvedDeviceIndexPrefix + strconv.Itoa(item.idx)
+			}
 			occupancies = podfacts.EffectiveOccupancies(f)
 		}
 
 		for _, occupancy := range occupancies {
-			i, exists := index[deviceKey{occupancy.NodeUID, occupancy.Node, occupancy.Source, occupancy.DeviceID}]
-			if !exists || occupancy.NodeUID == "" {
+			if occupancy.NodeUID == "" {
 				continue
 			}
-			device := &out.Devices[i]
+			idx := -1
+			exists := false
+			if rawIdx, ok := strings.CutPrefix(occupancy.DeviceID, resolvedDeviceIndexPrefix); ok {
+				if parsed, err := strconv.Atoi(rawIdx); err == nil && parsed >= 0 && parsed < len(out.Devices) {
+					idx, exists = parsed, true
+				}
+			} else if b, ok := index[deviceKey{occupancy.NodeUID, occupancy.Node, occupancy.Source, occupancy.DeviceID}]; ok && !b.ambiguous {
+				idx, exists = b.index, true
+			}
+			if !exists {
+				continue
+			}
+			device := &out.Devices[idx]
 			device.EffectiveOccupancies = append(device.EffectiveOccupancies, resourceview.EffectiveOccupancy{
 				PodUID: f.Metadata.UID, Source: occupancy.Source, Device: device.Identity,
 				Resource: device.Resource, Complete: occupancy.Complete,
@@ -354,126 +346,20 @@ func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory, inde
 	}
 }
 
-func appendRegistrationFacts(out *resourceview.Snapshot, nodeFact *resourceview.Node, node *corev1.Node, catalog *devicecatalog.Snapshot, provider, vendor, configKey string, records []util.RegistrationDevice, err error) {
-	source := &viewv1.SourceState{Source: "hami_registration:" + provider, State: resourceview.Known}
-	if err != nil {
-		source.State, source.Reason = resourceview.Unknown, "unverified"
+func appendDialectInventory(out *resourceview.Snapshot, nodeFact *resourceview.Node, inv provider.NodeInventory) {
+	for _, source := range inv.Sources {
+		if source != nil {
+			nodeFact.Sources = append(nodeFact.Sources, copySource(source))
+		}
 	}
-	nodeFact.Sources = append(nodeFact.Sources, source)
-	for _, record := range records {
-		device := registrationDeviceFact(node, catalog, provider, vendor, configKey, record)
-		device.Coverage.Sources = append(device.Coverage.Sources, proto.Clone(source).(*viewv1.SourceState))
+	invCoverage := &viewv1.Coverage{Sources: inv.Sources}
+	for _, device := range inv.Devices {
+		if device.Coverage == nil {
+			device.Coverage = coverage("device", "shared_node_informer", 1)
+		} else {
+			device.Coverage = proto.Clone(device.Coverage).(*viewv1.Coverage)
+		}
+		addCoverageSources(device.Coverage, invCoverage)
 		out.Devices = append(out.Devices, device)
 	}
-}
-
-func registrationDeviceFact(node *corev1.Node, catalog *devicecatalog.Snapshot, provider, vendor, configKey string, registered util.RegistrationDevice) resourceview.Device {
-	device := registered.Device
-	id := resourceview.DeviceIdentity{Provider: provider, Node: node.Name, NodeUID: node.UID, DeviceID: device.ID}
-	row := resourceview.Device{Identity: id, Kind: "physical", Vendor: vendor, Model: device.Type, Mode: device.Mode, States: map[string]*viewv1.FieldState{}, Sources: []*viewv1.SourceState{{Source: "hami_registration:" + provider, State: resourceview.Known}}, Coverage: coverage("device", "shared_node_informer", 1)}
-	if provider == "NVIDIA" || provider == "Metax" {
-		uuid := device.ID
-		row.UUID = &uuid
-	}
-	if registered.Known["health"] {
-		health := device.Health
-		row.Healthy = &health
-	}
-	row.States["kind"] = known("node_registration", "device")
-	row.States["model"], row.States["mode"], row.States["health"], row.States["uuid"] = known("node_registration", "device"), known("node_registration", "device"), known("node_registration", "device"), known("node_registration", "device")
-	if !registered.Known["mode"] || (provider == "NVIDIA" && device.Mode != nvidia.ModeHamiCore && device.Mode != nvidia.ModeMig) {
-		row.Mode = ""
-		row.States["mode"] = unknown("node_registration", "device", "unverified")
-		row.States["mode"].Params = map[string]string{"raw": registered.RawMode}
-	}
-	if !registered.Known["health"] {
-		row.States["health"] = unknown("node_registration", "device", "unverified")
-	}
-	if !registered.Known["type"] {
-		row.States["model"] = unknown("node_registration", "device", "unverified")
-	}
-	if row.UUID == nil {
-		row.States["uuid"] = unknown("node_registration", "device", "unverified")
-	}
-	if provider == "HCU" {
-		row.Identity.DeviceID = device.AliasId
-	}
-	if provider == "HCU" || provider == "DCU" {
-		serial, _ := hygon.BoardSerial(provider, row.Identity.DeviceID)
-		priority := 0
-		if provider == "HCU" {
-			priority = 1
-		}
-		row.Physical = resourceview.PhysicalAssociation{Domain: "hygon-board", BoardKey: serial, Priority: priority}
-	}
-	row.States["configured"] = unknown("device_config", "device", "missing_config")
-	row.States["resource"] = unknown("device_config", "device", "missing_config")
-	if catalog.Loaded() {
-		names, present := catalog.ResourceNames[configKey]
-		if provider == "HCU" && !present {
-			// Both DCU and HCU use HAMi's explicit hygon configuration. The
-			// exact Node resource check below still has to confirm this mapping.
-			names, present = catalog.ResourceNames["DCU"]
-		}
-		configured := present
-		if provider == "Ascend" {
-			model, exists := catalog.AscendModel(device.Type)
-			names.Count = model.ResourceName
-			configured = exists
-			present = true
-		}
-		if present {
-			row.Configured = &configured
-			row.States["configured"] = known("device_config", "device")
-			if names.Count != "" {
-				_, capacityPresent := node.Status.Capacity[corev1.ResourceName(names.Count)]
-				_, allocatablePresent := node.Status.Allocatable[corev1.ResourceName(names.Count)]
-				if capacityPresent || allocatablePresent {
-					row.Resource = names.Count
-					row.States["resource"] = known("device_config_and_node_status", "device")
-				} else {
-					row.States["resource"] = unknown("device_config_and_node_status", "device", "unverified")
-					row.States["resource"].Params = map[string]string{"expectedResource": names.Count}
-				}
-			}
-		}
-	}
-	row.SlotsCapacity = number(int64(device.Count), "slots", "node_registration", "device")
-	row.ComputeCapacityShare = percentShare(number(int64(device.Devcore), "percent", "node_registration", "device"))
-	row.MemoryCapacityBytes = number(int64(device.Devmem)*1024*1024, "bytes", "node_registration", "device")
-	if !registered.Known["count"] {
-		row.SlotsCapacity = absent("slots", "node_registration", "device", "unverified")
-	}
-	if !registered.Known["devcore"] {
-		row.ComputeCapacityShare = absent("share", "node_registration", "device", "unverified")
-	}
-	if !registered.Known["devmem"] {
-		row.MemoryCapacityBytes = absent("bytes", "node_registration", "device", "unverified")
-	}
-	if provider == "Ascend" {
-		// registerHAMi reports a percentage only in hami-core mode. Template
-		// mode reports physical AI Core count; normalize against the exact model.
-		if device.Mode != ascend.VNPUModeHamiCore {
-			row.ComputeCapacityShare = absent("share", "node_registration_and_device_config", "device", "unverified")
-			if model, exists := catalog.AscendModel(device.Type); exists && device.Mode == ascend.ModeTemplate && registered.Known["devcore"] && model.AICore > 0 {
-				ratio := new(big.Rat).SetFrac64(int64(device.Devcore), int64(model.AICore))
-				decimal := ratio.FloatString(9)
-				if exact, ok := new(big.Rat).SetString(decimal); ok && exact.Cmp(ratio) == 0 {
-					value := resource.MustParse(decimal)
-					row.ComputeCapacityShare = resourceview.Quantity{Value: &value, Unit: "share", State: known("node_registration_and_device_config", "device")}
-				}
-			}
-		}
-		if device.Type == "Ascend910C" {
-			// A 910C registration is a die/module. Source-reviewed paired
-			// allocation does not establish a unique enclosing physical card.
-			row.Kind = "unknown"
-			row.States["kind"] = unknown("node_registration", "device", "unverified")
-			row.States["kind"].Params = map[string]string{"identityLevel": "npu_module", "missing": "physical_card_association"}
-		}
-	}
-	row.MemoryPhysicalBytes = absent("bytes", "telemetry", "device", "unverified")
-	row.MemoryUsedBytes = absent("bytes", "telemetry", "device", "unverified")
-	row.UtilizationRatio = absent("ratio", "telemetry", "device", "unverified")
-	return row
 }

@@ -13,6 +13,7 @@ import (
 	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
+	"vgpu/internal/provider/registry"
 	"vgpu/internal/resourceview"
 )
 
@@ -23,7 +24,7 @@ func TestContinuousEmptyHAMiScopeConfirmsZeroButSourceGapsDoNot(t *testing.T) {
 	n := testNode()
 	cat := testCatalog()
 	buildProof := func(p podfacts.Inventory) resourceview.Snapshot {
-		return Build([]*corev1.Node{n}, cat, p, map[string]labels.Selector{"NVIDIA": labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), completeTestCoverage("node", "shared_node_informer", 1))
+		return Build([]*corev1.Node{n}, cat, p, map[string]labels.Selector{"NVIDIA": labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), completeTestCoverage("node", "shared_node_informer", 1), registry.DefaultInventoryDialects())
 	}
 	empty := podfacts.Inventory{Coverage: completeTestCoverage("pod", "shared_pod_informer", 0)}
 	got := buildProof(empty)
@@ -77,7 +78,7 @@ func TestInventoryContinuityCannotHideMalformedOrUnmappedProviders(t *testing.T)
 	p := podfacts.Inventory{Coverage: completeTestCoverage("pod", "pods", 0)}
 	proof := completeTestCoverage("node", "nodes", 1)
 	buildProof := func() resourceview.Snapshot {
-		return Build([]*corev1.Node{n}, cat, p, map[string]labels.Selector{"NVIDIA": labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Time{}, proof)
+		return Build([]*corev1.Node{n}, cat, p, map[string]labels.Selector{"NVIDIA": labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Time{}, proof, registry.DefaultInventoryDialects())
 	}
 	n.Annotations["hami.io/node-nvidia-register"] = "broken"
 	n.Status.Capacity = nil
@@ -132,7 +133,7 @@ func TestAcceleratorCoverageScopesNodeResources(t *testing.T) {
 			for name, value := range tc.resources {
 				node.Status.Capacity[name] = resource.MustParse(value)
 			}
-			s := Build([]*corev1.Node{node}, catalog, podfacts.Inventory{}, map[string]labels.Selector{"NVIDIA": labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), completeTestCoverage("node", "nodes", 1))
+			s := Build([]*corev1.Node{node}, catalog, podfacts.Inventory{}, map[string]labels.Selector{"NVIDIA": labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), completeTestCoverage("node", "nodes", 1), registry.DefaultInventoryDialects())
 			groups := resourceview.GroupPhysicalDevices(s)
 			if len(groups.AcceleratorNodes) != tc.acceleratorNodes || !s.NodeCoverage.Complete {
 				t.Fatalf("accelerator nodes=%d, node coverage=%v", len(groups.AcceleratorNodes), s.NodeCoverage)
@@ -188,7 +189,7 @@ func TestMixedNodeScopesAllocationEvidenceToItsSource(t *testing.T) {
 				}
 			}
 			pods.Entries[0].Occupancies = podfacts.EffectiveOccupancies(f)
-			got := Build([]*corev1.Node{node}, catalog, pods, selectors, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), completeTestCoverage("node", "shared_node_informer", 1))
+			got := Build([]*corev1.Node{node}, catalog, pods, selectors, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), completeTestCoverage("node", "shared_node_informer", 1), registry.DefaultInventoryDialects())
 			if len(got.Devices) != 2 {
 				t.Fatalf("got %d devices", len(got.Devices))
 			}

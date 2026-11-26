@@ -15,6 +15,7 @@ import (
 	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
+	"vgpu/internal/provider/registry"
 	"vgpu/internal/providerfacts"
 	"vgpu/internal/resourceview"
 )
@@ -102,7 +103,7 @@ func (r *resourceSnapshotSource) Capture(ctx context.Context) (*ClusterCapture, 
 	}
 	nodeCoverage := continuityCoverage("node", "shared_node_informer", nodeProof, nodeObjects, nodeTracker.unchanged(nodeProof))
 	pods.Coverage = continuityCoverage("pod", "shared_pod_informer", podProof, podObjects, podTracker.unchanged(podProof))
-	out := providerfacts.Build(nodes, catalog, pods, r.selectors, r.log, time.Now(), nodeCoverage)
+	out := providerfacts.Build(nodes, catalog, pods, r.selectors, r.log, time.Now(), nodeCoverage, registry.DefaultInventoryDialects())
 	if len(stalePods) > 0 {
 		out.VerifiedBindings = slices.DeleteFunc(out.VerifiedBindings, func(b resourceview.VerifiedDeviceBinding) bool {
 			return stalePods[b.PodUID]
