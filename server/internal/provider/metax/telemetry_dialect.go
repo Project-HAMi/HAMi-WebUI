@@ -34,7 +34,6 @@ func NewTelemetryDialect() provider.TelemetryDialect {
 	return sgpuDialect{}
 }
 
-func (sgpuDialect) ProviderName() string { return metaxProviderName }
 func (sgpuDialect) SourceName() string   { return "mx_exporter" }
 func (sgpuDialect) MemoryScale() float64 { return float64(provider.BytesPerKiB) }
 

@@ -24,7 +24,6 @@ func hygonMetricNames(providerName string) (utilization, used, total string) {
 	return prefix + "_utilizationrate", prefix + "_usedmemory_bytes", prefix + "_memorycap_bytes"
 }
 
-func (d inventoryDialect) ProviderName() string { return d.Name() }
 func (d inventoryDialect) SourceName() string   { return strings.ToLower(d.Name()) + "_exporter" }
 func (inventoryDialect) MemoryScale() float64   { return 1 }
 

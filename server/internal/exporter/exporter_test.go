@@ -8,14 +8,43 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
+	viewv1 "vgpu/api/observability/v1"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/provider/metax"
+	"vgpu/internal/resourceview"
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/prometheus"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+func seedTestObservation(generator *MetricsGenerator, at time.Time, providerName, nodeName, deviceID string, usedMiB, totalMiB, utilPercent *float64) {
+	generator.now = func() time.Time { return at }
+	if generator.observations == nil {
+		generator.observations = resourceview.DeviceObservations{}
+	}
+	state := func() *viewv1.FieldState {
+		return &viewv1.FieldState{State: resourceview.Known, Source: "test", Scope: "device", ObservedAt: timestamppb.New(at)}
+	}
+	var obs resourceview.DeviceObservation
+	if usedMiB != nil {
+		q := resource.NewQuantity(int64(*usedMiB*bytesPerMiB), resource.BinarySI)
+		obs.MemoryUsedBytes = resourceview.Quantity{Value: q, Unit: "bytes", State: state()}
+	}
+	if totalMiB != nil {
+		q := resource.NewQuantity(int64(*totalMiB*bytesPerMiB), resource.BinarySI)
+		obs.MemoryPhysicalBytes = resourceview.Quantity{Value: q, Unit: "bytes", State: state()}
+	}
+	if utilPercent != nil {
+		q := resource.MustParse(fmt.Sprintf("%g", *utilPercent/100))
+		obs.UtilizationRatio = resourceview.Quantity{Value: &q, Unit: "ratio", State: state()}
+	}
+	generator.observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, DeviceID: deviceID}] = obs
+}
 
 type fakeInstantQuerier struct {
 	responses        []*pb.InstantResponse
@@ -191,13 +220,13 @@ func TestDeviceUsageMetricsDistinguishMissingFromIdle(t *testing.T) {
 		{
 			name: "memory",
 			query: func(generator *MetricsGenerator) (float32, error) {
-				return generator.deviceMemUsed(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+				return generator.deviceMemUsed(context.Background(), biz.CambriconGPUDevice, "MLU-1")
 			},
 		},
 		{
 			name: "compute",
 			query: func(generator *MetricsGenerator) (float32, error) {
-				return generator.deviceCoreUtil(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+				return generator.deviceCoreUtil(context.Background(), biz.CambriconGPUDevice, "MLU-1")
 			},
 		},
 	}
@@ -227,13 +256,13 @@ func TestDeviceUsageMetricsRejectNonFiniteSamples(t *testing.T) {
 		read func(*MetricsGenerator) (float32, error)
 	}{
 		{name: "memory used", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.deviceMemUsed(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+			return generator.deviceMemUsed(context.Background(), biz.CambriconGPUDevice, "MLU-1")
 		}},
 		{name: "memory total", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.deviceMemTotal(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+			return generator.deviceMemTotal(context.Background(), biz.CambriconGPUDevice, "MLU-1")
 		}},
 		{name: "compute", read: func(generator *MetricsGenerator) (float32, error) {
-			return generator.deviceCoreUtil(context.Background(), biz.NvidiaGPUDevice, "GPU-1")
+			return generator.deviceCoreUtil(context.Background(), biz.CambriconGPUDevice, "MLU-1")
 		}},
 	}
 	values := []struct {
@@ -498,33 +527,16 @@ func TestMLUAdditionalInfoUsesPhysicalPowerSeries(t *testing.T) {
 }
 
 func TestDeviceMemoryQueriesConvertVendorUnitsToMiB(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider string
-		raw      float32
-		wantMiB  float32
-	}{
-		{name: "NVIDIA already reports MiB", provider: biz.NvidiaGPUDevice, raw: 1024, wantMiB: 1024},
-		{name: "Cambricon reports bytes", provider: biz.CambriconGPUDevice, raw: 1024 * 1024 * 1024, wantMiB: 1024},
-		{name: "Ascend already reports MiB", provider: biz.AscendGPUDevice, raw: 1024, wantMiB: 1024},
-		{name: "Hygon reports bytes", provider: biz.HygonGPUDevice, raw: 1024 * 1024 * 1024, wantMiB: 1024},
-		{name: "MetaX keeps existing KiB assumption", provider: biz.MetaxGPUDevice, raw: 1024 * 1024, wantMiB: 1024},
+	generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: 1024 * 1024 * 1024}}}}}}
+	used, err := generator.deviceMemUsed(context.Background(), biz.CambriconGPUDevice, "device-1")
+	if err != nil || used != 1024 {
+		t.Fatalf("deviceMemUsed() = (%v, %v), want (1024, nil)", used, err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: tt.raw}}}}}}
-			used, err := generator.deviceMemUsed(context.Background(), tt.provider, "device-1")
-			if err != nil || used != tt.wantMiB {
-				t.Fatalf("deviceMemUsed() = (%v, %v), want (%v, nil)", used, err, tt.wantMiB)
-			}
-
-			generator.monitorService = &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: tt.raw}}}}}
-			total, err := generator.deviceMemTotal(context.Background(), tt.provider, "device-1")
-			if err != nil || total != tt.wantMiB {
-				t.Fatalf("deviceMemTotal() = (%v, %v), want (%v, nil)", total, err, tt.wantMiB)
-			}
-		})
+	generator.monitorService = &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: 1024 * 1024 * 1024}}}}}
+	total, err := generator.deviceMemTotal(context.Background(), biz.CambriconGPUDevice, "device-1")
+	if err != nil || total != 1024 {
+		t.Fatalf("deviceMemTotal() = (%v, %v), want (1024, nil)", total, err)
 	}
 }
 
@@ -582,11 +594,9 @@ func TestGenerateDeviceMetricsSeparatesPhysicalAndSchedulableMemory(t *testing.T
 		nodeName      = "node-physical-contract"
 		deviceType    = "A100"
 		schedulableMB = 81920
-		physicalMB    = 40960
-		usedMB        = 10240
 	)
-	usedQuery := `avg(DCGM_FI_DEV_FB_USED{UUID="GPU-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
-	totalQuery := `avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-physical-contract",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
+	physicalMB := float64(40960)
+	usedMB := float64(10240)
 	generator := newDeviceMetricsTestGenerator(
 		&biz.DeviceInfo{
 			Id:       deviceID,
@@ -597,11 +607,9 @@ func TestGenerateDeviceMetricsSeparatesPhysicalAndSchedulableMemory(t *testing.T
 			NodeName: nodeName,
 			Provider: biz.NvidiaGPUDevice,
 		},
-		map[string]*pb.InstantResponse{
-			usedQuery:  instantValue(usedMB),
-			totalQuery: instantValue(physicalMB),
-		},
+		nil,
 	)
+	seedTestObservation(generator, time.Now(), biz.NvidiaGPUDevice, nodeName, deviceID, &usedMB, &physicalMB, nil)
 
 	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
 		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
@@ -616,13 +624,12 @@ func TestGenerateDeviceMetricsSeparatesPhysicalAndSchedulableMemory(t *testing.T
 
 func TestGenerateDeviceMetricsGivesUnconfiguredDevicesNoSchedulableCapacity(t *testing.T) {
 	const deviceID, nodeName = "B3-stale", "npu-node"
+	usedMB, totalMB := float64(1024), float64(65536)
 	generator := newDeviceMetricsTestGenerator(&biz.DeviceInfo{
 		Id: deviceID, AliasId: deviceID, Devmem: 65536, Devcore: 100, Count: 4,
 		Type: "Ascend910B9", NodeName: nodeName, Provider: biz.AscendGPUDevice, Unconfigured: true,
-	}, map[string]*pb.InstantResponse{
-		`avg(npu_chip_info_hbm_used_memory{vdie_id="B3-stale"})`:  instantValue(1024),
-		`avg(npu_chip_info_hbm_total_memory{vdie_id="B3-stale"})`: instantValue(65536),
-	})
+	}, nil)
+	seedTestObservation(generator, time.Now(), biz.AscendGPUDevice, nodeName, deviceID, &usedMB, &totalMB, nil)
 	t.Cleanup(func() { deleteTrackedTestCells(generator) })
 
 	if err := generator.GenerateDeviceMetrics(context.Background()); isFatalRefreshFailure(err) {
@@ -638,43 +645,40 @@ func TestGenerateDeviceMetricsGivesUnconfiguredDevicesNoSchedulableCapacity(t *t
 }
 
 func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t *testing.T) {
+	ptr := func(v float64) *float64 { return &v }
 	tests := []struct {
 		name              string
 		deviceID          string
-		responses         map[string]*pb.InstantResponse
+		usedMB            *float64
+		totalMB           *float64
 		wantPhysicalSize  bool
 		wantPhysicalUsed  bool
 		wantPhysicalUtil  bool
 		wantMemoryScaling bool
 	}{
 		{
-			name:     "used without total",
-			deviceID: "GPU-used-only",
-			responses: map[string]*pb.InstantResponse{
-				`avg(DCGM_FI_DEV_FB_USED{UUID="GPU-used-only",GPU_I_ID="",GPU_CI_ID=""})`: instantValue(512),
-			},
+			name:             "used without total",
+			deviceID:         "GPU-used-only",
+			usedMB:           ptr(512),
 			wantPhysicalUsed: true,
 		},
 		{
-			name:     "total without used",
-			deviceID: "GPU-total-only",
-			responses: map[string]*pb.InstantResponse{
-				`avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-total-only",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-total-only",GPU_I_ID="",GPU_CI_ID=""})`: instantValue(40960),
-			},
+			name:              "total without used",
+			deviceID:          "GPU-total-only",
+			totalMB:           ptr(40960),
 			wantPhysicalSize:  true,
 			wantMemoryScaling: true,
 		},
 		{
 			name:     "zero total is not capacity",
 			deviceID: "GPU-zero-total",
-			responses: map[string]*pb.InstantResponse{
-				`avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-zero-total",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-zero-total",GPU_I_ID="",GPU_CI_ID=""})`: instantValue(0),
-			},
+			totalMB:  ptr(0),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			nodeName := "node-coverage-" + tt.deviceID
 			generator := newDeviceMetricsTestGenerator(
 				&biz.DeviceInfo{
 					Id:       tt.deviceID,
@@ -682,11 +686,12 @@ func TestGenerateDeviceMetricsOmitsPhysicalUtilizationWithoutMatchingCoverage(t 
 					Devcore:  100,
 					Count:    1,
 					Type:     "A100",
-					NodeName: "node-coverage-" + tt.deviceID,
+					NodeName: nodeName,
 					Provider: biz.NvidiaGPUDevice,
 				},
-				tt.responses,
+				nil,
 			)
+			seedTestObservation(generator, time.Now(), biz.NvidiaGPUDevice, nodeName, tt.deviceID, tt.usedMB, tt.totalMB, nil)
 
 			if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
 				t.Fatalf("GenerateDeviceMetrics() error = %v", err)
@@ -892,8 +897,7 @@ func TestCommitCyclePrunesPhysicalMemorySeriesWhenTelemetryDisappears(t *testing
 		nodeName   = "node-prune-physical-contract"
 		deviceType = "A100"
 	)
-	usedQuery := `avg(DCGM_FI_DEV_FB_USED{UUID="GPU-prune-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
-	totalQuery := `avg(DCGM_FI_DEV_FB_FREE{UUID="GPU-prune-physical-contract",GPU_I_ID="",GPU_CI_ID=""})+avg(DCGM_FI_DEV_FB_USED{UUID="GPU-prune-physical-contract",GPU_I_ID="",GPU_CI_ID=""})`
+	usedMB, totalMB := float64(10240), float64(40960)
 	generator := newDeviceMetricsTestGenerator(
 		&biz.DeviceInfo{
 			Id:       deviceID,
@@ -904,11 +908,9 @@ func TestCommitCyclePrunesPhysicalMemorySeriesWhenTelemetryDisappears(t *testing
 			NodeName: nodeName,
 			Provider: biz.NvidiaGPUDevice,
 		},
-		map[string]*pb.InstantResponse{
-			usedQuery:  instantValue(10240),
-			totalQuery: instantValue(40960),
-		},
+		nil,
 	)
+	seedTestObservation(generator, time.Now(), biz.NvidiaGPUDevice, nodeName, deviceID, &usedMB, &totalMB, nil)
 	t.Cleanup(func() { deleteTrackedTestCells(generator) })
 
 	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
@@ -930,7 +932,7 @@ func TestCommitCyclePrunesPhysicalMemorySeriesWhenTelemetryDisappears(t *testing
 
 	// A successful cycle with no vendor memory telemetry must retain the
 	// schedulable inventory while pruning physical series from the registry.
-	generator.monitorService = &fakeInstantQuerier{responsesByQuery: map[string]*pb.InstantResponse{}}
+	generator.observations = nil
 	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
 		t.Fatalf("second GenerateDeviceMetrics() error = %v", err)
 	}
@@ -1076,7 +1078,7 @@ func TestMetaxMultiDeviceUtilizationUsesEachDeviceAllocation(t *testing.T) {
 	}
 	t.Cleanup(func() { deleteTrackedTestCells(generator) })
 
-	if err := generator.generateMetricsForMetaxGPU(context.Background(), containers); err != nil {
+	if err := generator.generateMetricsForMetaxGPU(context.Background(), containers, nil); err != nil {
 		t.Fatalf("generateMetricsForMetaxGPU() error = %v", err)
 	}
 	for _, device := range devices {
@@ -1145,7 +1147,7 @@ func TestMetaxMetricsPairOnlyMetaxAllocations(t *testing.T) {
 				ContainerDevices: tt.devices,
 			}}
 
-			if err := generator.generateMetricsForMetaxGPU(context.Background(), containers); err != nil {
+			if err := generator.generateMetricsForMetaxGPU(context.Background(), containers, nil); err != nil {
 				t.Fatalf("generateMetricsForMetaxGPU() error = %v", err)
 			}
 			for i, sample := range memoryResponse.Data {
@@ -1183,7 +1185,7 @@ func TestNvidiaContainerCoreMetrics(t *testing.T) {
 			fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: tt.raw}}}}}
 			generator := &MetricsGenerator{monitorService: fake}
 
-			used, util, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", tt.allocated)
+			used, util, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", "", "", tt.allocated, nil)
 			if err != nil {
 				t.Fatalf("containerCoreMetrics() error = %v", err)
 			}
@@ -1215,7 +1217,7 @@ func TestNvidiaContainerCoreMetricsRejectsNonFiniteValues(t *testing.T) {
 			fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{{Data: []*pb.Sample{{Value: tt.raw}}}}}
 			generator := &MetricsGenerator{monitorService: fake}
 
-			_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 50)
+			_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", "", "", 50, nil)
 			if !errors.Is(err, errNoMetricData) {
 				t.Fatalf("expected errNoMetricData, got %v", err)
 			}
@@ -1227,7 +1229,7 @@ func TestContainerCoreMetricsRejectsZeroAllocation(t *testing.T) {
 	fake := &fakeInstantQuerier{}
 	generator := &MetricsGenerator{monitorService: fake}
 
-	_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", 0)
+	_, _, err := generator.containerCoreMetrics(context.Background(), biz.NvidiaGPUDevice, "research", "train", "worker", "pod-uid", "GPU-1", "node-1", "", "", 0, nil)
 	if !errors.Is(err, errInvalidCoreCapacity) {
 		t.Fatalf("expected errInvalidCoreCapacity, got %v", err)
 	}
@@ -1238,40 +1240,118 @@ func TestContainerCoreMetricsRejectsZeroAllocation(t *testing.T) {
 
 func TestContainerCoreMetricsKeepsLegacyProviderConversions(t *testing.T) {
 	tests := []struct {
-		name      string
-		provider  string
-		taskValue float32
-		cardValue float32
-		allocated int32
-		wantUsed  float64
-		wantUtil  float64
+		name        string
+		provider    string
+		deviceID    string
+		aliasID     string
+		taskValue   float32
+		cardValue   float64
+		allocated   int32
+		wantUsed    float64
+		wantUtil    float64
+		wantQueries int
+		seedObs     bool
 	}{
-		{name: "Cambricon task metric", provider: biz.CambriconGPUDevice, taskValue: 50, cardValue: 50, allocated: 40, wantUsed: 20, wantUtil: 50},
-		{name: "Cambricon legacy card fallback", provider: biz.CambriconGPUDevice, taskValue: 50, cardValue: 100, allocated: 40, wantUsed: 40, wantUtil: 100},
-		{name: "Hygon task metric", provider: biz.HygonGPUDevice, taskValue: 25, cardValue: 50, allocated: 50, wantUsed: 25, wantUtil: 50},
-		{name: "Metax sGPU task metric", provider: metax.MetaxSGPUDevice, taskValue: 25, cardValue: 50, allocated: 50, wantUsed: 25, wantUtil: 50},
+		{name: "Cambricon task metric", provider: biz.CambriconGPUDevice, deviceID: "device-1", taskValue: 50, cardValue: 50, allocated: 40, wantUsed: 20, wantUtil: 50, wantQueries: 2},
+		{name: "Cambricon legacy card fallback", provider: biz.CambriconGPUDevice, deviceID: "device-1", taskValue: 50, cardValue: 100, allocated: 40, wantUsed: 40, wantUtil: 100, wantQueries: 2},
+		{name: "Hygon board-serial observation", provider: biz.HygonGPUDevice, deviceID: "DCU-board-1", taskValue: 25, cardValue: 50, allocated: 50, wantUsed: 25, wantUtil: 50, wantQueries: 1, seedObs: true},
+		{name: "Hygon numeric DCU legacy card fallback", provider: biz.HygonGPUDevice, deviceID: "legacy-serial", aliasID: "node-1-dcu-3", taskValue: 25, cardValue: 98, allocated: 50, wantUsed: 49, wantUtil: 98, wantQueries: 2},
+		{name: "Hygon numeric DCU with DCU-prefixed serial", provider: biz.HygonGPUDevice, deviceID: "DCU-board-3", aliasID: "node-1-dcu-3", taskValue: 25, cardValue: 98, allocated: 50, wantUsed: 49, wantUtil: 98, wantQueries: 2},
+		{name: "Hygon blank DCU serial skips legacy query", provider: biz.HygonGPUDevice, deviceID: "", aliasID: "node-1-dcu-3", taskValue: 25, cardValue: 98, allocated: 50, wantUsed: 25, wantUtil: 50, wantQueries: 1},
+		{name: "Metax sGPU observation", provider: metax.MetaxSGPUDevice, deviceID: "device-1", taskValue: 25, cardValue: 50, allocated: 50, wantUsed: 25, wantUtil: 50, wantQueries: 1, seedObs: true},
+		{name: "Metax sGPU saturated observation fallback", provider: metax.MetaxSGPUDevice, deviceID: "device-1", taskValue: 25, cardValue: 98, allocated: 50, wantUsed: 49, wantUtil: 98, wantQueries: 1, seedObs: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &fakeInstantQuerier{responses: []*pb.InstantResponse{
 				{Data: []*pb.Sample{{Value: tt.taskValue}}},
-				{Data: []*pb.Sample{{Value: tt.cardValue}}},
+				{Data: []*pb.Sample{{Value: float32(tt.cardValue)}}},
 			}}
 			generator := &MetricsGenerator{monitorService: fake}
+			var observations resourceview.DeviceObservations
+			if tt.seedObs {
+				seedTestObservation(generator, time.Now(), biz.MetaxGPUDevice, "node-1", tt.deviceID, nil, nil, &tt.cardValue)
+				if tt.provider != metax.MetaxSGPUDevice {
+					generator.observations = nil
+					seedTestObservation(generator, time.Now(), tt.provider, "node-1", tt.deviceID, nil, nil, &tt.cardValue)
+				}
+				observations = generator.DeviceObservations()
+			}
 
-			used, util, err := generator.containerCoreMetrics(context.Background(), tt.provider, "research", "train", "worker", "pod-uid", "device-1", "node-1", tt.allocated)
+			used, util, err := generator.containerCoreMetrics(context.Background(), tt.provider, "research", "train", "worker", "pod-uid", tt.deviceID, "node-1", "", tt.aliasID, tt.allocated, observations)
 			if err != nil {
 				t.Fatalf("containerCoreMetrics() error = %v", err)
 			}
 			if used != tt.wantUsed || util != tt.wantUtil {
 				t.Fatalf("containerCoreMetrics() = (%v, %v), want (%v, %v)", used, util, tt.wantUsed, tt.wantUtil)
 			}
-			if len(fake.queries) != 2 {
-				t.Fatalf("legacy provider made %d queries, want 2", len(fake.queries))
+			if len(fake.queries) != tt.wantQueries {
+				t.Fatalf("legacy provider made %d queries, want %d", len(fake.queries), tt.wantQueries)
 			}
 		})
 	}
+}
+
+func TestMetaxNativeContainerCoreMetricsUsesCardSaturationFallback(t *testing.T) {
+	t.Run("queries legacy card utilization when unobserved", func(t *testing.T) {
+		generator := &MetricsGenerator{
+			monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{
+				{Data: []*pb.Sample{{Metric: map[string]string{"uuid": "MX-0", "modelName": "C500", "Hostname": "metax-node"}, Value: 128}}},
+				instantValue(10),
+				instantValue(98),
+			}},
+			log: log.NewHelper(log.NewStdLogger(io.Discard)),
+		}
+		t.Cleanup(func() { deleteTrackedTestCells(generator) })
+		containers := []*biz.Container{{
+			Name: "worker", PodName: "metax-pod", PodUID: "pod-uid", Namespace: "research",
+			ContainerDevices: biz.ContainerDevices{{UUID: "MX-0", Type: metax.MetaxGPUDevice, Usedmem: 1024, Usedcores: 50}},
+		}}
+		if err := generator.generateMetricsForMetaxGPU(context.Background(), containers, nil); err != nil {
+			t.Fatalf("generateMetricsForMetaxGPU() error = %v", err)
+		}
+		labels := []string{"metax-node", metax.MetaxGPUDevice, "C500", "MX-0", "metax-pod", "worker", "research"}
+		assertTrackedGaugeValue(t, generator, HamiContainerCoreUsed, labels, 49)
+		assertTrackedGaugeValue(t, generator, HamiContainerCoreUtil, labels, 98)
+	})
+
+	t.Run("prefers existing observation without re-querying mx_gpu_usage", func(t *testing.T) {
+		querier := &fakeInstantQuerier{query: func(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+			q := req.GetQuery()
+			switch {
+			case strings.HasPrefix(q, "mx_memory_used"):
+				return &pb.InstantResponse{Data: []*pb.Sample{{Metric: map[string]string{"uuid": "MX-0", "modelName": "C500", "Hostname": "metax-node"}, Value: 128}}}, nil
+			case strings.Contains(q, `exported_pod="metax-pod"`):
+				return instantValue(20), nil
+			default:
+				t.Fatalf("unexpected query when observation already exists: %s", q)
+				return nil, nil
+			}
+		}}
+		generator := &MetricsGenerator{
+			monitorService: querier,
+			log:            log.NewHelper(log.NewStdLogger(io.Discard)),
+		}
+		t.Cleanup(func() { deleteTrackedTestCells(generator) })
+		cardUtil := float64(98)
+		seedTestObservation(generator, time.Now(), biz.MetaxGPUDevice, "metax-node", "MX-0", nil, nil, &cardUtil)
+		oldID := resourceview.DeviceIdentity{Provider: biz.MetaxGPUDevice, Node: "metax-node", DeviceID: "MX-0"}
+		newID := oldID
+		newID.NodeUID = "metax-node-uid"
+		generator.observations[newID] = generator.observations[oldID]
+		delete(generator.observations, oldID)
+		containers := []*biz.Container{{
+			Name: "worker", PodName: "metax-pod", PodUID: "pod-uid", NodeUID: "metax-node-uid", Namespace: "research",
+			ContainerDevices: biz.ContainerDevices{{UUID: "MX-0", Type: metax.MetaxGPUDevice, Usedmem: 1024, Usedcores: 50}},
+		}}
+		if err := generator.generateMetricsForMetaxGPU(context.Background(), containers, generator.DeviceObservations()); err != nil {
+			t.Fatalf("generateMetricsForMetaxGPU() error = %v", err)
+		}
+		labels := []string{"metax-node", metax.MetaxGPUDevice, "C500", "MX-0", "metax-pod", "worker", "research"}
+		assertTrackedGaugeValue(t, generator, HamiContainerCoreUsed, labels, 49)
+		assertTrackedGaugeValue(t, generator, HamiContainerCoreUtil, labels, 98)
+	})
 }
 
 func TestGenerateContainerMetricsPreservesMissingAndIdleUsage(t *testing.T) {

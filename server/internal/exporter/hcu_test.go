@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,14 +23,13 @@ func TestHCUPhysicalTelemetryUsesExporterNamesAndByteUnits(t *testing.T) {
 		Provider: biz.HygonHCUDevice, NodeName: "hcu-node", Devmem: 65536, Devcore: 100, Count: 4,
 	}
 	generator := newDeviceMetricsTestGenerator(device, map[string]*pb.InstantResponse{
-		`hcu_power_usage{device_id="serial-01"}`:           {Data: []*pb.Sample{{Metric: map[string]string{"minor_number": "3"}, Value: 150}}},
-		`avg(hcu_memorycap_bytes{device_id="serial-01"})`:  instantValue(64 * 1024 * 1024 * 1024),
-		`avg(hcu_usedmemory_bytes{device_id="serial-01"})`: instantValue(8 * 1024 * 1024 * 1024),
-		`avg(hcu_utilizationrate{device_id="serial-01"})`:  instantValue(35),
-		`avg(hcu_temp{device_id="serial-01"})`:             instantValue(48),
-		`avg(hcu_temp_mem{device_id="serial-01"})`:         instantValue(51),
-		`avg(hcu_power_usage{device_id="serial-01"})`:      instantValue(150),
+		`hcu_power_usage{device_id="serial-01"}`:   {Data: []*pb.Sample{{Metric: map[string]string{"minor_number": "3"}, Value: 150}}},
+		`avg(hcu_temp{device_id="serial-01"})`:     instantValue(48),
+		`avg(hcu_temp_mem{device_id="serial-01"})`: instantValue(51),
+		`avg(hcu_power_usage{device_id="serial-01"})`: instantValue(150),
 	})
+	usedMB, totalMB, utilPct := float64(8192), float64(65536), float64(35)
+	seedTestObservation(generator, time.Now(), biz.HygonHCUDevice, device.NodeName, device.AliasId, &usedMB, &totalMB, &utilPct)
 	t.Cleanup(func() { deleteTrackedTestCells(generator) })
 	if err := generator.GenerateDeviceMetrics(context.Background()); err != nil {
 		t.Fatal(err)

@@ -73,10 +73,8 @@ type PhysicalReadings struct {
 // TelemetryDialect encapsulates vendor-specific Prometheus batching, sample
 // indexing, and physical reading verification behind a uniform contract.
 type TelemetryDialect interface {
-	// Name returns the stable dialect identifier.
+	// Name returns the stable provider identifier matching device.Identity.Provider.
 	Name() string
-	// ProviderName returns the device Identity.Provider value handled by this dialect.
-	ProviderName() string
 	// SourceName returns the provenance Source string emitted on telemetry quantities.
 	SourceName() string
 	// MemoryScale returns the multiplier converting raw memory readings to bytes.

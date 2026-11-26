@@ -37,7 +37,6 @@ func NewTelemetryDialect() provider.TelemetryDialect {
 	return inventoryDialect{}
 }
 
-func (inventoryDialect) ProviderName() string { return NvidiaGPUDevice }
 func (inventoryDialect) SourceName() string   { return "dcgm" }
 func (inventoryDialect) MemoryScale() float64 { return float64(provider.BytesPerMiB) }
 

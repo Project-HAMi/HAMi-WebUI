@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/google/wire"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ProviderSet is service providers.
@@ -35,7 +36,6 @@ const (
 	defaultGenerateTimeout  = 60 * time.Second
 	bytesPerKiB             = 1024
 	bytesPerMiB             = bytesPerKiB * 1024
-	dcgmWholeGPUMatchers    = `GPU_I_ID="",GPU_CI_ID=""`
 )
 
 var (
@@ -128,6 +128,56 @@ func (s *MetricsGenerator) activeTelemetryDialects() []provider.TelemetryDialect
 		return s.telemetryDialects
 	}
 	return registry.DefaultTelemetryDialects()
+}
+
+func lookupDeviceObservation(
+	observations resourceview.DeviceObservations,
+	providerName, nodeName, nodeUID, deviceID, aliasID string,
+) (resourceview.DeviceObservation, bool) {
+	if len(observations) == 0 {
+		return resourceview.DeviceObservation{}, false
+	}
+	if providerName == metax.MetaxSGPUDevice {
+		providerName = biz.MetaxGPUDevice
+	}
+	uid := types.UID(nodeUID)
+	if deviceID != "" {
+		if obs, ok := observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, NodeUID: uid, DeviceID: deviceID}]; ok {
+			return obs, true
+		}
+	}
+	if aliasID != "" && aliasID != deviceID {
+		if obs, ok := observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, NodeUID: uid, DeviceID: aliasID}]; ok {
+			return obs, true
+		}
+	}
+	return resourceview.DeviceObservation{}, false
+}
+
+func isLegacyNumericDCU(nodeName, deviceID, aliasID string) bool {
+	if deviceID == "" || nodeName == "" {
+		return false
+	}
+	minor, ok := strings.CutPrefix(aliasID, nodeName+"-dcu-")
+	return ok && minor != "" && strings.Trim(minor, "0123456789") == ""
+}
+
+func legacyPhysicalQueryAllowed(device *biz.DeviceInfo) bool {
+	if device.Id == "" {
+		return false
+	}
+	switch device.Provider {
+	case biz.CambriconGPUDevice:
+		return true
+	case biz.MetaxGPUDevice:
+		// Native MetaX (metax-tech.com/gpu) has no sGPU node annotation; its AliasId is "<node>-metax-<index>".
+		return device.AliasId != "" && device.AliasId != device.Id
+	case biz.HygonGPUDevice:
+		// Legacy numeric DCU registrations (DCU-N) resolve Id via dcu_temp and AliasId to "<node>-dcu-<N>".
+		return isLegacyNumericDCU(device.NodeName, device.Id, device.AliasId)
+	default:
+		return false
+	}
 }
 
 func (s *MetricsGenerator) clockNow() time.Time {
@@ -237,16 +287,7 @@ func (s *MetricsGenerator) Start(_ context.Context) error {
 		s.log.Infow("msg", "starting metrics collector", "interval", s.interval, "timeout", s.timeout)
 		go func() {
 			defer close(s.done)
-			var wg sync.WaitGroup
-			if s.resourceSource != nil {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					s.loop(ctx, s.refreshResources)
-				}()
-			}
 			s.loop(ctx, s.runOnce)
-			wg.Wait()
 		}()
 	})
 	return nil
@@ -302,10 +343,19 @@ func (s *MetricsGenerator) runOnce(parent context.Context) {
 		s.runMu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(parent, s.timeout)
-	defer cancel()
 	start := s.clockNow()
-	err := s.GenerateMetrics(ctx)
+	var resourceErr error
+	if s.resourceSource != nil && s.promClient != nil {
+		obsCtx, obsCancel := context.WithTimeout(parent, s.timeout)
+		resourceErr = s.refreshResourceSnapshot(obsCtx, s.promClient.QueryAt)
+		obsCancel()
+		if resourceErr != nil && parent.Err() == nil {
+			s.log.Warnw("msg", "resource metrics refresh incomplete", "err", resourceErr)
+		}
+	}
+	genCtx, genCancel := context.WithTimeout(parent, s.timeout)
+	defer genCancel()
+	err := s.GenerateMetrics(genCtx)
 	if isFatalRefreshFailure(err) {
 		s.dropCurrentCycle()
 		finished := s.clockNow()
@@ -317,9 +367,9 @@ func (s *MetricsGenerator) runOnce(parent context.Context) {
 	s.commitCycle()
 	finished := s.clockNow()
 	HamiWebUIMetricsRefreshDurationSeconds.Set(finished.Sub(start).Seconds())
-	if err != nil {
+	if refreshErr := errors.Join(resourceErr, err); refreshErr != nil {
 		HamiWebUIMetricsRefreshSuccess.Set(0)
-		s.log.Warnw("msg", "metrics refresh degraded (best-effort snapshot committed)", "err", err, "elapsed", finished.Sub(start))
+		s.log.Warnw("msg", "metrics refresh degraded (best-effort snapshot committed)", "err", refreshErr, "elapsed", finished.Sub(start))
 		return
 	}
 	HamiWebUIMetricsRefreshLastSuccessTimestampSeconds.Set(float64(finished.Unix()))
@@ -360,16 +410,18 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	if err != nil {
 		return s.recordFatalError(fmt.Errorf("list devices: %w", err))
 	}
+	observations := s.DeviceObservations()
 	for _, device := range deviceInfos {
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
 		}
 		provider := device.Provider
-		deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id)
 		var driver, deviceNo = "", ""
-		if err == nil && deviceAdditional != nil {
-			driver = deviceAdditional.DriverVersion
-			deviceNo = deviceAdditional.DeviceNo
+		if device.Id != "" {
+			if deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id); err == nil && deviceAdditional != nil {
+				driver = deviceAdditional.DriverVersion
+				deviceNo = deviceAdditional.DeviceNo
+			}
 		}
 
 		// HAMi does not schedule unconfigured devices, so they add no schedulable capacity.
@@ -380,29 +432,57 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			s.set(HamiVCoreScaling, float64(device.Devcore)/100, device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			s.set(HamiCoreSize, float64(biz.PhysicalCoreBaselinePerDevice), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
-		deviceMemUsed, memoryUsedErr := s.deviceMemUsed(ctx, provider, device.Id)
-		if memoryUsedErr == nil {
+		var (
+			deviceMemUsed, deviceMemSize, actualCoreUtil float32
+			hasMemUsed, hasMemSize, hasCoreUtil          bool
+		)
+		if obs, observed := lookupDeviceObservation(observations, provider, device.NodeName, device.NodeUid, device.Id, device.AliasId); observed {
+			if usedBytes, known := obs.MemoryUsedBytes.KnownValue(); known {
+				deviceMemUsed = float32(usedBytes / bytesPerMiB)
+				hasMemUsed = true
+			}
+			if totalBytes, known := obs.MemoryPhysicalBytes.KnownValue(); known {
+				deviceMemSize = float32(totalBytes / bytesPerMiB)
+				hasMemSize = true
+			}
+			if utilRatio, known := obs.UtilizationRatio.KnownValue(); known {
+				actualCoreUtil = float32(utilRatio * 100)
+				hasCoreUtil = true
+			}
+		} else if legacyPhysicalQueryAllowed(device) {
+			if v, err := s.deviceMemUsed(ctx, provider, device.Id); err == nil {
+				deviceMemUsed = v
+				hasMemUsed = true
+			}
+			if v, err := s.deviceMemTotal(ctx, provider, device.Id); err == nil {
+				deviceMemSize = v
+				hasMemSize = true
+			}
+			if v, err := s.deviceCoreUtil(ctx, provider, device.Id); err == nil {
+				actualCoreUtil = v
+				hasCoreUtil = true
+			}
+		}
+		if hasMemUsed {
 			s.set(HamiMemoryUsed, float64(deviceMemUsed), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
-		deviceMemSize, memorySizeErr := s.deviceMemTotal(ctx, provider, device.Id)
-		if memorySizeErr == nil && deviceMemSize > 0 {
+		if hasMemSize && deviceMemSize > 0 {
 			s.set(HamiMemorySize, float64(deviceMemSize), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			if !device.Unconfigured {
 				s.set(HamiVMemoryScaling, roundToOneDecimal(float64(float32(device.Devmem)/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			}
-			if memoryUsedErr == nil {
+			if hasMemUsed {
 				s.set(HamiMemoryUtil, roundToOneDecimal(100*float64(deviceMemUsed/deviceMemSize)), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			}
 		}
-		actualCoreUtil, err := s.deviceCoreUtil(ctx, provider, device.Id)
-		if err == nil {
+		if hasCoreUtil {
 			s.set(HamiCoreUsed, float64(actualCoreUtil), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			s.set(HamiCoreUtil, float64(actualCoreUtil), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiCoreUsedAvg, float64(actualCoreUtil), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			s.set(HamiCoreUtilAvg, float64(actualCoreUtil), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
-		actualCoreUtilAvg, err := s.deviceCoreUtil(ctx, provider, device.Id)
-		if err == nil {
-			s.set(HamiCoreUsedAvg, float64(actualCoreUtilAvg), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
-			s.set(HamiCoreUtilAvg, float64(actualCoreUtilAvg), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+		if device.Id == "" {
+			continue
 		}
 		gpuTemperature, err := s.gpuTemperature(ctx, provider, device.Id)
 		if err == nil {
@@ -436,7 +516,7 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	return s.currentRefreshError()
 }
 
-func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, containers []*biz.Container) error {
+func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, containers []*biz.Container, observations resourceview.DeviceObservations) error {
 	for _, c := range containers {
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
@@ -496,8 +576,16 @@ func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, conta
 				if core[i] > 0 {
 					util = roundToOneDecimal(100 * float64(taskCoreUsed) / float64(core[i]))
 				}
-				cardCoreUtil, err := s.deviceCoreUtil(ctx, metax.MetaxGPUDevice, deviceUUID)
-				if err == nil && used != 0 && cardCoreUtil > 95 {
+				var cardCoreUtil float32
+				cardErr := errNoMetricData
+				if obs, observed := lookupDeviceObservation(observations, biz.MetaxGPUDevice, nodeName, c.NodeUID, deviceUUID, ""); observed {
+					if ratio, known := obs.UtilizationRatio.KnownValue(); known {
+						cardCoreUtil, cardErr = float32(ratio*100), nil
+					}
+				} else if deviceUUID != "" {
+					cardCoreUtil, cardErr = s.deviceCoreUtil(ctx, metax.MetaxGPUDevice, deviceUUID)
+				}
+				if cardErr == nil && used != 0 && cardCoreUtil > 95 {
 					used = float64(cardCoreUtil) / 100 * float64(core[i])
 					util = float64(cardCoreUtil)
 				} else if ctx.Err() != nil {
@@ -529,7 +617,8 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 		return s.recordFatalError(fmt.Errorf("list containers: %w", err))
 	}
 
-	if err := s.generateMetricsForMetaxGPU(ctx, containers); isFatalRefreshFailure(err) {
+	observations := s.DeviceObservations()
+	if err := s.generateMetricsForMetaxGPU(ctx, containers, observations); isFatalRefreshFailure(err) {
 		return err
 	}
 	for _, device := range deviceInfos {
@@ -576,7 +665,7 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			s.set(HamiContainerVcoreAllocationKnown, allocationKnown, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
 			if coreAllocationKnown {
 				s.set(HamiContainerVcoreAllocated, float64(core), device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace, podUIDLabel)
-				used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, core)
+				used, util, err := s.containerCoreMetrics(ctx, provider, c.Namespace, c.PodName, c.Name, c.PodUID, device.Id, device.NodeName, device.NodeUid, device.AliasId, core, observations)
 				if err == nil {
 					s.set(HamiContainerCoreUsed, used, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
 					s.set(HamiContainerCoreUtil, util, device.NodeName, provider, device.Type, device.Id, c.PodName, c.Name, c.Namespace)
@@ -642,16 +731,10 @@ func (s *MetricsGenerator) queryRequiredInstantVal(ctx context.Context, query st
 func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
-	case biz.NvidiaGPUDevice:
-		query = fmt.Sprintf("avg(DCGM_FI_DEV_FB_USED{UUID=%q,%s})", deviceUUID, dcgmWholeGPUMatchers)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_used{uuid=\"%s\"})", deviceUUID)
-	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_hbm_used_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
-	case biz.HygonHCUDevice:
-		query = fmt.Sprintf("avg(hcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
@@ -661,23 +744,23 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	if err != nil {
 		return val, err
 	}
-	return deviceMemoryToMiB(provider, val), nil
+	switch provider {
+	case biz.CambriconGPUDevice, biz.HygonGPUDevice:
+		return val / bytesPerMiB, nil
+	case biz.MetaxGPUDevice:
+		return val / bytesPerKiB, nil
+	default:
+		return val, nil
+	}
 }
 
 func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
-	case biz.NvidiaGPUDevice:
-		selector := fmt.Sprintf("{UUID=%q,%s}", deviceUUID, dcgmWholeGPUMatchers)
-		query = fmt.Sprintf("avg(DCGM_FI_DEV_FB_FREE%s)+avg(DCGM_FI_DEV_FB_USED%s)", selector, selector)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_total{uuid=\"%s\"})", deviceUUID)
-	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_hbm_total_memory{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
-	case biz.HygonHCUDevice:
-		query = fmt.Sprintf("avg(hcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
@@ -687,34 +770,24 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	if err != nil {
 		return val, err
 	}
-	return deviceMemoryToMiB(provider, val), nil
-}
-
-func deviceMemoryToMiB(provider string, value float32) float32 {
 	switch provider {
-	case biz.CambriconGPUDevice, biz.HygonGPUDevice, biz.HygonHCUDevice:
-		return value / bytesPerMiB
+	case biz.CambriconGPUDevice, biz.HygonGPUDevice:
+		return val / bytesPerMiB, nil
 	case biz.MetaxGPUDevice:
-		return value / bytesPerKiB
+		return val / bytesPerKiB, nil
 	default:
-		return value
+		return val, nil
 	}
 }
 
 func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
-	case biz.NvidiaGPUDevice:
-		query = fmt.Sprintf("DCGM_FI_DEV_GPU_UTIL{UUID=\"%s\"}", deviceUUID)
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_utilization{uuid=\"%s\"})", deviceUUID)
-	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_utilization{vdie_id=\"%s\"})", deviceUUID)
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
-	case biz.HygonHCUDevice:
-		query = fmt.Sprintf("avg(hcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
-	case biz.MetaxGPUDevice, metax.MetaxGPUDevice, metax.MetaxSGPUDevice:
+	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
 		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
@@ -789,7 +862,12 @@ func hcuTaskQuery(metric, window, deviceUUID, node, namespace, pod, container st
 // For NVIDIA and HCU, used estimates active allocated compute in vCore percentage points
 // and excludes elastic borrowing; util is allocated-compute activity (0-100), not
 // physical-card utilization.
-func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, namespace, pod, container, podUUID, deviceUUID, hostname string, allocatedCore int32) (float64, float64, error) {
+func (s *MetricsGenerator) containerCoreMetrics(
+	ctx context.Context,
+	provider, namespace, pod, container, podUUID, deviceUUID, hostname, nodeUID, aliasID string,
+	allocatedCore int32,
+	observations resourceview.DeviceObservations,
+) (float64, float64, error) {
 	if allocatedCore <= 0 {
 		return 0, 0, errInvalidCoreCapacity
 	}
@@ -822,8 +900,18 @@ func (s *MetricsGenerator) containerCoreMetrics(ctx context.Context, provider, n
 	// Keep the legacy fallback for providers whose task-level metrics still need it.
 	// It must not be used for NVIDIA or HCU: physical-card activity cannot be
 	// attributed to one container when several workloads share the same card.
-	cardCoreUtil, err := s.deviceCoreUtil(ctx, provider, deviceUUID)
-	if err == nil && used != 0 && cardCoreUtil > 95 {
+	var cardCoreUtil float32
+	cardErr := errNoMetricData
+	if provider == biz.CambriconGPUDevice {
+		cardCoreUtil, cardErr = s.deviceCoreUtil(ctx, provider, deviceUUID)
+	} else if obs, observed := lookupDeviceObservation(observations, provider, hostname, nodeUID, deviceUUID, aliasID); observed {
+		if ratio, known := obs.UtilizationRatio.KnownValue(); known {
+			cardCoreUtil, cardErr = float32(ratio*100), nil
+		}
+	} else if provider == biz.HygonGPUDevice && isLegacyNumericDCU(hostname, deviceUUID, aliasID) {
+		cardCoreUtil, cardErr = s.deviceCoreUtil(ctx, provider, deviceUUID)
+	}
+	if cardErr == nil && used != 0 && cardCoreUtil > 95 {
 		used = float64(cardCoreUtil) / 100 * float64(allocatedCore)
 		util = float64(cardCoreUtil)
 	} else if ctx.Err() != nil {
