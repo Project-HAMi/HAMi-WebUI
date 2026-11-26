@@ -14,8 +14,10 @@ import (
 	"vgpu/internal/conf"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
+	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/nvidia"
+	"vgpu/internal/provider/registry"
 	"vgpu/internal/provider/util"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -42,6 +44,16 @@ type podRepo struct {
 	schedulingResourceNames map[corev1.ResourceName]struct{}
 	schedulingEvents        *schedulingEventReader
 	ascend                  ascend.Decoder
+	allocationDialects      []provider.AllocationDialect
+}
+
+func (r *podRepo) factAllocationDialects() []provider.AllocationDialect {
+	if len(r.allocationDialects) > 0 {
+		return r.allocationDialects
+	}
+	return registry.DefaultAllocationDialects(registry.AllocationConfig{
+		AscendAnnotationlessPolicy: r.ascend.Policy,
+	})
 }
 
 func NewPodRepo(data *Data, logger log.Logger, config *conf.Bootstrap, catalog devicecatalog.Source) (*podRepo, error) {
@@ -141,7 +153,7 @@ func (r *podRepo) onAddPod(obj interface{}) {
 }
 
 func (r *podRepo) decodePodInfo(pod *corev1.Pod, node *corev1.Node, snapshot *devicecatalog.Snapshot) *biz.PodInfo {
-	pod = alignNvidiaAllocation(pod, snapshot)
+	pod = nvidia.AlignPodAllocation(pod, snapshot)
 	nodeUID := ""
 	if node != nil && node.Name == pod.Spec.NodeName {
 		nodeUID = string(node.UID)

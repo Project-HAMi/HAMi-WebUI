@@ -68,3 +68,20 @@ func DefaultInventoryDialects() []provider.InventoryDialect {
 		},
 	}
 }
+
+// AllocationConfig supplies runtime policy inputs for Pod allocation dialects.
+type AllocationConfig struct {
+	AscendAnnotationlessPolicy string
+}
+
+// DefaultAllocationDialects returns all built-in vendor AllocationDialects.
+func DefaultAllocationDialects(cfg AllocationConfig) []provider.AllocationDialect {
+	return []provider.AllocationDialect{
+		nvidia.NewAllocationDialect(),
+		hygon.NewHCUAllocationDialect(),
+		hygon.NewDCUAllocationDialect(),
+		metax.NewAllocationDialect(),
+		mlu.NewAllocationDialect(),
+		ascend.NewAllocationDialect(cfg.AscendAnnotationlessPolicy),
+	}
+}

@@ -12,11 +12,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	k8stypes "k8s.io/apimachinery/pkg/types"
-	viewv1 "vgpu/api/observability/v1"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
+	"vgpu/internal/provider"
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/resourceview"
 	"vgpu/internal/service"
@@ -435,9 +435,24 @@ func TestMissingSecondRequestedDevice(t *testing.T) {
 func TestFractionalInitComputeShare(t *testing.T) {
 	catalog := loadedTestCatalog(t, devicecatalog.AscendModel{CommonWord: "TestNPU", AICore: 32,
 		Templates: []devicecatalog.AscendTemplate{{Name: "one-core", AICore: 1, Memory: 8}}})
-	facts := ascend.Facts{CommonWord: "TestNPU", Mode: ascend.ModeTemplate, Template: "one-core", Memory: 8}
-	record := podfacts.Allocation{RawMode: ascend.ModeTemplate, States: map[string]*viewv1.FieldState{}, Quantities: map[string]podfacts.Quantity{"slots": factQuantity(1, "slots"), "memory": factQuantity(8<<20, "bytes")}}
-	applySafeAscendInterpretation(&record, catalog, facts, "")
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "work", Name: "p", UID: "pod-uid", ResourceVersion: "1",
+			Annotations: map[string]string{
+				provider.AssignedNodeAnnotation:     "node",
+				"hami.io/TestNPU-devices-allocated": "card,TestNPU,8,10:;",
+				ascend.VNPUModeAnnotation:           ascend.ModeTemplate,
+				"huawei.com/TestNPU":                `[{"UUID":"card","temp":"one-core","memory":8}]`,
+			},
+		},
+		Spec: corev1.PodSpec{NodeName: "node", Containers: []corev1.Container{{Name: "app"}}},
+	}
+	out := ascend.NewAllocationDialect("").ExtractPodAllocations(provider.PodAllocationContext{
+		Pod:            pod,
+		Catalog:        catalog,
+		ContainerNames: []string{"app"},
+	})
+	record := out.Allocations[0].Records[0]
 	peak := podfacts.Occupancy{DeviceID: "card", Node: "node", NodeUID: "uid", Quantities: record.Quantities}
 	h := biz.NodeHolders{Reservations: map[string]biz.DeviceReservation{}, UncertainDeviceIDs: map[string]bool{}}
 	addInitReservations(&h, map[string]bool{"card": true}, podfacts.NodeAllocation{UID: "uid", Peaks: []podfacts.Occupancy{peak}}, "node", "uid")

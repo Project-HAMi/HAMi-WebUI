@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"vgpu/internal/devicecatalog"
+	"vgpu/internal/podfacts"
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/util"
 	"vgpu/internal/resourceview"
@@ -21,8 +22,56 @@ func NewSGPUDialect() provider.InventoryDialect {
 	return sgpuDialect{}
 }
 
+// NewAllocationDialect returns the AllocationDialect for MetaX GPU and sGPU Pods.
+func NewAllocationDialect() provider.AllocationDialect {
+	return sgpuDialect{}
+}
+
 func (sgpuDialect) Name() string        { return metaxProviderName }
 func (sgpuDialect) SelectorKey() string { return metaxProviderName }
+
+func (sgpuDialect) CatalogResourceNames(_ *devicecatalog.Snapshot) []corev1.ResourceName {
+	return nil
+}
+
+func (sgpuDialect) ExtractPodAllocations(ctx provider.PodAllocationContext) provider.PodAllocationResult {
+	var merged provider.PodAllocationResult
+	specs := []struct {
+		kind          string
+		fallbackKey   string
+		clearDeviceID bool
+	}{
+		{kind: MetaxGPUDevice, fallbackKey: "hami.io/metax-gpu-devices-allocated"},
+		{kind: MetaxSGPUDevice, fallbackKey: "hami.io/metax-sgpu-devices-allocated", clearDeviceID: true},
+	}
+	for _, spec := range specs {
+		key := util.SupportDevices[spec.kind]
+		if key == "" {
+			key = spec.fallbackKey
+		}
+		var enrich func(source *podfacts.AllocationSnapshot, record *podfacts.Allocation, slot, index int, device util.ContainerDevice)
+		if spec.clearDeviceID {
+			enrich = func(_ *podfacts.AllocationSnapshot, record *podfacts.Allocation, _, _ int, _ util.ContainerDevice) {
+				// Requires separately verified inventory association, not telemetry arithmetic.
+				record.DeviceID = ""
+			}
+		}
+		part := provider.DecodeStandardPodAllocation(ctx, provider.StandardAllocationSpec{
+			Kind:               spec.kind,
+			AnnotationKey:      key,
+			UnreadableProvider: metaxProviderName,
+			DecodeContainer: func(rawSlot, _ string) (util.ContainerDevices, error) {
+				return util.DecodeMetaxContainerDevices(rawSlot)
+			},
+			EnrichRecord: enrich,
+		})
+		merged.Allocations = append(merged.Allocations, part.Allocations...)
+		merged.UnreadableAllocations = append(merged.UnreadableAllocations, part.UnreadableAllocations...)
+		merged.RecognizedAnnotationKeys = append(merged.RecognizedAnnotationKeys, part.RecognizedAnnotationKeys...)
+		merged.ResourceNames = append(merged.ResourceNames, part.ResourceNames...)
+	}
+	return merged
+}
 
 func (sgpuDialect) OwnsResource(_ string, _ *devicecatalog.Snapshot) bool {
 	return false
