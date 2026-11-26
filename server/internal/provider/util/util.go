@@ -185,8 +185,14 @@ func DecodeDCUContainerDevices(str, priority, nodeName string) (ContainerDevices
 		if len(parts) < 2 || parts[1] == "" {
 			return ContainerDevice{}, fmt.Errorf("invalid DCU device id %q", seg.id)
 		}
+		uuid := seg.id
+		if len(parts) == 2 && parts[0] == "DCU" {
+			if minor, err := strconv.Atoi(parts[1]); err == nil && minor >= 0 {
+				uuid = fmt.Sprintf("%s-dcu-%d", nodeName, minor)
+			}
+		}
 		return ContainerDevice{
-			Idx: i, UUID: fmt.Sprintf("%s-dcu-%s", nodeName, parts[1]), Type: seg.devType,
+			Idx: i, UUID: uuid, Type: seg.devType,
 			Usedmem: seg.mem, Usedcores: coresOrWholeCard(seg.cores), Priority: priority,
 		}, nil
 	})

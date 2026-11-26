@@ -69,10 +69,24 @@ type NodeResource struct {
 	Capacity, Allocatable Quantity
 }
 
+// VerifiedDeviceBinding records a same-generation, record-level match between
+// a Pod allocation record and a registered device on the same Node UID.
+// Unmatched, conflicting, or stale records stay outside this slice and are
+// never written back to the Pod ledger.
+type VerifiedDeviceBinding struct {
+	PodUID      types.UID
+	Container   string
+	Source      string
+	RecordID    string
+	RawDeviceID string
+	Device      DeviceIdentity
+}
+
 type Snapshot struct {
 	At                           time.Time // assembly time, never substituted for field observation time
 	Nodes                        []Node
 	Devices                      []Device
+	VerifiedBindings             []VerifiedDeviceBinding
 	NodeCoverage, DeviceCoverage *viewv1.Coverage
 }
 

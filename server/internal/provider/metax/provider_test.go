@@ -1,6 +1,7 @@
 package metax
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,9 +11,11 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"vgpu/internal/data/prom"
+	"vgpu/internal/provider/util"
 )
 
 func TestRegisteredSGPUsSurviveMissingTelemetry(t *testing.T) {
@@ -52,5 +55,33 @@ func TestRegisteredSGPUsSurviveMissingTelemetry(t *testing.T) {
 				t.Errorf("card B = %+v", b)
 			}
 		})
+	}
+}
+
+func TestNativeDevicesReturnErrorWhenPrometheusFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "prometheus down", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	logger := log.NewStdLogger(io.Discard)
+	client, err := prom.NewClient(srv.URL, time.Second, prom.HTTPConfig{}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "metax-node"},
+		Status: corev1.NodeStatus{
+			Capacity: corev1.ResourceList{
+				corev1.ResourceName(MeteaxDevice): resource.MustParse("2"),
+			},
+		},
+	}
+	gotErr := func() error {
+		_, err := NewMetax(client, log.NewHelper(logger), "").FetchDevices(node)
+		return err
+	}()
+	if !errors.Is(gotErr, util.ErrTelemetryUnavailable) {
+		t.Fatalf("expected ErrTelemetryUnavailable for native MetaX when Prometheus fails, got %v", gotErr)
 	}
 }

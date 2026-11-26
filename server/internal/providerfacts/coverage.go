@@ -116,7 +116,7 @@ func (s nodeAllocationSources) canRequest(source, resource string) bool {
 	}
 	return true // opaque or missing resource key
 }
-func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory, nodeEvidence *viewv1.Coverage) {
+func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory, nodeEvidence *viewv1.Coverage, bindingIndex map[deviceKey]int) {
 	// Inventory and allocation checks only need the affected node and allocation source.
 	nodesByUID := make(map[types.UID]*corev1.Node, len(nodes))
 	for _, node := range nodes {
@@ -129,7 +129,6 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 		node   types.UID
 		source string
 	}
-	identities := make(map[scope]map[string]bool)
 	sourcesByNode := make(map[types.UID]nodeAllocationSources)
 	for i, d := range out.Devices {
 		id := d.Identity
@@ -138,16 +137,6 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 		}
 		sourcesByNode[id.NodeUID].add(d, catalog)
 		devicesByNode[id.NodeUID] = append(devicesByNode[id.NodeUID], i)
-		key := scope{id.NodeUID, deviceAllocationSource(d)}
-		if identities[key] == nil {
-			identities[key] = make(map[string]bool)
-		}
-		identities[key][id.DeviceID] = true
-		if id.Provider == "DCU" {
-			if minor, ok := strings.CutPrefix(id.DeviceID, "DCU-"); ok {
-				identities[key][id.Node+"-dcu-"+minor] = true
-			}
-		}
 	}
 	podsByNode := make(map[string][]*podfacts.Facts)
 	for _, entry := range pods.Entries {
@@ -164,7 +153,7 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 	}
 	// All cards from one allocator on a node share the same Pod evidence.
 	// Validate those records once per source, not once per physical card.
-	allocationIssues := make(map[scope]string, len(identities))
+	allocationIssues := make(map[scope]string, len(out.Devices))
 	out.NodeCoverage = proto.Clone(nodeEvidence).(*viewv1.Coverage)
 	for i := range out.Devices {
 		d := &out.Devices[i]
@@ -180,7 +169,7 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 		key := scope{d.Identity.NodeUID, deviceAllocationSource(*d)}
 		issue, checked := allocationIssues[key]
 		if !checked {
-			issue = allocationSourceIssue(*d, identities[key], sourcesByNode[key.node], podsByNode[d.Identity.Node])
+			issue = allocationSourceIssue(*d, bindingIndex, sourcesByNode[key.node], podsByNode[d.Identity.Node])
 			allocationIssues[key] = issue
 		}
 		d.AllocationCoverage = allocationCoverage(*d, issue, pods.Coverage, nodeEvidence)
@@ -261,7 +250,7 @@ func applySnapshotCoverage(out *resourceview.Snapshot, nodes []*corev1.Node, cat
 	completeCoverage(global, globalComplete)
 	out.DeviceCoverage = global
 }
-func allocationSourceIssue(d resourceview.Device, identities map[string]bool, sources nodeAllocationSources, pods []*podfacts.Facts) string {
+func allocationSourceIssue(d resourceview.Device, bindingIndex map[deviceKey]int, sources nodeAllocationSources, pods []*podfacts.Facts) string {
 	sourceName := deviceAllocationSource(d)
 	reason := ""
 	for _, f := range pods {
@@ -317,11 +306,12 @@ func allocationSourceIssue(d resourceview.Device, identities map[string]bool, so
 					needsRecord = false
 				}
 				for _, record := range set.Records {
-					id := record.DeviceID
-					if id == "" && d.Identity.Provider == "Metax" {
-						id = record.RawDeviceID
+					id := recordLookupDeviceID(sourceName, record)
+					if record.NodeUID != d.Identity.NodeUID || record.Node != d.Identity.Node || id == "" {
+						reason = "unmatched_allocation_identity"
+						continue
 					}
-					if record.NodeUID != d.Identity.NodeUID || record.Node != d.Identity.Node || !identities[id] {
+					if _, matched := bindingIndex[deviceKey{record.NodeUID, record.Node, sourceName, id}]; !matched {
 						reason = "unmatched_allocation_identity"
 					}
 				}

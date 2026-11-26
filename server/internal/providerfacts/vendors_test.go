@@ -69,9 +69,20 @@ func TestRegisteredVendorIdentityUnitsAndAllocationAssociation(t *testing.T) {
 			if tc.provider == "Metax" && p.Entries[0].Facts.Containers[0].Allocations[0].Records[0].DeviceID != "" {
 				t.Fatal("inventory association mutated ledger")
 			}
+			if len(s.VerifiedBindings) != 3 {
+				t.Fatalf("expected 3 VerifiedDeviceBindings, got %+v", s.VerifiedBindings)
+			}
+			for _, b := range s.VerifiedBindings {
+				if b.PodUID != p.Entries[0].Facts.Metadata.UID || b.Source != "hami_annotation:"+tc.source ||
+					b.Device.NodeUID != n.UID || b.Device.DeviceID != tc.id ||
+					(tc.provider == "Metax" && b.RawDeviceID != tc.allocationID) {
+					t.Fatalf("unexpected VerifiedDeviceBinding: %+v", b)
+				}
+			}
 			n.UID = "replacement"
-			if got := vendorBuild(n, c, p, tc.provider).Devices[0]; len(got.EffectiveOccupancies) != 0 {
-				t.Fatal("UID replacement inherited occupancy")
+			replaced := vendorBuild(n, c, p, tc.provider)
+			if len(replaced.Devices[0].EffectiveOccupancies) != 0 || len(replaced.VerifiedBindings) != 0 {
+				t.Fatal("UID replacement inherited occupancy or verified binding")
 			}
 		})
 	}
@@ -132,6 +143,35 @@ func TestDCUOpaqueRegistrationIDDoesNotRequireTelemetryConversion(t *testing.T) 
 	s := vendorBuild(n, testCatalog(), podfacts.Inventory{}, "DCU")
 	if len(s.Devices) != 1 || s.Devices[0].Identity.DeviceID != "DCU-opaque-serial" || s.Devices[0].UUID != nil {
 		t.Fatal("opaque registration lost or became fake telemetry UUID")
+	}
+	c := testCatalog()
+	c.ResourceNames = map[string]devicecatalog.DeviceResourceNames{"DCU": {Count: "hygon.com/dcunum"}}
+	n.Status.Capacity = corev1.ResourceList{"hygon.com/dcunum": resource.MustParse("4")}
+	p := allocationInventory(t, n)
+	p.Entries[0].Facts.Containers[0].Allocations[0].Source.Source = "hami_annotation:DCU"
+	p.Entries[0].Facts.Containers[0].Allocations[0].Records[0].DeviceID = "node-a-dcu-opaque-serial"
+	p.Entries[0].Occupancies = podfacts.EffectiveOccupancies(p.Entries[0].Facts)
+	mismatched := vendorBuild(n, c, p, "DCU")
+	if len(mismatched.VerifiedBindings) != 0 || mismatched.Devices[0].AllocationCoverage.Complete {
+		t.Fatalf("fabricated opaque DCU alias matched or claimed complete: bindings=%+v cov=%+v", mismatched.VerifiedBindings, mismatched.Devices[0].AllocationCoverage)
+	}
+}
+
+func TestAscendVerifiedBindingMatchesCommonWordAndModel(t *testing.T) {
+	n := testNode()
+	n.Annotations = map[string]string{"hami.io/node-register-Ascend910B3": `[{"id":"npu-die-0","type":"Ascend910B3","count":4,"devmem":65536,"devcore":20,"health":true}]`, "hami-vnpu-core": "false"}
+	n.Status.Capacity = corev1.ResourceList{"huawei.com/Ascend910B": resource.MustParse("4")}
+	c := testCatalog()
+	c.Ascend = map[string]devicecatalog.AscendModel{"Ascend910B3": {CommonWord: "Ascend910B3", AICore: 20, ResourceName: "huawei.com/Ascend910B"}}
+	p := allocationInventory(t, n)
+	p.Entries[0].Facts.Containers[0].Allocations[0].Source.Source = "hami_annotation:Ascend910B3"
+	p.Entries[0].Facts.Containers[0].Allocations[0].Records[0].DeviceID = "npu-die-0"
+	p.Entries[0].Facts.Containers[0].Allocations[0].Records[0].RawDeviceID = "npu-die-0"
+	p.Entries[0].Occupancies = podfacts.EffectiveOccupancies(p.Entries[0].Facts)
+
+	s := vendorBuild(n, c, p, "Ascend")
+	if len(s.VerifiedBindings) != 1 || s.VerifiedBindings[0].Device.Provider != "Ascend" || s.VerifiedBindings[0].Device.DeviceID != "npu-die-0" {
+		t.Fatalf("expected Ascend VerifiedDeviceBinding, got %+v", s.VerifiedBindings)
 	}
 }
 

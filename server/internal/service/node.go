@@ -58,10 +58,11 @@ func (s *NodeService) GetAllNodes(ctx context.Context, req *pb.GetAllNodesReq) (
 	if err != nil {
 		return nil, err
 	}
+	reservations := biz.AggregateDeviceReservations(containers)
 
 	var res = &pb.NodesReply{List: []*pb.NodeReply{}}
 	for _, node := range nodes {
-		nodeReply := s.buildNodeReply(node, containers)
+		nodeReply := s.buildNodeReply(node, reservations)
 
 		if !matchesNodeFilters(nodeReply, filters) {
 			continue
@@ -111,13 +112,13 @@ func (s *NodeService) GetNode(ctx context.Context, req *pb.GetNodeReq) (*pb.Node
 		return nil, err
 	}
 
-	return s.buildNodeReply(node, containers), nil
+	return s.buildNodeReply(node, biz.AggregateDeviceReservations(containers)), nil
 }
 
 // buildNodeReply assembles a node reply from in-memory state only. The caller
-// passes a pre-fetched container list so per-device usage stats reuse one scan
-// rather than re-listing all containers for each device.
-func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container) *pb.NodeReply {
+// passes pre-aggregated per-device reservations so per-device lookups stay O(1)
+// rather than rescanning all containers for every device.
+func (s *NodeService) buildNodeReply(node *biz.Node, reservations map[string]biz.DeviceReservation) *pb.NodeReply {
 	coreUsedKnown := true
 	nodeReply := &pb.NodeReply{
 		Name:                    node.Name,
@@ -143,13 +144,13 @@ func (s *NodeService) buildNodeReply(node *biz.Node, containers []*biz.Container
 			coreTotal += biz.PhysicalCoreBaselinePerDevice
 			memoryTotal += device.Devmem
 		}
-		vGPU, core, memory, coreKnown := biz.ContainersStatisticsInfo(containers, device.AliasId)
-		vgpuUsed += vGPU
-		coreUsed += core
-		if !coreKnown {
+		reservation := reservations[device.AliasId]
+		vgpuUsed += reservation.Slots
+		coreUsed += reservation.Cores
+		if reservation.CoreUnknown {
 			coreUsedKnown = false
 		}
-		memoryUsed += memory
+		memoryUsed += reservation.MemoryMiB
 	}
 	nodeReply.CoreUsedKnown = &coreUsedKnown
 

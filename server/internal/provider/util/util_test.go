@@ -141,6 +141,13 @@ func TestDecodeDCUContainerDevicesRejectsIDWithoutIndex(t *testing.T) {
 	if _, err := DecodeDCUContainerDevices("DCU,DCU,1024,50", "", "node-a"); err == nil {
 		t.Fatal("expected an error for a device id without an index")
 	}
+	got, err := DecodeDCUContainerDevices("DCU-0,DCU,1024,50:DCU-0-extra,DCU,2048,50", "", "node-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0].UUID != "node-a-dcu-0" || got[1].UUID != "DCU-0-extra" {
+		t.Fatalf("DCU IDs = %+v, want [node-a-dcu-0 DCU-0-extra]", got)
+	}
 }
 
 // One vendor's unreadable annotation must neither crash nor hide the pod's other allocations.

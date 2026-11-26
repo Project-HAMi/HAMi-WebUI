@@ -113,11 +113,12 @@ func Build(nodes []*corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.
 		}
 		return a.DeviceID < b.DeviceID
 	})
-	attachAllocations(&out, pods)
+	bindingIndex := buildDeviceBindingIndex(out.Devices)
+	attachAllocations(&out, pods, bindingIndex)
 	if nodeEvidence == nil {
 		nodeEvidence = coverage("node", "shared_node_informer", len(out.Nodes))
 	}
-	applySnapshotCoverage(&out, nodes, catalog, pods, nodeEvidence)
+	applySnapshotCoverage(&out, nodes, catalog, pods, nodeEvidence, bindingIndex)
 	return out
 }
 func nodeFact(node *corev1.Node, catalog *devicecatalog.Snapshot) resourceview.Node {
@@ -262,11 +263,13 @@ type deviceKey struct {
 	node, source, id string
 }
 
-func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory) {
-	index := map[deviceKey]int{}
-
-	for i, device := range out.Devices {
+func buildDeviceBindingIndex(devices []resourceview.Device) map[deviceKey]int {
+	index := make(map[deviceKey]int, len(devices))
+	for i, device := range devices {
 		id := device.Identity
+		if id.NodeUID == "" || id.Node == "" || id.DeviceID == "" {
+			continue
+		}
 		source := deviceAllocationSource(device)
 		if source == "" {
 			continue
@@ -280,7 +283,17 @@ func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory) {
 			}
 		}
 	}
+	return index
+}
 
+func recordLookupDeviceID(source string, record podfacts.Allocation) string {
+	if record.DeviceID == "" && source == "hami_annotation:Metax-SGPU" {
+		return record.RawDeviceID
+	}
+	return record.DeviceID
+}
+
+func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory, index map[deviceKey]int) {
 	for _, entry := range pods.Entries {
 		f := entry.Facts
 		if f == nil || f.Terminal {
@@ -290,14 +303,27 @@ func attachAllocations(out *resourceview.Snapshot, pods podfacts.Inventory) {
 		matchedMetaX := false
 		for ci, c := range f.Containers {
 			for si, set := range c.Allocations {
-				if set.Source == nil || set.Source.Source != "hami_annotation:Metax-SGPU" || set.Source.State != resourceview.Known {
+				if set.Source == nil || set.Source.State != resourceview.Known {
 					continue
 				}
 				for ri, record := range set.Records {
-					if record.DeviceID != "" || record.RawDeviceID == "" || record.NodeUID == "" {
+					lookupID := recordLookupDeviceID(set.Source.Source, record)
+					if record.NodeUID == "" || lookupID == "" {
 						continue
 					}
-					if _, exists := index[deviceKey{record.NodeUID, record.Node, set.Source.Source, record.RawDeviceID}]; exists {
+					idx, exists := index[deviceKey{record.NodeUID, record.Node, set.Source.Source, lookupID}]
+					if !exists {
+						continue
+					}
+					out.VerifiedBindings = append(out.VerifiedBindings, resourceview.VerifiedDeviceBinding{
+						PodUID:      f.Metadata.UID,
+						Container:   c.Key.Name,
+						Source:      set.Source.Source,
+						RecordID:    record.RecordID,
+						RawDeviceID: record.RawDeviceID,
+						Device:      out.Devices[idx].Identity,
+					})
+					if set.Source.Source == "hami_annotation:Metax-SGPU" && record.DeviceID == "" {
 						if !matchedMetaX {
 							f = podfacts.Clone(f)
 							matchedMetaX = true

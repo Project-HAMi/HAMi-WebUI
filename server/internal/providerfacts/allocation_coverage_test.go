@@ -12,7 +12,8 @@ func TestEmptySlotIsCheckedAgainstItsOwnRequest(t *testing.T) {
 	const nvidia = "hami_annotation:NVIDIA"
 	const ascend = "hami_annotation:Ascend910B3"
 	sources := nodeAllocationSources{nvidia: {"nvidia.com/gpu": true}, ascend: {"huawei.com/npu": true}}
-	device := resourceview.Device{Identity: resourceview.DeviceIdentity{Provider: "NVIDIA", Node: node.Name, NodeUID: node.UID}}
+	device := resourceview.Device{Identity: resourceview.DeviceIdentity{Provider: "NVIDIA", Node: node.Name, NodeUID: node.UID, DeviceID: "GPU-a"}}
+	bindingIndex := buildDeviceBindingIndex([]resourceview.Device{device})
 
 	for _, tc := range []struct {
 		name, resource string
@@ -34,7 +35,7 @@ func TestEmptySlotIsCheckedAgainstItsOwnRequest(t *testing.T) {
 			if tc.resource != "" {
 				slot.Requests = []podfacts.Request{{Resource: tc.resource, Positive: true}}
 			}
-			issue := allocationSourceIssue(device, map[string]bool{"GPU-a": true}, sources, []*podfacts.Facts{facts})
+			issue := allocationSourceIssue(device, bindingIndex, sources, []*podfacts.Facts{facts})
 			if (issue != "") != tc.gap {
 				t.Fatalf("coverage issue %q, want gap %v", issue, tc.gap)
 			}

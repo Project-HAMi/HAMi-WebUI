@@ -34,7 +34,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 	// Fetch the container list once. StatisticsByDeviceId re-lists all containers
 	// on every call, so calling it per device turned this into an O(devices)
 	// re-scan; at large scale (100+ cards) that alone was seconds of work.
-	var containers []*biz.Container
+	var reservations map[string]biz.DeviceReservation
 	var scoped *biz.NodeHolders
 	var unreadable map[string]bool
 	if filters.NodeUid != "" {
@@ -48,10 +48,11 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		unreadable = holders.UnreadableDeviceIDs(deviceInfos, filters.NodeName, filters.NodeUid)
 		scoped = &holders
 	} else {
-		containers, err = s.pod.ListAllContainers(ctx)
+		containers, err := s.pod.ListAllContainers(ctx)
 		if err != nil {
 			return nil, err
 		}
+		reservations = biz.AggregateDeviceReservations(containers)
 	}
 
 	var res = &pb.GPUsReply{List: []*pb.GPUReply{}}
@@ -98,7 +99,9 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 				gpu.HasInitReservation = &reservation.HasInit
 			}
 		} else {
-			gpu.VgpuUsed, gpu.CoreUsed, gpu.MemoryUsed, coreKnown = biz.ContainersStatisticsInfo(containers, device.AliasId)
+			reservation := reservations[device.AliasId]
+			gpu.VgpuUsed, gpu.CoreUsed, gpu.MemoryUsed = reservation.Slots, reservation.Cores, reservation.MemoryMiB
+			coreKnown = !reservation.CoreUnknown
 		}
 		gpu.CoreUsedKnown = &coreKnown
 
@@ -145,39 +148,42 @@ func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq)
 }
 
 func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPUReply, error) {
+	deviceUid := strings.TrimSpace(req.GetUid())
+	if deviceUid == "" {
+		return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Device uid is required")
+	}
 	devices, err := s.node.ListAllDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	gpu := &pb.GPUReply{}
 	for _, device := range devices {
-		deviceUid := strings.Trim(req.Uid, " ")
-		if deviceUid == "" || deviceUid != device.Id {
+		if deviceUid != device.Id {
 			continue
 		}
-		gpu.Uuid = device.Id
-		gpu.NodeName = device.NodeName
-		gpu.Type = device.Type
-		gpu.VgpuTotal = device.Count
-		gpu.CoreTotal = biz.PhysicalCoreBaselinePerDevice
-		gpu.MemoryTotal = device.Devmem
-		gpu.NodeUid = device.NodeUid
-		gpu.Health = device.Health
-		gpu.Mode = device.Mode
-		gpu.Unconfigured = device.Unconfigured
-		gpu.Vendor = device.Provider
-		gpu.MigProfiles = migProfiles(device.MigProfiles)
-
 		vGPU, core, memory, coreKnown, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
-		if err == nil {
-			gpu.VgpuUsed = vGPU
-			gpu.CoreUsed = core
-			gpu.CoreUsedKnown = &coreKnown
-			gpu.MemoryUsed = memory
+		if err != nil {
+			return nil, err
 		}
-		return gpu, nil
+		return &pb.GPUReply{
+			Uuid:          device.Id,
+			NodeName:      device.NodeName,
+			Type:          device.Type,
+			VgpuTotal:     device.Count,
+			CoreTotal:     biz.PhysicalCoreBaselinePerDevice,
+			MemoryTotal:   device.Devmem,
+			NodeUid:       device.NodeUid,
+			Health:        device.Health,
+			Mode:          device.Mode,
+			Unconfigured:  device.Unconfigured,
+			Vendor:        device.Provider,
+			MigProfiles:   migProfiles(device.MigProfiles),
+			VgpuUsed:      vGPU,
+			CoreUsed:      core,
+			CoreUsedKnown: &coreKnown,
+			MemoryUsed:    memory,
+		}, nil
 	}
-	return gpu, nil
+	return nil, kratoserrors.NotFound("RESOURCE_GPU_NOT_FOUND", "Accelerator device was not found")
 }
 
 func migProfiles(profiles []biz.MigProfile) []*pb.MigProfile {

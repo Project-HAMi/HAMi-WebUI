@@ -2,8 +2,8 @@ package biz
 
 import (
 	"context"
+
 	"github.com/go-kratos/kratos/v2/log"
-	"github.com/gookit/goutil/arrutil"
 )
 
 type SummaryRepo interface {
@@ -41,7 +41,8 @@ func (t *SummaryUseCase) GetGPUSummary(ctx context.Context, deviceId string, nod
 	if err != nil {
 		return res, err
 	}
-	var nodeList []string
+	reservations := AggregateDeviceReservations(containers)
+	seenNodes := make(map[string]struct{})
 	for _, device := range deviceInfos {
 		if deviceType != "" && deviceType != device.Type {
 			continue
@@ -59,17 +60,16 @@ func (t *SummaryUseCase) GetGPUSummary(ctx context.Context, deviceId string, nod
 			res.VgpuTotal = res.VgpuTotal + device.Count
 		}
 
-		vGPU, core, memory, coreKnown := ContainersStatisticsInfo(containers, device.AliasId)
-		res.CoreUsed = res.CoreUsed + core
-		if !coreKnown {
+		reservation := reservations[device.AliasId]
+		res.CoreUsed += reservation.Cores
+		if reservation.CoreUnknown {
 			res.CoreUsedKnown = false
 		}
-		res.MemoryUsed = res.MemoryUsed + memory
-		res.VgpuUsed = res.VgpuUsed + vGPU
+		res.MemoryUsed += reservation.MemoryMiB
+		res.VgpuUsed += reservation.Slots
 		res.GpuCount++
-		nodeList = append(nodeList, device.NodeUid)
+		seenNodes[device.NodeUid] = struct{}{}
 	}
-	nodeList = arrutil.Unique(nodeList)
-	res.NodeCount = int32(len(nodeList))
+	res.NodeCount = int32(len(seenNodes))
 	return res, nil
 }

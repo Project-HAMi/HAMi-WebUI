@@ -30,6 +30,13 @@ type ClusterCapture struct {
 	ByContainer map[podfacts.ContainerKey]*podfacts.Container
 }
 
+func cloneResourcesSnapshot(resources resourceview.Snapshot) resourceview.Snapshot {
+	resources.Nodes = slices.Clone(resources.Nodes)
+	resources.Devices = slices.Clone(resources.Devices)
+	resources.VerifiedBindings = slices.Clone(resources.VerifiedBindings)
+	return resources
+}
+
 // BuildClusterCapture constructs an immutable ClusterCapture and populates its
 // primary-key indexes in a single pass.
 func BuildClusterCapture(
@@ -39,8 +46,7 @@ func BuildClusterCapture(
 	pods podfacts.Inventory,
 	capturedAt time.Time,
 ) *ClusterCapture {
-	resources.Nodes = slices.Clone(resources.Nodes)
-	resources.Devices = slices.Clone(resources.Devices)
+	resources = cloneResourcesSnapshot(resources)
 	pods.Entries = slices.Clone(pods.Entries)
 	for i := range pods.Entries {
 		if pods.Entries[i].Facts == nil {
