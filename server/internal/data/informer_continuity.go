@@ -56,7 +56,11 @@ func newInformerContinuity(resource ...string) *informerContinuity {
 }
 func newTrackedInformerFactory(client kubernetes.Interface, resync time.Duration) (informers.SharedInformerFactory, *sharedContinuity) {
 	state := &sharedContinuity{pods: newInformerContinuity("pods"), nodes: newInformerContinuity("nodes")}
-	return informers.NewSharedInformerFactory(trackedInformerClient{Interface: client, state: state}, resync), state
+	return informers.NewSharedInformerFactoryWithOptions(
+		trackedInformerClient{Interface: client, state: state},
+		resync,
+		informers.WithTransform(trimInformerObject),
+	), state
 }
 func (s *informerContinuity) invalidate(reason string) {
 	s.mu.Lock()
