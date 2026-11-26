@@ -415,6 +415,7 @@ func (r *podRepo) assignedNode(pod *corev1.Pod) *corev1.Node {
 	node, err := r.nodeLister.Get(pod.Spec.NodeName)
 	if apierrors.IsNotFound(err) {
 		// The node watch can lag the Pod watch on the initial decode.
+		// Read directly as a detached object; never write fallback Nodes back into the informer cache.
 		ctx, cancel := context.WithTimeout(context.Background(), nodeReadTimeout)
 		node, err = r.data.k8sCl.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
 		cancel()
