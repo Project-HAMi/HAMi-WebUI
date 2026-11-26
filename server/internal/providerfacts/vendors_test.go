@@ -17,11 +17,12 @@ import (
 	"vgpu/internal/provider/ascend"
 	"vgpu/internal/provider/hygon"
 	"vgpu/internal/provider/metax"
+	"vgpu/internal/provider/registry"
 	"vgpu/internal/resourceview"
 )
 
 func vendorBuild(n *corev1.Node, c *devicecatalog.Snapshot, p podfacts.Inventory, provider string) resourceview.Snapshot {
-	return Build([]*corev1.Node{n}, c, p, map[string]labels.Selector{provider: labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil)
+	return Build([]*corev1.Node{n}, c, p, map[string]labels.Selector{provider: labels.Everything()}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil, registry.DefaultInventoryDialects())
 }
 func TestRegisteredVendorIdentityUnitsAndAllocationAssociation(t *testing.T) {
 	for _, tc := range []struct{ provider, key, raw, id, allocationID, source, configKey, countResource string }{
@@ -199,7 +200,7 @@ func TestMThreadsResourceOnlyNode(t *testing.T) {
 	for _, name := range []string{"mthreads.com/vgpu", "mthreads.com/gpu", "mthreads.com/sgpu-core", "mthreads.com/sgpu-memory", customName} {
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "a"}}
 		node.Status.Capacity = corev1.ResourceList{corev1.ResourceName(name): resource.MustParse("16")}
-		f := Build([]*corev1.Node{node}, catalog, podfacts.Inventory{}, nil, nil, time.Now(), nil)
+		f := Build([]*corev1.Node{node}, catalog, podfacts.Inventory{}, nil, nil, time.Now(), nil, registry.DefaultInventoryDialects())
 		if len(f.Devices) != 0 || len(f.Nodes) != 1 || len(f.Nodes[0].Resources) != 1 || f.Nodes[0].Resources[0].Resource != name {
 			t.Fatalf("advertised %s: got %d physical records, pools=%v", name, len(f.Devices), f.Nodes[0].Resources)
 		}
@@ -213,7 +214,7 @@ func TestHygonHCUAndDCUOverlapGroupsViaPhysicalAssociation(t *testing.T) {
 		hygon.RegisterAnnos:    "DCU-board-A,4,32768,100,DCU-Z100,0,true:DCU-0,4,32768,100,DCU-Z100,0,true:",
 	}
 	selectors := map[string]labels.Selector{"HCU": labels.Everything(), "DCU": labels.Everything()}
-	snap := Build([]*corev1.Node{node}, testCatalog(), podfacts.Inventory{}, selectors, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil)
+	snap := Build([]*corev1.Node{node}, testCatalog(), podfacts.Inventory{}, selectors, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil, registry.DefaultInventoryDialects())
 	inv := resourceview.GroupPhysicalDevices(snap)
 	if !inv.UnresolvedOnNode[node.UID] {
 		t.Fatal("expected slot-only DCU-0 to be flagged unresolved while HCU is active")

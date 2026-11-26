@@ -35,6 +35,10 @@ type Device struct {
 	Vendor, Model, Mode                      string
 	Configured, Healthy                      *bool
 	Resource                                 string
+	AllocationSource                         string
+	BindingAliases                           []string
+	ResourceKeys                             []string
+	RequireVerifiedRawBinding                bool
 	SlotsCapacity                            Quantity
 	ComputeCapacityShare                     Quantity
 	MemoryCapacityBytes, MemoryPhysicalBytes Quantity

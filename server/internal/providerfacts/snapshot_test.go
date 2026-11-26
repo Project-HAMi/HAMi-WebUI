@@ -15,6 +15,7 @@ import (
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/podfacts"
 	"vgpu/internal/provider/nvidia"
+	"vgpu/internal/provider/registry"
 	"vgpu/internal/resourceview"
 )
 
@@ -25,7 +26,7 @@ func testCatalog() *devicecatalog.Snapshot {
 	return &devicecatalog.Snapshot{State: devicecatalog.StateLoaded, ResourceNames: map[string]devicecatalog.DeviceResourceNames{"NVIDIA": {Count: "nvidia.com/gpu"}}}
 }
 func build(node *corev1.Node, catalog *devicecatalog.Snapshot, pods podfacts.Inventory) resourceview.Snapshot {
-	return Build([]*corev1.Node{node}, catalog, pods, map[string]labels.Selector{"NVIDIA": labels.SelectorFromSet(labels.Set{"gpu": "on"})}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil)
+	return Build([]*corev1.Node{node}, catalog, pods, map[string]labels.Selector{"NVIDIA": labels.SelectorFromSet(labels.Set{"gpu": "on"})}, log.NewHelper(log.NewStdLogger(io.Discard)), time.Unix(100, 0), nil, registry.DefaultInventoryDialects())
 }
 func TestNodeUnitsDoNotCreatePhysicalDevicesOrProviders(t *testing.T) {
 	node := testNode()
