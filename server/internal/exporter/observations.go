@@ -29,6 +29,9 @@ func (s *MetricsGenerator) publishedObservations() resourceview.DeviceObservatio
 // new metric collector consume this detached view of the same published round.
 func (s *MetricsGenerator) DeviceObservations() resourceview.DeviceObservations {
 	published := s.publishedObservations()
+	if len(published) == 0 {
+		return resourceview.DeviceObservations{}
+	}
 	result := make(resourceview.DeviceObservations, len(published))
 	now := s.clockNow()
 	for identity, observation := range published {

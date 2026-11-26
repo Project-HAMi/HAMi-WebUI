@@ -31,7 +31,6 @@ func NewTelemetryDialect() provider.TelemetryDialect {
 	return inventoryDialect{}
 }
 
-func (inventoryDialect) ProviderName() string { return AscendDevice }
 func (inventoryDialect) SourceName() string   { return "npu_exporter" }
 func (inventoryDialect) MemoryScale() float64 { return float64(provider.BytesPerMiB) }
 

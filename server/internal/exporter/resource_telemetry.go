@@ -122,7 +122,7 @@ func telemetryPlan(devices []resourceview.Device, dialects []provider.TelemetryD
 		if dialect == nil {
 			continue
 		}
-		providerName := dialect.ProviderName()
+		providerName := dialect.Name()
 		byKey := map[string][]resourceview.Device{}
 		for _, d := range devices {
 			id := d.Identity
@@ -155,14 +155,6 @@ func telemetryPlan(devices []resourceview.Device, dialects []provider.TelemetryD
 		}
 	}
 	return plan
-}
-
-func (s *MetricsGenerator) refreshResources(parent context.Context) {
-	ctx, cancel := context.WithTimeout(parent, s.timeout)
-	defer cancel()
-	if err := s.refreshResourceSnapshot(ctx, s.promClient.QueryAt); err != nil && parent.Err() == nil {
-		s.log.Warnw("msg", "resource metrics refresh incomplete", "err", err)
-	}
 }
 
 func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query queryAtFunc) error {
