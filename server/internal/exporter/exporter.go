@@ -115,12 +115,20 @@ type MetricsGenerator struct {
 
 	now func() time.Time
 
-	resourceSource   resourceview.SnapshotSource
+	resourceSource    resourceview.SnapshotSource
 	telemetryDialects []provider.TelemetryDialect
-	observationsMu   sync.RWMutex
-	resourceSnapshot *resourceview.Snapshot
-	physicalGroups   []resourceview.PhysicalGroup
-	observations     resourceview.DeviceObservations
+	batchTimeout      time.Duration
+	observationsMu    sync.RWMutex
+	resourceSnapshot  *resourceview.Snapshot
+	physicalGroups    []resourceview.PhysicalGroup
+	observations      resourceview.DeviceObservations
+}
+
+func (s *MetricsGenerator) telemetryChunkTimeout() time.Duration {
+	if s.batchTimeout > 0 {
+		return s.batchTimeout
+	}
+	return telemetryBatchTimeout
 }
 
 func (s *MetricsGenerator) activeTelemetryDialects() []provider.TelemetryDialect {
