@@ -1,0 +1,6 @@
+{
+  "code": 400,
+  "reason": "INVALID_ARGUMENT",
+  "message": "invalid telemetry trends query: unsupported scope \"invalid\"",
+  "metadata": {}
+}

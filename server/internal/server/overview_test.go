@@ -27,7 +27,7 @@ func (s overviewFixture) Snapshot(context.Context) (resourceview.Snapshot, error
 }
 func newOverviewHTTPFixture(complete bool) nethttp.Handler {
 	overview := service.NewOverviewService(resourceview.WithObservations(overviewFixture{complete: complete}, nil))
-	return NewHTTPServer(&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}}, nil, nil, nil, nil, nil, nil, nil, overview, nil, prometheus.NewRegistry(), nil).Handler
+	return NewHTTPServer(&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}}, nil, nil, nil, nil, nil, nil, nil, overview, nil, nil, prometheus.NewRegistry(), nil).Handler
 }
 
 func TestOverviewHTTPContract(t *testing.T) {
