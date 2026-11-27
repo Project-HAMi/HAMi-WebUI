@@ -31,5 +31,10 @@
       }
     ],
     "fields": {}
-  }
+  },
+  "computeUtilizationPercent": 42,
+  "memoryUsagePercent": 25,
+  "providers": [
+    "NVIDIA"
+  ]
 }

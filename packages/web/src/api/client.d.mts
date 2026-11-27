@@ -150,6 +150,9 @@ export interface NodeItem {
   inventoryCoverage?: Coverage;
   coreAllocationPercent?: number;
   memoryAllocationPercent?: number;
+  computeUtilizationPercent?: number;
+  memoryUsagePercent?: number;
+  providers?: string[];
 }
 
 export interface NodesReply {

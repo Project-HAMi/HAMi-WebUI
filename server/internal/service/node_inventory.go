@@ -37,6 +37,7 @@ func (s *NodeService) inventoryNodeRows(ctx context.Context, uid string, filters
 			IsSchedulable:           node.schedulable,
 			CardCnt:                 observedCount(node.deviceCoverage),
 			Type:                    node.modelNames(),
+			Providers:               node.providerNames(),
 			InventoryCoverage:       node.deviceCoverage,
 			Ip:                      n.InternalIP,
 			OsImage:                 n.SystemInfo.OSImage,
@@ -56,6 +57,9 @@ func (s *NodeService) inventoryNodeRows(ctx context.Context, uid string, filters
 		if node.allocations != nil {
 			node.allocations.fill(row)
 		}
+		if node.usage != nil {
+			node.usage.fill(row)
+		}
 		reply.List = append(reply.List, row)
 		if filtered {
 			countRow(reply.InventoryCoverage, node.states)
@@ -67,10 +71,31 @@ func (s *NodeService) inventoryNodeRows(ctx context.Context, uid string, filters
 	return reply, nil
 }
 
+func canonicalNodeProvider(provider string) string {
+	trimmed := strings.TrimSpace(provider)
+	switch strings.ToUpper(trimmed) {
+	case "DCU", "HCU":
+		return "Hygon"
+	default:
+		return trimmed
+	}
+}
+
 func observeNodeAllocation(n *inventoryNode, group resourceview.PhysicalGroup) string {
 	// No telemetry field histograms are required by the node pages.
 	countRow(n.deviceCoverage, nil)
 	model, _ := group.Model()
+	if provider := canonicalNodeProvider(group.Members[0].Identity.Provider); provider != "" {
+		if n.providers == nil {
+			n.providers = make(map[string]struct{})
+		}
+		n.providers[provider] = struct{}{}
+	}
+	sample := group.Observation(deviceObservation)
+	if n.usage == nil {
+		n.usage = &nodeUsage{}
+	}
+	n.usage.add(sample)
 	// Schedulable capacity belongs to a single configured registration.
 	if len(group.Members) != 1 {
 		return model
@@ -87,6 +112,36 @@ func observeNodeAllocation(n *inventoryNode, group resourceview.PhysicalGroup) s
 	n.allocations.compute.add(device.ComputeCapacityShare, used.Compute, covered)
 	n.allocations.memory.add(device.MemoryCapacityBytes, used.Memory, covered)
 	return model
+}
+
+type nodeUsage struct {
+	utilSum, memUsedSum, memPhysSum float64
+	utilCount, memCount             int
+}
+
+func (u *nodeUsage) add(sample resourceview.DeviceObservation) {
+	if ratio, ok := sample.UtilizationRatio.KnownValue(); ok && validFiniteNonNeg(ratio) {
+		u.utilSum += ratio
+		u.utilCount++
+	}
+	used, total := sample.MemoryUsedBytes.Value, sample.MemoryPhysicalBytes.Value
+	if used != nil && total != nil && total.Sign() > 0 && used.Sign() >= 0 && used.Cmp(*total) <= 0 {
+		usedVal, totalVal := float64(used.Value()), float64(total.Value())
+		if validFiniteNonNeg(usedVal) && validFiniteNonNeg(totalVal) && totalVal > 0 {
+			u.memUsedSum += usedVal
+			u.memPhysSum += totalVal
+			u.memCount++
+		}
+	}
+}
+
+func (u *nodeUsage) fill(row *pb.NodeReply) {
+	if u.utilCount > 0 {
+		row.ComputeUtilizationPercent = proto.Float64(100 * u.utilSum / float64(u.utilCount))
+	}
+	if u.memCount > 0 && u.memPhysSum > 0 {
+		row.MemoryUsagePercent = proto.Float64(100 * u.memUsedSum / u.memPhysSum)
+	}
 }
 
 type nodeAllocations struct{ slots, compute, memory nodeAllocation }

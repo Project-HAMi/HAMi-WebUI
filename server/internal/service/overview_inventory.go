@@ -42,11 +42,17 @@ type inventoryNode struct {
 	states             map[string]*pb.FieldState
 	deviceCoverage     *pb.Coverage
 	models             map[string]struct{}
+	providers          map[string]struct{}
 	allocations        *nodeAllocations
+	usage              *nodeUsage
 }
 
 func (n *inventoryNode) modelNames() []string {
 	return slices.Sorted(maps.Keys(n.models))
+}
+
+func (n *inventoryNode) providerNames() []string {
+	return slices.Sorted(maps.Keys(n.providers))
 }
 
 func (inv overviewInventory) nodeRows(uid string, observe func(*inventoryNode, resourceview.PhysicalGroup) string) ([]inventoryNode, *pb.Coverage) {

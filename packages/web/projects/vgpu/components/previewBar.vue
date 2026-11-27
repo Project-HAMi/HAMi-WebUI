@@ -40,14 +40,9 @@ import BlockBox from '@/components/BlockBox.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
 import { donutSliceColors } from '~/vgpu/metrics/vendor-colors.mjs';
 import { getPreviewBarPie } from '~/vgpu/components/preview-pie.mjs';
-import { onMounted, ref, computed } from 'vue';
+import { ref, computed } from 'vue';
 import VChart from 'vue-echarts';
-import cardApi from '~/vgpu/api/card';
 import TabTop from '~/vgpu/components/TabTop.vue';
-import {
-  nodeVendorDistributionQuery,
-  buildGroupedResourceTopQueries,
-} from '~/vgpu/metrics/query-contract.mjs';
 
 const props = defineProps({
   title: {
@@ -74,13 +69,12 @@ const onPieClick = (params) => {
 };
 
 const isNodeType = computed(() => props.type === 'node');
-const nodeQueries = buildGroupedResourceTopQueries('node');
 const rankingCharts = computed(() => {
   const series = (metric, key, label) => ({
-    key, tab: t(label),
-    ...(isNodeType.value
-      ? { query: nodeQueries[metric], nameKey: 'node' }
-      : { data: props.rankings[metric], status: props.rankingStatus }),
+    key,
+    tab: t(label),
+    data: props.rankings?.[metric],
+    status: props.rankingStatus,
   });
   return [
     {
@@ -94,11 +88,10 @@ const rankingCharts = computed(() => {
   ];
 });
 
-const nodeVendors = ref([]);
 const pieData = computed(() => {
-  const rows = isNodeType.value ? nodeVendors.value : (props.modelDistribution || []).map(row => ({
-    ...row, name: row.name || t('dashboard.unknownModel'),
-  }));
+  const rows = (props.modelDistribution || []).map((row) => (
+    isNodeType.value ? row : { ...row, name: row.name || t('dashboard.unknownModel') }
+  ));
   const colors = donutSliceColors(rows);
   return rows.map(row => ({ ...row, color: colors.get(row.name) }));
 });
@@ -122,15 +115,6 @@ const pieDataWithPercent = computed(() => {
       ...item,
       percent: Math.round((Number(item.value || 0) * 100) / total),
     }));
-});
-
-
-onMounted(async () => {
-  if (!isNodeType.value || props.hidePie) return;
-  const { data } = await cardApi.getInstantVector({ query: nodeVendorDistributionQuery });
-  nodeVendors.value = data.map(item => ({
-    name: item.metric.provider, vendor: item.metric.provider, value: Number(item.value),
-  }));
 });
 </script>
 
