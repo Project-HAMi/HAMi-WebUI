@@ -650,43 +650,7 @@ func buildTrendSpecs(q parsedTrendsQuery) []namedTrendSpec {
 			extraFilter += fmt.Sprintf(",node_uid=%s", strconv.Quote(q.nodeUID))
 		}
 	}
-	specs := buildPhysicalTrendSpecs(extraFilter)
-	if q.scope == "device" {
-		specs = append(specs, buildDeviceSensorTrendSpecs(q.deviceID, extraFilter)...)
-	}
-	return specs
-}
-
-func buildDeviceSensorTrendSpecs(deviceID, extraFilter string) []namedTrendSpec {
-	devicePresence := fmt.Sprintf(`hami_webui_device_info{device_kind="physical",%s}`, extraFilter)
-	sensorQuery := func(metricName string) string {
-		if parts, err := resourceview.ParseDeviceID(deviceID); err == nil {
-			provider, node, rawID := parts[0], parts[1], parts[2]
-			sensorUUID := rawID
-			if provider == "HCU" {
-				sensorUUID = strings.TrimPrefix(rawID, "HCU-")
-			}
-			sensorSelector := fmt.Sprintf("node=%s,provider=%s,device_uuid=%s",
-				strconv.Quote(node), strconv.Quote(provider), strconv.Quote(sensorUUID))
-			return fmt.Sprintf("avg(avg by (node, provider, device_uuid) (%s{%s}) and on (node, provider) max by (node, provider) (%s))",
-				metricName, sensorSelector, devicePresence)
-		}
-		sensorSelector := fmt.Sprintf("device_uuid=%s", strconv.Quote(deviceID))
-		return fmt.Sprintf("avg(avg by (node, provider, device_uuid) (%s{%s}) and on (node, provider, device_uuid) max by (node, provider, device_uuid) (%s))",
-			metricName, sensorSelector, devicePresence)
-	}
-	return []namedTrendSpec{
-		{
-			metric: "temperature_celsius",
-			unit:   "celsius",
-			query:  sensorQuery("hami_device_temperature"),
-		},
-		{
-			metric: "power_watts",
-			unit:   "watts",
-			query:  sensorQuery("hami_device_power"),
-		},
-	}
+	return buildPhysicalTrendSpecs(extraFilter)
 }
 
 func buildPhysicalTrendSpecs(extraSelector string) []namedTrendSpec {

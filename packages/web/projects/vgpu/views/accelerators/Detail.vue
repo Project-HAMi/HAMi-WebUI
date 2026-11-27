@@ -311,6 +311,7 @@ import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { ref, watch, computed, onUnmounted } from 'vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
+import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import { METRIC_STATUS, readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import {
   isLowerBound,
@@ -360,8 +361,6 @@ const DEVICE_TREND_METRICS = [
   { key: 'compute-usage', metric: 'compute_utilization_percent', sectionIndex: 'compute' },
   { key: 'memory-allocation', metric: 'memory_allocation_percent', sectionIndex: 'memory' },
   { key: 'memory-usage', metric: 'memory_utilization_percent', sectionIndex: 'memory' },
-  { key: 'temperature', metric: 'temperature_celsius', sectionIndex: 'temperature' },
-  { key: 'power', metric: 'power_watts', sectionIndex: 'power' },
 ];
 
 const route = useRoute();
@@ -749,10 +748,13 @@ const lineTools = [
     unit: 'W',
   },
 ];
-const telemetryTrend = computed(() => rangeSeries.value.filter(
-  (item) => item.sectionIndex === 'temperature' || item.sectionIndex === 'power',
-));
-const trendLoading = computed(() => rangeSeries.value.some(
+// Each sensor line is its own range group: it keeps its last result while a new range loads.
+const { data: telemetryTrend } = useRangeVector(
+  lineTools.map(({ query }, sectionIndex) => ({ query, sectionIndex })),
+  renderCardQuery,
+  times,
+);
+const trendLoading = computed(() => [...rangeSeries.value, ...telemetryTrend.value].some(
   (item) => item.refreshing || item.status === REQUEST_STATUS.LOADING,
 ));
 // The current readings do not depend on the chart range.

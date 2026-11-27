@@ -634,7 +634,7 @@ const overviewTrendCount = 1
 const trendPages = [
   ['overview', overviewTrendCount],
   ['nodes/node-1?nodeName=node-1', 1],
-  ['accelerators/gpu-1', 1],
+  ['accelerators/gpu-1', 3],
   ['workloads/pod-1/containers/worker', 2]
 ]
 
@@ -1036,13 +1036,7 @@ before(async() => {
           'memory_allocation_percent',
           'compute_utilization_percent',
           'memory_utilization_percent',
-          ...(scope === 'device' ? ['temperature_celsius', 'power_watts'] : []),
-        ].map((metric) => ({
-          metric,
-          unit: metric === 'temperature_celsius' ? 'celsius' : metric === 'power_watts' ? 'watts' : 'percent',
-          state,
-          points,
-        })),
+        ].map((metric) => ({ metric, unit: 'percent', state, points })),
       }
     } else if (pathname === '/v1/monitor/query/instant-vector') {
       if (body?.query?.includes('gpu-metric-new')) {
@@ -2875,7 +2869,7 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
           assert.equal(requests.length, seriesCount)
           for (const request of requests) {
-            const expected = route === 'overview' || route.startsWith('nodes/') || route.startsWith('accelerators/')
+            const expected = request.scope
               ? { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z' }
               : { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' }
             assert.deepEqual(request.range, expected)
@@ -2885,7 +2879,7 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * 2)
           for (const request of requests.slice(seriesCount)) {
-            const expected = route === 'overview' || route.startsWith('nodes/') || route.startsWith('accelerators/')
+            const expected = request.scope
               ? { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z' }
               : { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' }
             assert.deepEqual(request.range, expected)
@@ -5535,13 +5529,7 @@ async function installTimeAxisFixture(page, valueForIndex = (index) => index ===
             'memory_allocation_percent',
             'compute_utilization_percent',
             'memory_utilization_percent',
-            ...(parsed.searchParams.get('scope') === 'device' ? ['temperature_celsius', 'power_watts'] : []),
-          ].map((metric) => ({
-            metric,
-            unit: metric === 'temperature_celsius' ? 'celsius' : metric === 'power_watts' ? 'watts' : 'percent',
-            state,
-            points,
-          })),
+          ].map((metric) => ({ metric, unit: 'percent', state, points })),
         }),
       })
     }
