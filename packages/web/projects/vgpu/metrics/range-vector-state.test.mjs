@@ -5,7 +5,6 @@ import {
   buildRangeLineSeries,
   formatRangeTooltipValue,
   normalizeRangeValues,
-  normalizeRangeVectorResponse,
   toFiniteRangeValue,
 } from './range-vector-state.mjs';
 
@@ -43,38 +42,6 @@ test('non-numeric range values do not become synthetic zeroes', () => {
   assert.equal(toFiniteRangeValue(false), null);
   assert.equal(toFiniteRangeValue('0'), 0);
   assert.equal(toFiniteRangeValue(0), 0);
-});
-
-test('range response normalization is pure and retains every stream slot', () => {
-  const response = {
-    code: 0,
-    data: [
-      {
-        metric: { device_uuid: 'GPU-1' },
-        values: [
-          { timestamp: '1000', value: 0 },
-          { timestamp: '2000', missing: true },
-        ],
-      },
-    ],
-  };
-
-  const normalized = normalizeRangeVectorResponse(response);
-
-  assert.notEqual(normalized, response);
-  assert.notEqual(normalized.data, response.data);
-  assert.equal(normalized.data[0].values.length, 2);
-  assert.deepEqual(
-    normalized.data[0].values.map(({ timestamp, value }) => ({
-      timestamp,
-      value,
-    })),
-    [
-      { timestamp: 1000, value: 0 },
-      { timestamp: 2000, value: null },
-    ],
-  );
-  assert.equal(response.data[0].values[1].value, undefined);
 });
 
 test('live range chart series retain gaps and never reconnect missing slots', () => {

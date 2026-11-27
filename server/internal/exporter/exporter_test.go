@@ -1536,3 +1536,127 @@ func TestSGPUTaskQueriesResolvePhysicalUUID(t *testing.T) {
 		}
 	}
 }
+
+func TestSumMigInstanceMemoryAndDeviceSupplementalObservations(t *testing.T) {
+	const uuid = "GPU-parent"
+	sample := func(id, field string, value float64, extra ...map[string]string) *pb.Sample {
+		metric := map[string]string{
+			"UUID":     uuid,
+			"GPU_I_ID": id,
+			"instance": "exporter",
+			"__name__": "DCGM_FI_DEV_FB_" + field,
+		}
+		for _, kv := range extra {
+			for k, v := range kv {
+				metric[k] = v
+			}
+		}
+		return &pb.Sample{Metric: metric, Value: float32(value)}
+	}
+
+	rows := []*pb.Sample{sample("0", "USED", 10240), sample("0", "FREE", 10240)}
+	for _, id := range []string{"2", "3", "4", "5", "6"} {
+		rows = append(rows, sample(id, "USED", 5120), sample(id, "FREE", 5120))
+	}
+	rows = append(rows,
+		sample("0", "USED_BYTES", 10240*1024*1024),
+		sample("0", "USED", 10240),
+		sample("", "USED", 35840),
+		sample("0", "USED", 10240, map[string]string{"GPU_CI_ID": "1"}),
+	)
+	used, total, ok := sumMigInstanceMemory(rows, uuid)
+	if !ok || total == nil || used != 35*1024*1024*1024 || *total != 70*1024*1024*1024 {
+		t.Fatalf("sumMigInstanceMemory(rows) = (%d, %v, %v), want (35GiB, 70GiB, true)", used, total, ok)
+	}
+	if _, _, ok := sumMigInstanceMemory(append(rows, sample("2", "USED", 0)), uuid); ok {
+		t.Fatal("expected conflicting GI reading to be rejected")
+	}
+	if _, _, ok := sumMigInstanceMemory(append(rows, sample("2", "USED", 5120, map[string]string{"instance": "other"})), uuid); ok {
+		t.Fatal("expected mixed exporter sources to be rejected")
+	}
+
+	usedZero := sample("0", "USED", 0)
+	if u, tot, ok := sumMigInstanceMemory([]*pb.Sample{usedZero}, uuid); !ok || u != 0 || tot != nil {
+		t.Fatalf("measured zero without FREE = (%d, %v, %v), want (0, nil, true)", u, tot, ok)
+	}
+	if u, tot, ok := sumMigInstanceMemory([]*pb.Sample{usedZero, sample("0", "FREE", 1024)}, uuid); !ok || u != 0 || tot == nil || *tot != 1024*1024*1024 {
+		t.Fatalf("measured zero with FREE = (%d, %v, %v), want (0, 1GiB, true)", u, tot, ok)
+	}
+	if _, _, ok := sumMigInstanceMemory([]*pb.Sample{usedZero, sample("1", "FREE", 5120)}, uuid); ok {
+		t.Fatal("expected missing GI usage on GI 1 to be rejected")
+	}
+
+	pod := map[string]string{"pod": "training", "container": "worker"}
+	process := map[string]string{"pod": "training", "container": "worker", "pod_uid": "workload-uid"}
+	procRows := []*pb.Sample{
+		sample("0", "USED", 10240, pod),
+		sample("0", "FREE", 10240, pod),
+		sample("0", "USED", 512, process),
+		sample("0", "FREE", 10240, process),
+		sample("0", "USED", 512, map[string]string{"exported_pod_uid": "workload-uid"}),
+	}
+	if u, tot, ok := sumMigInstanceMemory(procRows, uuid); !ok || tot == nil || u != 10*1024*1024*1024 || *tot != 20*1024*1024*1024 {
+		t.Fatalf("Pod-labelled GI = (%d, %v, %v), want (10GiB, 20GiB, true)", u, tot, ok)
+	}
+	if _, _, ok := sumMigInstanceMemory(procRows[2:], uuid); ok {
+		t.Fatal("expected process-only GI rows to be rejected")
+	}
+
+	now := time.Unix(1760000000, 0).UTC()
+	migUUID := "GPU-mig-1"
+	gen := &MetricsGenerator{
+		nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{{
+			Id:       migUUID,
+			AliasId:  migUUID,
+			NodeName: "node-1",
+			NodeUid:  "node-uid-1",
+			Provider: biz.NvidiaGPUDevice,
+			Type:     "NVIDIA A100",
+			Mode:     "mig",
+			Devmem:   81920,
+		}}}, log.NewStdLogger(io.Discard)),
+		monitorService: &fakeInstantQuerier{query: func(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+			q := req.GetQuery()
+			switch {
+			case strings.Contains(q, "DCGM_FI_DEV_GPU_TEMP"):
+				return instantValue(52), nil
+			case strings.Contains(q, "DCGM_FI_DEV_POWER_USAGE"):
+				return instantValue(135), nil
+			case strings.Contains(q, "DCGM_FI_DEV_FB_(USED|FREE)"):
+				return &pb.InstantResponse{Data: []*pb.Sample{
+					{Metric: map[string]string{"UUID": migUUID, "GPU_I_ID": "0", "instance": "exp", "__name__": "DCGM_FI_DEV_FB_USED"}, Value: 2048},
+					{Metric: map[string]string{"UUID": migUUID, "GPU_I_ID": "0", "instance": "exp", "__name__": "DCGM_FI_DEV_FB_FREE"}, Value: 6144},
+				}}, nil
+			default:
+				return &pb.InstantResponse{}, nil
+			}
+		}},
+		now: func() time.Time { return now },
+		log: log.NewHelper(log.NewStdLogger(io.Discard)),
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(gen) })
+	if err := gen.GenerateDeviceMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	obs, ok := gen.DeviceObservations()[resourceview.DeviceIdentity{
+		Provider: biz.NvidiaGPUDevice,
+		Node:     "node-1",
+		NodeUID:  "node-uid-1",
+		DeviceID: migUUID,
+	}]
+	if !ok {
+		t.Fatal("missing supplemental DeviceObservation")
+	}
+	if v, ok := obs.TemperatureCelsius.KnownValue(); !ok || v != 52 {
+		t.Fatalf("TemperatureCelsius = (%v, %v), want (52, true)", v, ok)
+	}
+	if v, ok := obs.PowerWatts.KnownValue(); !ok || v != 135 {
+		t.Fatalf("PowerWatts = (%v, %v), want (135, true)", v, ok)
+	}
+	if obs.MigMemoryUsedBytes.Value == nil || obs.MigMemoryUsedBytes.Value.Value() != 2048*1024*1024 {
+		t.Fatalf("MigMemoryUsedBytes = %+v, want 2GiB", obs.MigMemoryUsedBytes.Value)
+	}
+	if obs.MigMemoryTotalBytes.Value == nil || obs.MigMemoryTotalBytes.Value.Value() != 8192*1024*1024 {
+		t.Fatalf("MigMemoryTotalBytes = %+v, want 8GiB", obs.MigMemoryTotalBytes.Value)
+	}
+}

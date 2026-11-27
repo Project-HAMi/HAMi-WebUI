@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"io"
 	"os"
 	"testing"
 	"time"
 
 	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 
 	obsv1 "vgpu/api/observability/v1"
@@ -283,4 +286,89 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 	if err != nil || slashDetail.Uuid != "GPU/with space" {
 		t.Fatalf("slash device detail = (%+v, %v)", slashDetail, err)
 	}
+}
+
+type cardTestSnapshotSource struct {
+	snap resourceview.Snapshot
+}
+
+func (s cardTestSnapshotSource) Snapshot(context.Context) (resourceview.Snapshot, error) {
+	return s.snap, nil
+}
+
+func TestGetDeviceExposesReservationsTelemetryAndMigMemory(t *testing.T) {
+	now := time.Now()
+	dev1 := &biz.DeviceInfo{
+		Id: "GPU-1", AliasId: "GPU-1", Count: 4, Devmem: 81920, Devcore: 100,
+		Type: "NVIDIA A100", Mode: "mig", Health: true,
+		NodeName: "node-1", NodeUid: "node-uid-1", Provider: biz.NvidiaGPUDevice,
+	}
+	nodeUC := biz.NewNodeUsecase(&resourcesTestNodeRepo{devices: []*biz.DeviceInfo{dev1}}, log.NewStdLogger(io.Discard))
+	podUC := biz.NewPodUseCase(&resourcesTestPodRepo{containers: []*biz.Container{
+		{
+			Name: "known", PodUID: "p1", NodeName: "node-1", NodeUID: "node-uid-1", CreateTime: now,
+			ContainerDevices: biz.ContainerDevices{{UUID: "GPU-1", Usedcores: 40, Usedmem: 10240}},
+		},
+		{
+			Name: "unknown", PodUID: "p2", NodeName: "node-1", NodeUID: "node-uid-1", CreateTime: now,
+			ContainerDevices: biz.ContainerDevices{{UUID: "GPU-1", Usedmem: 5120, CoreAllocationUnknown: true}},
+		},
+	}}, log.NewStdLogger(io.Discard))
+
+	knownFlag := true
+	devID := resourceview.DeviceIdentity{Provider: biz.NvidiaGPUDevice, Node: "node-1", NodeUID: "node-uid-1", DeviceID: "GPU-1"}
+	q := func(v string, unit string) resourceview.Quantity {
+		qty := resource.MustParse(v)
+		return resourceview.Quantity{
+			Value: &qty, Unit: unit,
+			State: &obsv1.FieldState{State: resourceview.Known, Source: "exporter", Scope: "device", ObservedAt: timestamppb.New(now)},
+		}
+	}
+	snap := resourceview.Snapshot{
+		At: now,
+		Nodes: []resourceview.Node{{
+			UID: "node-uid-1", Name: "node-1",
+		}},
+		Devices: []resourceview.Device{{
+			Identity: devID, Kind: "physical", Vendor: "NVIDIA", Model: "NVIDIA A100",
+			States: map[string]*obsv1.FieldState{"kind": {State: resourceview.Known}},
+		}},
+	}
+	obs := map[resourceview.DeviceIdentity]resourceview.DeviceObservation{
+		devID: {
+			UtilizationRatio:    q("0.55", "ratio"),
+			TemperatureCelsius:  q("61", "celsius"),
+			PowerWatts:          q("180", "watts"),
+			MigMemoryUsedBytes:  q("2147483648", "bytes"),
+			MigMemoryTotalBytes: q("10737418240", "bytes"),
+		},
+	}
+	_ = knownFlag
+	cardSvc := &CardService{
+		node: nodeUC,
+		pod:  podUC,
+		source: resourceview.WithObservations(
+			cardTestSnapshotSource{snap: snap},
+			cardObsReader(obs),
+		),
+	}
+	reply, err := cardSvc.getDevice(context.Background(), "GPU-1", "node-uid-1", true)
+	if err != nil {
+		t.Fatalf("getDevice() error = %v", err)
+	}
+	if reply.GetCoreUnknownCount() != 1 || reply.GetCoreUsedKnown() {
+		t.Fatalf("core unknown = (%d, %v), want (1, false)", reply.GetCoreUnknownCount(), reply.GetCoreUsedKnown())
+	}
+	if reply.GetUtilizationRatio() != 0.55 || reply.GetTemperatureCelsius() != 61 || reply.GetPowerWatts() != 180 {
+		t.Fatalf("unexpected device telemetry: %+v", reply)
+	}
+	if reply.MigInstanceMemory == nil || reply.MigInstanceMemory.UsedBytes != 2147483648 || reply.MigInstanceMemory.GetTotalBytes() != 10737418240 {
+		t.Fatalf("MigInstanceMemory = %+v, want (2GiB, 10GiB)", reply.MigInstanceMemory)
+	}
+}
+
+type cardObsReader map[resourceview.DeviceIdentity]resourceview.DeviceObservation
+
+func (r cardObsReader) DeviceObservations() resourceview.DeviceObservations {
+	return resourceview.DeviceObservations(r)
 }

@@ -1,5 +1,14 @@
 import { getBasePath } from '../utils/base-path.mjs';
 
+const DEFAULT_REQUEST_TIMEOUT = 60000;
+const defaultRequestTimeout = (() => {
+  const raw = typeof import.meta !== 'undefined' && import.meta.env
+    ? import.meta.env.VITE_APP_REQUEST_TIMEOUT
+    : undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REQUEST_TIMEOUT;
+})();
+
 export class ApiClientError extends Error {
   constructor({ status, code, reason = '', message = '', metadata = {}, url = '' }) {
     super(message || reason || `HTTP ${status}`);
@@ -43,6 +52,7 @@ export function buildApiUrl(path, query, basePath = getBasePath()) {
 export function createApiClient({
   fetchImpl = globalThis.fetch,
   getBasePathImpl = getBasePath,
+  timeoutMs = defaultRequestTimeout,
 } = {}) {
   if (typeof fetchImpl !== 'function') {
     throw new TypeError('fetch implementation is required');
@@ -50,12 +60,31 @@ export function createApiClient({
 
   async function requestJson(path, { query, signal } = {}) {
     const url = buildApiUrl(path, query, getBasePathImpl());
-    const response = await fetchImpl(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal,
-    });
-    const raw = await response.text();
+    const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
+    const controller = hasTimeout ? new AbortController() : null;
+    const onAbort = controller ? () => controller.abort(signal?.reason) : null;
+    let timer;
+    if (controller) {
+      if (signal?.aborted) {
+        controller.abort(signal.reason);
+      } else {
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }
+      timer = setTimeout(() => controller.abort(new Error('Request timeout')), timeoutMs);
+    }
+    let response;
+    let raw;
+    try {
+      response = await fetchImpl(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: controller ? controller.signal : signal,
+      });
+      raw = await response.text();
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+    }
     let payload = null;
     if (raw) {
       try {

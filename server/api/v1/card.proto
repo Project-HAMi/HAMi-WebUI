@@ -83,6 +83,18 @@ message GPUReply {
   optional bool has_init_reservation = 18;
   // Opaque resourceview.DeviceID matching hami_webui_device_* telemetry series.
   string telemetry_device_id = 19;
+  optional int32 core_unknown_count = 20;
+  optional double utilization_ratio = 21;
+  optional int64 memory_used_bytes = 22;
+  optional int64 memory_physical_bytes = 23;
+  optional double temperature_celsius = 24;
+  optional double power_watts = 25;
+  optional MigInstanceMemory mig_instance_memory = 26;
+}
+
+message MigInstanceMemory {
+  int64 used_bytes = 1;
+  optional int64 total_bytes = 2;
 }
 
 // One MIG device type and where NVML allows it on the GPU.

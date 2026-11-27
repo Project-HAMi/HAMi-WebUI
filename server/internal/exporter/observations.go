@@ -25,19 +25,49 @@ func (s *MetricsGenerator) publishedObservations() resourceview.DeviceObservatio
 	return s.observations
 }
 
+func (s *MetricsGenerator) snapshotObservations() (resourceview.DeviceObservations, resourceview.DeviceObservations) {
+	s.observationsMu.RLock()
+	defer s.observationsMu.RUnlock()
+	return s.observations, s.supplementalObservations
+}
+
 // DeviceObservations never queries upstream. Both API source wrapping and the
 // new metric collector consume this detached view of the same published round.
 func (s *MetricsGenerator) DeviceObservations() resourceview.DeviceObservations {
-	published := s.publishedObservations()
-	if len(published) == 0 {
+	published, supplemental := s.snapshotObservations()
+	if len(published) == 0 && len(supplemental) == 0 {
 		return resourceview.DeviceObservations{}
 	}
-	result := make(resourceview.DeviceObservations, len(published))
+	result := make(resourceview.DeviceObservations, len(published)+len(supplemental))
 	now := s.clockNow()
 	for identity, observation := range published {
-		result[identity] = resourceview.AgeObservation(observation, now, provider.TelemetryMaxSampleAge)
+		merged := observation
+		if extra, ok := supplemental[identity]; ok {
+			merged = mergeSupplementalObservation(merged, extra)
+		}
+		result[identity] = resourceview.AgeObservation(merged, now, provider.TelemetryMaxSampleAge)
+	}
+	for identity, extra := range supplemental {
+		if _, exists := result[identity]; exists {
+			continue
+		}
+		result[identity] = resourceview.AgeObservation(extra, now, provider.TelemetryMaxSampleAge)
 	}
 	return result
+}
+
+func mergeSupplementalObservation(base, extra resourceview.DeviceObservation) resourceview.DeviceObservation {
+	if extra.TemperatureCelsius.State != nil {
+		base.TemperatureCelsius = extra.TemperatureCelsius
+	}
+	if extra.PowerWatts.State != nil {
+		base.PowerWatts = extra.PowerWatts
+	}
+	if extra.MigMemoryUsedBytes.State != nil {
+		base.MigMemoryUsedBytes = extra.MigMemoryUsedBytes
+		base.MigMemoryTotalBytes = extra.MigMemoryTotalBytes
+	}
+	return base
 }
 
 func unknownObservation(unit, source, reason string) resourceview.Quantity {

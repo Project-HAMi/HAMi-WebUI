@@ -31,18 +31,6 @@ export function normalizeRangeValues(values) {
   return Array.isArray(values) ? values.map(normalizeRangePoint) : [];
 }
 
-export function normalizeRangeVectorResponse(response) {
-  if (!response || !Array.isArray(response.data)) return response;
-
-  return {
-    ...response,
-    data: response.data.map((stream) => ({
-      ...stream,
-      values: normalizeRangeValues(stream?.values),
-    })),
-  };
-}
-
 // Values are drawn as read; precision belongs to the tooltip, where rounding cannot
 // flatten a small value onto zero.
 export function buildRangeLineData(values) {

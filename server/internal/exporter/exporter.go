@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	pb "vgpu/api/v1"
+	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
@@ -22,6 +24,8 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/google/wire"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -120,10 +124,11 @@ type MetricsGenerator struct {
 	telemetryDialects []provider.TelemetryDialect
 	batchTimeout      time.Duration
 	splitCounts       [len(batchSplitReasons)]atomic.Uint64
-	observationsMu    sync.RWMutex
-	resourceSnapshot  *resourceview.Snapshot
-	physicalGroups    []resourceview.PhysicalGroup
-	observations      resourceview.DeviceObservations
+	observationsMu           sync.RWMutex
+	resourceSnapshot         *resourceview.Snapshot
+	physicalGroups           []resourceview.PhysicalGroup
+	observations             resourceview.DeviceObservations
+	supplementalObservations resourceview.DeviceObservations
 }
 
 func (s *MetricsGenerator) telemetryChunkTimeout() time.Duration {
@@ -420,10 +425,15 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 	if err != nil {
 		return s.recordFatalError(fmt.Errorf("list devices: %w", err))
 	}
+	var now time.Time
 	observations := s.DeviceObservations()
+	supplemental := resourceview.DeviceObservations{}
 	for _, device := range deviceInfos {
 		if err := ctx.Err(); err != nil {
 			return s.recordFatalError(err)
+		}
+		if now.IsZero() {
+			now = s.clockNow()
 		}
 		provider := device.Provider
 		var driver, deviceNo = "", ""
@@ -494,9 +504,13 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		if device.Id == "" {
 			continue
 		}
+		var obsEntry resourceview.DeviceObservation
 		gpuTemperature, err := s.gpuTemperature(ctx, provider, device.Id)
 		if err == nil {
 			s.set(HamiDeviceTemperature, float64(gpuTemperature), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			if q, ok := supplementalFloatQuantity(float64(gpuTemperature), "celsius", now); ok {
+				obsEntry.TemperatureCelsius = q
+			}
 		}
 		memoryTemperature, err := s.memoryTemperature(ctx, provider, device.Id)
 		if err == nil {
@@ -505,6 +519,9 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		gpuPower, err := s.gpuPower(ctx, provider, device.Id)
 		if err == nil {
 			s.set(HamiDevicePower, float64(gpuPower), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
+			if q, ok := supplementalFloatQuantity(float64(gpuPower), "watts", now); ok {
+				obsEntry.PowerWatts = q
+			}
 		}
 		fanSpeed, err := s.fanSpeed(ctx, provider, device.Id)
 		if err == nil {
@@ -519,11 +536,180 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		if err == nil {
 			s.set(HamiDeviceLastXIDErrorCode, float64(lastXIDErrorCode), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
+		if provider == biz.NvidiaGPUDevice && device.Mode == "mig" && (!hasMemUsed || !hasMemSize) {
+			migQuery := fmt.Sprintf(`{__name__=~"DCGM_FI_DEV_FB_(USED|FREE)(_BYTES)?",UUID=%q,GPU_I_ID!="",GPU_CI_ID=""}`, device.Id)
+			if migRes, err := s.queryInstant(ctx, migQuery); err == nil {
+				if usedBytes, totalBytes, ok := sumMigInstanceMemory(migRes.GetData(), device.Id); ok {
+					obsEntry.MigMemoryUsedBytes = supplementalBytesQuantity(usedBytes, now)
+					if totalBytes != nil {
+						obsEntry.MigMemoryTotalBytes = supplementalBytesQuantity(*totalBytes, now)
+					}
+				}
+			}
+		}
+		if device.NodeUid != "" && (obsEntry.TemperatureCelsius.State != nil || obsEntry.PowerWatts.State != nil || obsEntry.MigMemoryUsedBytes.State != nil) {
+			normProvider := provider
+			if normProvider == metax.MetaxSGPUDevice {
+				normProvider = biz.MetaxGPUDevice
+			}
+			id := resourceview.DeviceIdentity{
+				Provider: normProvider,
+				Node:     device.NodeName,
+				NodeUID:  types.UID(device.NodeUid),
+				DeviceID: device.Id,
+			}
+			supplemental[id] = obsEntry
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return s.recordFatalError(err)
 	}
+	s.observationsMu.Lock()
+	s.supplementalObservations = supplemental
+	s.observationsMu.Unlock()
 	return s.currentRefreshError()
+}
+
+func supplementalFloatQuantity(value float64, unit string, at time.Time) (resourceview.Quantity, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || at.IsZero() {
+		return resourceview.Quantity{}, false
+	}
+	q, err := resource.ParseQuantity(strconv.FormatFloat(value, 'f', -1, 64))
+	if err != nil {
+		return resourceview.Quantity{}, false
+	}
+	return resourceview.Quantity{
+		Value: &q,
+		Unit:  unit,
+		State: &viewv1.FieldState{
+			State:      resourceview.Known,
+			Source:     "exporter",
+			Scope:      "device",
+			ObservedAt: timestamppb.New(at.UTC()),
+		},
+	}, true
+}
+
+func supplementalBytesQuantity(bytes int64, at time.Time) resourceview.Quantity {
+	return resourceview.Quantity{
+		Value: resource.NewQuantity(bytes, resource.DecimalSI),
+		Unit:  "bytes",
+		State: &viewv1.FieldState{
+			State:      resourceview.Known,
+			Source:     "exporter",
+			Scope:      "device",
+			ObservedAt: timestamppb.New(at.UTC()),
+		},
+	}
+}
+
+type migSourceKey struct {
+	cluster, job, instance string
+}
+
+type migInstanceAcc struct {
+	hasUsed   bool
+	usedBytes int64
+	hasFree   bool
+	freeBytes int64
+}
+
+func sumMigInstanceMemory(samples []*pb.Sample, uuid string) (int64, *int64, bool) {
+	instances := map[string]*migInstanceAcc{}
+	var (
+		hasSource bool
+		source    migSourceKey
+	)
+	for _, sample := range samples {
+		if sample == nil {
+			continue
+		}
+		m := sample.GetMetric()
+		name := m["__name__"]
+		var (
+			kind  string
+			scale float64
+		)
+		switch name {
+		case "DCGM_FI_DEV_FB_USED":
+			kind, scale = "USED", bytesPerMiB
+		case "DCGM_FI_DEV_FB_USED_BYTES":
+			kind, scale = "USED", 1
+		case "DCGM_FI_DEV_FB_FREE":
+			kind, scale = "FREE", bytesPerMiB
+		case "DCGM_FI_DEV_FB_FREE_BYTES":
+			kind, scale = "FREE", 1
+		default:
+			continue
+		}
+		id := m["GPU_I_ID"]
+		if id == "" || m["GPU_CI_ID"] != "" || m["UUID"] != uuid {
+			continue
+		}
+		src := migSourceKey{cluster: m["cluster"], job: m["job"], instance: m["instance"]}
+		if hasSource && src != source {
+			return 0, nil, false
+		}
+		source = src
+		hasSource = true
+
+		// DCGM emits a separate FB_USED with Pod UID for each process-attributed Pod.
+		// FREE stays instance-wide even when DCGM copies it onto multiple Pods.
+		if kind == "USED" && (m["pod_uid"] != "" || m["exported_pod_uid"] != "" || m["vgpu"] != "" || m["exported_vgpu"] != "") {
+			continue
+		}
+		val := float64(sample.GetValue())
+		if math.IsNaN(val) || math.IsInf(val, 0) || val < 0 {
+			return 0, nil, false
+		}
+		scaled := math.Round(val * scale)
+		if math.IsNaN(scaled) || math.IsInf(scaled, 0) || scaled < 0 || scaled >= 0x1p63 {
+			return 0, nil, false
+		}
+		bytesVal := int64(scaled)
+		acc := instances[id]
+		if acc == nil {
+			acc = &migInstanceAcc{}
+			instances[id] = acc
+		}
+		if kind == "USED" {
+			if acc.hasUsed && acc.usedBytes != bytesVal {
+				return 0, nil, false
+			}
+			acc.usedBytes = bytesVal
+			acc.hasUsed = true
+		} else {
+			if acc.hasFree && acc.freeBytes != bytesVal {
+				return 0, nil, false
+			}
+			acc.freeBytes = bytesVal
+			acc.hasFree = true
+		}
+	}
+	if len(instances) == 0 {
+		return 0, nil, false
+	}
+	var (
+		used        int64
+		free        int64
+		hasCapacity = true
+	)
+	for _, acc := range instances {
+		if !acc.hasUsed {
+			return 0, nil, false
+		}
+		used += acc.usedBytes
+		if !acc.hasFree {
+			hasCapacity = false
+		} else {
+			free += acc.freeBytes
+		}
+	}
+	if hasCapacity {
+		total := used + free
+		return used, &total, true
+	}
+	return used, nil, true
 }
 
 func (s *MetricsGenerator) generateMetricsForMetaxGPU(ctx context.Context, containers []*biz.Container, observations resourceview.DeviceObservations) error {

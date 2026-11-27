@@ -43,8 +43,10 @@ type Device struct {
 	ComputeCapacityShare                     Quantity
 	MemoryCapacityBytes, MemoryPhysicalBytes Quantity
 	// Telemetry is separate from registration capacity. Missing never becomes 0.
-	MemoryUsedBytes, UtilizationRatio Quantity
-	EffectiveOccupancies              []EffectiveOccupancy
+	MemoryUsedBytes, UtilizationRatio                  Quantity
+	TemperatureCelsius, PowerWatts                     Quantity
+	MigMemoryUsedBytes, MigMemoryTotalBytes            Quantity
+	EffectiveOccupancies                               []EffectiveOccupancy
 	States                            map[string]*viewv1.FieldState
 	Sources                           []*viewv1.SourceState
 	Coverage                          *viewv1.Coverage

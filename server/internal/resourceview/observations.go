@@ -10,20 +10,38 @@ import (
 type DeviceObservations map[DeviceIdentity]DeviceObservation
 type DeviceObservation struct {
 	MemoryPhysicalBytes, MemoryUsedBytes, UtilizationRatio Quantity
+	TemperatureCelsius, PowerWatts                         Quantity
+	MigMemoryUsedBytes, MigMemoryTotalBytes                Quantity
 }
 
 // ObservationReader returns detached readings owned by the caller.
 type ObservationReader interface{ DeviceObservations() DeviceObservations }
 
 func (d DeviceObservation) DeepCopy() DeviceObservation {
-	return DeviceObservation{d.MemoryPhysicalBytes.DeepCopy(), d.MemoryUsedBytes.DeepCopy(), d.UtilizationRatio.DeepCopy()}
+	return DeviceObservation{
+		MemoryPhysicalBytes: d.MemoryPhysicalBytes.DeepCopy(),
+		MemoryUsedBytes:     d.MemoryUsedBytes.DeepCopy(),
+		UtilizationRatio:    d.UtilizationRatio.DeepCopy(),
+		TemperatureCelsius:  d.TemperatureCelsius.DeepCopy(),
+		PowerWatts:          d.PowerWatts.DeepCopy(),
+		MigMemoryUsedBytes:  d.MigMemoryUsedBytes.DeepCopy(),
+		MigMemoryTotalBytes: d.MigMemoryTotalBytes.DeepCopy(),
+	}
 }
 
 // AgeObservation changes known to stale at read time as well as at refresh time.
 // A stopped/failed producer can never leave its last snapshot known forever.
 func AgeObservation(observation DeviceObservation, now time.Time, maxAge time.Duration) DeviceObservation {
 	result := observation.DeepCopy()
-	for _, field := range []*Quantity{&result.MemoryPhysicalBytes, &result.MemoryUsedBytes, &result.UtilizationRatio} {
+	for _, field := range []*Quantity{
+		&result.MemoryPhysicalBytes,
+		&result.MemoryUsedBytes,
+		&result.UtilizationRatio,
+		&result.TemperatureCelsius,
+		&result.PowerWatts,
+		&result.MigMemoryUsedBytes,
+		&result.MigMemoryTotalBytes,
+	} {
 		if field.State == nil || field.State.State != Known {
 			continue
 		}
@@ -76,6 +94,10 @@ func (s *ObservedSnapshotSource) Snapshot(ctx context.Context) (Snapshot, error)
 		device.MemoryPhysicalBytes = observation.MemoryPhysicalBytes
 		device.MemoryUsedBytes = observation.MemoryUsedBytes
 		device.UtilizationRatio = observation.UtilizationRatio
+		device.TemperatureCelsius = observation.TemperatureCelsius
+		device.PowerWatts = observation.PowerWatts
+		device.MigMemoryUsedBytes = observation.MigMemoryUsedBytes
+		device.MigMemoryTotalBytes = observation.MigMemoryTotalBytes
 	}
 	return snapshot, nil
 }

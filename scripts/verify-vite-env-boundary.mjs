@@ -5,8 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import axios from 'axios'
-
+import { buildApiUrl } from '../packages/web/src/api/client.mjs'
 import { getBasePath } from '../packages/web/src/utils/base-path.mjs'
 
 const repositoryRoot = path.resolve(
@@ -139,14 +138,13 @@ for (const [baseURI, expected] of basePathCases) {
 }
 
 for (const [baseURI, expected] of [
-  ['https://hami.example.test/', '/api/vgpu/v1/nodes'],
+  ['https://hami.example.test/', '/api/v1/nodes'],
   [
     'https://hami.example.test/platform/hami/',
-    '/platform/hami/api/vgpu/v1/nodes'
+    '/platform/hami/api/v1/nodes'
   ]
 ]) {
-  const client = axios.create({ baseURL: getBasePath(baseURI) })
-  assert.equal(client.getUri({ url: '/api/vgpu/v1/nodes' }), expected)
+  assert.equal(buildApiUrl('nodes', undefined, getBasePath(baseURI)), expected)
 }
 
 console.log('Vite build environment boundary verified.')

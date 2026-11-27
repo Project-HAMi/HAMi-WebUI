@@ -33,6 +33,7 @@ test('createApiClient encodes path segments, validates required params, and forw
   const seen = [];
   const controller = new AbortController();
   const client = createApiClient({
+    timeoutMs: 0,
     getBasePathImpl: () => '/gpu-ui/',
     fetchImpl: async (url, init) => {
       seen.push({ url, init });
@@ -130,6 +131,12 @@ test('createApiClient parses every frozen /api/v1 HTTP golden payload cleanly', 
 
   const device = await client.getDevice('GPU-1', { nodeUid: 'node-uid-1' });
   assert.equal(device.vendor, 'NVIDIA');
+  assert.equal(device.coreUnknownCount, 0);
+  assert.equal(device.utilizationRatio, 0.42);
+  assert.equal(device.memoryUsedBytes, '21474836480');
+  assert.equal(device.memoryPhysicalBytes, '85899345920');
+  assert.equal(device.temperatureCelsius, 48);
+  assert.equal(device.powerWatts, 120);
 
   const containers = await client.listContainers({ page: 1, pageSize: 20 });
   assert.equal(containers.total, 1);
@@ -152,4 +159,33 @@ test('createApiClient parses every frozen /api/v1 HTTP golden payload cleanly', 
 
   const about = await client.getAbout();
   assert.equal(about.hami.state, 'ok');
+});
+
+test('createApiClient aborts stalled requests on timeoutMs and forwards caller abort', async () => {
+  const stalled = createApiClient({
+    timeoutMs: 20,
+    fetchImpl: (_url, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason || new Error('aborted')), { once: true });
+      }),
+    getBasePathImpl: () => '/',
+  });
+
+  await assert.rejects(
+    () => stalled.getAbout(),
+    /Request timeout/,
+  );
+
+  const callerController = new AbortController();
+  const inFlight = createApiClient({
+    timeoutMs: 5000,
+    fetchImpl: (_url, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason || new Error('aborted')), { once: true });
+      }),
+    getBasePathImpl: () => '/',
+  });
+  const pending = inFlight.getAbout({ signal: callerController.signal });
+  callerController.abort(new Error('caller canceled'));
+  await assert.rejects(() => pending, /caller canceled/);
 });

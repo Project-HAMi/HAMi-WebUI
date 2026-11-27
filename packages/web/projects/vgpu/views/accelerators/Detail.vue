@@ -310,22 +310,18 @@ import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { ref, watch, computed, onUnmounted } from 'vue';
-import useInstantVector from '~/vgpu/hooks/useInstantVector';
-import useRangeVector from '~/vgpu/hooks/useRangeVector';
-import { METRIC_STATUS, readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import {
   isLowerBound,
   isNothingCounted,
   lowerBoundMessage,
   nothingCountedMessage,
-  readUncountedMetric,
 } from '~/vgpu/metrics/uncounted.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource.js';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import apiClient, { ApiClientError } from '@/api/client.mjs';
 import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
-import cardApi from '~/vgpu/api/card';
+import { getDetailHealth } from '~/vgpu/api/physical-inventory.mjs';
 import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
@@ -334,13 +330,6 @@ import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
 import { CHART_COLORS } from '~/vgpu/metrics/chart-colors.mjs';
 import { stateTextKey } from '~/vgpu/metrics/metric-state.mjs';
 import { useI18n } from 'vue-i18n';
-import {
-  buildComputeAllocationQueries,
-  buildUnknownComputeShareQuery,
-  buildMemoryAllocationQueries,
-  buildMemoryUsageQueries,
-} from '~/vgpu/metrics/query-contract.mjs';
-import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/nodes/detail-location.mjs';
 import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 import { getAllocationSlotDisplay } from './allocation-slot-display.mjs';
@@ -349,7 +338,6 @@ import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
 import NpuAllocationOption from './components/NpuAllocationOption.vue';
-import { migInstanceMemoryQuery, sumMigInstanceMemory } from './mig-instance-memory.mjs';
 import { cardHealthDisplay } from './card-health.mjs';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import { parseDeviceSplitPage } from '~/vgpu/components/device-split.mjs';
@@ -361,7 +349,10 @@ const DEVICE_TREND_METRICS = [
   { key: 'compute-usage', metric: 'compute_utilization_percent', sectionIndex: 'compute' },
   { key: 'memory-allocation', metric: 'memory_allocation_percent', sectionIndex: 'memory' },
   { key: 'memory-usage', metric: 'memory_utilization_percent', sectionIndex: 'memory' },
+  { key: 'temperature', metric: 'temperature_celsius', sectionIndex: 'temperature' },
+  { key: 'power', metric: 'power_watts', sectionIndex: 'power' },
 ];
+const BYTES_PER_GIB = 1024 ** 3;
 
 const route = useRoute();
 const { t } = useI18n();
@@ -477,7 +468,7 @@ watch(detail, async (card, _, onCleanup) => {
   const controller = new AbortController();
   onCleanup(() => controller.abort());
   try {
-    const health = await cardApi.getDetailHealth(card, controller.signal);
+    const health = await getDetailHealth(card, controller.signal);
     if (!controller.signal.aborted) headerHealth.value = health;
   } catch {
     if (!controller.signal.aborted) headerHealth.value = {};
@@ -532,70 +523,6 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const cardMetricSelector = 'device_uuid=$device_uuid';
-const computeAllocationQueries = buildComputeAllocationQueries({
-  selector: cardMetricSelector,
-});
-const memoryAllocationQueries = buildMemoryAllocationQueries({
-  selector: cardMetricSelector,
-});
-const memoryUsageQueries = buildMemoryUsageQueries({
-  selector: cardMetricSelector,
-});
-
-const _gaugeConfigBase = [
-  {
-    titleKey: 'dashboard.computeAllocRate',
-    percent: 0,
-    query: computeAllocationQueries.query,
-    totalQuery: computeAllocationQueries.totalQuery,
-    total: 0,
-    used: 0,
-    unit: ' ',
-  },
-  {
-    titleKey: 'dashboard.memAllocRate',
-    percent: 0,
-    query: memoryAllocationQueries.query,
-    totalQuery: memoryAllocationQueries.totalQuery,
-    total: 0,
-    used: 0,
-    unit: 'GiB',
-  },
-  {
-    titleKey: 'dashboard.computeUsageRate',
-    percent: 0,
-    query: `avg(sum(hami_core_util{device_uuid=$device_uuid}) by (instance))`,
-    total: 100,
-    used: 0,
-    unit: ' ',
-  },
-  {
-    titleKey: 'dashboard.memUsageRate',
-    percent: 0,
-    query: memoryUsageQueries.query,
-    totalQuery: memoryUsageQueries.totalQuery,
-    total: 0,
-    used: 0,
-    unit: 'GiB',
-  },
-];
-
-const renderCardQuery = (query) => renderPromQLTemplate(query, {
-  device_uuid: detailCardUuid.value,
-});
-
-// Current values only: trend charts below subscribe to /api/v1/telemetry/trends.
-const gaugeData = useInstantVector(
-  _gaugeConfigBase.map((item) => ({ ...item, title: t(item.titleKey) })),
-  renderCardQuery,
-);
-
-// The card's allocation rate leaves out allocations whose share HAMi does not
-// state, so it reads as a lower bound unless none are confirmed.
-const uncountedQuery = buildUnknownComputeShareQuery({ selector: cardMetricSelector });
-const uncountedMetric = useInstantVector([{ query: uncountedQuery }], renderCardQuery);
-const computeAllocUncounted = computed(() => readUncountedMetric(uncountedMetric.value[0]));
 
 const trendParams = computed(() => (detailCardUuid.value
   ? {
@@ -612,24 +539,22 @@ const { data: rangeSeries } = useTelemetryTrends({
 const computeTrend = computed(() => rangeSeries.value.filter((item) => item.sectionIndex === 'compute'));
 const memoryTrend = computed(() => rangeSeries.value.filter((item) => item.sectionIndex === 'memory'));
 
-const gaugeConfig = computed(() =>
-  gaugeData.value.map((item) => ({
-    ...item,
-    title: item.titleKey ? t(item.titleKey) : item.title,
-  })),
-);
-
-const readGaugeField = (index, field) =>
-  readReadyMetricField(gaugeConfig.value?.[index], field);
+const toFiniteNumber = (value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
 
 const computeTotalText = computed(() => {
-  const total = readGaugeField(0, 'total');
-  return total === undefined ? '--' : `${roundToDecimal(total / 100, 1)}`;
+  if (!isDetailReady.value) return '--';
+  const total = toFiniteNumber(detail.value?.coreTotal);
+  return total === undefined || total <= 0 ? '--' : `${roundToDecimal(total / 100, 1)}`;
 });
 
 const memoryTotalText = computed(() => {
-  const total = readGaugeField(1, 'total');
-  return total === undefined ? '--' : `${roundToDecimal(total, 1)} GiB`;
+  if (!isDetailReady.value) return '--';
+  const totalMiB = toFiniteNumber(detail.value?.memoryTotal);
+  return totalMiB === undefined || totalMiB <= 0 ? '--' : `${roundToDecimal(totalMiB / 1024, 1)} GiB`;
 });
 
 const formatUsedValue = (v, unit, divisor = 1) => {
@@ -640,67 +565,102 @@ const formatUsedValue = (v, unit, divisor = 1) => {
   return unit && String(unit).trim() ? `${text} ${unit}` : text;
 };
 
-const computeAllocUsedText = computed(() =>
-  detail.value?.isExternal || computeAllocNothingCounted.value
-    ? '--'
-    : formatUsedValue(
-        readGaugeField(0, 'used'),
-        gaugeConfig.value?.[0]?.unit,
-        100,
-      ),
-);
-const computeUsageUsedText = computed(() =>
-  formatUsedValue(
-    readGaugeField(2, 'used'),
-    gaugeConfig.value?.[2]?.unit,
-    100,
-  ),
-);
-const memoryAllocUsedText = computed(() =>
-  detail.value?.isExternal
-    ? '--'
-    : formatUsedValue(
-        readGaugeField(1, 'used'),
-        gaugeConfig.value?.[1]?.unit,
-      ),
-);
-// Only look up GI readings when this MIG card lacks a usable whole-GPU memory pair.
-const migMemoryUuid = computed(() =>
-  detail.value?.mode === 'mig' && gaugeConfig.value?.[3]?.status === METRIC_STATUS.MISSING
-    ? detailCardUuid.value : undefined,
-);
-const { data: migInstanceMemory, status: migMemoryStatus } = useDetailResource({
-  source: migMemoryUuid,
-  initialData: null,
-  request: async (uuid, signal) => {
-    const result = await cardApi.getInstantVector({ query: migInstanceMemoryQuery(uuid) }, signal);
-    return sumMigInstanceMemory(result.data ?? [], uuid);
-  },
-  classify: result => result ? REQUEST_STATUS.READY : REQUEST_STATUS.MISSING,
+const computeAllocUncounted = computed(() => {
+  if (!isDetailReady.value || !detail.value) return undefined;
+  if (typeof detail.value.coreUnknownCount === 'number' && Number.isFinite(detail.value.coreUnknownCount)) {
+    return Math.max(0, detail.value.coreUnknownCount);
+  }
+  return detail.value.coreUsedKnown === false ? null : 0;
 });
+
+const computeAllocUsedRaw = computed(() => (
+  !isDetailReady.value || detail.value?.isExternal ? undefined : toFiniteNumber(detail.value?.coreUsed)
+));
+
+const computeAllocNothingCounted = computed(() =>
+  isNothingCounted(computeAllocUsedRaw.value, computeAllocUncounted.value),
+);
+
+const computeAllocUsedText = computed(() =>
+  computeAllocNothingCounted.value
+    ? '--'
+    : formatUsedValue(computeAllocUsedRaw.value, ' ', 100),
+);
+
+const computeUsageRatioRaw = computed(() => (
+  isDetailReady.value ? toFiniteNumber(detail.value?.utilizationRatio) : undefined
+));
+
+const computeUsageUsedText = computed(() =>
+  formatUsedValue(computeUsageRatioRaw.value, ' '),
+);
+
+const memoryAllocUsedMiB = computed(() => (
+  !isDetailReady.value || detail.value?.isExternal ? undefined : toFiniteNumber(detail.value?.memoryUsed)
+));
+
+const memoryAllocUsedText = computed(() =>
+  formatUsedValue(memoryAllocUsedMiB.value, 'GiB', 1024),
+);
+
+const wholeMemoryUsage = computed(() => {
+  if (!isDetailReady.value || !detail.value) return null;
+  const usedBytes = toFiniteNumber(detail.value.memoryUsedBytes);
+  const physBytes = toFiniteNumber(detail.value.memoryPhysicalBytes);
+  if (usedBytes === undefined || physBytes === undefined || physBytes <= 0) return null;
+  return {
+    usedGiB: usedBytes / BYTES_PER_GIB,
+    percent: (usedBytes / physBytes) * 100,
+  };
+});
+
+const migInstanceMemory = computed(() => {
+  if (!isDetailReady.value || detail.value?.mode !== 'mig' || wholeMemoryUsage.value) return null;
+  const mig = detail.value?.migInstanceMemory;
+  if (!mig) return null;
+  const usedBytes = toFiniteNumber(mig.usedBytes);
+  if (usedBytes === undefined) return null;
+  const totalBytes = toFiniteNumber(mig.totalBytes);
+  return {
+    usedGiB: usedBytes / BYTES_PER_GIB,
+    totalGiB: totalBytes === undefined ? undefined : totalBytes / BYTES_PER_GIB,
+    percent: totalBytes !== undefined && totalBytes > 0 ? (100 * usedBytes) / totalBytes : undefined,
+  };
+});
+
 const memoryUsageHelp = computed(() => {
   if (!migInstanceMemory.value) {
-    return t(migMemoryUuid.value && migMemoryStatus.value === REQUEST_STATUS.MISSING
-      ? 'dashboard.migMemoryMissing' : 'dashboard.memUsageRateDescription');
+    return t(
+      isDetailReady.value && detail.value?.mode === 'mig' && !wholeMemoryUsage.value
+        ? 'dashboard.migMemoryMissing'
+        : 'dashboard.memUsageRateDescription',
+    );
   }
   const { totalGiB, percent } = migInstanceMemory.value;
   return percent === undefined ? t('dashboard.migInstancesUsedHelp')
     : t('dashboard.migInstancesUsageHelp', { total: formatUsedValue(totalGiB, 'GiB') });
 });
-const memoryUsageUsedText = computed(() => formatUsedValue(
-  migInstanceMemory.value?.usedGiB ?? readGaugeField(3, 'used'), gaugeConfig.value?.[3]?.unit,
-));
+
+const memoryUsageUsedText = computed(() =>
+  formatUsedValue(migInstanceMemory.value?.usedGiB ?? wholeMemoryUsage.value?.usedGiB, 'GiB'),
+);
 
 const computeAllocPercentRaw = computed(() => {
-  if (detail.value?.isExternal) return undefined;
-  return readGaugeField(0, 'percent');
+  if (computeAllocUsedRaw.value === undefined) return undefined;
+  const total = toFiniteNumber(detail.value?.coreTotal);
+  return total !== undefined && total > 0 ? (computeAllocUsedRaw.value / total) * 100 : undefined;
 });
 const memoryAllocPercentRaw = computed(() => {
-  if (detail.value?.isExternal) return undefined;
-  return readGaugeField(1, 'percent');
+  if (memoryAllocUsedMiB.value === undefined) return undefined;
+  const totalMiB = toFiniteNumber(detail.value?.memoryTotal);
+  return totalMiB !== undefined && totalMiB > 0 ? (memoryAllocUsedMiB.value / totalMiB) * 100 : undefined;
 });
-const computeUsagePercentRaw = computed(() => readGaugeField(2, 'percent'));
-const memoryUsagePercentRaw = computed(() => migInstanceMemory.value ? migInstanceMemory.value.percent : readGaugeField(3, 'percent'));
+const computeUsagePercentRaw = computed(() => (
+  computeUsageRatioRaw.value === undefined ? undefined : computeUsageRatioRaw.value * 100
+));
+const memoryUsagePercentRaw = computed(() =>
+  migInstanceMemory.value ? migInstanceMemory.value.percent : wholeMemoryUsage.value?.percent,
+);
 
 const clampPercent = (v) => Math.max(0, Math.min(100, v));
 const roundPercentForProgress = (p) => (p === undefined ? undefined : roundToDecimal(p, 2));
@@ -717,7 +677,6 @@ const computeUsagePercentProgressRounded = computed(() => roundPercentForProgres
 const memoryAllocPercentProgressRounded = computed(() => roundPercentForProgress(memoryAllocPercentProgress.value));
 const memoryUsagePercentProgressRounded = computed(() => roundPercentForProgress(memoryUsagePercentProgress.value));
 
-const computeAllocNothingCounted = computed(() => isNothingCounted(readGaugeField(0, 'used'), computeAllocUncounted.value));
 const computeAllocNote = computed(() => {
   if (computeAllocNothingCounted.value) return nothingCountedMessage(t, computeAllocUncounted.value);
   return isLowerBound(computeAllocUncounted.value) ? lowerBoundMessage(t, computeAllocUncounted.value) : '';
@@ -738,40 +697,36 @@ const lineTools = [
   {
     titleKey: 'card.detail.gpuTemperatureTrend',
     seriesNameKey: 'card.detail.gpuTemperature',
-    query: `avg by (device_no,driver_version) (hami_device_temperature{device_uuid=$device_uuid})`,
+    sectionIndex: 'temperature',
     unit: '℃',
   },
   {
     titleKey: 'card.detail.gpuPowerTrend',
     seriesNameKey: 'card.detail.gpuPower',
-    query: `avg by (device_no,driver_version) (hami_device_power{device_uuid=$device_uuid})`,
+    sectionIndex: 'power',
     unit: 'W',
   },
 ];
-// Each sensor line is its own range group: it keeps its last result while a new range loads.
-const { data: telemetryTrend } = useRangeVector(
-  lineTools.map(({ query }, sectionIndex) => ({ query, sectionIndex })),
-  renderCardQuery,
-  times,
-);
-const trendLoading = computed(() => [...rangeSeries.value, ...telemetryTrend.value].some(
+const trendLoading = computed(() => rangeSeries.value.some(
   (item) => item.refreshing || item.status === REQUEST_STATUS.LOADING,
 ));
-// The current readings do not depend on the chart range.
-const telemetryNow = useInstantVector(lineTools.map(({ query }) => ({ query })), renderCardQuery);
 
-const sensorReadings = computed(() => lineTools.map(({ seriesNameKey, unit }, index) => {
-  const state = telemetryNow.value[index];
-  return {
-    key: seriesNameKey,
-    loading: !state || state.status === REQUEST_STATUS.LOADING,
-    text: formatOptionalTelemetry(readReadyMetricField(state, 'used'), unit),
-  };
-}));
+const sensorReadings = computed(() => [
+  {
+    key: 'card.detail.gpuTemperature',
+    loading: detailStatus.value === REQUEST_STATUS.LOADING,
+    text: isDetailReady.value ? formatOptionalTelemetry(detail.value?.temperatureCelsius, '℃') : '--',
+  },
+  {
+    key: 'card.detail.gpuPower',
+    loading: detailStatus.value === REQUEST_STATUS.LOADING,
+    text: isDetailReady.value ? formatOptionalTelemetry(detail.value?.powerWatts, 'W') : '--',
+  },
+]);
 
 const lineToolsView = computed(() =>
-  lineTools.map((item, index) => {
-    const state = telemetryTrend.value[index];
+  lineTools.map((item) => {
+    const state = rangeSeries.value.find((entry) => entry.sectionIndex === item.sectionIndex);
     const status = state?.status || REQUEST_STATUS.LOADING;
     return {
       ...item,

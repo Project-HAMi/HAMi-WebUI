@@ -201,6 +201,18 @@ export interface DeviceItem {
   nodeAllocationComplete?: boolean;
   hasInitReservation?: boolean;
   telemetryDeviceId?: string;
+  coreUnknownCount?: number;
+  utilizationRatio?: number;
+  memoryUsedBytes?: string | number;
+  memoryPhysicalBytes?: string | number;
+  temperatureCelsius?: number;
+  powerWatts?: number;
+  migInstanceMemory?: MigInstanceMemory | null;
+}
+
+export interface MigInstanceMemory {
+  usedBytes: string | number;
+  totalBytes?: string | number;
 }
 
 export interface DevicesReply {
@@ -556,6 +568,7 @@ export function buildApiUrl(
 export function createApiClient(options?: {
   fetchImpl?: typeof fetch;
   getBasePathImpl?: () => string;
+  timeoutMs?: number;
 }): ApiClient;
 
 declare const apiClient: ApiClient;
