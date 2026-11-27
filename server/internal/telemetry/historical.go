@@ -12,7 +12,6 @@ import (
 
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
-	"golang.org/x/sync/singleflight"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -22,10 +21,11 @@ import (
 )
 
 const (
-	defaultQueryTimeout    = 15 * time.Second
-	defaultCacheTTL        = 15 * time.Second
-	defaultMaxCacheEntries = 256
-	defaultMaxCacheBytes   = 8 << 20
+	defaultQueryTimeout         = 15 * time.Second
+	defaultCacheTTL             = 15 * time.Second
+	defaultMaxCacheEntries      = 256
+	defaultMaxCacheBytes        = 8 << 20
+	defaultMaxConcurrentFetches = 2
 
 	minTrendStep   = 30 * time.Second
 	maxTrendStep   = time.Hour
@@ -49,6 +49,13 @@ type cachedTrend struct {
 	expiresAt time.Time
 }
 
+type trendFlight struct {
+	done    chan struct{}
+	cancel  context.CancelFunc
+	waiters int
+	reply   *obsv1.TrendsReply
+}
+
 // HistoricalObservationReader serves bounded, named PromQL trends from historical
 // Prometheus metrics without exposing arbitrary PromQL to callers.
 type HistoricalObservationReader struct {
@@ -59,8 +66,9 @@ type HistoricalObservationReader struct {
 	maxCacheEntries int
 	maxCacheBytes   int
 
-	group      singleflight.Group
+	fetchSem   chan struct{}
 	cacheMu    sync.Mutex
+	flights    map[string]*trendFlight
 	cache      map[string]cachedTrend
 	cacheOrder []string
 	cacheBytes int
@@ -84,6 +92,8 @@ func NewHistoricalObservationReaderWithQuerier(querier RangeQuerier) *Historical
 		cacheTTL:        defaultCacheTTL,
 		maxCacheEntries: defaultMaxCacheEntries,
 		maxCacheBytes:   defaultMaxCacheBytes,
+		fetchSem:        make(chan struct{}, defaultMaxConcurrentFetches),
+		flights:         make(map[string]*trendFlight),
 		cache:           make(map[string]cachedTrend),
 	}
 }
@@ -92,6 +102,7 @@ type parsedTrendsQuery struct {
 	scope       string
 	entityScope string
 	node        string
+	nodeUID     string
 	deviceID    string
 	namespace   string
 	pod         string
@@ -145,31 +156,90 @@ func (r *HistoricalObservationReader) Trends(ctx context.Context, req *obsv1.Tre
 	}
 
 	key := parsed.cacheKey()
-	if cached, ok := r.getCached(key, r.clockNow()); ok {
-		return cached, nil
-	}
+	now := r.clockNow()
 
-	ch := r.group.DoChan(key, func() (any, error) {
-		if cached, ok := r.getCached(key, r.clockNow()); ok {
+	var f *trendFlight
+	r.cacheMu.Lock()
+	if entry, ok := r.cache[key]; ok {
+		if now.Before(entry.expiresAt) {
+			cached := proto.Clone(entry.reply).(*obsv1.TrendsReply)
+			r.cacheMu.Unlock()
 			return cached, nil
 		}
-		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.effectiveTimeout())
-		defer cancel()
-		reply, cacheable := r.fetchTrends(fetchCtx, parsed)
-		if cacheable {
-			r.putCached(key, reply, r.clockNow())
+		r.deleteEntryLocked(key)
+	}
+	if existing, ok := r.flights[key]; ok {
+		existing.waiters++
+		f = existing
+		r.cacheMu.Unlock()
+	} else {
+		fetchCtx, cancel := context.WithTimeout(context.Background(), r.effectiveTimeout())
+		f = &trendFlight{
+			done:    make(chan struct{}),
+			cancel:  cancel,
+			waiters: 1,
 		}
-		return reply, nil
-	})
+		if r.flights == nil {
+			r.flights = make(map[string]*trendFlight)
+		}
+		r.flights[key] = f
+		r.cacheMu.Unlock()
+		go r.runFlight(fetchCtx, cancel, key, f, parsed)
+	}
 
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case res := <-ch:
-		if res.Err != nil {
-			return nil, res.Err
+	case <-f.done:
+		if f.reply == nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, context.Canceled
 		}
-		return proto.Clone(res.Val.(*obsv1.TrendsReply)).(*obsv1.TrendsReply), nil
+		return proto.Clone(f.reply).(*obsv1.TrendsReply), nil
+	case <-ctx.Done():
+		r.cacheMu.Lock()
+		f.waiters--
+		if f.waiters == 0 {
+			f.cancel()
+			if r.flights[key] == f {
+				delete(r.flights, key)
+			}
+		}
+		r.cacheMu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+func (r *HistoricalObservationReader) runFlight(fetchCtx context.Context, cancel context.CancelFunc, key string, f *trendFlight, parsed parsedTrendsQuery) {
+	defer func() {
+		cancel()
+		r.cacheMu.Lock()
+		if r.flights[key] == f {
+			delete(r.flights, key)
+		}
+		r.cacheMu.Unlock()
+		close(f.done)
+	}()
+
+	if r.fetchSem != nil {
+		select {
+		case r.fetchSem <- struct{}{}:
+			defer func() { <-r.fetchSem }()
+		case <-fetchCtx.Done():
+			if !errors.Is(fetchCtx.Err(), context.Canceled) {
+				f.reply = r.unavailableReply(parsed, "query_failed")
+			}
+			return
+		}
+	}
+
+	reply, cacheable := r.fetchTrends(fetchCtx, parsed)
+	if errors.Is(fetchCtx.Err(), context.Canceled) {
+		return
+	}
+	f.reply = reply
+	if cacheable {
+		r.putCached(key, reply, r.clockNow())
 	}
 }
 
@@ -189,6 +259,9 @@ func (r *HistoricalObservationReader) fetchTrends(ctx context.Context, q parsedT
 	cacheable := true
 	var circuitErr error
 	for _, spec := range q.specs {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, false
+		}
 		if circuitErr != nil {
 			cacheable = false
 			reply.Series = append(reply.Series, unavailableTrendSeries(spec, q.entityScope, "circuit_open", grid))
@@ -196,6 +269,9 @@ func (r *HistoricalObservationReader) fetchTrends(ctx context.Context, q parsedT
 		}
 		value, err := r.querier.QueryRange(ctx, spec.query, promRange)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return nil, false
+			}
 			cacheable = false
 			reason := classifyQueryError(err)
 			if errors.Is(err, prom.ErrCircuitOpen) {
@@ -336,6 +412,7 @@ func (q parsedTrendsQuery) cacheKey() string {
 	return strings.Join([]string{
 		q.scope,
 		q.node,
+		q.nodeUID,
 		q.deviceID,
 		q.namespace,
 		q.pod,
@@ -345,23 +422,6 @@ func (q parsedTrendsQuery) cacheKey() string {
 		strconv.FormatInt(q.end.Unix(), 10),
 		strconv.FormatInt(int64(q.step/time.Second), 10),
 	}, "\x00")
-}
-
-func (r *HistoricalObservationReader) getCached(key string, now time.Time) (*obsv1.TrendsReply, bool) {
-	if r == nil {
-		return nil, false
-	}
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
-	entry, ok := r.cache[key]
-	if !ok {
-		return nil, false
-	}
-	if !now.Before(entry.expiresAt) {
-		r.deleteEntryLocked(key)
-		return nil, false
-	}
-	return proto.Clone(entry.reply).(*obsv1.TrendsReply), true
 }
 
 func (r *HistoricalObservationReader) putCached(key string, reply *obsv1.TrendsReply, now time.Time) {
@@ -444,6 +504,7 @@ func parseTrendsQuery(req *obsv1.TrendsRequest, now time.Time) (parsedTrendsQuer
 	}
 	scope := strings.TrimSpace(req.GetScope())
 	node := strings.TrimSpace(req.GetNode())
+	nodeUID := strings.TrimSpace(req.GetNodeUid())
 	deviceID := strings.TrimSpace(req.GetDeviceId())
 	namespace := strings.TrimSpace(req.GetNamespace())
 	pod := strings.TrimSpace(req.GetPod())
@@ -453,22 +514,22 @@ func parseTrendsQuery(req *obsv1.TrendsRequest, now time.Time) (parsedTrendsQuer
 	var entityScope string
 	switch scope {
 	case "cluster":
-		if node != "" || deviceID != "" || namespace != "" || pod != "" || container != "" || podUID != "" {
+		if node != "" || nodeUID != "" || deviceID != "" || namespace != "" || pod != "" || container != "" || podUID != "" {
 			return parsedTrendsQuery{}, fmt.Errorf("%w: cluster scope does not accept entity filters", ErrInvalidTrendsQuery)
 		}
 		entityScope = "device"
 	case "node":
-		if node == "" || deviceID != "" || namespace != "" || pod != "" || container != "" || podUID != "" {
-			return parsedTrendsQuery{}, fmt.Errorf("%w: node scope requires only node", ErrInvalidTrendsQuery)
+		if node == "" || nodeUID == "" || deviceID != "" || namespace != "" || pod != "" || container != "" || podUID != "" {
+			return parsedTrendsQuery{}, fmt.Errorf("%w: node scope requires node and node_uid", ErrInvalidTrendsQuery)
 		}
 		entityScope = "device"
 	case "device":
 		if deviceID == "" || node != "" || namespace != "" || pod != "" || container != "" || podUID != "" {
-			return parsedTrendsQuery{}, fmt.Errorf("%w: device scope requires only device_id", ErrInvalidTrendsQuery)
+			return parsedTrendsQuery{}, fmt.Errorf("%w: device scope requires device_id", ErrInvalidTrendsQuery)
 		}
 		entityScope = "device"
 	case "container":
-		if namespace == "" || pod == "" || container == "" || podUID == "" || node != "" || deviceID != "" {
+		if namespace == "" || pod == "" || container == "" || podUID == "" || node != "" || nodeUID != "" || deviceID != "" {
 			return parsedTrendsQuery{}, fmt.Errorf("%w: container scope requires namespace, pod, container, and pod_uid", ErrInvalidTrendsQuery)
 		}
 		entityScope = "container"
@@ -512,11 +573,15 @@ func parseTrendsQuery(req *obsv1.TrendsRequest, now time.Time) (parsedTrendsQuer
 		step = selectAutoStep(end.Sub(start))
 	}
 
-	end = end.Truncate(step)
-	start = start.Truncate(step)
-	if !end.After(start) {
-		start = end.Add(-step)
+	alignedEnd := end.Truncate(step)
+	alignedStart := start.Truncate(step)
+	if alignedStart.Before(start) {
+		alignedStart = alignedStart.Add(step)
 	}
+	if alignedEnd.Before(alignedStart) {
+		return parsedTrendsQuery{}, fmt.Errorf("%w: window contains no step-aligned sample points", ErrInvalidTrendsQuery)
+	}
+	start, end = alignedStart, alignedEnd
 	if points := int(end.Sub(start)/step) + 1; points > maxTrendPoints {
 		return parsedTrendsQuery{}, fmt.Errorf("%w: requested %d points exceeds maximum of %d", ErrInvalidTrendsQuery, points, maxTrendPoints)
 	}
@@ -525,6 +590,7 @@ func parseTrendsQuery(req *obsv1.TrendsRequest, now time.Time) (parsedTrendsQuer
 		scope:       scope,
 		entityScope: entityScope,
 		node:        node,
+		nodeUID:     nodeUID,
 		deviceID:    deviceID,
 		namespace:   namespace,
 		pod:         pod,
@@ -562,9 +628,12 @@ func buildTrendSpecs(q parsedTrendsQuery) []namedTrendSpec {
 	var extraFilter string
 	switch q.scope {
 	case "node":
-		extraFilter = fmt.Sprintf("node=%s", strconv.Quote(q.node))
+		extraFilter = fmt.Sprintf("node=%s,node_uid=%s", strconv.Quote(q.node), strconv.Quote(q.nodeUID))
 	case "device":
 		extraFilter = fmt.Sprintf("device_id=%s", strconv.Quote(q.deviceID))
+		if q.nodeUID != "" {
+			extraFilter += fmt.Sprintf(",node_uid=%s", strconv.Quote(q.nodeUID))
+		}
 	}
 	return buildPhysicalTrendSpecs(extraFilter)
 }
@@ -643,27 +712,37 @@ func buildPhysicalTrendSpecs(extraSelector string) []namedTrendSpec {
 
 func buildContainerTrendSpecs(namespace, pod, container, podUID string) []namedTrendSpec {
 	const groupLabels = "node, provider, device_uuid"
-	const match = "on (node, provider, device_uuid)"
 
 	baseSel := fmt.Sprintf("namespace_name=%s,pod_name=%s,container_name=%s",
 		strconv.Quote(namespace), strconv.Quote(pod), strconv.Quote(container))
 	allocSel := fmt.Sprintf("%s,container_pod_uuid=%s", baseSel, strconv.Quote(container+":"+podUID))
 
-	devices := fmt.Sprintf("max by (%s) (hami_container_vgpu_allocated{%s}) > 0", groupLabels, allocSel)
-	compute := fmt.Sprintf("avg(avg by (%s) (hami_container_core_util{%s}) and %s (%s))", groupLabels, baseSel, match, devices)
-	memAlloc := fmt.Sprintf("max by (%s) (hami_container_vmemory_allocated{%s}) and %s (%s)", groupLabels, allocSel, match, devices)
-	memUsed := fmt.Sprintf("avg by (%s) (hami_container_memory_used{%s}) and %s (%s)", groupLabels, baseSel, match, memAlloc)
+	allocVgpu := fmt.Sprintf("(hami_container_vgpu_allocated{%s} > 0)", allocSel)
+	allocMem := fmt.Sprintf("(hami_container_vmemory_allocated{%s} and %s)", allocSel, allocVgpu)
+	pairedCore := fmt.Sprintf("(hami_container_core_util{%s} and ignoring (container_pod_uuid) %s)", baseSel, allocVgpu)
+	pairedMemUsed := fmt.Sprintf("(hami_container_memory_used{%s} and ignoring (container_pod_uuid) %s)", baseSel, allocMem)
+
+	devices := fmt.Sprintf("max by (%s) (%s)", groupLabels, allocVgpu)
+	compute := fmt.Sprintf("avg by (%s) (%s)", groupLabels, pairedCore)
+	memAlloc := fmt.Sprintf("max by (%s) (%s)", groupLabels, allocMem)
+	memUsed := fmt.Sprintf("avg by (%s) (%s)", groupLabels, pairedMemUsed)
 
 	return []namedTrendSpec{
 		{
 			metric: "compute_utilization_percent",
 			unit:   "percent",
-			query:  compute,
+			query: fmt.Sprintf(
+				"(avg(%s)) and on () (count(%s) == count(%s))",
+				compute, compute, devices,
+			),
 		},
 		{
 			metric: "memory_utilization_percent",
 			unit:   "percent",
-			query:  fmt.Sprintf("100 * sum(%s) / clamp_min(sum(%s), 1)", memUsed, memAlloc),
+			query: fmt.Sprintf(
+				"(100 * sum(%s) / clamp_min(sum(%s), 1)) and on () (count(%s) == count(%s)) and on () (count(%s) == count(%s))",
+				memUsed, memAlloc, memAlloc, devices, memUsed, devices,
+			),
 		},
 	}
 }

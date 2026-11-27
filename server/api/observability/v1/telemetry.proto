@@ -28,6 +28,8 @@ message TrendsRequest {
   string end = 9;
   // Optional Go duration string (e.g. "60s", "5m"). Allowed range is [30s, 1h].
   string step = 10;
+  // Required for scope="node", optional for scope="device". Disallowed for other scopes.
+  string node_uid = 11;
 }
 
 message TrendsReply {

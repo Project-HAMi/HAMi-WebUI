@@ -42,16 +42,20 @@ func TestHistoricalReaderValidationAndCanonicalParams(t *testing.T) {
 		{Scope: ""},
 		{Scope: "unknown"},
 		{Scope: "cluster", Node: "n1"},
+		{Scope: "cluster", NodeUid: "u1"},
 		{Scope: "node"},
-		{Scope: "node", Node: "n1", DeviceId: "d1"},
+		{Scope: "node", Node: "n1"},
+		{Scope: "node", Node: "n1", NodeUid: "u1", DeviceId: "d1"},
 		{Scope: "device"},
 		{Scope: "device", DeviceId: "d1", Node: "n1"},
 		{Scope: "container", Namespace: "ns", Pod: "p", Container: "c"},
 		{Scope: "container", Namespace: "ns", Pod: "p", Container: "c", PodUid: "u1", Node: "n1"},
+		{Scope: "container", Namespace: "ns", Pod: "p", Container: "c", PodUid: "u1", NodeUid: "n1"},
 		{Scope: "cluster", Start: "not-a-time"},
 		{Scope: "cluster", End: "not-a-time"},
 		{Scope: "cluster", Start: "2026-01-02T00:00:00Z", End: "2026-01-01T00:00:00Z"},
 		{Scope: "cluster", Start: "2026-01-01T00:00:00Z", End: "2026-01-16T00:00:00Z"},
+		{Scope: "cluster", Start: "2026-01-01T12:05:00Z", End: "2026-01-01T12:10:00Z", Step: "1h"},
 		{Scope: "cluster", Step: "15s"},
 		{Scope: "cluster", Step: "2h"},
 		{Scope: "cluster", Step: "4500ms"},
@@ -73,6 +77,34 @@ func TestHistoricalReaderValidationAndCanonicalParams(t *testing.T) {
 	if len(reply.Series) != 4 {
 		t.Fatalf("cluster series count = %d, want 4", len(reply.Series))
 	}
+
+	singleAligned, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope: "cluster",
+		Start: "2026-01-01T12:05:00Z",
+		End:   "2026-01-01T13:05:00Z",
+		Step:  "1h",
+	})
+	if err != nil {
+		t.Fatalf("single aligned boundary query failed: %v", err)
+	}
+	wantPoint := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+	if !singleAligned.Start.AsTime().Equal(wantPoint) || !singleAligned.End.AsTime().Equal(wantPoint) {
+		t.Fatalf("aligned bounds = [%v, %v], want [%v, %v]", singleAligned.Start.AsTime(), singleAligned.End.AsTime(), wantPoint, wantPoint)
+	}
+	if len(singleAligned.Series[0].Points) != 1 {
+		t.Fatalf("single aligned points = %d, want 1", len(singleAligned.Series[0].Points))
+	}
+
+	reader.now = func() time.Time { return time.Date(2026, 1, 1, 12, 10, 17, 0, time.UTC) }
+	unalignedDefault, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{Scope: "cluster"})
+	if err != nil {
+		t.Fatalf("unaligned default window failed: %v", err)
+	}
+	wantStart := time.Date(2026, 1, 1, 11, 11, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 1, 1, 12, 10, 0, 0, time.UTC)
+	if !unalignedDefault.Start.AsTime().Equal(wantStart) || !unalignedDefault.End.AsTime().Equal(wantEnd) {
+		t.Fatalf("unaligned default bounds = [%v, %v], want [%v, %v]", unalignedDefault.Start.AsTime(), unalignedDefault.End.AsTime(), wantStart, wantEnd)
+	}
 }
 
 func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
@@ -87,14 +119,29 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 	reader.now = func() time.Time { return now }
 
 	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
-		Scope: "node",
-		Node:  `worker-1",or="inject`,
+		Scope:   "node",
+		Node:    `worker-1",or="inject`,
+		NodeUid: "node-uid-1",
 	}); err != nil {
 		t.Fatalf("node trends failed: %v", err)
 	}
 	for _, q := range seenQueries {
-		if !strings.Contains(q, "hami_webui_device_") || !strings.Contains(q, `node="worker-1\",or=\"inject"`) {
-			t.Fatalf("unsafe or unexpected physical query: %s", q)
+		if !strings.Contains(q, "hami_webui_device_") || !strings.Contains(q, `node="worker-1\",or=\"inject",node_uid="node-uid-1"`) {
+			t.Fatalf("unsafe or unexpected physical node query: %s", q)
+		}
+	}
+
+	seenQueries = nil
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope:    "device",
+		DeviceId: "dev-1",
+		NodeUid:  "node-uid-2",
+	}); err != nil {
+		t.Fatalf("device trends with node_uid failed: %v", err)
+	}
+	for _, q := range seenQueries {
+		if !strings.Contains(q, `device_id="dev-1",node_uid="node-uid-2"`) {
+			t.Fatalf("device query missing optional node_uid filter: %s", q)
 		}
 	}
 
@@ -117,6 +164,12 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 		}
 		if !strings.Contains(q, `container_pod_uuid="worker:pod-uid-1"`) {
 			t.Fatalf("container query missing canonical container_pod_uuid: %s", q)
+		}
+		if !strings.Contains(q, "and ignoring (container_pod_uuid)") {
+			t.Fatalf("container query must pair target identity before aggregation: %s", q)
+		}
+		if !strings.Contains(q, "== count(max by (node, provider, device_uuid)") {
+			t.Fatalf("container query missing device-set completeness guard: %s", q)
 		}
 	}
 }
@@ -269,7 +322,7 @@ func TestHistoricalReaderSingleflightCancellationTTLCacheAndCircuitShortCircuit(
 	// Bound max entries (2): add 2 more distinct keys and verify oldest gets evicted.
 	for _, node := range []string{"node-a", "node-b"} {
 		if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
-			Scope: "node", Node: node, Start: req.Start, End: req.End, Step: req.Step,
+			Scope: "node", Node: node, NodeUid: "uid-" + node, Start: req.Start, End: req.End, Step: req.Step,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -302,6 +355,115 @@ func TestHistoricalReaderSingleflightCancellationTTLCacheAndCircuitShortCircuit(
 	}
 	if recovered.Series[0].State.GetState() != resourceview.Known {
 		t.Fatalf("failed reply was wrongly cached: %+v", recovered.Series[0].State)
+	}
+}
+
+func TestHistoricalReaderCancelsUpstreamWhenAllWaitersCancelAndBoundsConcurrency(t *testing.T) {
+	now := time.Unix(1760000100, 0).UTC()
+	var inFlight, maxInFlight atomic.Int32
+	firstStarted := make(chan struct{}, 4)
+	firstCanceled := make(chan struct{}, 4)
+	unblockAll := make(chan struct{})
+
+	reader := NewHistoricalObservationReaderWithQuerier(fakeRangeQuerier{
+		fn: func(ctx context.Context, query string, _ promv1.Range) (model.Value, error) {
+			cur := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				prev := maxInFlight.Load()
+				if cur <= prev || maxInFlight.CompareAndSwap(prev, cur) {
+					break
+				}
+			}
+			if strings.Contains(query, `node="node-1"`) {
+				select {
+				case firstStarted <- struct{}{}:
+				default:
+				}
+				select {
+				case <-ctx.Done():
+					select {
+					case firstCanceled <- struct{}{}:
+					default:
+					}
+					return nil, ctx.Err()
+				case <-unblockAll:
+				}
+			} else if strings.Contains(query, `node="node-2"`) {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-unblockAll:
+				}
+			}
+			return model.Matrix{&model.SampleStream{
+				Values: []model.SamplePair{{Timestamp: model.Time(now.UnixMilli()), Value: 10}},
+			}}, nil
+		},
+	})
+	reader.now = func() time.Time { return now }
+
+	reqFor := func(node string) *obsv1.TrendsRequest {
+		return &obsv1.TrendsRequest{
+			Scope: "node", Node: node, NodeUid: "uid-" + node,
+			Start: now.Add(-time.Minute).Format(time.RFC3339),
+			End:   now.Format(time.RFC3339),
+			Step:  "60s",
+		}
+	}
+
+	// Sole waiter cancellation cancels upstream context immediately.
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	errCh1 := make(chan error, 1)
+	go func() {
+		_, err := reader.Trends(ctx1, reqFor("node-1"))
+		errCh1 <- err
+	}()
+	<-firstStarted
+	cancel1()
+	if err := <-errCh1; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled sole waiter err = %v, want Canceled", err)
+	}
+	select {
+	case <-firstCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("upstream QueryRange context was not canceled when sole waiter canceled")
+	}
+
+	// 3 distinct slow requests share the 2-slot historical semaphore; canceling one frees a slot.
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
+	errChA := make(chan error, 1)
+	errChB := make(chan error, 1)
+	doneC := make(chan error, 1)
+	go func() {
+		_, err := reader.Trends(ctxA, reqFor("node-1"))
+		errChA <- err
+	}()
+	go func() {
+		_, err := reader.Trends(ctxB, reqFor("node-2"))
+		errChB <- err
+	}()
+	<-firstStarted
+	go func() {
+		_, err := reader.Trends(context.Background(), reqFor("node-3"))
+		doneC <- err
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	cancelA()
+	if err := <-errChA; !errors.Is(err, context.Canceled) {
+		t.Fatalf("reqA err = %v, want Canceled", err)
+	}
+	if err := <-doneC; err != nil {
+		t.Fatalf("reqC failed after reqA freed concurrency slot: %v", err)
+	}
+	cancelB()
+	_ = <-errChB
+	close(unblockAll)
+
+	if maxInFlight.Load() > defaultMaxConcurrentFetches {
+		t.Fatalf("maxInFlight = %d, want <= %d", maxInFlight.Load(), defaultMaxConcurrentFetches)
 	}
 }
 
