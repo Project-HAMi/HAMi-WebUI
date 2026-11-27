@@ -1,7 +1,4 @@
-import { buildPhysicalResourceQueries } from './physical-resource-queries.mjs';
-
 const METRICS = Object.freeze({
-  vgpuAllocated: 'hami_container_vgpu_allocated',
   computeAllocated: 'hami_container_vcore_allocated',
   computeAllocationKnown: 'hami_container_vcore_allocation_known',
   computeCapacity: 'hami_core_size',
@@ -10,8 +7,6 @@ const METRICS = Object.freeze({
   memorySchedulableCapacity: 'hami_vmemory_size',
   memoryPhysicalCapacity: 'hami_memory_size',
   memoryUsed: 'hami_memory_used',
-  taskComputeUtilization: 'hami_container_core_util',
-  taskMemoryUsed: 'hami_container_memory_used',
 });
 
 const PROMETHEUS_LABEL_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -39,26 +34,6 @@ const aggregateAcrossExporterReplicas = (series, groupLabel = '') => {
 
 const divideForDisplay = (expression, divisor) =>
   divisor === 1 ? expression : `${expression} / ${divisor}`;
-
-// One allocation's compute share is either known or not, so a partial sum would
-// misstate that allocation itself. Scopes that are a single allocation drop out
-// entirely; aggregates keep what they can measure and report a lower bound.
-const excludeUnknownComputeAllocations = (
-  expression,
-  { selector = '', groupLabel = '' } = {},
-) => {
-  validateGroupLabel(groupLabel);
-  const unknownSeries = `${metricSeries(
-    METRICS.computeAllocationKnown,
-    selector,
-  )} == 0`;
-  const unknown = groupLabel
-    ? `max by (${groupLabel}) (${unknownSeries})`
-    : `max(${unknownSeries})`;
-  const match = groupLabel ? `on (${groupLabel})` : 'on ()';
-
-  return `(${expression}) unless ${match} ${unknown}`;
-};
 
 const buildAllocationQueries = ({
   allocatedMetric,
@@ -116,72 +91,6 @@ export const buildComputeAllocationQueries = (options = {}) =>
     ...options,
   });
 
-export const buildTaskComputeAllocationQuery = ({
-  selector = '',
-  groupLabel = '',
-} = {}) => {
-  validateGroupLabel(groupLabel);
-  const allocated = metricSeries(METRICS.computeAllocated, selector);
-  const aggregate = aggregateAcrossExporterReplicas(allocated, groupLabel);
-
-  return excludeUnknownComputeAllocations(aggregate, {
-    selector,
-    groupLabel,
-  });
-};
-
-export const buildTaskAllocationTopQueries = () => {
-  const groupLabel = 'container_pod_uuid';
-  const compute = buildTaskComputeAllocationQuery({ groupLabel });
-  const memory = aggregateAcrossExporterReplicas(
-    METRICS.memoryAllocated,
-    groupLabel,
-  );
-  const vgpu = aggregateAcrossExporterReplicas(
-    METRICS.vgpuAllocated,
-    groupLabel,
-  );
-
-  return {
-    compute: `topk(5, (${compute}) / 100)`,
-    memory: `topk(5, ${memory} / 1024)`,
-    vgpu: `topk(5, ${vgpu})`,
-  };
-};
-
-export const buildTaskResourceOverviewQueries = ({ selector = '' } = {}) => {
-  const gpuCards = aggregateAcrossExporterReplicas(
-    metricSeries(METRICS.vgpuAllocated, selector),
-  );
-  const memory = aggregateAcrossExporterReplicas(
-    metricSeries(METRICS.memoryAllocated, selector),
-  );
-
-  return {
-    gpuCards,
-    computeLimit: buildTaskComputeAllocationQuery({ selector }),
-    singleCardMemory: `${memory} / clamp_min(${gpuCards}, 1) / 1024`,
-  };
-};
-
-export const buildTaskContainerResourceQueries = () => {
-  const identity =
-    'namespace=$namespace,pod=$pod,container=$container,uid=$pod_uid';
-
-  return {
-    cpuLimit: `max(kube_pod_container_resource_limits{resource="cpu",unit="core",${identity}})`,
-    memoryLimit: `max(kube_pod_container_resource_limits{resource="memory",unit="byte",${identity}}) / 1024 / 1024 / 1024`,
-    containerInfo: `max(kube_pod_container_info{${identity}})`,
-  };
-};
-
-export const buildTaskCountQueries = () => ({
-  byNode:
-    'topk(5, count by (node) (sum by (container_pod_uuid, node) (hami_container_vgpu_allocated)))',
-  byDevice:
-    'topk(5, count by (device_uuid) (sum by (container_pod_uuid, device_uuid) (hami_container_vgpu_allocated)))',
-});
-
 export const buildMemoryAllocationQueries = (options = {}) =>
   buildAllocationQueries({
     allocatedMetric: METRICS.memoryAllocated,
@@ -221,26 +130,3 @@ export const buildMemoryUsageQueries = ({
 export const nodeVendorDistributionQuery = 'count by (provider) ('
   + 'group by (node, provider) (hami_vgpu_count{provider!~"DCU|HCU|Hygon"}) or '
   + 'label_replace(group by (node) (hami_vgpu_count{provider=~"DCU|HCU|Hygon"}), "provider", "Hygon", "node", ".*"))';
-
-export const buildGroupedResourceTopQueries = (groupLabel) => {
-  validateGroupLabel(groupLabel);
-  if (!groupLabel) {
-    throw new TypeError('A Prometheus group label is required');
-  }
-
-  const metrics = groupLabel === 'node'
-    ? buildPhysicalResourceQueries({ byNode: true })
-    : {
-      computeAllocation: buildComputeAllocationQueries({ groupLabel }),
-      computeUsage: { percentQuery: `avg by (${groupLabel}) (${METRICS.computeUsageAverage})` },
-      memoryAllocation: buildMemoryAllocationQueries({ groupLabel }),
-      memoryUsage: buildMemoryUsageQueries({ groupLabel }),
-    };
-  const top5 = ({ percentQuery }) => `topk(5, ${percentQuery})`;
-  return {
-    computeAllocation: top5(metrics.computeAllocation),
-    computeUsage: top5(metrics.computeUsage),
-    memoryAllocation: top5(metrics.memoryAllocation),
-    memoryUsage: top5(metrics.memoryUsage),
-  };
-};

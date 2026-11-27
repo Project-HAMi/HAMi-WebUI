@@ -80,22 +80,10 @@
 <script setup>
 import BlockBox from '@/components/BlockBox.vue';
 import SegmentedControl from '@/components/SegmentedControl/index.vue';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import cardApi from '~/vgpu/api/card';
-import { cloneDeep } from 'lodash';
-import {
-  createRequestState,
-  rejectRequest,
-  REQUEST_STATUS,
-  resolveRequest,
-  startRequest,
-} from '@/hooks/request-state.mjs';
-import {
-  formatRankingValue,
-  readRankingRows,
-  readUncountedRows,
-} from './tab-top-state.mjs';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
+import { formatRankingValue } from './tab-top-state.mjs';
 import { isLowerBound, isNothingCounted, lowerBoundMessage, nothingCountedMessage } from '../metrics/uncounted.mjs';
 
 const props = defineProps({
@@ -105,16 +93,21 @@ const props = defineProps({
   onClick: Function,
 });
 const { t } = useI18n();
-const createStatefulConfigs = (configs = []) =>
-  cloneDeep(configs).map((item) => item.query ? ({
-    ...item,
-    ...createRequestState(Array.isArray(item.data) ? item.data : []),
-  }) : item);
-const currentConfig = ref(createStatefulConfigs(props.config));
 const tabActive = ref('');
 
+watch(
+  () => props.config,
+  (list) => {
+    if (!list?.length) return;
+    if (!list.some((item) => item.key === tabActive.value)) {
+      tabActive.value = list[0].key;
+    }
+  },
+  { immediate: true },
+);
+
 const tabOptions = computed(() =>
-  (currentConfig.value || []).map(({ tab, key }) => ({
+  (props.config || []).map(({ tab, key }) => ({
     label: tab,
     value: key,
   })),
@@ -126,11 +119,13 @@ const handleClick = (params) => {
   }
 };
 
+const activeConfig = computed(() =>
+  (props.config || []).find((item) => item.key === tabActive.value),
+);
+
 const displayItems = computed(() => {
-  const config = currentConfig.value.find(
-    (item) => item.key === tabActive.value,
-  );
-  const data = cloneDeep(config?.data) || [];
+  const config = activeConfig.value;
+  const data = Array.isArray(config?.data) ? config.data : [];
   const unit = config?.unit || '%';
 
   if (!data.length) return [];
@@ -163,9 +158,6 @@ const displayItems = computed(() => {
     });
 });
 
-const activeConfig = computed(() =>
-  currentConfig.value.find((item) => item.key === tabActive.value),
-);
 const activeStatus = computed(
   () => activeConfig.value?.status || REQUEST_STATUS.LOADING,
 );
@@ -182,69 +174,6 @@ const activeStateText = computed(() => {
 const handleItemClick = (item) => {
   handleClick({ data: item });
 };
-
-const fetchData = (configList) => {
-  if (!configList?.length) return;
-  if (!configList.some((item) => item.key === tabActive.value)) {
-    tabActive.value = configList[0].key;
-  }
-  configList.forEach((v, i) => {
-    if (!v.query) return;
-    const state = configList[i];
-    const hasResolved = state.hasResolved;
-    const requestId = startRequest(state, { hasResolved });
-    // Rows whose rate leaves allocations out read as lower bounds, and every row
-    // does when that count cannot be read; the list waits for it either way.
-    const uncounted = v.uncountedQuery
-      ? cardApi.getInstantVector({ query: v.uncountedQuery }).then(
-        (res) => readUncountedRows(res, v.nameKey),
-        () => null,
-      )
-      : Promise.resolve({});
-    cardApi.getInstantVector({ query: v.query }).then(
-      async (res) => {
-        const result = readRankingRows(res, v.nameKey);
-        const counts = await uncounted;
-        if (requestId === state.requestId) state.uncounted = counts;
-        resolveRequest(state, {
-          ...result,
-          requestId,
-        });
-      },
-      (error) => rejectRequest(state, error, { hasResolved, requestId }),
-    );
-  });
-};
-
-onMounted(() => {
-  fetchData(currentConfig.value);
-});
-
-watch(
-  () => props.config,
-  (val) => {
-    const previous = new Map(
-      currentConfig.value.map((item) => [`${item.key}:${item.query}`, item]),
-    );
-    currentConfig.value = createStatefulConfigs(val).map((item) => {
-      if (!item.query) return item;
-      const old = previous.get(`${item.key}:${item.query}`);
-      if (!old) return item;
-      return {
-        ...item,
-        data: old.data,
-        uncounted: old.uncounted,
-        status: old.status,
-        hasResolved: old.hasResolved,
-        refreshing: old.refreshing,
-        error: old.error,
-        refreshError: old.refreshError,
-      };
-    });
-    fetchData(currentConfig.value);
-  },
-  { deep: true },
-);
 </script>
 
 <style lang="scss" scoped>

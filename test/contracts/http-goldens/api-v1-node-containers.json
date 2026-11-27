@@ -45,7 +45,9 @@
           "allocatedCoresReason": ""
         }
       ],
-      "allocationShapeReason": ""
+      "allocationShapeReason": "",
+      "cpuLimitCores": 4,
+      "memoryLimitBytes": "8589934592"
     }
   ],
   "allocationNodeUid": "node-uid-1"

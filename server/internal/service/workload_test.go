@@ -431,3 +431,63 @@ func TestWorkloadDeviceFilterKeepsNumberedDevicesApart(t *testing.T) {
 		}
 	}
 }
+
+func TestGetWorkloadRankingsAggregatesClusterTop5(t *testing.T) {
+	emptyReply, err := workloadTestService(nil).GetWorkloadRankings(context.Background())
+	if err != nil {
+		t.Fatalf("empty GetWorkloadRankings error = %v", err)
+	}
+	if len(emptyReply.ByNode) != 0 || len(emptyReply.ByDevice) != 0 || len(emptyReply.ByCompute) != 0 || len(emptyReply.ByMemory) != 0 || len(emptyReply.ByVgpu) != 0 {
+		t.Fatalf("expected empty rankings, got %+v", emptyReply)
+	}
+
+	// Build 6 containers across 2 nodes to test top-5 cap, multi-slot device dedup, and unknown compute exclusion.
+	makeItem := func(idx int, node, nodeUID, devA, devB string, cores, mem int32, coreUnknown bool) *biz.Container {
+		devices := biz.ContainerDevices{{UUID: devA, Usedcores: cores, Usedmem: mem, CoreAllocationUnknown: coreUnknown}}
+		if devB != "" {
+			devices = append(devices, biz.ContainerDevice{UUID: devB, Usedcores: 10, Usedmem: 512, CoreAllocationUnknown: coreUnknown})
+		}
+		return &biz.Container{
+			Name:             "c-" + string(rune('a'+idx)),
+			PodName:          "pod-" + string(rune('a'+idx)),
+			PodUID:           "uid-" + string(rune('a'+idx)),
+			Namespace:        "ns",
+			NodeName:         node,
+			NodeUID:          nodeUID,
+			Status:           biz.ContainerStatusSuccess,
+			ContainerDevices: devices,
+		}
+	}
+	containers := []*biz.Container{
+		makeItem(0, "node-b", "uid-nb", "gpu-1", "gpu-1", 80, 4096, false),
+		makeItem(1, "node-b", "uid-nb", "gpu-2", "", 40, 2048, false),
+		makeItem(2, "node-b", "uid-nb", "gpu-1", "", 20, 1024, false),
+		makeItem(3, "node-a", "uid-na", "gpu-shared", "", 90, 8192, true),
+		makeItem(4, "node-a", "uid-na", "gpu-3", "", 60, 3072, false),
+		makeItem(5, "node-c", "uid-nc", "gpu-shared", "", 10, 512, false),
+	}
+	pending := workloadTestPending("pending-ignored", workloadTestRequest("main", "regular", "4"))
+
+	reply, err := workloadTestService(containers, pending).GetWorkloadRankings(context.Background())
+	if err != nil {
+		t.Fatalf("GetWorkloadRankings() error = %v", err)
+	}
+	if len(reply.ByNode) != 3 || reply.ByNode[0].Name != "node-b" || reply.ByNode[0].NodeUid != "uid-nb" || reply.ByNode[0].Count != 3 {
+		t.Fatalf("ByNode = %+v", reply.ByNode)
+	}
+	if len(reply.ByDevice) != 4 || reply.ByDevice[0].Name != "gpu-1" || reply.ByDevice[0].Count != 2 || reply.ByDevice[0].NodeUid != "uid-nb" {
+		t.Fatalf("ByDevice = %+v, want gpu-1 count=2 once per container", reply.ByDevice)
+	}
+	if reply.ByDevice[1].Name != "gpu-shared" || reply.ByDevice[1].NodeUid != "" {
+		t.Fatalf("shared duplicate device across nodes should clear ambiguous node_uid, got %+v", reply.ByDevice[1])
+	}
+	if len(reply.ByCompute) != 5 || reply.ByCompute[0].Name != "c-a" || reply.ByCompute[0].Value != 0.9 {
+		t.Fatalf("ByCompute = %+v (unknown compute pod should be excluded)", reply.ByCompute)
+	}
+	if len(reply.ByMemory) != 5 || reply.ByMemory[0].Name != "c-d" || reply.ByMemory[0].Value != 8 {
+		t.Fatalf("ByMemory = %+v", reply.ByMemory)
+	}
+	if len(reply.ByVgpu) != 5 || reply.ByVgpu[0].Name != "c-a" || reply.ByVgpu[0].Value != 2 {
+		t.Fatalf("ByVgpu = %+v", reply.ByVgpu)
+	}
+}

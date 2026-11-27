@@ -1,5 +1,3 @@
-import { REQUEST_STATUS } from '../../../src/hooks/request-state.mjs';
-
 const toFiniteValue = (value) => {
   if (
     value === null ||
@@ -20,31 +18,4 @@ export const formatRankingValue = (value, unit = '%') => {
     : String(rounded);
   const normalizedUnit = typeof unit === 'string' ? unit.trim() : '';
   return normalizedUnit ? `${display} ${normalizedUnit}` : display;
-};
-
-export const readRankingRows = (response, nameKey) => {
-  if (!Array.isArray(response?.data)) {
-    return { data: [], status: REQUEST_STATUS.INVALID };
-  }
-
-  const rows = response.data.flatMap((item) => {
-    const value = toFiniteValue(item?.value);
-    if (value === undefined) return [];
-    return [{ name: item?.metric?.[nameKey] || '-', value }];
-  });
-
-  if (rows.length) return { data: rows, status: REQUEST_STATUS.READY };
-  return {
-    data: [],
-    status: response.data.length
-      ? REQUEST_STATUS.INVALID
-      : REQUEST_STATUS.MISSING,
-  };
-};
-
-// Per-row counts of allocations a rate left out; null when the reply is unreadable.
-export const readUncountedRows = (response, nameKey) => {
-  const { data, status } = readRankingRows(response, nameKey);
-  if (status === REQUEST_STATUS.INVALID) return null;
-  return Object.fromEntries(data.map((row) => [row.name, row.value]));
 };

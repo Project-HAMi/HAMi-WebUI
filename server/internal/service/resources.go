@@ -168,6 +168,13 @@ func (s *ResourcesService) ListContainers(ctx context.Context, req *pb.ListConta
 	})
 }
 
+func (s *ResourcesService) GetContainerRankings(ctx context.Context, _ *pb.GetContainerRankingsRequest) (*pb.WorkloadRankingsReply, error) {
+	if s == nil || s.workloads == nil {
+		return nil, unavailableService("workload")
+	}
+	return s.workloads.GetWorkloadRankings(ctx)
+}
+
 func (s *ResourcesService) GetContainer(ctx context.Context, req *pb.GetResourceContainerRequest) (*pb.ContainerReply, error) {
 	if s == nil || s.containers == nil {
 		return nil, unavailableService("container")

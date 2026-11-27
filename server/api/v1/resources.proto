@@ -38,6 +38,10 @@ service Resources {
     option (google.api.http) = { get: "/api/v1/containers" };
   }
 
+  rpc GetContainerRankings (GetContainerRankingsRequest) returns (WorkloadRankingsReply) {
+    option (google.api.http) = { get: "/api/v1/containers/rankings" };
+  }
+
   rpc GetContainer (GetResourceContainerRequest) returns (ContainerReply) {
     option (google.api.http) = { get: "/api/v1/containers/{pod_uid}/{container}" };
   }
@@ -95,6 +99,8 @@ message ListContainersRequest {
   int32 page = 9;
   int32 page_size = 10;
 }
+
+message GetContainerRankingsRequest {}
 
 message GetResourceContainerRequest {
   string pod_uid = 1;

@@ -172,6 +172,8 @@ func (s *ContainerService) GetAllContainers(ctx context.Context, req *pb.GetAllC
 		containerReply.NodeUid = container.NodeUID
 		containerReply.Namespace = container.Namespace
 		containerReply.Priority = container.Priority
+		containerReply.CpuLimitCores = container.CPULimitCores
+		containerReply.MemoryLimitBytes = container.MemoryLimitBytes
 		allocatedCoresKnown := true
 		var selected biz.ContainerDevices
 		var vendors []string
@@ -254,6 +256,8 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	ctrReply.NodeUid = container.NodeUID
 	ctrReply.Namespace = container.Namespace
 	ctrReply.Priority = container.Priority
+	ctrReply.CpuLimitCores = container.CPULimitCores
+	ctrReply.MemoryLimitBytes = container.MemoryLimitBytes
 	allocatedCoresKnown := true
 	allContainers, err := s.pod.ListAllContainers(ctx)
 	if err == nil {

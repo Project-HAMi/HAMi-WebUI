@@ -288,15 +288,19 @@ func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 		}
 		nodeRepo.nodes = []*biz.Node{{Name: "node-1", Uid: "node-uid-1", IsReady: true, IsSchedulable: true, Devices: []*biz.DeviceInfo{dev}}}
 		nodeRepo.devices = []*biz.DeviceInfo{dev}
+		cpuLimit := 4.0
+		memoryLimit := int64(8589934592)
 		podRepo.containers = []*biz.Container{{
-			Name:       "trainer",
-			PodUID:     "pod-uid-1",
-			PodName:    "train-job-0",
-			Namespace:  "default",
-			NodeName:   "node-1",
-			NodeUID:    "node-uid-1",
-			Status:     biz.ContainerStatusSuccess,
-			CreateTime: at,
+			Name:             "trainer",
+			PodUID:           "pod-uid-1",
+			PodName:          "train-job-0",
+			Namespace:        "default",
+			NodeName:         "node-1",
+			NodeUID:          "node-uid-1",
+			Status:           biz.ContainerStatusSuccess,
+			CreateTime:       at,
+			CPULimitCores:    &cpuLimit,
+			MemoryLimitBytes: &memoryLimit,
 			ContainerDevices: biz.ContainerDevices{{
 				UUID:      "GPU-1",
 				Type:      "NVIDIA A100",
@@ -425,6 +429,7 @@ func TestHTTPJSONGoldens(t *testing.T) {
 		{name: "api-v1-devices.json", empty: false, method: "GET", target: "/api/v1/devices", wantStatus: 200},
 		{name: "api-v1-device-detail.json", empty: false, method: "GET", target: "/api/v1/device?id=GPU-1&node_uid=node-uid-1", wantStatus: 200},
 		{name: "api-v1-containers.json", empty: false, method: "GET", target: "/api/v1/containers?page=1&page_size=20", wantStatus: 200},
+		{name: "api-v1-containers-rankings.json", empty: false, method: "GET", target: "/api/v1/containers/rankings", wantStatus: 200},
 		{name: "api-v1-container-detail.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/trainer", wantStatus: 200},
 		{name: "api-v1-container-not-found.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/missing", wantStatus: 404},
 		{name: "api-v1-scheduling-pod.json", empty: false, method: "GET", target: "/api/v1/scheduling/pods/default/train-job-0?uid=pod-uid-1", wantStatus: 200},

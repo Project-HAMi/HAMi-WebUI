@@ -136,6 +136,156 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, req *pb.ListWorkloa
 	return result, nil
 }
 
+const workloadRankingLimit = 5
+
+// GetWorkloadRankings computes the cluster-wide Top 5 workload rankings from
+// allocated containers without table-filter or pagination truncation.
+func (s *WorkloadService) GetWorkloadRankings(ctx context.Context) (*pb.WorkloadRankingsReply, error) {
+	allocated, err := s.containers.GetAllContainers(ctx, &pb.GetAllContainersReq{})
+	if err != nil {
+		return nil, err
+	}
+	reply := &pb.WorkloadRankingsReply{
+		ByNode:    []*pb.EntityCountRankingItem{},
+		ByDevice:  []*pb.EntityCountRankingItem{},
+		ByCompute: []*pb.ContainerAllocationRankingItem{},
+		ByMemory:  []*pb.ContainerAllocationRankingItem{},
+		ByVgpu:    []*pb.ContainerAllocationRankingItem{},
+	}
+	items := allocated.GetItems()
+	if len(items) == 0 {
+		return reply, nil
+	}
+
+	type entityCount struct {
+		name         string
+		nodeUID      string
+		ambiguousUID bool
+		count        int32
+	}
+	addEntity := func(counts map[string]*entityCount, name, nodeUID string) {
+		if name == "" {
+			return
+		}
+		entry, ok := counts[name]
+		if !ok {
+			entry = &entityCount{name: name, nodeUID: nodeUID}
+			counts[name] = entry
+		} else if nodeUID != "" {
+			if entry.nodeUID == "" && !entry.ambiguousUID {
+				entry.nodeUID = nodeUID
+			} else if entry.nodeUID != nodeUID {
+				entry.nodeUID = ""
+				entry.ambiguousUID = true
+			}
+		}
+		entry.count++
+	}
+	topEntities := func(counts map[string]*entityCount) []*pb.EntityCountRankingItem {
+		list := make([]*entityCount, 0, len(counts))
+		for _, entry := range counts {
+			list = append(list, entry)
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].count != list[j].count {
+				return list[i].count > list[j].count
+			}
+			return list[i].name < list[j].name
+		})
+		if len(list) > workloadRankingLimit {
+			list = list[:workloadRankingLimit]
+		}
+		out := make([]*pb.EntityCountRankingItem, 0, len(list))
+		for _, entry := range list {
+			out = append(out, &pb.EntityCountRankingItem{
+				Name:    entry.name,
+				NodeUid: entry.nodeUID,
+				Count:   entry.count,
+			})
+		}
+		return out
+	}
+
+	type allocationEntry struct {
+		item  *pb.ContainerReply
+		value float64
+	}
+	topAllocations := func(entries []allocationEntry) []*pb.ContainerAllocationRankingItem {
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].value != entries[j].value {
+				return entries[i].value > entries[j].value
+			}
+			left, right := entries[i].item, entries[j].item
+			if left.Namespace != right.Namespace {
+				return left.Namespace < right.Namespace
+			}
+			if left.AppName != right.AppName {
+				return left.AppName < right.AppName
+			}
+			if left.Name != right.Name {
+				return left.Name < right.Name
+			}
+			return left.PodUid < right.PodUid
+		})
+		if len(entries) > workloadRankingLimit {
+			entries = entries[:workloadRankingLimit]
+		}
+		out := make([]*pb.ContainerAllocationRankingItem, 0, len(entries))
+		for _, entry := range entries {
+			out = append(out, &pb.ContainerAllocationRankingItem{
+				PodUid:    entry.item.PodUid,
+				Name:      entry.item.Name,
+				AppName:   entry.item.AppName,
+				Namespace: entry.item.Namespace,
+				Value:     entry.value,
+			})
+		}
+		return out
+	}
+
+	nodeCounts := map[string]*entityCount{}
+	deviceCounts := map[string]*entityCount{}
+	computeEntries := make([]allocationEntry, 0, len(items))
+	memoryEntries := make([]allocationEntry, 0, len(items))
+	vgpuEntries := make([]allocationEntry, 0, len(items))
+
+	for _, item := range items {
+		addEntity(nodeCounts, item.NodeName, item.NodeUid)
+		seenDevices := map[string]struct{}{}
+		for _, deviceID := range item.DeviceIds {
+			if deviceID == "" {
+				continue
+			}
+			if _, ok := seenDevices[deviceID]; ok {
+				continue
+			}
+			seenDevices[deviceID] = struct{}{}
+			addEntity(deviceCounts, deviceID, item.NodeUid)
+		}
+		if item.AllocatedCoresKnown == nil || *item.AllocatedCoresKnown {
+			computeEntries = append(computeEntries, allocationEntry{
+				item:  item,
+				value: float64(item.AllocatedCores) / 100.0,
+			})
+		}
+		memoryEntries = append(memoryEntries, allocationEntry{
+			item:  item,
+			value: float64(item.AllocatedMem) / 1024.0,
+		})
+		vgpuEntries = append(vgpuEntries, allocationEntry{
+			item:  item,
+			value: float64(item.AllocatedDevices),
+		})
+	}
+
+	reply.ByNode = topEntities(nodeCounts)
+	reply.ByDevice = topEntities(deviceCounts)
+	reply.ByCompute = topAllocations(computeEntries)
+	reply.ByMemory = topAllocations(memoryEntries)
+	reply.ByVgpu = topAllocations(vgpuEntries)
+	return reply, nil
+}
+
 func mergeWorkloads(allocated []*pb.ContainerReply, pods []*biz.SchedulingPod) []*pb.ContainerReply {
 	items := make([]*pb.ContainerReply, 0, len(allocated)+len(pods))
 	bound := make(map[string]bool)

@@ -173,6 +173,10 @@ export function createApiClient({
       });
     },
 
+    async getContainerRankings(options = {}) {
+      return requestJson('containers/rankings', { signal: options.signal });
+    },
+
     async getContainer(podUid, container, options = {}) {
       return requestJson(
         `containers/${requireSegment('podUid', podUid)}/${requireSegment('container', container)}`,
