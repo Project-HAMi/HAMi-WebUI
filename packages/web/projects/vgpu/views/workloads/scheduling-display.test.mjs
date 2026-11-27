@@ -148,6 +148,8 @@ test('stable identity separates same-name Pod replacement and errors preserve th
   assert.notEqual(schedulingIdentity({ namespace: 'dev', name: 'app', uid: 'old' }), schedulingIdentity({ namespace: 'dev', name: 'app', uid: 'new' }));
   assert.equal(getSchedulingDetailError({ response: { status: 409 } }), 'recreated');
   assert.equal(getSchedulingDetailError({ response: { status: 404 } }), 'gone');
+  assert.equal(getSchedulingDetailError({ status: 409 }), 'recreated');
+  assert.equal(getSchedulingDetailError({ status: 404 }), 'gone');
   assert.equal(getSchedulingDetailError(new Error()), 'loadFailed');
 });
 

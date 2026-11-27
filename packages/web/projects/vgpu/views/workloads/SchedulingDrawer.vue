@@ -217,7 +217,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { CheckIcon, CloseIcon, CopyIcon, RefreshIcon } from 'tdesign-icons-vue-next';
-import taskApi from '~/vgpu/api/task';
+import apiClient from '@/api/client.mjs';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import { deviceWording, sharedVendor } from '~/vgpu/components/device-copy.mjs';
 import {
@@ -336,23 +336,30 @@ const refresh = async () => {
   now.value = Date.now();
   const current = ++generation;
   controller?.abort();
-  controller = new AbortController();
+  const requestController = new AbortController();
+  controller = requestController;
   loading.value = true;
   loadError.value = false;
   try {
-    const result = await taskApi.getSchedulingDetail({ name: identity.name, namespace: identity.namespace, uid: identity.uid }, controller.signal);
-    if (current !== generation) return;
+    const result = await apiClient.getSchedulingPod(
+      identity.namespace,
+      identity.name,
+      identity.uid,
+      { signal: requestController.signal },
+    );
+    if (requestController.signal.aborted || current !== generation) return;
     if (!result?.pod || schedulingIdentity(result.pod) !== schedulingIdentity(identity)) throw new Error('Unexpected Pod identity');
     response.value = result;
     now.value = Date.now();
     identityError.value = '';
     emit('updated', result.pod);
   } catch (error) {
-    if (current !== generation) return;
+    if (requestController.signal.aborted || current !== generation) return;
     const kind = getSchedulingDetailError(error);
     if (['gone', 'recreated'].includes(kind)) identityError.value = kind;
     else loadError.value = true;
   } finally {
+    if (controller === requestController) controller = null;
     if (current === generation) loading.value = false;
   }
 };

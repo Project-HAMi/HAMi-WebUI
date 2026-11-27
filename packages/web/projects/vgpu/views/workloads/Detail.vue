@@ -247,7 +247,13 @@
     </div>
   </block-box>
 
-  <TrendTimeFilter v-model="times" :loading="trendLoading" class="workload-trend-filter" />
+  <TrendTimeFilter
+    v-model="times"
+    :loading="trendLoading"
+    :min-range-ms="CONTAINER_TREND_MIN_RANGE_MS"
+    :max-range-ms="CONTAINER_TREND_MAX_RANGE_MS"
+    class="workload-trend-filter"
+  />
 
   <div class="task-trend-row">
     <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
@@ -279,16 +285,13 @@ import EllipsisText from '@/components/EllipsisText.vue';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onBeforeUnmount } from 'vue';
 import { Tooltip as TTooltip } from 'tdesign-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 
 import apiClient from '@/api/client.mjs';
-import cardApi from '~/vgpu/api/card';
-import nodeApi from '~/vgpu/api/node';
-import { timeParse, calculatePrometheusStep, roundToDecimal } from '@/utils';
-import { formatQueryTimestamp } from '@/utils/query-time.mjs';
-import taskApi from '~/vgpu/api/task';
+import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
+import { timeParse, roundToDecimal } from '@/utils';
 import BlockBox from '@/components/BlockBox.vue';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
 import { buildTimeSeriesOptions } from '~/vgpu/metrics/chart-presets.mjs';
@@ -297,9 +300,6 @@ import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
 import WorkloadStatus from './WorkloadStatus.vue';
 import { getWorkloadStatus } from './workload-status.mjs';
-import useTaskMonitoring, {
-  getTaskMonitoringAllocationShape,
-} from './useTaskMonitoring';
 import {
   METRIC_STATUS,
   readReadyMetricField,
@@ -341,7 +341,16 @@ const {
 } = useDetailResource({
   source: requestedIdentity,
   isValidSource: ({ name, podUid } = {}) => Boolean(name && podUid),
-  request: ({ name, podUid }, signal) => taskApi.getTaskDetail({ name, podUid }, signal),
+  request: async ({ name, podUid }, signal) => {
+    try {
+      return await apiClient.getContainer(podUid, name, { signal });
+    } catch (error) {
+      if (error?.status === 404 && error?.reason === 'RESOURCE_CONTAINER_NOT_FOUND') {
+        return {};
+      }
+      throw error;
+    }
+  },
   classify: (payload, identity) => classifyDetailPayload(payload, {
     identityKeys: ['name', 'podUid'],
     expectedIdentity: identity,
@@ -371,12 +380,16 @@ const safeDeviceIds = computed(() => (
 ));
 // One request can hold two MIG instances of the same GPU.
 const distinctDeviceIds = computed(() => [...new Set(safeDeviceIds.value)]);
-const monitoringAllocationShape = computed(() => (
-  getTaskMonitoringAllocationShape({
-    allocatedDevices: detail.value?.allocatedDevices,
-    deviceIds: safeDeviceIds.value,
-  })
-));
+const hasText = (value) => typeof value === 'string' && value.trim() !== '';
+const hasValidAllocationShape = computed(() => {
+  const expectedVgpuCount = Number(detail.value?.allocatedDevices);
+  return (
+    Number.isSafeInteger(expectedVgpuCount) &&
+    expectedVgpuCount > 0 &&
+    safeDeviceIds.value.length === expectedVgpuCount &&
+    safeDeviceIds.value.every(hasText)
+  );
+});
 const gpuModelList = computed(() => {
   if (!distinctDeviceIds.value.length) return [];
   const grouped = new Map();
@@ -398,20 +411,35 @@ const splitDeviceIds = computed(() => {
 const deviceSplits = ref([]);
 const splitHighlight = computed(() => ({ podUid: detail.value?.podUid, container: detail.value?.name }));
 let workloadSplitGeneration = 0;
+const splitControllers = new Map();
+const abortSplitRequests = () => {
+  for (const controller of splitControllers.values()) {
+    controller.abort();
+  }
+  splitControllers.clear();
+};
+onBeforeUnmount(abortSplitRequests);
 const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
+  splitControllers.get(split.uuid)?.abort();
+  const controller = new AbortController();
+  splitControllers.set(split.uuid, controller);
   split.status = 'loading';
   split.totalContainers = undefined;
   split.truncated = false;
   try {
+    const scopeNodeUid = detail.value?.nodeUid || undefined;
     const [card, workloads] = await Promise.all([
-      apiClient.getDevice(split.uuid, { nodeUid: detail.value?.nodeUid || undefined }),
-      taskApi.getWorkloads({ filters: { deviceId: split.uuid }, page: 1, pageSize: 100 }),
+      apiClient.getDevice(split.uuid, { nodeUid: scopeNodeUid, signal: controller.signal }),
+      apiClient.listContainers(
+        { deviceId: split.uuid, nodeUid: scopeNodeUid, page: 1, pageSize: 100 },
+        { signal: controller.signal },
+      ),
     ]);
-    if (generation !== workloadSplitGeneration) return;
+    if (controller.signal.aborted || generation !== workloadSplitGeneration) return;
     if (!card || typeof card !== 'object' || !card.uuid) {
       throw new Error('Device not found');
     }
-    if (detail.value?.nodeUid && card.nodeUid && card.nodeUid !== detail.value.nodeUid) {
+    if (scopeNodeUid && card.nodeUid && card.nodeUid !== scopeNodeUid) {
       throw new Error('Device node mismatch');
     }
     const page = parseDeviceSplitPage(workloads, 100);
@@ -421,11 +449,18 @@ const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
     split.truncated = page.truncated;
     split.status = 'ready';
   } catch {
-    if (generation === workloadSplitGeneration) split.status = 'error';
+    if (!controller.signal.aborted && generation === workloadSplitGeneration) {
+      split.status = 'error';
+    }
+  } finally {
+    if (splitControllers.get(split.uuid) === controller) {
+      splitControllers.delete(split.uuid);
+    }
   }
 };
 watch([() => detail.value?.podUid, splitDeviceIds], ([podUid, uuids]) => {
   const generation = ++workloadSplitGeneration;
+  abortSplitRequests();
   deviceSplits.value = podUid
     ? uuids.map((uuid) => ({ uuid, device: { uuid }, containers: [], totalContainers: undefined, truncated: false, status: 'loading' }))
     : [];
@@ -580,7 +615,11 @@ const resourceOverviewTexts = computed(() => {
 
 const handleGpuJump = (uuid) => {
   if (!uuid) return;
-  router.push(`/accelerators/${uuid}`);
+  router.push({
+    name: 'accelerator-detail',
+    params: { uuid },
+    ...(nodeUid.value ? { query: { nodeUid: nodeUid.value } } : {}),
+  });
 };
 
 const headerStatusDisplay = computed(() => (
@@ -589,53 +628,66 @@ const headerStatusDisplay = computed(() => (
     : { label: '' }
 ));
 
-const taskMonitoringSource = computed(() => {
-  if (
-    detailStatus.value !== REQUEST_STATUS.READY ||
-    !monitoringAllocationShape.value
-  ) return null;
-  return {
-    container: detail.value.name || '',
-    ...monitoringAllocationShape.value,
-    namespace: detail.value.namespace || '',
-    pod: detail.value.appName || '',
-    podUid: detail.value.podUid || requestedIdentity.value.podUid || '',
-  };
-});
-const taskMonitoringRange = computed(() => {
-  const [rangeStart, rangeEnd] = times.value || [];
-  if (!rangeStart || !rangeEnd) return null;
-  return {
-    start: formatQueryTimestamp(rangeStart),
-    end: formatQueryTimestamp(rangeEnd),
-    step: calculatePrometheusStep(rangeStart, rangeEnd),
-  };
+const CONTAINER_TREND_MIN_RANGE_MS = 30 * 1000;
+const CONTAINER_TREND_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+const CONTAINER_TREND_METRICS = Object.freeze([
+  {
+    key: 'computeUsage',
+    titleKey: 'task.computeUsageTrend',
+    metric: 'compute_utilization_percent',
+    sectionIndex: 'compute',
+  },
+  {
+    key: 'memoryUsage',
+    titleKey: 'task.memUsageTrend',
+    metric: 'memory_utilization_percent',
+    sectionIndex: 'memory',
+  },
+]);
+
+const trendParams = computed(() => {
+  if (detailStatus.value !== REQUEST_STATUS.READY || !hasValidAllocationShape.value) return {};
+  const namespace = detail.value?.namespace || '';
+  const pod = detail.value?.appName || '';
+  const container = detail.value?.name || '';
+  const podUid = detail.value?.podUid || requestedIdentity.value.podUid || '';
+  if (!hasText(namespace) || !hasText(pod) || !hasText(container) || !hasText(podUid)) {
+    return {};
+  }
+  return { namespace, pod, container, podUid };
 });
 const {
   data: taskMonitoringSeries,
   refresh: retryTaskMonitoring,
-} = useTaskMonitoring({
-  source: taskMonitoringSource,
-  range: taskMonitoringRange,
-  request: (payload) => cardApi.getRangeVector(payload),
+} = useTelemetryTrends({
+  scope: 'container',
+  params: trendParams,
+  metrics: CONTAINER_TREND_METRICS,
+  times,
 });
-const trendLoading = computed(() => taskMonitoringSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
-const lineConfigView = computed(() =>
-  taskMonitoringSeries.value.map((item) => ({
-    ...item,
-    title: dt(item.titleKey),
-    stateText: getTaskMonitoringStateText(item.status),
-    option: buildTimeSeriesOptions({
-      series: [
-        {
-          name: t('dashboard.usageRateLegend'),
-          data: item.data,
-          color: CHART_COLORS.single,
-        },
-      ],
-    }),
-  })),
-);
+const lineConfigView = computed(() => {
+  const missingAllocation = detailStatus.value === REQUEST_STATUS.READY && !trendParams.value.podUid;
+  return taskMonitoringSeries.value.map((item) => {
+    const resolved = missingAllocation
+      ? { ...item, status: REQUEST_STATUS.MISSING, data: [], refreshing: false, refreshError: null }
+      : item;
+    return {
+      ...resolved,
+      title: dt(resolved.titleKey),
+      stateText: getTaskMonitoringStateText(resolved.status),
+      option: buildTimeSeriesOptions({
+        series: [
+          {
+            name: t('dashboard.usageRateLegend'),
+            data: resolved.data,
+            color: CHART_COLORS.single,
+          },
+        ],
+      }),
+    };
+  });
+});
+const trendLoading = computed(() => lineConfigView.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 const getTaskMonitoringStateText = (status) => {
   if (status === REQUEST_STATUS.ERROR) return t('dashboard.metricQueryFailed');
   if (status === REQUEST_STATUS.INVALID) return t('dashboard.metricInvalid');
@@ -645,13 +697,17 @@ const getTaskMonitoringStateText = (status) => {
 let enrichmentGeneration = 0;
 watch(
   [detailStatus, detail],
-  ([status, currentDetail]) => {
+  ([status, currentDetail], _prev, onCleanup) => {
     const generation = ++enrichmentGeneration;
     nodeUid.value = '';
     cardTypeById.value = {};
     if (status !== REQUEST_STATUS.READY) return;
 
+    const controller = new AbortController();
+    onCleanup(() => controller.abort());
+
     const isCurrent = () => (
+      !controller.signal.aborted &&
       generation === enrichmentGeneration &&
       detailStatus.value === REQUEST_STATUS.READY &&
       detail.value?.name === currentDetail?.name &&
@@ -662,9 +718,9 @@ watch(
 
     void (async () => {
       try {
-        const cards = await cardApi.getCardListReq({ filters: {} });
+        const cards = await apiClient.listDevices({}, { signal: controller.signal });
         if (!isCurrent()) return;
-        cardTypeById.value = (cards.list || []).reduce((acc, item) => {
+        cardTypeById.value = (cards?.list || []).reduce((acc, item) => {
           if (item?.uuid && item?.type) acc[item.uuid] = item.type;
           if (item?.id && item?.type) acc[item.id] = item.type;
           return acc;
@@ -678,7 +734,7 @@ watch(
     if (!nodeUid.value && nodeName) {
       void (async () => {
         try {
-          const { list = [] } = await nodeApi.getNodes({ filters: {} });
+          const { list = [] } = await apiClient.listNodes({}, { signal: controller.signal });
           if (!isCurrent()) return;
           const node = list.find((item) => item?.name === nodeName);
           nodeUid.value = node?.uid || '';
