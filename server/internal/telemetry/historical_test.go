@@ -459,7 +459,7 @@ func TestHistoricalReaderCancelsUpstreamWhenAllWaitersCancelAndBoundsConcurrency
 		t.Fatalf("reqC failed after reqA freed concurrency slot: %v", err)
 	}
 	cancelB()
-	_ = <-errChB
+	<-errChB
 	close(unblockAll)
 
 	if maxInFlight.Load() > defaultMaxConcurrentFetches {
