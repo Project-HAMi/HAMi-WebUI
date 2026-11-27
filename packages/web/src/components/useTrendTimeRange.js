@@ -12,11 +12,13 @@ const timestamps = (range) => {
   });
 };
 
-const rangeError = (range, now) => {
+const rangeError = (range, now, { minRangeMs = 0, maxRangeMs = Infinity } = {}) => {
   const [start, end] = timestamps(range);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 'invalid';
   if (start >= end) return 'order';
   if (end > now) return 'future';
+  if (minRangeMs > 0 && end - start < minRangeMs) return 'minRange';
+  if (Number.isFinite(maxRangeMs) && end - start > maxRangeMs) return 'maxRange';
   return '';
 };
 
@@ -31,9 +33,9 @@ const presetForRange = (range) => {
   return hours ? `${hours}h` : 'custom';
 };
 
-export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now) {
+export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now, bounds = {}) {
   const initialNow = now();
-  const hasInitialRange = !rangeError(modelValue.value, initialNow);
+  const hasInitialRange = !rangeError(modelValue.value, initialNow, bounds);
   const appliedRange = ref(hasInitialRange
     ? copyRange(modelValue.value)
     : [new Date(initialNow - HOUR), new Date(initialNow)]);
@@ -66,7 +68,7 @@ export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now) 
   };
 
   const applyCustomRange = (range) => {
-    validationError.value = rangeError(range, now());
+    validationError.value = rangeError(range, now(), bounds);
     if (validationError.value) {
       resetCustomRange();
       return;
@@ -85,7 +87,7 @@ export default function useTrendTimeRange(modelValue, onUpdate, now = Date.now) 
   };
 
   watch(modelValue, (range) => {
-    if (rangeError(range, now()) || sameRange(range, appliedRange.value)) return;
+    if (rangeError(range, now(), bounds) || sameRange(range, appliedRange.value)) return;
     appliedRange.value = copyRange(range);
     validationError.value = '';
     if (currentDateRange.value !== 'custom') currentDateRange.value = presetForRange(range);

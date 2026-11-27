@@ -23,7 +23,13 @@
 
       <div class="home-bottom">
         <div class="home-bottom-trend-filter">
-          <TrendTimeFilter v-model="times" :loading="trendLoading" @refresh-current="refreshCurrentSnapshot" />
+          <TrendTimeFilter
+            v-model="times"
+            :loading="trendLoading"
+            :min-range-ms="OVERVIEW_TREND_MIN_RANGE_MS"
+            :max-range-ms="OVERVIEW_TREND_MAX_RANGE_MS"
+            @refresh-current="refreshCurrentSnapshot"
+          />
         </div>
         <div class="home-bottom-row home-bottom-trend-row">
           <div
@@ -50,25 +56,29 @@ import { useI18n } from 'vue-i18n';
 import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import Block from './Block.vue';
 import './style.scss';
-import resourcesApi from '~/vgpu/api/resources';
-import cardApi from '~/vgpu/api/card';
-import request from '@/utils/request';
+import resourcesApi from '@/api/client.mjs';
 import DeviceUsageDistribution from './DeviceUsageDistribution.vue';
 import OverviewIssuesPopover from './OverviewIssuesPopover.vue';
 import { attachLegacyDeviceLinks } from './device-detail-links.mjs';
-import taskApi from '~/vgpu/api/task';
-import useInstantVector from '~/vgpu/hooks/useInstantVector';
-import useRangeVector from '~/vgpu/hooks/useRangeVector';
+import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
 import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
 import Gauge from '~/vgpu/components/gauge.vue';
-import { getRangeConfigInit } from './config';
-import { createOverviewGaugeConfigs } from './metric-config.mjs';
 import { startVisibleSnapshots } from './visible-snapshots.mjs';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import OverviewInventory from './OverviewInventory.vue';
-import { readContainerSummary, readResourceInventory } from './resource-summary.mjs';
+import { readContainerSummary, readOverviewGauges, readResourceInventory } from './resource-summary.mjs';
 
 const { t } = useI18n();
+
+const OVERVIEW_TREND_METRICS = [
+  { key: 'compute-allocation', metric: 'compute_allocation_percent', sectionIndex: 'compute' },
+  { key: 'compute-usage', metric: 'compute_utilization_percent', sectionIndex: 'compute' },
+  { key: 'memory-allocation', metric: 'memory_allocation_percent', sectionIndex: 'memory' },
+  { key: 'memory-usage', metric: 'memory_utilization_percent', sectionIndex: 'memory' },
+];
+const TREND_SECTION_KEYS = ['compute', 'memory'];
+const OVERVIEW_TREND_MIN_RANGE_MS = 30 * 1000;
+const OVERVIEW_TREND_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
 const end = new Date();
 const start = new Date(end.getTime() - 3600 * 1000);
@@ -81,17 +91,6 @@ const subscribe = (reader) => {
 };
 let snapshots;
 const refreshCurrentSnapshot = (at) => snapshots?.refresh(at);
-const _cardGaugeConfig = useInstantVector(createOverviewGaugeConfigs(), undefined, undefined, { subscribe });
-
-const cardGaugeConfig = computed(() => _cardGaugeConfig.value.map((item) => ({
-  ...item,
-  title: t(item.titleKey),
-  description: t(item.descriptionKey),
-  unit: item.unitKey ? t(item.unitKey) : item.unit,
-  metricHelpLabel: t('dashboard.metricHelpLabel', {
-    metric: t(item.titleKey),
-  }),
-})));
 
 // Keep the previous successful response visible while refreshing. Once a request
 // fails, clear that source instead of presenting old counts as current.
@@ -115,13 +114,27 @@ function useInventorySource(load, project) {
   return result;
 }
 
-const inventoryState = useInventorySource(resourcesApi.overviewInventory, readResourceInventory);
+const inventoryState = useInventorySource(
+  (signal) => resourcesApi.getOverviewInventory({ signal }),
+  readResourceInventory,
+);
 const workloadState = useInventorySource(
-  signal => taskApi.getWorkloads({ filters: {}, page: 1, pageSize: 1 }, signal),
+  (signal) => resourcesApi.listContainers({ page: 1, pageSize: 1 }, { signal }),
   readContainerSummary,
 );
 
-// Only detail links need the legacy GPU list. Inventory totals and graphs can render on their own.
+const cardGaugeConfig = computed(() =>
+  readOverviewGauges(inventoryState.value.data?.resourceSummary, inventoryState.value.status).map((item) => ({
+    ...item,
+    title: t(item.titleKey),
+    description: t(item.descriptionKey),
+    metricHelpLabel: t('dashboard.metricHelpLabel', {
+      metric: t(item.titleKey),
+    }),
+  })),
+);
+
+// Only detail links need the device registration list. Inventory totals and graphs can render on their own.
 const issueDetailsOpen = ref(false);
 const usageDetailsOpen = ref(false);
 const legacyRows = shallowRef([]);
@@ -134,7 +147,7 @@ watch([detailsOpen, () => inventoryState.value.data], async ([open, inventory], 
   const controller = new AbortController();
   onCleanup(() => controller.abort());
   try {
-    const reply = await request({ ...cardApi.getCardList(), errorFeedback: 'inline', signal: controller.signal });
+    const reply = await resourcesApi.listDevices({}, { signal: controller.signal });
     if (!controller.signal.aborted) legacyRows.value = Array.isArray(reply?.list) ? reply.list : [];
   } catch {
     if (!controller.signal.aborted) legacyRows.value = [];
@@ -147,14 +160,13 @@ const issueStatus = computed(() => inventoryState.value.data?.issueStatus
   ?? (inventoryState.value.status === REQUEST_STATUS.LOADING ? 'loading' : 'error'));
 const usageStatus = computed(() => inventoryState.value.data?.usageStatus ?? inventoryState.value.status);
 
-const rangeDefinitions = getRangeConfigInit();
-const { data: rangeSeries } = useRangeVector(
-  rangeDefinitions.flatMap(section => section.dataSource.map(series => ({ ...series, sectionIndex: section.key }))),
-  query => query,
+const { data: rangeSeries } = useTelemetryTrends({
+  scope: 'cluster',
+  metrics: OVERVIEW_TREND_METRICS,
   times,
-);
+});
 const trendLoading = computed(() => rangeSeries.value.some(item => item.refreshing || item.status === REQUEST_STATUS.LOADING));
-const rangeConfig = computed(() => rangeDefinitions.map(({ key }) => ({
+const rangeConfig = computed(() => TREND_SECTION_KEYS.map((key) => ({
   key, series: rangeSeries.value.filter(item => item.sectionIndex === key),
 })));
 

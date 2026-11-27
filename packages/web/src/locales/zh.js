@@ -294,7 +294,7 @@ export default {
       '已分配显存 ÷ 可调度显存（含超配容量）。只统计两项数据都可用的卡。',
     memAllocRateDescription:
       '已分配给工作负载的显存 ÷ HAMi 注册的可调度显存。启用显存超配时，分母包含扩展后的虚拟容量。',
-    computeUsageRateDescription: '近 5 分钟物理卡算力利用率的平均值。每次采样只统计有读数的卡。',
+    computeUsageRateDescription: '当前物理卡算力利用率的平均值。只统计有读数的卡。',
     overviewMemUsageRateDescription:
       '已用物理显存 ÷ 物理显存总量。只统计两项数据都可用的卡。',
     memUsageRateDescription: '已用物理显存 ÷ 物理显存总量。',
@@ -724,6 +724,8 @@ export default {
     invalid: '时间范围不完整或无效，已恢复原范围。',
     order: '结束时间须晚于开始时间，已恢复原范围。',
     future: '结束时间不能晚于当前时间，已恢复原范围。',
+    minRange: '时间范围不能少于 30 秒，已恢复原范围。',
+    maxRange: '时间范围不能超过 31 天，已恢复原范围。',
     last7d: '近7天',
     last5d: '近5天',
     last3d: '近3天',

@@ -63,12 +63,23 @@ export interface InventoryDevice {
   memoryUsageRatio?: number;
 }
 
+export interface InventoryResourceSummary {
+  computeAllocatedRatio?: number;
+  computeCapacityRatio?: number;
+  memoryAllocatedBytes?: number;
+  memoryCapacityBytes?: number;
+  utilizationRatio?: number;
+  memoryUsedBytes?: number;
+  memoryPhysicalBytes?: number;
+}
+
 export interface OverviewInventoryReply {
   snapshotAt: string;
   nodes: InventoryNode[];
   devices: InventoryDevice[];
   nodeCoverage: Coverage;
   deviceCoverage: Coverage;
+  summary?: InventoryResourceSummary;
 }
 
 export type TrendScope = 'cluster' | 'node' | 'device' | 'container';

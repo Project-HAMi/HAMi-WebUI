@@ -54,10 +54,10 @@ func TestHistoricalReaderValidationAndCanonicalParams(t *testing.T) {
 		{Scope: "cluster", Start: "not-a-time"},
 		{Scope: "cluster", End: "not-a-time"},
 		{Scope: "cluster", Start: "2026-01-02T00:00:00Z", End: "2026-01-01T00:00:00Z"},
-		{Scope: "cluster", Start: "2026-01-01T00:00:00Z", End: "2026-01-16T00:00:00Z"},
+		{Scope: "cluster", Start: "2026-01-01T00:00:00Z", End: "2026-02-02T00:00:00Z"},
 		{Scope: "cluster", Start: "2026-01-01T12:05:00Z", End: "2026-01-01T12:10:00Z", Step: "1h"},
 		{Scope: "cluster", Step: "15s"},
-		{Scope: "cluster", Step: "2h"},
+		{Scope: "cluster", Step: "7h"},
 		{Scope: "cluster", Step: "4500ms"},
 		{Scope: "cluster", Start: "2026-01-01T00:00:00Z", End: "2026-01-01T06:00:00Z", Step: "30s"},
 	}
@@ -105,6 +105,18 @@ func TestHistoricalReaderValidationAndCanonicalParams(t *testing.T) {
 	if !unalignedDefault.Start.AsTime().Equal(wantStart) || !unalignedDefault.End.AsTime().Equal(wantEnd) {
 		t.Fatalf("unaligned default bounds = [%v, %v], want [%v, %v]", unalignedDefault.Start.AsTime(), unalignedDefault.End.AsTime(), wantStart, wantEnd)
 	}
+
+	thirtyDayReply, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope: "cluster",
+		Start: "2026-01-01T00:00:00Z",
+		End:   "2026-01-31T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("30d cluster trends failed: %v", err)
+	}
+	if thirtyDayReply.StepSeconds != int64((6 * time.Hour) / time.Second) {
+		t.Fatalf("30d StepSeconds = %d, want %d", thirtyDayReply.StepSeconds, int64((6 * time.Hour) / time.Second))
+	}
 }
 
 func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
@@ -143,6 +155,16 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 		if !strings.Contains(q, `device_id="dev-1",node_uid="node-uid-2"`) {
 			t.Fatalf("device query missing optional node_uid filter: %s", q)
 		}
+	}
+
+	seenQueries = nil
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope: "cluster",
+	}); err != nil {
+		t.Fatalf("cluster trends failed: %v", err)
+	}
+	if len(seenQueries) != 4 || !strings.Contains(seenQueries[2], "100 * avg(") || strings.Contains(seenQueries[2], "sum_over_time") {
+		t.Fatalf("cluster compute_utilization_percent must evaluate 100 * avg(...) at outer step: %v", seenQueries)
 	}
 
 	seenQueries = nil

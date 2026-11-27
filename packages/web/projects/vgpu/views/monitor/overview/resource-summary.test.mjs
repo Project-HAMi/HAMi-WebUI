@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readContainerSummary, readResourceInventory } from './resource-summary.mjs';
+import { readContainerSummary, readOverviewGauges, readResourceInventory } from './resource-summary.mjs';
 
 const coverage = (entity, observed, complete) => ({ entity, observed, complete, ...(complete ? { total: observed } : {}) });
 const inventory = (nodes, devices, nodeComplete = true, deviceComplete = true) => ({
@@ -119,4 +119,32 @@ test('inventory gaps do not create incidents or change resource coverage', () =>
   assert.deepEqual(result.issues, []);
   assert.equal(result.summary.devices.partial, true);
   assert.equal(result.summary.devices.observed, 1);
+});
+
+test('readOverviewGauges maps summary fields to the four overview gauges and handles missing/error states', () => {
+  const giB = 2 ** 30;
+  const ready = readOverviewGauges({
+    computeAllocatedRatio: 1,
+    computeCapacityRatio: 4,
+    memoryAllocatedBytes: 32 * giB,
+    memoryCapacityBytes: 64 * giB,
+    utilizationRatio: 0.42,
+    memoryUsedBytes: 16 * giB,
+    memoryPhysicalBytes: 64 * giB,
+  }, 'ready');
+  assert.deepEqual(ready.map(g => [g.id, g.status, g.used, g.total, g.percent]), [
+    ['compute-allocation', 'ready', 1, 4, 25],
+    ['memory-allocation', 'ready', 32, 64, 50],
+    ['compute-utilization', 'ready', 42, 100, 42],
+    ['memory-utilization', 'ready', 16, 64, 25],
+  ]);
+
+  const partial = readOverviewGauges({ utilizationRatio: 0.5 }, 'ready');
+  assert.deepEqual(partial.map(g => g.status), ['missing', 'missing', 'ready', 'missing']);
+
+  const loading = readOverviewGauges(null, 'loading');
+  assert.deepEqual(loading.map(g => g.status), ['loading', 'loading', 'loading', 'loading']);
+
+  const failed = readOverviewGauges(null, 'error');
+  assert.deepEqual(failed.map(g => g.status), ['error', 'error', 'error', 'error']);
 });

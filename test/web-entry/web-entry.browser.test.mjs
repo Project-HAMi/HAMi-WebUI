@@ -9,7 +9,7 @@ import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
 import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
-import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries, buildPhysicalUsageQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
+import { buildPhysicalAllocationQueries, buildPhysicalUsageQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -220,7 +220,7 @@ async function loadAllowedFrame(parentURL, expectedFrameURL, { checkAPI = false 
   const failedAssets = []
   const apiRequests = []
   page.on('request', (request) => {
-    if (request.url().includes(`${basePath}api/vgpu/`)) {
+    if (request.url().includes(`${basePath}api/v1/`) || request.url().includes(`${basePath}api/vgpu/`)) {
       apiRequests.push(request.url())
     }
   })
@@ -320,7 +320,7 @@ async function assertChartRuntime(target) {
   const requestedNodeRanks = []
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
   page.on('request', (request) => {
-    if (request.url().includes('/v1/monitor/query/range-vector')) {
+    if (request.url().includes('/v1/monitor/query/range-vector') || request.url().includes('/api/v1/telemetry/trends')) {
       rangeRequests += 1
     } else if (request.url().endsWith('/v1/monitor/query/instant-vector')) {
       const query = request.postDataJSON()?.query
@@ -529,7 +529,7 @@ async function assertTrendRefreshState(page) {
 
   let mode = 'pass'
   const held = []
-  await page.route('**/v1/monitor/query/range-vector', async(route) => {
+  await page.route(/\/api\/(?:vgpu\/)?v1\/(?:monitor\/query\/range-vector|telemetry\/trends)/, async(route) => {
     if (mode === 'pass') return route.continue()
     await new Promise((release) => held.push(release))
     if (mode === 'fail') return route.fulfill({ status: 500, body: 'injected failure' })
@@ -609,7 +609,16 @@ function trackMonitorRequests(page) {
 function trackTrendRequests(page) {
   const requests = []
   page.on('request', (request) => {
-    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
+    const parsed = new URL(request.url())
+    if (parsed.pathname.endsWith('/api/v1/telemetry/trends')) {
+      requests.push({
+        scope: parsed.searchParams.get('scope'),
+        range: { start: parsed.searchParams.get('start'), end: parsed.searchParams.get('end') },
+        url: request.url(),
+      })
+    } else if (parsed.pathname.endsWith('/v1/monitor/query/range-vector')) {
+      requests.push(request.postDataJSON())
+    }
   })
   return requests
 }
@@ -622,7 +631,7 @@ async function localRangeAsUTC(page, values) {
   }), values)
 }
 
-const overviewTrendCount = 4
+const overviewTrendCount = 1
 const trendPages = [
   ['overview', overviewTrendCount],
   ['nodes/node-1?nodeName=node-1', 4],
@@ -896,15 +905,43 @@ before(async() => {
         nodeCoverage: coverageFixture('node', 3),
         devices: [{ node: 'node-1', provider: 'NVIDIA', deviceId: 'gpu-1', model: 'NVIDIA', healthy: true }],
         deviceCoverage: coverageFixture('device', 1),
+        summary: {
+          computeAllocatedRatio: 0.4,
+          computeCapacityRatio: 1,
+          memoryAllocatedBytes: 20480 * 1024 * 1024,
+          memoryCapacityBytes: 81920 * 1024 * 1024,
+          utilizationRatio: 0.4,
+          memoryUsedBytes: 20480 * 1024 * 1024,
+          memoryPhysicalBytes: 81920 * 1024 * 1024,
+        },
       }
-    } else if (pathname === '/v1/gpus') {
+    } else if (pathname === '/v1/gpus' || pathname === '/api/v1/devices') {
       payload = {
         code: 0,
         list: [{ uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true }],
         total: 1
       }
-    } else if (pathname === '/v1/containers' || pathname === '/v1/workloads') {
+    } else if (pathname === '/v1/containers' || pathname === '/v1/workloads' || pathname === '/api/v1/containers') {
       payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1, statusCounts: { all: 1, success: 1 } }
+    } else if (pathname === '/api/v1/device-config') {
+      payload = { state: 'loaded', reason: '', issues: [], ascendModels: [] }
+    } else if (pathname === '/api/v1/telemetry/trends') {
+      const start = requestURL.searchParams.get('start') || new Date((now - 60) * 1000).toISOString().replace('.000Z', 'Z')
+      const end = requestURL.searchParams.get('end') || new Date(now * 1000).toISOString().replace('.000Z', 'Z')
+      const points = [{ at: start, value: 20 }, { at: end, value: 42 }]
+      const state = { state: 'known', reason: '', params: {}, source: 'prometheus', scope: 'device', observedAt: end }
+      payload = {
+        scope: requestURL.searchParams.get('scope') || 'cluster',
+        start,
+        end,
+        stepSeconds: 60,
+        series: [
+          'compute_allocation_percent',
+          'memory_allocation_percent',
+          'compute_utilization_percent',
+          'memory_utilization_percent',
+        ].map((metric) => ({ metric, unit: 'percent', state, points })),
+      }
     } else if (pathname === '/v1/monitor/query/instant-vector') {
       if (body?.query?.includes('gpu-metric-new')) {
         const requestKey = 'monitor:gpu-metric-new'
@@ -2720,14 +2757,20 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
           assert.equal(requests.length, seriesCount)
           for (const request of requests) {
-            assert.deepEqual(request.range, { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' })
+            const expected = route === 'overview'
+              ? { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z' }
+              : { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' }
+            assert.deepEqual(request.range, expected)
           }
           await page.clock.setFixedTime(new Date('2026-10-07T12:01:01.999Z'))
           await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * 2)
           for (const request of requests.slice(seriesCount)) {
-            assert.deepEqual(request.range, { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' })
+            const expected = route === 'overview'
+              ? { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z' }
+              : { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' }
+            assert.deepEqual(request.range, expected)
           }
         } finally {
           await page.close()
@@ -2811,7 +2854,7 @@ test('explicit trend refresh advances relative ranges once and blocks repeat req
         const refreshIcon = await refresh.locator('.refresh-button__icon').elementHandle()
         assert.equal(requests.length, seriesCount)
         assert.equal(await refresh.isEnabled(), true)
-        await page.route('**/v1/monitor/query/range-vector', async(route) => {
+        await page.route(/\/api\/(?:vgpu\/)?v1\/(?:monitor\/query\/range-vector|telemetry\/trends)/, async(route) => {
           if (hold) await new Promise((release) => held.push(release))
           await route.continue()
         })
@@ -2908,7 +2951,7 @@ test('explicit custom refresh cancels drafts, preserves applied dates and can re
     for (const request of requests.slice(overviewTrendCount * 2)) assert.deepEqual([request.range.start, request.range.end], await localRangeAsUTC(page, applied))
 
     let fail = true
-    await page.route('**/v1/monitor/query/range-vector', (route) => fail
+    await page.route(/\/api\/(?:vgpu\/)?v1\/(?:monitor\/query\/range-vector|telemetry\/trends)/, (route) => fail
       ? route.fulfill({ status: 500, body: 'injected refresh failure' })
       : route.continue())
     await refresh.press('Enter')
@@ -3229,10 +3272,7 @@ test('workload status segments keep same-selection no-op behavior when shared co
 test('custom trend dates apply exact input and restore the applied range on cancellation or invalid input', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 }, timezoneId: 'America/Argentina/Buenos_Aires' })
-  const requests = []
-  page.on('request', (request) => {
-    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
-  })
+  const requests = trackTrendRequests(page)
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
@@ -3376,10 +3416,7 @@ test('custom trend Enter rejects empty and malformed input with one warning and 
     await t.test(name, async() => {
       const page = await browser.newPage({ locale: 'en-US' })
       await page.clock.install({ time: new Date('2026-10-06T12:00:00.123Z') })
-      const requests = []
-      page.on('request', (request) => {
-        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
-      })
+      const requests = trackTrendRequests(page)
       try {
         await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
         const filter = page.locator('.trend-time-filter')
@@ -3428,10 +3465,7 @@ test('custom trend warnings preserve aligned controls and chart position in both
   for (const locale of ['en-US', 'zh-CN']) {
     await t.test(locale, async() => {
       const page = await browser.newPage({ locale, viewport: { width: 1440, height: 900 } })
-      const requests = []
-      page.on('request', (request) => {
-        if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
-      })
+      const requests = trackTrendRequests(page)
       try {
         await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
         const filter = page.locator('.trend-time-filter')
@@ -3512,10 +3546,7 @@ test('custom trend warnings repeat without stacking and ignore composing or repe
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
   await page.clock.install({ time: Date.now() })
-  const requests = []
-  page.on('request', (request) => {
-    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
-  })
+  const requests = trackTrendRequests(page)
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
@@ -3650,11 +3681,8 @@ test('custom trend calendar hover preserves continuous range colors and disabled
 test('calendar confirmation applies one range and canceled calendar edits keep it', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
-  const requests = []
+  const requests = trackTrendRequests(page)
   await page.clock.install({ time: new Date('2026-10-06T12:00:00.123Z') })
-  page.on('request', (request) => {
-    if (request.url().endsWith('/v1/monitor/query/range-vector')) requests.push(request.postDataJSON())
-  })
   try {
     await page.goto(`${target}${deepRoute}`, { waitUntil: 'networkidle' })
     const filter = page.locator('.trend-time-filter')
@@ -4182,7 +4210,7 @@ test('overview details fetch verified device links on demand and keep missing re
   await page.route('**/api/v1/overview/inventory', route => route.fulfill({ json: {
     nodes: [node], devices, nodeCoverage: coverageFixture('node', 1), deviceCoverage: coverageFixture('device', 8)
   } }))
-  await page.route('**/v1/gpus', route => {
+  await page.route('**/api/v1/devices', route => {
     lists++
     return route.fulfill({ json: { list: devices.map(d => ({
       nodeName: node.name, nodeUid: node.uid, uuid: d.deviceId, vendor: d.provider
@@ -4310,7 +4338,7 @@ test('overview issue status opens details only for unhealthy devices or unready 
     await initialResponse.promise
     await route.fulfill(reply ? { json: reply } : { status: 503, json: {} })
   })
-  await page.route('**/v1/gpus', async route => {
+  await page.route('**/api/v1/devices', async route => {
     legacyReads++
     if (pendingLookup) await pendingLookup.promise
     await route.fulfill({ json: { code: 0, list: [{ uuid: gpu.deviceId, vendor: gpu.provider, nodeName: node.name, nodeUid: node.uid }] } })
@@ -4396,7 +4424,7 @@ test('overview issue status opens details only for unhealthy devices or unready 
     const deviceLink = dialog.getByRole('link', { name: gpu.deviceId, exact: true })
     await deviceLink.waitFor()
     pendingLookup = Promise.withResolvers()
-    const refreshing = page.waitForRequest('**/v1/gpus')
+    const refreshing = page.waitForRequest('**/api/v1/devices')
     await page.clock.fastForward(30_000)
     await refreshing
     assert.ok(await deviceLink.isVisible(), 'A pending lookup must preserve the link for the same device')
@@ -4430,18 +4458,10 @@ test('overview issue status opens details only for unhealthy devices or unready 
 test('overview workload count matches the workload list total', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
-  const workloadRequests = []
-  let containerRequests = 0
+  const containerQueries = []
+  let legacyContainerRequests = 0
   let reply = 'empty'
-  // The old source: 62 containers, which the overview used to count.
-  await page.route('**/v1/containers', (route) => {
-    containerRequests += 1
-    const items = Array.from({ length: 62 }, (_, index) => ({ name: `worker-${index}`, podUid: `pod-${index}`, namespace: 'default' }))
-    return route.fulfill({ json: { code: 0, items, total: items.length } })
-  })
-  const row = { name: 'worker', podUid: 'pod-1', namespace: 'default' }
-  await page.route('**/v1/workloads', (route) => {
-    workloadRequests.push(route.request().postDataJSON())
+  const respond = (route) => {
     if (reply === 'failed') return route.fulfill({ status: 500, json: { code: 500, message: 'injected failure' } })
     if (reply === 'empty') return route.fulfill({ json: { code: 0, items: [], total: 0, statusCounts: {} } })
     if (reply === 'no total') return route.fulfill({ json: { code: 0, items: [row] } })
@@ -4449,7 +4469,18 @@ test('overview workload count matches the workload list total', async() => {
     return route.fulfill({
       json: { code: 0, items: [row], total: 68, statusCounts: { all: 68, pending: 6, success: 60, abnormal: 2 } },
     })
+  }
+  await page.route('**/api/vgpu/v1/containers**', (route) => {
+    legacyContainerRequests += 1
+    const items = Array.from({ length: 62 }, (_, index) => ({ name: `worker-${index}`, podUid: `pod-${index}`, namespace: 'default' }))
+    return route.fulfill({ json: { code: 0, items, total: items.length } })
   })
+  const row = { name: 'worker', podUid: 'pod-1', namespace: 'default' }
+  await page.route('**/api/v1/containers**', (route) => {
+    containerQueries.push(Object.fromEntries(new URL(route.request().url()).searchParams))
+    return respond(route)
+  })
+  await page.route('**/api/vgpu/v1/workloads', (route) => respond(route))
   const workloadTab = page.locator('[role="tab"][id$="-workloads"]')
   const cardCount = () => workloadTab.locator('.resource-tab__count').innerText()
 
@@ -4462,12 +4493,12 @@ test('overview workload count matches the workload list total', async() => {
     assert.equal(await cardCount(), '—', 'A reply without a total must not read as a number')
 
     reply = 'counted'
-    workloadRequests.length = 0
-    containerRequests = 0
+    containerQueries.length = 0
+    legacyContainerRequests = 0
     await page.reload({ waitUntil: 'domcontentloaded' })
     assert.equal(await cardCount(), '68')
-    assert.deepEqual(workloadRequests, [{ filters: {}, page: 1, pageSize: 1 }])
-    assert.equal(containerRequests, 0, 'The overview still read the container list')
+    assert.deepEqual(containerQueries, [{ page: '1', page_size: '1' }])
+    assert.equal(legacyContainerRequests, 0, 'The overview must not read the legacy container endpoint')
 
     await workloadTab.click()
     const panel = page.getByRole('tabpanel')
@@ -5338,8 +5369,37 @@ async function installTimeAxisFixture(page, valueForIndex = (index) => index ===
       return fillText.call(this, text, x, y, ...args)
     }
   })
-  await page.route('**/v1/monitor/query/range-vector', async(route) => {
-    const { range } = route.request().postDataJSON()
+  await page.route(/\/api\/(?:vgpu\/)?v1\/(?:monitor\/query\/range-vector|telemetry\/trends)/, async(route) => {
+    const request = route.request()
+    if (request.method() === 'GET') {
+      const parsed = new URL(request.url())
+      const startStr = parsed.searchParams.get('start')
+      const endStr = parsed.searchParams.get('end')
+      const start = Date.parse(startStr)
+      const end = Date.parse(endStr)
+      const points = Array.from({ length: sampleCount }, (_, index) => {
+        const at = new Date(start + (end - start) * index / (sampleCount - 1)).toISOString().replace('.000Z', 'Z')
+        const value = valueForIndex(index)
+        return value === null ? { at } : { at, value }
+      })
+      const state = { state: 'known', reason: '', params: {}, source: 'prometheus', scope: 'device', observedAt: endStr }
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          scope: parsed.searchParams.get('scope') || 'cluster',
+          start: startStr,
+          end: endStr,
+          stepSeconds: 60,
+          series: [
+            'compute_allocation_percent',
+            'memory_allocation_percent',
+            'compute_utilization_percent',
+            'memory_utilization_percent',
+          ].map((metric) => ({ metric, unit: 'percent', state, points })),
+        }),
+      })
+    }
+    const { range } = request.postDataJSON()
     const start = Date.parse(range.start)
     const end = Date.parse(range.end)
     const values = Array.from({ length: sampleCount }, (_, index) => ({
@@ -6025,7 +6085,7 @@ test('overview loading regions keep page containers while data arrives', { timeo
       const page = await browser.newPage({ locale, viewport: { width: 1280, height: 1000 } })
       let release
       const gate = new Promise((resolve) => { release = resolve })
-      await page.route(/\/v1\/(?:overview\/inventory|workloads|monitor\/query\/instant-vector)$/, async(route) => {
+      await page.route(/\/api\/v1\/(?:overview\/inventory|containers)(?:\?|$)/, async(route) => {
         const response = await route.fetch()
         await gate
         await route.fulfill({ response })
@@ -6251,7 +6311,7 @@ test('chart loading reserves the painted plot and legend rows on narrow hourly a
       })
       let release
       const gate = new Promise((resolve) => { release = resolve })
-      await page.route('**/v1/monitor/query/range-vector', async(route) => {
+      await page.route(/\/api\/(?:vgpu\/)?v1\/(?:monitor\/query\/range-vector|telemetry\/trends)/, async(route) => {
         await gate
         await route.fallback()
       })
@@ -7243,11 +7303,8 @@ test('model and node dropdowns filter their options while typing', { timeout: 60
 test('overview gauges share the initial trend time and advance together on a visible or manual refresh', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', timezoneId: 'UTC' })
-  const metrics = Object.values(buildPhysicalResourceQueries())
-  const gaugeQueries = new Set(metrics.flatMap(({ query, totalQuery }) => [query, totalQuery].filter(Boolean)))
-  const trendQueries = new Set(metrics.map(({ percentQuery }) => percentQuery))
-  const rounds = new Map()
-  const trendEnds = new Map()
+  const trendRequests = trackTrendRequests(page)
+  const legacyMonitorRequests = trackMonitorRequests(page)
   const inventoryReads = []
   page.on('request', request => {
     const path = new URL(request.url()).pathname
@@ -7255,48 +7312,31 @@ test('overview gauges share the initial trend time and advance together on a vis
       inventoryReads.push(path.replace(basePath, '/'))
     }
   })
-  const snapshotInventoryReads = ['/api/v1/overview/inventory', '/api/vgpu/v1/workloads'].sort()
+  const snapshotInventoryReads = ['/api/v1/overview/inventory', '/api/v1/containers'].sort()
   const assertInventoryRounds = count => assert.deepEqual(
     inventoryReads.slice().sort(), Array.from({ length: count }, () => snapshotInventoryReads).flat().sort(),
     'Each live snapshot must read compact inventory once and the container total once',
   )
-  const readRound = async(index) => {
-    await waitUntil(() => [...rounds.values()][index]?.size === 7, 'Missing overview gauge query')
-    return [...rounds.keys()][index]
-  }
 
-  await page.route('**/monitor/query/range-vector', async(route) => {
-    const { query, range } = route.request().postDataJSON()
-    if (trendQueries.has(query)) trendEnds.set(query, range.end)
-    await route.continue()
-  })
-  await page.route('**/monitor/query/instant-vector', async(route) => {
-    const { query, time } = route.request().postDataJSON()
-    if (!gaugeQueries.has(query)) return route.continue()
-    if (!rounds.has(time)) rounds.set(time, new Set())
-    rounds.get(time).add(query)
-    // Move the clock forward between numerator and capacity requests.
-    if (query === metrics[0].query) await page.clock.fastForward(1200)
-    await route.fulfill({ json: { code: 0, data: [{ value: 1 }] } })
-  })
   try {
     await page.clock.install({ time: new Date('2026-10-07T12:00:00Z') })
     await page.goto(target + deepRoute, { waitUntil: 'networkidle' })
-    const first = await readRound(0)
     assertInventoryRounds(1)
-    await waitUntil(() => trendEnds.size === 4, 'Missing initial overview trends')
-    assert.ok(Number.isFinite(Date.parse(first)))
-    assert.deepEqual(new Set(trendEnds.values()), new Set([first]))
+    await waitUntil(() => trendRequests.length === 1, 'Missing initial overview telemetry trends')
+    const firstEnd = trendRequests[0].range.end
+    assert.equal(trendRequests[0].scope, 'cluster')
+    assert.ok(Number.isFinite(Date.parse(firstEnd)))
     await page.clock.fastForward(30_000)
-    const next = await readRound(1)
-    assert.ok(Date.parse(next) > Date.parse(first))
+    await waitUntil(() => inventoryReads.length === 4, 'Missing 30s live inventory refresh')
     await page.waitForLoadState('networkidle')
     assertInventoryRounds(2)
     await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
-    const manual = await readRound(2)
-    assert.ok(Date.parse(manual) > Date.parse(next))
+    await waitUntil(() => trendRequests.length === 2, 'Missing manual overview trends refresh')
+    await waitUntil(() => inventoryReads.length === 6, 'Missing manual inventory refresh')
+    const manualEnd = trendRequests[1].range.end
+    assert.ok(Date.parse(manualEnd) > Date.parse(firstEnd))
     await page.waitForLoadState('networkidle')
-    assert.deepEqual(new Set(trendEnds.values()), new Set([manual]))
+    assertInventoryRounds(3)
 
     await selectTrendRange(page, 'custom')
     const start = page.getByRole('textbox', { name: 'Start Time', exact: true })
@@ -7309,9 +7349,9 @@ test('overview gauges share the initial trend time and advance together on a vis
     await page.waitForLoadState('networkidle')
     await page.getByRole('button', { name: 'Refresh trends', exact: true }).click()
     await page.waitForLoadState('networkidle')
-    assert.deepEqual(new Set(trendEnds.values()), new Set(['2026-10-06T11:23:45Z']))
-    assert.equal(rounds.size, 3, 'Browsing or refreshing history must not rewind the live gauges')
+    assert.equal(trendRequests.at(-1).range.end, '2026-10-06T11:23:45Z')
     assertInventoryRounds(3)
+    assert.deepEqual(legacyMonitorRequests, [], 'Overview must not emit legacy monitor queries')
   } finally {
     await page.close()
   }
@@ -7338,7 +7378,7 @@ test('overview, default management, health tabs and model legend share one physi
   let complete = true
   await page.route('**/api/v1/overview/inventory', r => r.fulfill({ json: { nodes: [node], devices: currentDevices,
     nodeCoverage: coverageFixture('node', 1), deviceCoverage: { ...coverageFixture('device', currentDevices.length), complete } } }))
-  await page.route('**/api/vgpu/v1/gpus', r => r.fulfill({ json: { list } }))
+  await page.route(/\/api\/(?:vgpu\/)?v1\/(?:gpus|devices)$/, r => r.fulfill({ json: { list } }))
   const tabs = page.getByRole('group', { name: 'GPU Status', exact: true })
   const rows = page.locator('.accelerator-table tbody tr')
   try {
@@ -7362,7 +7402,7 @@ test('overview, default management, health tabs and model legend share one physi
     assert.equal(await rows.getByText('ascend-module').count(), 0)
     assert.equal(await page.locator('.nodeCard-legend .legend-count').innerText(), '3 (100%)')
     assert.equal(await page.locator('.accelerator-table thead th').count(), 8)
-    await page.route('**/api/vgpu/v1/gpus', r => r.fulfill({ status: 503, json: {} }))
+    await page.route(/\/api\/(?:vgpu\/)?v1\/(?:gpus|devices)$/, r => r.fulfill({ status: 503, json: {} }))
     await page.goto(target + basePath + 'accelerators?health=healthy')
     await tabs.getByRole('button', { name: 'Normal 1', pressed: true }).waitFor()
     await rows.getByText('gpu-ok', { exact: true }).waitFor()

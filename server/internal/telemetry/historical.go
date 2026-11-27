@@ -28,8 +28,8 @@ const (
 	defaultMaxConcurrentFetches = 2
 
 	minTrendStep   = 30 * time.Second
-	maxTrendStep   = time.Hour
-	maxTrendWindow = 14 * 24 * time.Hour
+	maxTrendStep   = 6 * time.Hour
+	maxTrendWindow = 31 * 24 * time.Hour
 	maxTrendPoints = 360
 	maxAutoPoints  = 120
 	defaultWindow  = time.Hour
@@ -625,6 +625,8 @@ func selectAutoStep(window time.Duration) time.Duration {
 		15 * time.Minute,
 		30 * time.Minute,
 		time.Hour,
+		2 * time.Hour,
+		6 * time.Hour,
 	}
 	for _, candidate := range candidates {
 		if int(window/candidate)+1 <= maxAutoPoints {

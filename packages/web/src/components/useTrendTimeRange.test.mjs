@@ -10,7 +10,7 @@ const HOUR = 60 * 60 * 1000;
 const range = (hours = 1, end = NOW) => [new Date(end - hours * HOUR), new Date(end)];
 const values = (dates) => dates.map((date) => date.getTime());
 
-function mount(t, initial = range()) {
+function mount(t, initial = range(), bounds = {}) {
   const scope = effectScope();
   t.after(() => scope.stop());
   const model = ref(initial);
@@ -23,7 +23,7 @@ function mount(t, initial = range()) {
     state = useTrendTimeRange(model, (value) => {
       updates.push(value);
       model.value = value;
-    }, () => clock);
+    }, () => clock, bounds);
   });
   return { state, model, updates, queries, advance: (milliseconds) => { clock += milliseconds; } };
 }
@@ -170,8 +170,39 @@ test('empty, incomplete, malformed, reversed, equal, and future custom ranges ca
   }
   assert.equal(updates.length, 0);
   assert.equal(queries.length, 1);
-  state.applyCustomRange(range(6));
+  // Default unbounded callers allow 20s and 40d ranges.
+  state.applyCustomRange([new Date(NOW - 20_000), new Date(NOW)]);
   await nextTick();
   assert.equal(state.validationError.value, '');
   assert.equal(updates.length, 1);
+  state.applyCustomRange([new Date(NOW - 40 * 24 * HOUR), new Date(NOW)]);
+  await nextTick();
+  assert.equal(state.validationError.value, '');
+  assert.equal(updates.length, 2);
+});
+
+test('bounded custom ranges enforce minimum and maximum duration limits', async (t) => {
+  const bounds = { minRangeMs: 30_000, maxRangeMs: 31 * 24 * HOUR };
+  const { state, model, updates, queries } = mount(t, range(), bounds);
+  state.selectRange('custom');
+  for (const [selected, error] of [
+    [[new Date(NOW - 19_000), new Date(NOW)], 'minRange'],
+    [[new Date(NOW - 40 * 24 * HOUR), new Date(NOW)], 'maxRange'],
+  ]) {
+    state.applyCustomRange(selected);
+    await nextTick();
+    assert.equal(state.validationError.value, error);
+    assert.deepEqual(values(model.value), values(range()));
+  }
+  assert.equal(updates.length, 0);
+  assert.equal(queries.length, 1);
+
+  state.applyCustomRange([new Date(NOW - 30_000), new Date(NOW)]);
+  await nextTick();
+  assert.equal(state.validationError.value, '');
+  assert.equal(updates.length, 1);
+  state.applyCustomRange([new Date(NOW - 31 * 24 * HOUR), new Date(NOW)]);
+  await nextTick();
+  assert.equal(state.validationError.value, '');
+  assert.equal(updates.length, 2);
 });

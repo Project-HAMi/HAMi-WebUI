@@ -6,25 +6,41 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import cardApi from '~/vgpu/api/card';
-import deviceConfigApi from '~/vgpu/api/deviceConfig';
+import apiClient from '@/api/client.mjs';
 import { getDeviceConfigStateKey, shouldWarnAboutDeviceConfig } from '~/vgpu/views/card/admin/device-config-display.mjs';
 
 const { t, locale } = useI18n();
 const config = ref(null);
 const deviceTypes = ref([]);
+let controller = null;
 
 onMounted(async () => {
-  const [read, types] = await Promise.allSettled([
-    deviceConfigApi.getDeviceConfig(),
-    cardApi.getCardTypeReq({ filters: {} }),
-  ]);
-  if (read.status === 'fulfilled') config.value = read.value;
-  if (types.status === 'fulfilled') {
-    deviceTypes.value = (types.value?.list || []).map((item) => item?.type).filter(Boolean);
+  const currentController = new AbortController();
+  controller = currentController;
+  try {
+    const read = await apiClient.getDeviceConfig({ signal: currentController.signal });
+    if (currentController.signal.aborted) return;
+    config.value = read;
+  } catch {
+    return;
   }
+  if (!config.value?.state || config.value.state === 'loaded' || config.value.state === 'loading') {
+    return;
+  }
+  try {
+    const types = await apiClient.listDevices({}, { signal: currentController.signal });
+    if (currentController.signal.aborted) return;
+    deviceTypes.value = (types?.list || []).map((item) => item?.type).filter(Boolean);
+  } catch {
+    // Ignore aborted or failed registration lookup; alert stays hidden without confirmed Ascend types.
+  }
+});
+
+onUnmounted(() => {
+  controller?.abort();
+  controller = null;
 });
 
 const message = computed(() => {
