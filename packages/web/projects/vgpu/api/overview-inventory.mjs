@@ -22,6 +22,19 @@ export const readCoverageCount = (coverage) => {
 const nonemptyString = value => typeof value === 'string' && value.length > 0;
 const optionalFlag = value => value == null || typeof value === 'boolean';
 const optionalRatio = value => value == null || (Number.isFinite(value) && value >= 0 && value <= 1);
+const optionalNonNegative = value => value == null || (Number.isFinite(value) && value >= 0);
+
+function validSummary(summary) {
+  if (summary == null) return true;
+  if (typeof summary !== 'object') return false;
+  return optionalNonNegative(summary.computeAllocatedRatio)
+    && optionalNonNegative(summary.computeCapacityRatio)
+    && optionalNonNegative(summary.memoryAllocatedBytes)
+    && optionalNonNegative(summary.memoryCapacityBytes)
+    && optionalRatio(summary.utilizationRatio)
+    && optionalNonNegative(summary.memoryUsedBytes)
+    && optionalNonNegative(summary.memoryPhysicalBytes);
+}
 
 export const physicalDeviceKey = ({ node, provider, deviceId }) => JSON.stringify([node, provider, deviceId]);
 
@@ -40,12 +53,13 @@ function checkRows(entity, rows, coverage, identity, valid) {
 }
 
 export function readOverviewInventory(reply) {
-  const { nodes, devices, nodeCoverage, deviceCoverage } = reply;
+  const { nodes, devices, nodeCoverage, deviceCoverage, summary } = reply;
   checkRows('node', nodes, nodeCoverage, node => node.name, node =>
     nonemptyString(node.name) && optionalFlag(node.ready) && optionalFlag(node.schedulable)
       && (node.physicalDevices == null || isCount(node.physicalDevices)));
   checkRows('device', devices, deviceCoverage, physicalDeviceKey, device =>
     nonemptyString(device.node) && nonemptyString(device.provider) && nonemptyString(device.deviceId)
       && optionalFlag(device.healthy) && optionalRatio(device.utilizationRatio) && optionalRatio(device.memoryUsageRatio));
-  return { nodes, devices, nodeCoverage, deviceCoverage };
+  if (!validSummary(summary)) throw new TypeError('Invalid resource summary');
+  return { nodes, devices, nodeCoverage, deviceCoverage, summary: summary ?? null };
 }

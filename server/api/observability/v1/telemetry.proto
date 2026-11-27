@@ -26,7 +26,7 @@ message TrendsRequest {
   // Optional RFC3339 timestamps. Defaults to [end-1h, now].
   string start = 8;
   string end = 9;
-  // Optional Go duration string (e.g. "60s", "5m"). Allowed range is [30s, 1h].
+  // Optional Go duration string (e.g. "60s", "5m"). Allowed range is [30s, 6h].
   string step = 10;
   // Required for scope="node", optional for scope="device". Disallowed for other scopes.
   string node_uid = 11;
