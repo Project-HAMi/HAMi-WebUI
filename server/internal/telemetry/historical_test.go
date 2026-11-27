@@ -163,8 +163,8 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("cluster trends failed: %v", err)
 	}
-	if len(seenQueries) != 4 || !strings.Contains(seenQueries[2], "sum_over_time(sum(") || !strings.Contains(seenQueries[2], "[5m:30s]") {
-		t.Fatalf("cluster compute_utilization_percent must use 5m smoothing window: %v", seenQueries)
+	if len(seenQueries) != 4 || !strings.Contains(seenQueries[2], "100 * avg(") || strings.Contains(seenQueries[2], "sum_over_time") {
+		t.Fatalf("cluster compute_utilization_percent must evaluate 100 * avg(...) at outer step: %v", seenQueries)
 	}
 
 	seenQueries = nil

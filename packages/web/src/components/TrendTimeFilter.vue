@@ -98,6 +98,14 @@ const props = defineProps({
     default: () => [],
   },
   loading: Boolean,
+  minRangeMs: {
+    type: Number,
+    default: 0,
+  },
+  maxRangeMs: {
+    type: Number,
+    default: Infinity,
+  },
 });
 
 const emit = defineEmits(['update:modelValue', 'refresh-current']);
@@ -111,7 +119,12 @@ const {
   refreshRange,
   selectRange: applyPresetRange,
   validationError,
-} = useTrendTimeRange(toRef(props, 'modelValue'), (range) => emit('update:modelValue', range));
+} = useTrendTimeRange(
+  toRef(props, 'modelValue'),
+  (range) => emit('update:modelValue', range),
+  Date.now,
+  { minRangeMs: props.minRangeMs, maxRangeMs: props.maxRangeMs },
+);
 const showCustomDateRangePicker = computed(() => currentDateRange.value === 'custom');
 const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const renderTimezone = (h) => h('span', { class: 'trend-time-filter-timezone' }, t('timeRange.timezone', { timezone }));

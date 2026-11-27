@@ -701,15 +701,6 @@ func buildPhysicalTrendSpecs(extraSelector string) []namedTrendSpec {
 	memPhysical := metricSeries("memory_physical_bytes")
 	memElig := fmt.Sprintf("(%s <= %s) and %s %s", memUsed, memPhysical, deviceMatch, singleSource(memUsed+" or "+memPhysical))
 
-	computeUtilQuery := fmt.Sprintf("100 * avg(%s)", observedUsage)
-	if extraSelector == "" {
-		observedCount := fmt.Sprintf("count(%s)", observedUsage)
-		computeUtilQuery = fmt.Sprintf(
-			"100 * sum_over_time(sum(%s)[5m:30s]) / sum_over_time(%s[5m:30s]) and on () %s",
-			observedUsage, observedCount, observedCount,
-		)
-	}
-
 	return []namedTrendSpec{
 		{
 			metric: "compute_allocation_percent",
@@ -724,7 +715,7 @@ func buildPhysicalTrendSpecs(extraSelector string) []namedTrendSpec {
 		{
 			metric: "compute_utilization_percent",
 			unit:   "percent",
-			query:  computeUtilQuery,
+			query:  fmt.Sprintf("100 * avg(%s)", observedUsage),
 		},
 		{
 			metric: "memory_utilization_percent",

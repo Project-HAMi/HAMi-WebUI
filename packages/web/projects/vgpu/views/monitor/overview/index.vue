@@ -23,7 +23,13 @@
 
       <div class="home-bottom">
         <div class="home-bottom-trend-filter">
-          <TrendTimeFilter v-model="times" :loading="trendLoading" @refresh-current="refreshCurrentSnapshot" />
+          <TrendTimeFilter
+            v-model="times"
+            :loading="trendLoading"
+            :min-range-ms="OVERVIEW_TREND_MIN_RANGE_MS"
+            :max-range-ms="OVERVIEW_TREND_MAX_RANGE_MS"
+            @refresh-current="refreshCurrentSnapshot"
+          />
         </div>
         <div class="home-bottom-row home-bottom-trend-row">
           <div
@@ -71,6 +77,8 @@ const OVERVIEW_TREND_METRICS = [
   { key: 'memory-usage', metric: 'memory_utilization_percent', sectionIndex: 'memory' },
 ];
 const TREND_SECTION_KEYS = ['compute', 'memory'];
+const OVERVIEW_TREND_MIN_RANGE_MS = 30 * 1000;
+const OVERVIEW_TREND_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
 
 const end = new Date();
 const start = new Date(end.getTime() - 3600 * 1000);
