@@ -144,17 +144,58 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 	}
 
 	seenQueries = nil
+	opaqueID, err := resourceview.DeviceID("hami-nvidia", "worker-1", "dev-1")
+	if err != nil {
+		t.Fatalf("DeviceID() error = %v", err)
+	}
 	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
 		Scope:    "device",
-		DeviceId: "dev-1",
+		DeviceId: opaqueID,
 		NodeUid:  "node-uid-2",
 	}); err != nil {
 		t.Fatalf("device trends with node_uid failed: %v", err)
 	}
-	for _, q := range seenQueries {
-		if !strings.Contains(q, `device_id="dev-1",node_uid="node-uid-2"`) {
+	if len(seenQueries) != 6 {
+		t.Fatalf("device queries = %d, want 6: %v", len(seenQueries), seenQueries)
+	}
+	for _, q := range seenQueries[:4] {
+		if !strings.Contains(q, fmt.Sprintf(`device_id=%q,node_uid="node-uid-2"`, opaqueID)) {
 			t.Fatalf("device query missing optional node_uid filter: %s", q)
 		}
+	}
+	if seenQueries[4] != `avg(hami_device_temperature{node="worker-1",device_uuid="dev-1"})` ||
+		seenQueries[5] != `avg(hami_device_power{node="worker-1",device_uuid="dev-1"})` {
+		t.Fatalf("device sensor queries = %v", seenQueries[4:])
+	}
+
+	seenQueries = nil
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope:    "device",
+		DeviceId: "dev-1",
+	}); err != nil {
+		t.Fatalf("plain device trends failed: %v", err)
+	}
+	if len(seenQueries) != 6 ||
+		seenQueries[4] != `avg(hami_device_temperature{device_uuid="dev-1"})` ||
+		seenQueries[5] != `avg(hami_device_power{device_uuid="dev-1"})` {
+		t.Fatalf("plain device sensor queries = %v", seenQueries)
+	}
+
+	seenQueries = nil
+	hcuID, err := resourceview.DeviceID("HCU", "worker-1", "HCU-serial-01")
+	if err != nil {
+		t.Fatalf("DeviceID(HCU) error = %v", err)
+	}
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope:    "device",
+		DeviceId: hcuID,
+	}); err != nil {
+		t.Fatalf("HCU device trends failed: %v", err)
+	}
+	if len(seenQueries) != 6 ||
+		seenQueries[4] != `avg(hami_device_temperature{node="worker-1",device_uuid="serial-01"})` ||
+		seenQueries[5] != `avg(hami_device_power{node="worker-1",device_uuid="serial-01"})` {
+		t.Fatalf("HCU device sensor queries = %v", seenQueries)
 	}
 
 	seenQueries = nil

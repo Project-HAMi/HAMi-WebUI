@@ -186,29 +186,30 @@ func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, r
 	}
 	device := matched[0]
 	var (
-		vGPU, core, memory int32
-		coreKnown          bool
+		vGPU, core, memory, coreUnknownCount int32
+		coreKnown                            bool
 	)
-	if nodeUID != "" {
-		containers, err := s.pod.ListAllContainers(ctx)
-		if err != nil {
-			return nil, err
-		}
-		var scoped []*biz.Container
-		for _, c := range containers {
-			if c.NodeUID == device.NodeUid {
-				scoped = append(scoped, c)
+	containers, err := s.pod.ListAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if device.AliasId != "" {
+		scoped := containers
+		if nodeUID != "" {
+			scoped = make([]*biz.Container, 0, len(containers))
+			for _, c := range containers {
+				if c.NodeUID == device.NodeUid {
+					scoped = append(scoped, c)
+				}
 			}
 		}
-		vGPU, core, memory, coreKnown = biz.ContainersStatisticsInfo(scoped, device.AliasId)
-	} else {
-		var err error
-		vGPU, core, memory, coreKnown, err = s.pod.StatisticsByDeviceId(ctx, device.AliasId)
-		if err != nil {
-			return nil, err
-		}
+		res := biz.AggregateDeviceReservations(scoped)[device.AliasId]
+		vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
+		coreUnknownCount = res.CoreUnknownCount
+		coreKnown = !res.CoreUnknown
 	}
-	return &pb.GPUReply{
+	telemetryDeviceID, obs, hasObs := s.devicePhysicalSnapshot(ctx, device)
+	reply := &pb.GPUReply{
 		Uuid:              device.Id,
 		NodeName:          device.NodeName,
 		Type:              device.Type,
@@ -224,18 +225,45 @@ func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, r
 		VgpuUsed:          vGPU,
 		CoreUsed:          core,
 		CoreUsedKnown:     &coreKnown,
+		CoreUnknownCount:  &coreUnknownCount,
 		MemoryUsed:        memory,
-		TelemetryDeviceId: s.telemetryDeviceIDForDevice(ctx, device),
-	}, nil
+		TelemetryDeviceId: telemetryDeviceID,
+	}
+	if hasObs {
+		if util, ok := obs.UtilizationRatio.KnownValue(); ok {
+			reply.UtilizationRatio = &util
+		}
+		if usedQ, physQ := obs.MemoryUsedBytes, obs.MemoryPhysicalBytes; usedQ.State.GetState() == resourceview.Known && physQ.State.GetState() == resourceview.Known && usedQ.Value != nil && physQ.Value != nil && physQ.Value.Sign() > 0 {
+			usedBytes := usedQ.Value.Value()
+			physBytes := physQ.Value.Value()
+			reply.MemoryUsedBytes = &usedBytes
+			reply.MemoryPhysicalBytes = &physBytes
+		}
+		if temp, ok := obs.TemperatureCelsius.KnownValue(); ok {
+			reply.TemperatureCelsius = &temp
+		}
+		if power, ok := obs.PowerWatts.KnownValue(); ok {
+			reply.PowerWatts = &power
+		}
+		if device.Mode == "mig" && reply.MemoryUsedBytes == nil && obs.MigMemoryUsedBytes.State.GetState() == resourceview.Known && obs.MigMemoryUsedBytes.Value != nil {
+			mig := &pb.MigInstanceMemory{UsedBytes: obs.MigMemoryUsedBytes.Value.Value()}
+			if obs.MigMemoryTotalBytes.State.GetState() == resourceview.Known && obs.MigMemoryTotalBytes.Value != nil {
+				total := obs.MigMemoryTotalBytes.Value.Value()
+				mig.TotalBytes = &total
+			}
+			reply.MigInstanceMemory = mig
+		}
+	}
+	return reply, nil
 }
 
-func (s *CardService) telemetryDeviceIDForDevice(ctx context.Context, device *biz.DeviceInfo) string {
+func (s *CardService) devicePhysicalSnapshot(ctx context.Context, device *biz.DeviceInfo) (string, resourceview.DeviceObservation, bool) {
 	if s == nil || s.source == nil || device == nil {
-		return ""
+		return "", resourceview.DeviceObservation{}, false
 	}
 	snapshot, err := s.source.Snapshot(ctx)
 	if err != nil {
-		return ""
+		return "", resourceview.DeviceObservation{}, false
 	}
 	inv := resourceview.GroupPhysicalDevices(snapshot)
 	for _, group := range inv.Groups {
@@ -248,14 +276,26 @@ func (s *CardService) telemetryDeviceIDForDevice(ctx context.Context, device *bi
 			}
 			if member.Identity.DeviceID == device.Id || (device.AliasId != "" && (member.Identity.DeviceID == device.AliasId || slices.Contains(member.BindingAliases, device.AliasId))) {
 				first := group.Members[0].Identity
-				if id, err := resourceview.DeviceID(first.Provider, first.Node, first.DeviceID); err == nil {
-					return id
+				telemetryID, err := resourceview.DeviceID(first.Provider, first.Node, first.DeviceID)
+				if err != nil {
+					telemetryID = ""
 				}
-				return ""
+				obs := group.Observation(func(d resourceview.Device) resourceview.DeviceObservation {
+					return resourceview.DeviceObservation{
+						UtilizationRatio:    d.UtilizationRatio,
+						MemoryUsedBytes:     d.MemoryUsedBytes,
+						MemoryPhysicalBytes: d.MemoryPhysicalBytes,
+						TemperatureCelsius:  d.TemperatureCelsius,
+						PowerWatts:          d.PowerWatts,
+						MigMemoryUsedBytes:  d.MigMemoryUsedBytes,
+						MigMemoryTotalBytes: d.MigMemoryTotalBytes,
+					}
+				})
+				return telemetryID, obs, true
 			}
 		}
 	}
-	return ""
+	return "", resourceview.DeviceObservation{}, false
 }
 
 func migProfiles(profiles []biz.MigProfile) []*pb.MigProfile {

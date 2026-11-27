@@ -646,7 +646,7 @@ const overviewTrendCount = 1
 const trendPages = [
   ['overview', overviewTrendCount],
   ['nodes/node-1?nodeName=node-1', 1],
-  ['accelerators/gpu-1', 3],
+  ['accelerators/gpu-1', 1],
   ['workloads/pod-1/containers/worker', 1]
 ]
 
@@ -794,12 +794,19 @@ before(async() => {
         vgpuTotal: 1,
         coreUsed: 0,
         coreTotal: 100,
+        coreUnknownCount: 0,
+        coreUsedKnown: true,
         memoryUsed: 0,
         memoryTotal: 16_384,
         nodeUid: 'node-1',
         health: true,
         mode: '',
         telemetryDeviceId: Buffer.from(`NVIDIA\0node-1\0${uid}`).toString('base64url'),
+        utilizationRatio: 0.4,
+        memoryUsedBytes: String(4096 * 1024 * 1024),
+        memoryPhysicalBytes: String(16384 * 1024 * 1024),
+        temperatureCelsius: 48,
+        powerWatts: 120,
       }
     } else if (pathname === '/v1/node') {
       const uid = requestURL.searchParams.get('uid') ?? ''
@@ -1077,7 +1084,14 @@ before(async() => {
       const start = requestURL.searchParams.get('start') || new Date((now - 60) * 1000).toISOString().replace('.000Z', 'Z')
       const end = requestURL.searchParams.get('end') || new Date(now * 1000).toISOString().replace('.000Z', 'Z')
       const deviceId = requestURL.searchParams.get('device_id') || ''
-      if (deviceId === 'gpu-metric-new') {
+      const decodedDeviceId = (() => {
+        try {
+          return Buffer.from(deviceId, 'base64url').toString('utf8')
+        } catch {
+          return deviceId
+        }
+      })()
+      if (deviceId === 'gpu-metric-new' || decodedDeviceId.includes('gpu-metric-new')) {
         const requestKey = 'monitor:gpu-metric-new'
         countBackendRequest(requestKey)
         await waitForResponseGate(requestKey)
@@ -1090,42 +1104,19 @@ before(async() => {
         end,
         stepSeconds: 60,
         series: [
-          'compute_allocation_percent',
-          'memory_allocation_percent',
-          'compute_utilization_percent',
-          'memory_utilization_percent',
-        ].map((metric) => ({ metric, unit: 'percent', state, points })),
-      }
-    } else if (pathname === '/v1/monitor/query/instant-vector') {
-      if (body?.query?.includes('gpu-metric-new')) {
-        const requestKey = 'monitor:gpu-metric-new'
-        countBackendRequest(requestKey)
-        await waitForResponseGate(requestKey)
-      }
-      payload = {
-        code: 0,
-        data: [{
-          metric: {
-            device_type: 'NVIDIA',
-            device_uuid: 'gpu-1',
-            node: 'node-1',
-            provider: 'NVIDIA'
-          },
-          value: 0.4
-        }]
-      }
-    } else if (pathname === '/v1/monitor/query/range-vector') {
-      if (body?.query?.includes('gpu-metric-new')) {
-        const requestKey = 'monitor:gpu-metric-new'
-        countBackendRequest(requestKey)
-        await waitForResponseGate(requestKey)
-      }
-      payload = {
-        code: 0,
-        data: [{
-          metric: { node: 'node-1' },
-          values: [[now - 60, 20], [now, 42]]
-        }]
+          ...[
+            'compute_allocation_percent',
+            'memory_allocation_percent',
+            'compute_utilization_percent',
+            'memory_utilization_percent',
+          ].map((metric) => ({ metric, unit: 'percent', state, points })),
+          ...(scope === 'device'
+            ? [
+                { metric: 'temperature_celsius', unit: 'celsius', state, points },
+                { metric: 'power_watts', unit: 'watts', state, points },
+              ]
+            : []),
+        ],
       }
     }
 
@@ -1904,21 +1895,21 @@ test('GPU resource cards stay compact across panel widths and languages', async(
   await page.route('**/api/v1/device?**', async(route) => {
     const response = await route.fetch()
     const device = await response.json()
-    return route.fulfill({ json: { ...device, vendor: 'NVIDIA', mode: deviceMode } })
-  })
-  await page.route('**/v1/monitor/query/instant-vector', (route) => {
-    const { query } = route.request().postDataJSON()
-    let value = 100
-    if (query.includes('hami_container_vcore_allocation_known')) value = 0
-    else if (query.includes('hami_container_vmemory_allocated')) value = longValues ? 2048.75 : 512.25
-    else if (query.includes('hami_vmemory_size')) value = 1024.5
-    else if (query.includes('hami_memory_used')) value = 128.25
-    else if (query.includes('hami_memory_size')) value = 2048.5
-    else if (query.includes('hami_container_vcore_allocated')) value = 85.25
-    else if (query.includes('hami_core_util')) value = 64.25
     return route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ data: [{ metric: { device_uuid: 'gpu-1' }, value }] })
+      json: {
+        ...device,
+        vendor: 'NVIDIA',
+        mode: deviceMode,
+        coreUsed: 85,
+        coreTotal: 100,
+        coreUnknownCount: 0,
+        coreUsedKnown: true,
+        memoryUsed: (longValues ? 2048.75 : 512.25) * 1024,
+        memoryTotal: 1024.5 * 1024,
+        utilizationRatio: 0.6425,
+        memoryUsedBytes: String(Math.round(128.25 * 1024 * 1024)),
+        memoryPhysicalBytes: String(Math.round(2048.5 * 1024 * 1024)),
+      },
     })
   })
   const inspectLayout = () => page.locator('.resource-overview-cards').evaluate((element) => {
@@ -2146,44 +2137,28 @@ test('device holders omit duplicate shared counts while keeping allocation distr
 test('runtime language updates the document and TDesign services', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
-  let failNextMonitorRequest = true
-
-  await page.route('**/api/vgpu/v1/monitor/query/instant-vector**', (route) => {
-    if (!failNextMonitorRequest) return route.continue()
-    failNextMonitorRequest = false
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        code: 50008,
-        message: 'authentication expired'
-      })
-    })
-  })
 
   try {
     await page.goto(
-      `${target}${basePath}accelerators/gpu-1`,
+      `${target}${basePath}overview`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('html[lang="en"]').waitFor()
 
-    const messageBox = page.locator('.t-dialog:visible')
-    await messageBox.waitFor()
-    await messageBox.locator('.t-button--theme-primary')
-      .filter({ hasText: 'Confirm' })
-      .click()
+    await selectTrendRange(page, 'custom')
+    const customInput = page.locator('.trend-time-filter-custom .t-range-input')
+    await customInput.click()
+    const pickerPopup = page.locator('.trend-time-filter-popup')
+    await pickerPopup.waitFor({ state: 'visible' })
+    await pickerPopup.locator('.t-date-picker__footer button').filter({ hasText: 'Confirm' }).click()
+    await pickerPopup.waitFor({ state: 'hidden' })
 
     await page.getByRole('button', { name: '中文', exact: true }).click()
     await page.locator('html[lang="zh-CN"]').waitFor()
-
-    failNextMonitorRequest = true
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    await page.locator('html[lang="zh-CN"]').waitFor()
-    await messageBox.waitFor()
-    await messageBox.locator('.t-button--theme-primary')
-      .filter({ hasText: '确定' })
-      .click()
+    await customInput.click()
+    await pickerPopup.waitFor({ state: 'visible' })
+    await pickerPopup.locator('.t-date-picker__footer button').filter({ hasText: '确定' }).click()
+    await pickerPopup.waitFor({ state: 'hidden' })
 
     await page.getByRole('button', { name: 'English', exact: true }).click()
     await page.locator('html[lang="en"]').waitFor()
@@ -2783,9 +2758,10 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
       )
       await page.locator('.layout-title').filter({ hasText: 'gpu-delayed' }).waitFor()
       await waitUntil(
-        () => monitorRequests.length > 0 && trendRequests.length > 0,
-        'Monitoring did not start after the card detail resolved'
+        () => trendRequests.length > 0,
+        'Trends did not start after the card detail resolved'
       )
+      assert.equal(monitorRequests.length, 0, 'Card detail must not issue legacy monitor queries')
     } finally {
       gate.release()
       responseGates.delete(requestKey)
@@ -2834,7 +2810,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
   })
 
   await t.test('route changes never expose metrics from the previous card', async() => {
-    const requestKey = 'monitor:gpu-metric-new'
+    const requestKey = 'gpu:gpu-metric-new'
     const gate = createResponseGate(requestKey)
     const page = await browser.newPage()
     try {
@@ -2857,20 +2833,18 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
         )
       })
       await page.locator('.layout-title').filter({ hasText: 'gpu-metric-new' }).waitFor()
+      await page.locator('[data-testid="detail-page-skeleton"]').waitFor()
+      await waitUntil(
+        () => (backendRequestCounts.get(requestKey) ?? 0) > 0,
+        'New card detail request did not reach the backend'
+      )
+
+      assert.equal(await page.locator('.resource-card-footer-percent').count(), 0)
+
+      gate.release()
       await page.locator(
         '.detail-page-state[data-detail-state="ready"]'
       ).waitFor()
-      await waitUntil(
-        () => (backendRequestCounts.get(requestKey) ?? 0) > 0,
-        'New card monitoring request did not reach the backend'
-      )
-
-      assert.deepEqual(
-        await page.locator('.resource-card-footer-percent').allTextContents(),
-        ['--', '--', '--', '--']
-      )
-
-      gate.release()
       await page.waitForFunction(() =>
         [...document.querySelectorAll('.resource-card-footer-percent')]
           .some((element) => element.textContent?.trim() !== '--')
@@ -4218,15 +4192,6 @@ test('distribution legends keep each name and its count on one line', async() =>
     'count by (device_type)': [['NVIDIA-A100-SXM4-80GB', 59], ['Ascend910B3', 42], ['NVIDIA-H100-SXM5-80GB', 24], ['DCU', 12345]],
     'count by (provider)': [['Ascend', 13], ['NVIDIA', 11], ['Hygon', 2], ['Metax', 1]],
   }
-  await page.route('**/monitor/query/instant-vector', async(route) => {
-    const query = route.request().postDataJSON()?.query || ''
-    const prefix = Object.keys(legends).find((key) => query.startsWith(key))
-    if (!prefix) return route.fallback()
-    const label = prefix.includes('provider') ? 'provider' : 'device_type'
-    await route.fulfill({
-      json: { code: 0, data: legends[prefix].map(([name, value]) => ({ metric: { [label]: name }, value })) }
-    })
-  })
   const devices = legends['count by (device_type)'].flatMap(([type, count]) =>
     Array.from({ length: Math.min(count, 125) }, (_, index) => ({
       type, uuid: type + index, nodeName: 'worker', nodeUid: 'node-uid', vendor: 'NVIDIA', health: true,

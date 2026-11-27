@@ -270,6 +270,8 @@ func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 				UtilizationRatio:    newGoldenQuantity("0.42", "ratio", "prometheus"),
 				MemoryUsedBytes:     newGoldenQuantity("21474836480", "bytes", "prometheus"),
 				MemoryPhysicalBytes: newGoldenQuantity("85899345920", "bytes", "prometheus"),
+				TemperatureCelsius:  newGoldenQuantity("48", "celsius", "exporter"),
+				PowerWatts:          newGoldenQuantity("120", "watts", "exporter"),
 			},
 		}}
 

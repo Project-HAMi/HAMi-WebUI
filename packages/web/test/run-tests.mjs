@@ -17,28 +17,13 @@ const discoverTests = (dir, out = []) => {
   return out;
 };
 
-const promqlTest = 'test/homepage-promql.test.mjs';
 const tests = [
   ...discoverTests(join(webRoot, 'src')),
   ...discoverTests(join(webRoot, 'projects')),
   ...discoverTests(join(webRoot, 'test')),
 ].sort();
 
-const promtool = process.env.PROMTOOL || 'promtool';
-const hasPromtool = spawnSync(promtool, ['--version'], { stdio: 'ignore' }).status === 0;
-const requirePromtool = process.env.CI === 'true' || process.env.REQUIRE_PROMTOOL === '1';
-
-let selectedTests = tests;
-if (!hasPromtool) {
-  if (requirePromtool) {
-    console.error(`Required promtool binary not found (${promtool}) while running ${promqlTest}`);
-    process.exit(1);
-  }
-  console.log(`[run-tests] promtool unavailable locally; skipping ${promqlTest}`);
-  selectedTests = tests.filter((file) => file !== promqlTest);
-}
-
-const result = spawnSync(process.execPath, ['--test', ...selectedTests], {
+const result = spawnSync(process.execPath, ['--test', ...tests], {
   cwd: webRoot,
   stdio: 'inherit',
 });

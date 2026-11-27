@@ -15,5 +15,11 @@
   "unconfigured": false,
   "vendor": "NVIDIA",
   "migProfiles": [],
-  "telemetryDeviceId": "TlZJRElBAG5vZGUtMQBHUFUtMQ"
+  "telemetryDeviceId": "TlZJRElBAG5vZGUtMQBHUFUtMQ",
+  "coreUnknownCount": 0,
+  "utilizationRatio": 0.42,
+  "memoryUsedBytes": "21474836480",
+  "memoryPhysicalBytes": "85899345920",
+  "temperatureCelsius": 48,
+  "powerWatts": 120
 }

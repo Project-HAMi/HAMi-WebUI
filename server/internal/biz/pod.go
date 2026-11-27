@@ -61,8 +61,8 @@ type PodInfo struct {
 }
 
 type DeviceReservation struct {
-	Slots, Cores, MemoryMiB int32
-	CoreUnknown, HasInit    bool
+	Slots, Cores, MemoryMiB, CoreUnknownCount int32
+	CoreUnknown, HasInit                      bool
 }
 
 // NodeHolders contains only allocations attributable to the requested Node UID.
@@ -169,6 +169,7 @@ func AggregateDeviceReservations(containers []*Container) map[string]DeviceReser
 			entry.MemoryMiB += cd.Usedmem
 			if cd.CoreAllocationUnknown {
 				entry.CoreUnknown = true
+				entry.CoreUnknownCount++
 			}
 			res[cd.UUID] = entry
 		}

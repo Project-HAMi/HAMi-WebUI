@@ -82,13 +82,26 @@ func (g PhysicalGroup) Observation(read func(Device) DeviceObservation) DeviceOb
 	// Select memory as one pair so a handover never mixes two exporters.
 	needUtil := needsFallback(out.UtilizationRatio)
 	needMemory := needsFallback(out.MemoryUsedBytes, out.MemoryPhysicalBytes)
-	if needUtil || needMemory {
+	needTemp := needsFallback(out.TemperatureCelsius)
+	needPower := needsFallback(out.PowerWatts)
+	needMig := needsFallback(out.MigMemoryUsedBytes)
+	if needUtil || needMemory || needTemp || needPower || needMig {
 		legacy := reconcileObservations(fallback, read)
 		if needUtil && legacy.UtilizationRatio.Value != nil {
 			out.UtilizationRatio = legacy.UtilizationRatio
 		}
 		if needMemory && legacy.MemoryUsedBytes.Value != nil && legacy.MemoryPhysicalBytes.Value != nil {
 			out.MemoryUsedBytes, out.MemoryPhysicalBytes = legacy.MemoryUsedBytes, legacy.MemoryPhysicalBytes
+		}
+		if needTemp && legacy.TemperatureCelsius.Value != nil {
+			out.TemperatureCelsius = legacy.TemperatureCelsius
+		}
+		if needPower && legacy.PowerWatts.Value != nil {
+			out.PowerWatts = legacy.PowerWatts
+		}
+		if needMig && legacy.MigMemoryUsedBytes.Value != nil {
+			out.MigMemoryUsedBytes = legacy.MigMemoryUsedBytes
+			out.MigMemoryTotalBytes = legacy.MigMemoryTotalBytes
 		}
 	}
 	return out
@@ -112,17 +125,27 @@ func needsFallback(fields ...Quantity) bool {
 func reconcileObservations(members []Device, read func(Device) DeviceObservation) DeviceObservation {
 	var out DeviceObservation
 	paired := false
+	migPaired := false
 	for _, member := range members {
 		sample := read(member)
 		used, capacity := measurement(sample.MemoryUsedBytes, "bytes"), measurement(sample.MemoryPhysicalBytes, "bytes")
+		migUsed, migTotal := measurement(sample.MigMemoryUsedBytes, "bytes"), measurement(sample.MigMemoryTotalBytes, "bytes")
 		out.UtilizationRatio = mergeMeasurement(out.UtilizationRatio, measurement(sample.UtilizationRatio, "ratio"))
 		out.MemoryUsedBytes = mergeMeasurement(out.MemoryUsedBytes, used)
 		out.MemoryPhysicalBytes = mergeMeasurement(out.MemoryPhysicalBytes, capacity)
+		out.TemperatureCelsius = mergeMeasurement(out.TemperatureCelsius, measurement(sample.TemperatureCelsius, "celsius"))
+		out.PowerWatts = mergeMeasurement(out.PowerWatts, measurement(sample.PowerWatts, "watts"))
+		out.MigMemoryUsedBytes = mergeMeasurement(out.MigMemoryUsedBytes, migUsed)
+		out.MigMemoryTotalBytes = mergeMeasurement(out.MigMemoryTotalBytes, migTotal)
 		paired = paired || (used.Value != nil && capacity.Value != nil && sameReading(used, capacity))
+		migPaired = migPaired || (migUsed.Value != nil && migTotal.Value != nil && sameReading(migUsed, migTotal) && migTotal.Value.Cmp(*migUsed.Value) >= 0)
 	}
 	if !paired && out.MemoryUsedBytes.Value != nil && out.MemoryPhysicalBytes.Value != nil {
 		out.MemoryUsedBytes = unavailableMeasurement("bytes", Conflict, "unpaired_samples")
 		out.MemoryPhysicalBytes = unavailableMeasurement("bytes", Conflict, "unpaired_samples")
+	}
+	if out.MigMemoryTotalBytes.Value != nil && !migPaired {
+		out.MigMemoryTotalBytes = unavailableMeasurement("bytes", Conflict, "unpaired_samples")
 	}
 	return out
 }

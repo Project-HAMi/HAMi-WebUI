@@ -104,7 +104,7 @@
 </template>
 
 <script setup lang="jsx">
-import cardApi from '~/vgpu/api/card';
+import { getPhysicalCardList } from '~/vgpu/api/physical-inventory.mjs';
 import apiClient from '@/api/client.mjs';
 import { useRouter, useRoute } from 'vue-router';
 import { cardHealth, cardHealthDisplay, healthLabels } from './card-health.mjs';
@@ -477,7 +477,7 @@ watch(
 
 // Summary charts cover the full physical inventory. Toolbar filters apply only to the table.
 const physicalModels = ref(null);
-const tableState = useFetchList(() => cardApi.getPhysicalCardList(), {
+const tableState = useFetchList(() => getPhysicalCardList(), {
   immediate: false,
   onSuccess: reply => { physicalModels.value = reply.models; },
 });

@@ -677,7 +677,34 @@ func buildTrendSpecs(q parsedTrendsQuery) []namedTrendSpec {
 			extraFilter += fmt.Sprintf(",node_uid=%s", strconv.Quote(q.nodeUID))
 		}
 	}
-	return buildPhysicalTrendSpecs(extraFilter)
+	specs := buildPhysicalTrendSpecs(extraFilter)
+	if q.scope == "device" {
+		specs = append(specs, buildDeviceSensorTrendSpecs(q.deviceID)...)
+	}
+	return specs
+}
+
+func buildDeviceSensorTrendSpecs(deviceID string) []namedTrendSpec {
+	selector := fmt.Sprintf("device_uuid=%s", strconv.Quote(deviceID))
+	if parts, err := resourceview.ParseDeviceID(deviceID); err == nil {
+		rawUUID := parts[2]
+		if parts[0] == "HCU" {
+			rawUUID = strings.TrimPrefix(rawUUID, "HCU-")
+		}
+		selector = fmt.Sprintf("node=%s,device_uuid=%s", strconv.Quote(parts[1]), strconv.Quote(rawUUID))
+	}
+	return []namedTrendSpec{
+		{
+			metric: "temperature_celsius",
+			unit:   "celsius",
+			query:  fmt.Sprintf("avg(hami_device_temperature{%s})", selector),
+		},
+		{
+			metric: "power_watts",
+			unit:   "watts",
+			query:  fmt.Sprintf("avg(hami_device_power{%s})", selector),
+		},
+	}
 }
 
 func buildPhysicalTrendSpecs(extraSelector string) []namedTrendSpec {
