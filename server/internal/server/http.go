@@ -46,6 +46,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	workload *service.WorkloadService,
 	deviceConfig *service.DeviceConfigService,
 	overview *service.OverviewService,
+	telemetrySvc *service.TelemetryService,
 	about *service.AboutService,
 	gatherer prometheus.Gatherer,
 	logger log.Logger) *http.Server {
@@ -76,6 +77,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterWorkloadHTTPServer(srv, workload)
 	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
 	pb.RegisterOverviewHTTPServer(srv, overview)
+	pb.RegisterTelemetryHTTPServer(srv, telemetrySvc)
 	v1.RegisterAboutHTTPServer(srv, about)
 	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})))

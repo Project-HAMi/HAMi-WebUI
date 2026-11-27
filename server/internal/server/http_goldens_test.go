@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/prometheus"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/prometheus/common/model"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -22,8 +24,10 @@ import (
 	obsv1 "vgpu/api/observability/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
+	"vgpu/internal/data/prom"
 	"vgpu/internal/resourceview"
 	"vgpu/internal/service"
+	"vgpu/internal/telemetry"
 )
 
 type goldenSnapshotSource struct{ snapshot resourceview.Snapshot }
@@ -102,6 +106,26 @@ func newGoldenQuantity(dec string, unit, source string) resourceview.Quantity {
 			ObservedAt: timestamppb.New(time.Unix(1700000000, 0).UTC()),
 		},
 	}
+}
+
+type goldenRangeQuerier struct {
+	at          time.Time
+	circuitOpen bool
+}
+
+func (q goldenRangeQuerier) QueryRange(_ context.Context, _ string, _ promv1.Range) (model.Value, error) {
+	if q.circuitOpen {
+		return nil, prom.ErrCircuitOpen
+	}
+	end := q.at.Truncate(time.Minute)
+	return model.Matrix{
+		&model.SampleStream{
+			Values: []model.SamplePair{
+				{Timestamp: model.Time(end.Add(-time.Minute).UnixMilli()), Value: 42.5},
+				{Timestamp: model.Time(end.UnixMilli()), Value: 50},
+			},
+		},
+	}, nil
 }
 
 func newGoldenHTTPHandler(empty bool) nethttp.Handler {
@@ -212,6 +236,10 @@ func newGoldenHTTPHandler(empty bool) nethttp.Handler {
 	schedUC := biz.NewSchedulingUsecase(goldenSchedulingRepo{})
 	ctrSvc := service.NewContainerService(nodeUC, podUC)
 
+	telemetrySvc := service.NewTelemetryServiceWithReader(
+		telemetry.NewHistoricalObservationReaderWithQuerier(goldenRangeQuerier{at: at, circuitOpen: empty}),
+	)
+
 	return NewHTTPServer(
 		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
 		nil,
@@ -222,6 +250,7 @@ func newGoldenHTTPHandler(empty bool) nethttp.Handler {
 		service.NewWorkloadService(ctrSvc, schedUC),
 		nil,
 		service.NewOverviewService(resourceview.WithObservations(goldenSnapshotSource{snapshot: snap}, obs)),
+		telemetrySvc,
 		nil,
 		prometheus.NewRegistry(),
 		logger,
@@ -246,6 +275,9 @@ func TestHTTPJSONGoldens(t *testing.T) {
 		{name: "gpu-detail-not-found.json", empty: false, method: "GET", target: "/v1/gpu?uid=GPU-MISSING", wantStatus: 404},
 		{name: "workloads-page.json", empty: false, method: "POST", target: "/v1/workloads", body: `{"page":1,"pageSize":100,"filters":{"deviceId":"GPU-1"}}`, wantStatus: 200},
 		{name: "workloads-empty.json", empty: true, method: "POST", target: "/v1/workloads", body: `{"page":1,"pageSize":100,"filters":{"deviceId":"GPU-1"}}`, wantStatus: 200},
+		{name: "telemetry-trends-cluster.json", empty: false, method: "GET", target: "/api/v1/telemetry/trends?scope=cluster&start=2023-11-14T22:11:00Z&end=2023-11-14T22:13:00Z&step=60s", wantStatus: 200},
+		{name: "telemetry-trends-circuit-open.json", empty: true, method: "GET", target: "/api/v1/telemetry/trends?scope=cluster&start=2023-11-14T22:11:00Z&end=2023-11-14T22:13:00Z&step=60s", wantStatus: 200},
+		{name: "telemetry-trends-invalid.json", empty: false, method: "GET", target: "/api/v1/telemetry/trends?scope=invalid", wantStatus: 400},
 	}
 
 	for _, tc := range cases {

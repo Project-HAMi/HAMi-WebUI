@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package observability.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "api/observability/v1/common.proto";
+
+option go_package = "vgpu/api/observability/v1;observabilityv1";
+
+service Telemetry {
+  rpc GetTrends (TrendsRequest) returns (TrendsReply) {
+    option (google.api.http) = { get: "/api/v1/telemetry/trends" };
+  }
+}
+
+message TrendsRequest {
+  // cluster, node, device, or container.
+  string scope = 1;
+  string node = 2;
+  string device_id = 3;
+  string namespace = 4;
+  string pod = 5;
+  string container = 6;
+  string pod_uid = 7;
+  // Optional RFC3339 timestamps. Defaults to [end-1h, now].
+  string start = 8;
+  string end = 9;
+  // Optional Go duration string (e.g. "60s", "5m"). Allowed range is [30s, 1h].
+  string step = 10;
+  // Required for scope="node", optional for scope="device". Disallowed for other scopes.
+  string node_uid = 11;
+}
+
+message TrendsReply {
+  string scope = 1;
+  google.protobuf.Timestamp start = 2;
+  google.protobuf.Timestamp end = 3;
+  int64 step_seconds = 4;
+  repeated TrendSeries series = 5;
+}
+
+message TrendSeries {
+  string metric = 1;
+  string unit = 2;
+  FieldState state = 3;
+  repeated TrendPoint points = 4;
+}
+
+message TrendPoint {
+  google.protobuf.Timestamp at = 1;
+  optional double value = 2;
+}

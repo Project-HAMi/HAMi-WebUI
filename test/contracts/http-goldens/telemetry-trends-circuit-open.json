@@ -1,0 +1,100 @@
+{
+  "scope": "cluster",
+  "start": "2023-11-14T22:11:00Z",
+  "end": "2023-11-14T22:13:00Z",
+  "stepSeconds": "60",
+  "series": [
+    {
+      "metric": "compute_allocation_percent",
+      "unit": "percent",
+      "state": {
+        "state": "unknown",
+        "reason": "circuit_open",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": null
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z"
+        },
+        {
+          "at": "2023-11-14T22:13:00Z"
+        }
+      ]
+    },
+    {
+      "metric": "memory_allocation_percent",
+      "unit": "percent",
+      "state": {
+        "state": "unknown",
+        "reason": "circuit_open",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": null
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z"
+        },
+        {
+          "at": "2023-11-14T22:13:00Z"
+        }
+      ]
+    },
+    {
+      "metric": "compute_utilization_percent",
+      "unit": "percent",
+      "state": {
+        "state": "unknown",
+        "reason": "circuit_open",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": null
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z"
+        },
+        {
+          "at": "2023-11-14T22:13:00Z"
+        }
+      ]
+    },
+    {
+      "metric": "memory_utilization_percent",
+      "unit": "percent",
+      "state": {
+        "state": "unknown",
+        "reason": "circuit_open",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": null
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z"
+        },
+        {
+          "at": "2023-11-14T22:13:00Z"
+        }
+      ]
+    }
+  ]
+}

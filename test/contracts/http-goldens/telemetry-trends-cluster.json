@@ -1,0 +1,108 @@
+{
+  "scope": "cluster",
+  "start": "2023-11-14T22:11:00Z",
+  "end": "2023-11-14T22:13:00Z",
+  "stepSeconds": "60",
+  "series": [
+    {
+      "metric": "compute_allocation_percent",
+      "unit": "percent",
+      "state": {
+        "state": "known",
+        "reason": "",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": "2023-11-14T22:13:00Z"
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z",
+          "value": 42.5
+        },
+        {
+          "at": "2023-11-14T22:13:00Z",
+          "value": 50
+        }
+      ]
+    },
+    {
+      "metric": "memory_allocation_percent",
+      "unit": "percent",
+      "state": {
+        "state": "known",
+        "reason": "",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": "2023-11-14T22:13:00Z"
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z",
+          "value": 42.5
+        },
+        {
+          "at": "2023-11-14T22:13:00Z",
+          "value": 50
+        }
+      ]
+    },
+    {
+      "metric": "compute_utilization_percent",
+      "unit": "percent",
+      "state": {
+        "state": "known",
+        "reason": "",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": "2023-11-14T22:13:00Z"
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z",
+          "value": 42.5
+        },
+        {
+          "at": "2023-11-14T22:13:00Z",
+          "value": 50
+        }
+      ]
+    },
+    {
+      "metric": "memory_utilization_percent",
+      "unit": "percent",
+      "state": {
+        "state": "known",
+        "reason": "",
+        "params": {},
+        "source": "prometheus",
+        "scope": "device",
+        "observedAt": "2023-11-14T22:13:00Z"
+      },
+      "points": [
+        {
+          "at": "2023-11-14T22:11:00Z"
+        },
+        {
+          "at": "2023-11-14T22:12:00Z",
+          "value": 42.5
+        },
+        {
+          "at": "2023-11-14T22:13:00Z",
+          "value": 50
+        }
+      ]
+    }
+  ]
+}
