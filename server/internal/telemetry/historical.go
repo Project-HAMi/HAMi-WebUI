@@ -99,19 +99,21 @@ func NewHistoricalObservationReaderWithQuerier(querier RangeQuerier) *Historical
 }
 
 type parsedTrendsQuery struct {
-	scope       string
-	entityScope string
-	node        string
-	nodeUID     string
-	deviceID    string
-	namespace   string
-	pod         string
-	container   string
-	podUID      string
-	start       time.Time
-	end         time.Time
-	step        time.Duration
-	specs       []namedTrendSpec
+	scope               string
+	entityScope         string
+	node                string
+	nodeUID             string
+	deviceID            string
+	namespace           string
+	pod                 string
+	container           string
+	podUID              string
+	expectedDeviceCount int
+	expectedVgpuCount   int
+	start               time.Time
+	end                 time.Time
+	step                time.Duration
+	specs               []namedTrendSpec
 }
 
 type namedTrendSpec struct {
@@ -144,12 +146,35 @@ func (r *HistoricalObservationReader) effectiveTTL() time.Duration {
 // Trends validates req and returns named historical trend series aligned onto a
 // uniform time grid. Missing samples remain nil (omitted), never coerced to zero.
 func (r *HistoricalObservationReader) Trends(ctx context.Context, req *obsv1.TrendsRequest) (*obsv1.TrendsReply, error) {
+	return r.trends(ctx, req, 0, 0)
+}
+
+// TrendsWithExpectedAllocation behaves like Trends while requiring container
+// scope queries to match the expected unique device count and vGPU slot sum.
+func (r *HistoricalObservationReader) TrendsWithExpectedAllocation(
+	ctx context.Context,
+	req *obsv1.TrendsRequest,
+	expectedDeviceCount, expectedVgpuCount int,
+) (*obsv1.TrendsReply, error) {
+	return r.trends(ctx, req, expectedDeviceCount, expectedVgpuCount)
+}
+
+func (r *HistoricalObservationReader) trends(
+	ctx context.Context,
+	req *obsv1.TrendsRequest,
+	expectedDeviceCount, expectedVgpuCount int,
+) (*obsv1.TrendsReply, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	parsed, err := parseTrendsQuery(req, r.clockNow())
 	if err != nil {
 		return nil, err
+	}
+	if parsed.scope == "container" && expectedDeviceCount > 0 && expectedVgpuCount >= expectedDeviceCount {
+		parsed.expectedDeviceCount = expectedDeviceCount
+		parsed.expectedVgpuCount = expectedVgpuCount
+		parsed.specs = buildTrendSpecs(parsed)
 	}
 	if r == nil || r.querier == nil {
 		return r.unavailableReply(parsed, "prom_unavailable"), nil
@@ -442,6 +467,8 @@ func (q parsedTrendsQuery) cacheKey() string {
 		q.pod,
 		q.container,
 		q.podUID,
+		strconv.Itoa(q.expectedDeviceCount),
+		strconv.Itoa(q.expectedVgpuCount),
 		strconv.FormatInt(q.start.Unix(), 10),
 		strconv.FormatInt(q.end.Unix(), 10),
 		strconv.FormatInt(int64(q.step/time.Second), 10),
@@ -638,7 +665,7 @@ func selectAutoStep(window time.Duration) time.Duration {
 
 func buildTrendSpecs(q parsedTrendsQuery) []namedTrendSpec {
 	if q.scope == "container" {
-		return buildContainerTrendSpecs(q.namespace, q.pod, q.container, q.podUID)
+		return buildContainerTrendSpecs(q.namespace, q.pod, q.container, q.podUID, q.expectedDeviceCount, q.expectedVgpuCount)
 	}
 	var extraFilter string
 	switch q.scope {
@@ -725,7 +752,7 @@ func buildPhysicalTrendSpecs(extraSelector string) []namedTrendSpec {
 	}
 }
 
-func buildContainerTrendSpecs(namespace, pod, container, podUID string) []namedTrendSpec {
+func buildContainerTrendSpecs(namespace, pod, container, podUID string, expectedDeviceCount, expectedVgpuCount int) []namedTrendSpec {
 	const groupLabels = "node, provider, device_uuid"
 
 	baseSel := fmt.Sprintf("namespace_name=%s,pod_name=%s,container_name=%s",
@@ -741,6 +768,29 @@ func buildContainerTrendSpecs(namespace, pod, container, podUID string) []namedT
 	compute := fmt.Sprintf("avg by (%s) (%s)", groupLabels, pairedCore)
 	memAlloc := fmt.Sprintf("max by (%s) (%s)", groupLabels, allocMem)
 	memUsed := fmt.Sprintf("avg by (%s) (%s)", groupLabels, pairedMemUsed)
+
+	if expectedDeviceCount > 0 && expectedVgpuCount >= expectedDeviceCount {
+		completeDevices := fmt.Sprintf("and on () (count(%s) == %d) and on () (sum(%s) == %d)",
+			devices, expectedDeviceCount, devices, expectedVgpuCount)
+		return []namedTrendSpec{
+			{
+				metric: "compute_utilization_percent",
+				unit:   "percent",
+				query: fmt.Sprintf(
+					"(avg(%s)) %s and on () (count(%s) == %d)",
+					compute, completeDevices, compute, expectedDeviceCount,
+				),
+			},
+			{
+				metric: "memory_utilization_percent",
+				unit:   "percent",
+				query: fmt.Sprintf(
+					"(100 * sum(%s) / clamp_min(sum(%s), 1)) %s and on () (count(%s) == %d) and on () (count(%s) == %d)",
+					memUsed, memAlloc, completeDevices, memAlloc, expectedDeviceCount, memUsed, expectedDeviceCount,
+				),
+			},
+		}
+	}
 
 	return []namedTrendSpec{
 		{

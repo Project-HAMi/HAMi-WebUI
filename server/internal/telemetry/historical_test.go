@@ -194,6 +194,46 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 			t.Fatalf("container query missing device-set completeness guard: %s", q)
 		}
 	}
+
+	seenQueries = nil
+	req := &obsv1.TrendsRequest{
+		Scope:     "container",
+		Namespace: "ml",
+		Pod:       "trainer-0",
+		Container: "worker",
+		PodUid:    "pod-uid-1",
+		Start:     "2026-01-01T10:00:00Z",
+		End:       "2026-01-01T11:00:00Z",
+	}
+	if _, err := reader.TrendsWithExpectedAllocation(context.Background(), req, 2, 3); err != nil {
+		t.Fatalf("container trends with expected allocation failed: %v", err)
+	}
+	if len(seenQueries) != 2 {
+		t.Fatalf("container expected-allocation queries = %d, want 2", len(seenQueries))
+	}
+	for _, q := range seenQueries {
+		if !strings.Contains(q, ") == 2) and on () (sum(") || !strings.Contains(q, ") == 3)") {
+			t.Fatalf("expected device/vGPU completeness guard missing in %s", q)
+		}
+		if !strings.Contains(q, "count(avg by (node, provider, device_uuid)") && !strings.Contains(q, "count(max by (node, provider, device_uuid)") {
+			t.Fatalf("expected per-metric count guard missing in %s", q)
+		}
+	}
+	if !strings.Contains(seenQueries[0], "(count(avg by (node, provider, device_uuid)") || !strings.Contains(seenQueries[0], ") == 2") {
+		t.Fatalf("compute query missing == 2 guard: %s", seenQueries[0])
+	}
+	if strings.Count(seenQueries[1], ") == 2") < 3 {
+		t.Fatalf("memory query missing device/memAlloc/memUsed == 2 guards: %s", seenQueries[1])
+	}
+
+	// Changing expected counts must not reuse cached trends from a different shape.
+	seenQueries = nil
+	if _, err := reader.TrendsWithExpectedAllocation(context.Background(), req, 1, 2); err != nil {
+		t.Fatalf("container trends with updated expected allocation failed: %v", err)
+	}
+	if len(seenQueries) != 2 || !strings.Contains(seenQueries[0], ") == 1)") || !strings.Contains(seenQueries[0], ") == 2)") {
+		t.Fatalf("expected cache separation for different allocation counts, got %v", seenQueries)
+	}
 }
 
 func TestHistoricalReaderAlignsGridAndPreservesMissingAndConflictStates(t *testing.T) {
