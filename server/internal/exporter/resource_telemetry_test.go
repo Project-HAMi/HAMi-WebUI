@@ -3,14 +3,19 @@ package exporter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
+	"k8s.io/apimachinery/pkg/types"
 
+	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/biz"
+	"vgpu/internal/data/prom"
 	"vgpu/internal/provider"
 	"vgpu/internal/provider/hygon"
 	"vgpu/internal/provider/nvidia"
@@ -59,7 +64,7 @@ func TestPhysicalExporterObservationsEndToEnd(t *testing.T) {
 		h := model.Metric{"job": "hygon", "instance": "h:8000", "node": "host"}
 		m := model.Metric{"job": "mx-exporter", "instance": "h:8081"}
 		switch {
-		case strings.Contains(expr, "timestamp(up)"):
+		case strings.Contains(expr, "timestamp(up"):
 			if unavailable {
 				return nil, errors.New("prometheus timeout")
 			}
@@ -236,7 +241,7 @@ func TestTelemetryEvaluationSharesPrometheusMillisecondBoundary(t *testing.T) {
 		name := "up"
 		labels := model.Metric{"node": "host", "job": "dcgm", "instance": "h:9400"}
 		sampled := boundary
-		if !strings.Contains(expr, "timestamp(up)") {
+		if !strings.Contains(expr, "timestamp(up") {
 			name = "DCGM_FI_DEV_GPU_UTIL"
 			labels["UUID"] = "GPU-01"
 			sampled = sampleAt
@@ -341,6 +346,297 @@ func TestDCUReadingRequiresCurrentNodeAndUnambiguousBoardSerial(t *testing.T) {
 		invalid.Value = v
 		if r := read(card, invalid); !errors.Is(r.Util.Err, provider.ErrTelemetryInvalid) {
 			t.Errorf("stored invalid percent %v: %v", v, r.Util.Err)
+		}
+	}
+}
+
+func TestTelemetryBatchSplits64To16OnOverflowSeriesLimitAndChunkTimeout(t *testing.T) {
+	at := time.UnixMilli(1760000000000).UTC()
+	sampled := at.Add(-5 * time.Second)
+	devices := make([]resourceview.Device, 0, 20)
+	for i := 0; i < 20; i++ {
+		id := resourceview.DeviceIdentity{Provider: biz.NvidiaGPUDevice, Node: "host", NodeUID: "host-uid", DeviceID: fmt.Sprintf("GPU-%02d", i)}
+		devices = append(devices, resourceview.Device{Identity: id, Kind: "physical", States: map[string]*viewv1.FieldState{"kind": {State: resourceview.Known}}})
+	}
+	facts := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 1), Devices: devices}
+	sampleRow := func(name, uuid string, val float64) model.Vector {
+		l := model.Metric{model.MetricNameLabel: model.LabelValue(name), "UUID": model.LabelValue(uuid), "node": "host", "job": "dcgm", "instance": "host:9400"}
+		ts := l.Clone()
+		ts[model.MetricNameLabel] = model.LabelValue(sampleTimePrefix + name)
+		return model.Vector{
+			{Metric: l, Value: model.SampleValue(val), Timestamp: model.Time(at.UnixMilli())},
+			{Metric: ts, Value: model.SampleValue(float64(sampled.UnixMilli()) / 1000), Timestamp: model.Time(at.UnixMilli())},
+		}
+	}
+
+	modes := []string{"overflow", "series_limit", "chunk_timeout"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			g := &MetricsGenerator{
+				resourceSource: &sequenceFacts{available: []resourceview.Snapshot{facts, facts}},
+				now:            func() time.Time { return at },
+				batchTimeout:   30 * time.Millisecond,
+			}
+			var subBatchSizes []int
+			query := func(ctx context.Context, expr string, _ time.Time) (model.Value, error) {
+				if strings.Contains(expr, "timestamp(up") {
+					if !strings.Contains(expr, `instance=~"host:9400"`) {
+						t.Fatalf("unexpected unfiltered up query: %s", expr)
+					}
+					var rows model.Vector
+					rows = append(rows, sampleRow("up", "", 1)...)
+					return rows, nil
+				}
+				var matched []string
+				for i := 0; i < 20; i++ {
+					id := fmt.Sprintf("GPU-%02d", i)
+					if strings.Contains(expr, id) {
+						matched = append(matched, id)
+					}
+				}
+				subBatchSizes = append(subBatchSizes, len(matched))
+				if len(matched) > telemetryFallbackIDsPerQuery {
+					switch mode {
+					case "overflow":
+						return nil, prom.ErrResponseTooLarge
+					case "series_limit":
+						var huge model.Vector
+						for i := 0; i <= telemetryMaxBatchSeries; i++ {
+							rows := sampleRow("DCGM_FI_DEV_GPU_UTIL", matched[0], 10)
+							rows[0].Metric["pod"] = model.LabelValue(fmt.Sprintf("pod-%d", i))
+							rows[1].Metric["pod"] = model.LabelValue(fmt.Sprintf("pod-%d", i))
+							huge = append(huge, rows...)
+						}
+						return huge, nil
+					case "chunk_timeout":
+						<-ctx.Done()
+						return nil, ctx.Err()
+					}
+				}
+				var rows model.Vector
+				for _, id := range matched {
+					rows = append(rows, sampleRow("DCGM_FI_DEV_GPU_UTIL", id, 50)...)
+					rows = append(rows, sampleRow("DCGM_FI_DEV_FB_USED", id, 1024)...)
+					rows = append(rows, sampleRow("DCGM_FI_DEV_FB_FREE", id, 3072)...)
+				}
+				return rows, nil
+			}
+			// Seed first cycle via sub-batches only, then check a failing second sub-chunk turns Stale.
+			if err := g.refreshResourceSnapshot(context.Background(), query); err != nil {
+				t.Fatalf("first refresh error = %v", err)
+			}
+			wantSizes := []int{20, 16, 4}
+			if fmt.Sprint(subBatchSizes) != fmt.Sprint(wantSizes) {
+				t.Fatalf("chunk sizes = %v, want %v", subBatchSizes, wantSizes)
+			}
+			for _, dev := range devices {
+				if v, ok := g.DeviceObservations()[dev.Identity].UtilizationRatio.KnownValue(); !ok || v != 0.5 {
+					t.Fatalf("%s utilization = (%v, %t), want (0.5, true)", dev.Identity.DeviceID, v, ok)
+				}
+			}
+
+			// Fail only the 4-device tail chunk on the second cycle while keeping the 16-device head chunk healthy.
+			failTailQuery := func(ctx context.Context, expr string, evalAt time.Time) (model.Value, error) {
+				if strings.Contains(expr, "GPU-16") && !strings.Contains(expr, "GPU-00") {
+					return nil, errors.New("tail timeout")
+				}
+				return query(ctx, expr, evalAt)
+			}
+			if err := g.refreshResourceSnapshot(context.Background(), failTailQuery); err == nil {
+				t.Fatal("expected partial tail error")
+			}
+			obs := g.DeviceObservations()
+			if v, ok := obs[devices[0].Identity].UtilizationRatio.KnownValue(); !ok || v != 0.5 {
+				t.Fatalf("healthy sub-chunk became %+v", obs[devices[0].Identity].UtilizationRatio)
+			}
+			if tail := obs[devices[19].Identity].UtilizationRatio; tail.State.State != resourceview.Stale {
+				t.Fatalf("failed tail sub-chunk state = %+v, want Stale", tail.State)
+			}
+		})
+	}
+}
+
+func TestTelemetryUpQueryIsScopedToObservedInstancesAndChunked(t *testing.T) {
+	at := time.UnixMilli(1760000000000).UTC()
+	sampled := at.Add(-5 * time.Second)
+	var devices []resourceview.Device
+	for i := 0; i < 65; i++ {
+		node := fmt.Sprintf("node-%03d", i)
+		devices = append(devices, resourceview.Device{
+			Identity: resourceview.DeviceIdentity{Provider: biz.NvidiaGPUDevice, Node: node, NodeUID: types.UID(node + "-uid"), DeviceID: fmt.Sprintf("GPU-%03d", i)},
+			Kind:     "physical",
+			States:   map[string]*viewv1.FieldState{"kind": {State: resourceview.Known}},
+		})
+	}
+	facts := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 1), Devices: devices}
+	g := &MetricsGenerator{
+		resourceSource: &sequenceFacts{available: []resourceview.Snapshot{facts, facts}},
+		now:            func() time.Time { return at },
+	}
+	var upExprs []string
+	var failSecondUp bool
+	query := func(_ context.Context, expr string, _ time.Time) (model.Value, error) {
+		var rows model.Vector
+		add := func(name string, l model.Metric, v float64) {
+			m := l.Clone()
+			m[model.MetricNameLabel] = model.LabelValue(name)
+			rows = append(rows, &model.Sample{Metric: m, Value: model.SampleValue(v), Timestamp: model.Time(at.UnixMilli())})
+			ts := l.Clone()
+			ts[model.MetricNameLabel] = model.LabelValue(sampleTimePrefix + name)
+			rows = append(rows, &model.Sample{Metric: ts, Value: model.SampleValue(float64(sampled.UnixMilli()) / 1000), Timestamp: model.Time(at.UnixMilli())})
+		}
+		if strings.Contains(expr, "timestamp(up") {
+			if !strings.Contains(expr, "instance=~") {
+				t.Fatalf("unscoped up query emitted: %s", expr)
+			}
+			upExprs = append(upExprs, expr)
+			if failSecondUp && len(upExprs) == 2 {
+				return nil, errors.New("up chunk failed")
+			}
+			for i := 0; i < 65; i++ {
+				inst := fmt.Sprintf("node-%03d:9400", i)
+				if strings.Contains(expr, inst) {
+					add("up", model.Metric{"job": "dcgm", "instance": model.LabelValue(inst), "node": model.LabelValue(fmt.Sprintf("node-%03d", i))}, 1)
+				}
+			}
+			return rows, nil
+		}
+		for i := 0; i < 65; i++ {
+			id := fmt.Sprintf("GPU-%03d", i)
+			node := fmt.Sprintf("node-%03d", i)
+			if strings.Contains(expr, id) {
+				base := model.Metric{"job": "dcgm", "instance": model.LabelValue(node + ":9400"), "node": model.LabelValue(node), "UUID": model.LabelValue(id)}
+				add("DCGM_FI_DEV_GPU_UTIL", base, 25)
+			}
+		}
+		return rows, nil
+	}
+	if err := g.refreshResourceSnapshot(context.Background(), query); err != nil {
+		t.Fatalf("initial refresh error = %v", err)
+	}
+	if len(upExprs) != 2 {
+		t.Fatalf("up query chunks = %d, want 2 across 65 instances", len(upExprs))
+	}
+
+	upExprs = nil
+	failSecondUp = true
+	if err := g.refreshResourceSnapshot(context.Background(), query); err == nil {
+		t.Fatal("expected error from failed 2nd up chunk")
+	}
+	obs := g.DeviceObservations()
+	if v, ok := obs[devices[0].Identity].UtilizationRatio.KnownValue(); !ok || v != 0.25 {
+		t.Fatalf("unaffected instance became %+v", obs[devices[0].Identity].UtilizationRatio)
+	}
+	if last := obs[devices[64].Identity].UtilizationRatio; last.State.State != resourceview.Stale {
+		t.Fatalf("card on failed up chunk = %+v, want Stale", last.State)
+	}
+
+	// Multiple device batches (65 GPUs) across <=64 nodes coalesce into a single up query.
+	coalesceDevices := make([]resourceview.Device, 0, 65)
+	for i := 0; i < 65; i++ {
+		node := fmt.Sprintf("node-%03d", i%16)
+		coalesceDevices = append(coalesceDevices, resourceview.Device{
+			Identity: resourceview.DeviceIdentity{Provider: biz.NvidiaGPUDevice, Node: node, NodeUID: types.UID(node + "-uid"), DeviceID: fmt.Sprintf("GPU-%03d", i)},
+			Kind:     "physical",
+			States:   map[string]*viewv1.FieldState{"kind": {State: resourceview.Known}},
+		})
+	}
+	coalesceFacts := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 1), Devices: coalesceDevices}
+	coalesceGen := &MetricsGenerator{
+		resourceSource: &sequenceFacts{available: []resourceview.Snapshot{coalesceFacts}},
+		now:            func() time.Time { return at },
+	}
+	var coalesceUpQueries int
+	coalesceQuery := func(_ context.Context, expr string, _ time.Time) (model.Value, error) {
+		var rows model.Vector
+		add := func(name string, l model.Metric, v float64) {
+			m := l.Clone()
+			m[model.MetricNameLabel] = model.LabelValue(name)
+			rows = append(rows, &model.Sample{Metric: m, Value: model.SampleValue(v), Timestamp: model.Time(at.UnixMilli())})
+			ts := l.Clone()
+			ts[model.MetricNameLabel] = model.LabelValue(sampleTimePrefix + name)
+			rows = append(rows, &model.Sample{Metric: ts, Value: model.SampleValue(float64(sampled.UnixMilli()) / 1000), Timestamp: model.Time(at.UnixMilli())})
+		}
+		if strings.Contains(expr, "timestamp(up") {
+			coalesceUpQueries++
+			for i := 0; i < 16; i++ {
+				inst := fmt.Sprintf("node-%03d:9400", i)
+				add("up", model.Metric{"job": "dcgm", "instance": model.LabelValue(inst), "node": model.LabelValue(fmt.Sprintf("node-%03d", i))}, 1)
+			}
+			return rows, nil
+		}
+		for i := 0; i < 65; i++ {
+			id := fmt.Sprintf("GPU-%03d", i)
+			node := fmt.Sprintf("node-%03d", i%16)
+			if strings.Contains(expr, id) {
+				add("DCGM_FI_DEV_GPU_UTIL", model.Metric{"job": "dcgm", "instance": model.LabelValue(node + ":9400"), "node": model.LabelValue(node), "UUID": model.LabelValue(id)}, 25)
+			}
+		}
+		return rows, nil
+	}
+	if err := coalesceGen.refreshResourceSnapshot(context.Background(), coalesceQuery); err != nil {
+		t.Fatalf("coalesced refresh error = %v", err)
+	}
+	if coalesceUpQueries != 1 {
+		t.Fatalf("up queries across 2 device batches / 16 nodes = %d, want 1", coalesceUpQueries)
+	}
+}
+
+func TestTelemetryCircuitOpenShortCircuitsRemainingBatches(t *testing.T) {
+	at := time.UnixMilli(1760000000000).UTC()
+	sampled := at.Add(-5 * time.Second)
+	var devices []resourceview.Device
+	for i := 0; i < 65; i++ {
+		id := resourceview.DeviceIdentity{Provider: biz.NvidiaGPUDevice, Node: "host", NodeUID: "host-uid", DeviceID: fmt.Sprintf("GPU-%03d", i)}
+		devices = append(devices, resourceview.Device{Identity: id, Kind: "physical", States: map[string]*viewv1.FieldState{"kind": {State: resourceview.Known}}})
+	}
+	facts := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 1), Devices: devices}
+	g := &MetricsGenerator{
+		resourceSource: &sequenceFacts{available: []resourceview.Snapshot{facts, facts}},
+		now:            func() time.Time { return at },
+	}
+	var calls atomic.Int32
+	var openCircuit bool
+	query := func(_ context.Context, expr string, _ time.Time) (model.Value, error) {
+		calls.Add(1)
+		if openCircuit {
+			return nil, prom.ErrCircuitOpen
+		}
+		var rows model.Vector
+		add := func(name string, l model.Metric, v float64) {
+			m := l.Clone()
+			m[model.MetricNameLabel] = model.LabelValue(name)
+			rows = append(rows, &model.Sample{Metric: m, Value: model.SampleValue(v), Timestamp: model.Time(at.UnixMilli())})
+			ts := l.Clone()
+			ts[model.MetricNameLabel] = model.LabelValue(sampleTimePrefix + name)
+			rows = append(rows, &model.Sample{Metric: ts, Value: model.SampleValue(float64(sampled.UnixMilli()) / 1000), Timestamp: model.Time(at.UnixMilli())})
+		}
+		if strings.Contains(expr, "timestamp(up") {
+			add("up", model.Metric{"job": "dcgm", "instance": "host:9400", "node": "host"}, 1)
+			return rows, nil
+		}
+		for i := 0; i < 65; i++ {
+			id := fmt.Sprintf("GPU-%03d", i)
+			if strings.Contains(expr, id) {
+				add("DCGM_FI_DEV_GPU_UTIL", model.Metric{"job": "dcgm", "instance": "host:9400", "node": "host", "UUID": model.LabelValue(id)}, 30)
+			}
+		}
+		return rows, nil
+	}
+	if err := g.refreshResourceSnapshot(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+	calls.Store(0)
+	openCircuit = true
+	if err := g.refreshResourceSnapshot(context.Background(), query); !errors.Is(err, prom.ErrCircuitOpen) {
+		t.Fatalf("expected ErrCircuitOpen, got %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("queries after ErrCircuitOpen = %d, want 1 (immediate short-circuit)", calls.Load())
+	}
+	for _, dev := range devices {
+		if u := g.DeviceObservations()[dev.Identity].UtilizationRatio; u.State.State != resourceview.Stale {
+			t.Fatalf("%s state = %+v, want Stale", dev.Identity.DeviceID, u.State)
 		}
 	}
 }

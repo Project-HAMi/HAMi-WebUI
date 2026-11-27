@@ -13,13 +13,17 @@ import (
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/types"
 
+	"vgpu/internal/data/prom"
 	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
 )
 
 const sampleTimePrefix = "hami_webui_original_timestamp_"
 
-var errTelemetryQuery = errors.New("physical telemetry query failed")
+var (
+	errTelemetryQuery       = errors.New("physical telemetry query failed")
+	errTelemetrySeriesLimit = errors.New("physical telemetry batch exceeded series limit")
+)
 
 type queryAtFunc func(context.Context, string, time.Time) (model.Value, error)
 
@@ -45,6 +49,7 @@ func queryFamilies(ctx context.Context, query queryAtFunc, families []string, fi
 	}
 	type pair struct{ values, timestamps model.Vector }
 	byName := map[string]*pair{}
+	seriesCount := 0
 	for _, r := range rows {
 		if r == nil || r.Histogram != nil {
 			return nil, provider.ErrTelemetryInvalid
@@ -65,6 +70,10 @@ func queryFamilies(ctx context.Context, query queryAtFunc, families []string, fi
 			delete(row.Metric, model.MetricNameLabel)
 			p.timestamps = append(p.timestamps, &row)
 		} else {
+			seriesCount++
+			if seriesCount > telemetryMaxBatchSeries {
+				return nil, fmt.Errorf("%w: %w", errTelemetryQuery, errTelemetrySeriesLimit)
+			}
 			p.values = append(p.values, r)
 		}
 	}
@@ -107,13 +116,21 @@ func targetEvidence(samples []provider.TelemetrySample, at time.Time) map[provid
 
 // Issue one scoped selection per chunk instead of one request per card or
 // workload. A failed chunk cannot make unrelated nodes or vendors disappear.
-const telemetryIDsPerQuery = 64
+const (
+	telemetryIDsPerQuery         = 64
+	telemetryFallbackIDsPerQuery = 16
+	telemetryMaxBatchSeries      = 20_000
+	telemetryBatchTimeout        = 3 * time.Second
+)
+
+type telemetryKeyGroup struct {
+	key     string
+	devices []resourceview.Device
+}
 
 type telemetryBatch struct {
-	dialect  provider.TelemetryDialect
-	families []string
-	filter   string
-	devices  []resourceview.Device
+	dialect provider.TelemetryDialect
+	groups  []telemetryKeyGroup
 }
 
 func telemetryPlan(devices []resourceview.Device, dialects []provider.TelemetryDialect) []telemetryBatch {
@@ -142,19 +159,59 @@ func telemetryPlan(devices []resourceview.Device, dialects []provider.TelemetryD
 		sort.Strings(keys)
 		for start := 0; start < len(keys); start += telemetryIDsPerQuery {
 			chunk := keys[start:min(start+telemetryIDsPerQuery, len(keys))]
-			var ids []string
-			var rows []resourceview.Device
+			groups := make([]telemetryKeyGroup, 0, len(chunk))
 			for _, key := range chunk {
-				ids = append(ids, regexp.QuoteMeta(key))
-				rows = append(rows, byKey[key]...)
+				groups = append(groups, telemetryKeyGroup{key: key, devices: byKey[key]})
 			}
-			families, filter := dialect.QuerySpec(ids)
-			sortedFamilies := slices.Clone(families)
-			sort.Strings(sortedFamilies)
-			plan = append(plan, telemetryBatch{dialect: dialect, families: sortedFamilies, filter: "{" + filter + "}", devices: rows})
+			plan = append(plan, telemetryBatch{dialect: dialect, groups: groups})
 		}
 	}
 	return plan
+}
+
+func buildBatchSpec(dialect provider.TelemetryDialect, groups []telemetryKeyGroup) (families []string, filter string, devices []resourceview.Device) {
+	ids := make([]string, 0, len(groups))
+	for _, g := range groups {
+		ids = append(ids, regexp.QuoteMeta(g.key))
+		devices = append(devices, g.devices...)
+	}
+	rawFamilies, rawFilter := dialect.QuerySpec(ids)
+	families = slices.Clone(rawFamilies)
+	sort.Strings(families)
+	return families, "{" + rawFilter + "}", devices
+}
+
+func groupDevices(groups []telemetryKeyGroup) []resourceview.Device {
+	var devices []resourceview.Device
+	for _, g := range groups {
+		devices = append(devices, g.devices...)
+	}
+	return devices
+}
+
+func shouldSplitBatch(groups []telemetryKeyGroup, parentCtx, chunkCtx context.Context, err error) bool {
+	if err == nil || len(groups) <= telemetryFallbackIDsPerQuery || parentCtx.Err() != nil || errors.Is(err, prom.ErrCircuitOpen) {
+		return false
+	}
+	return errors.Is(err, prom.ErrResponseTooLarge) ||
+		errors.Is(err, errTelemetrySeriesLimit) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(chunkCtx.Err(), context.DeadlineExceeded)
+}
+
+func queryChunk(
+	parent context.Context,
+	query queryAtFunc,
+	dialect provider.TelemetryDialect,
+	groups []telemetryKeyGroup,
+	at time.Time,
+	timeout time.Duration,
+) (provider.TelemetryRawFamilies, []resourceview.Device, context.Context, error) {
+	families, filter, devices := buildBatchSpec(dialect, groups)
+	chunkCtx, cancel := context.WithTimeout(parent, timeout)
+	raw, err := queryFamilies(chunkCtx, query, families, filter, at)
+	cancel()
+	return raw, devices, chunkCtx, err
 }
 
 func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query queryAtFunc) error {
@@ -191,46 +248,114 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 		born[node.UID] = node.CreatedAt
 	}
 	plan := telemetryPlan(snapshot.Devices, s.activeTelemetryDialects())
-	var errs []error
-	var targets map[provider.TelemetryTarget]provider.TelemetryTargetEvidence
-	var targetErr error
-	if len(plan) > 0 {
-		up, err := queryFamilies(ctx, query, []string{"up"}, "", at)
-		targetErr = err
-		if err == nil {
-			targets = targetEvidence(up["up"], at)
-		} else {
-			errs = append(errs, err)
-		}
+	type executedChunk struct {
+		dialect provider.TelemetryDialect
+		devices []resourceview.Device
+		byID    map[string]provider.TelemetryRawFamilies
+		err     error
 	}
-	for _, batch := range plan {
-		raw := provider.TelemetryRawFamilies{}
-		batchErr := targetErr
-		if batchErr == nil {
-			raw, batchErr = queryFamilies(ctx, query, batch.families, batch.filter, at)
-			if batchErr != nil {
-				errs = append(errs, batchErr)
+	var (
+		executed    []executedChunk
+		errs        []error
+		circuitErr  error
+		instanceSet = map[string]struct{}{}
+	)
+	chunkTimeout := s.telemetryChunkTimeout()
+	recordChunk := func(dialect provider.TelemetryDialect, devices []resourceview.Device, raw provider.TelemetryRawFamilies, batchErr error) {
+		if batchErr != nil {
+			errs = append(errs, batchErr)
+			if errors.Is(batchErr, prom.ErrCircuitOpen) && circuitErr == nil {
+				circuitErr = batchErr
 			}
+			executed = append(executed, executedChunk{dialect: dialect, devices: devices, err: batchErr})
+			return
 		}
 		// Index by the exporter's entity before resolving per-field aliases.
 		byID := map[string]provider.TelemetryRawFamilies{}
 		for family, rows := range raw {
 			for _, sample := range rows {
-				key := batch.dialect.SampleKey(sample.Labels)
+				if inst := sample.Labels["instance"]; inst != "" {
+					instanceSet[inst] = struct{}{}
+				}
+				key := dialect.SampleKey(sample.Labels)
 				if byID[key] == nil {
 					byID[key] = provider.TelemetryRawFamilies{}
 				}
 				byID[key][family] = append(byID[key][family], sample)
 			}
 		}
-		source := batch.dialect.SourceName()
-		memoryScale := batch.dialect.MemoryScale()
-		for _, device := range batch.devices {
+		executed = append(executed, executedChunk{dialect: dialect, devices: devices, byID: byID})
+	}
+	for _, batch := range plan {
+		if circuitErr != nil {
+			executed = append(executed, executedChunk{dialect: batch.dialect, devices: groupDevices(batch.groups), err: circuitErr})
+			continue
+		}
+		raw, devices, chunkCtx, batchErr := queryChunk(ctx, query, batch.dialect, batch.groups, at, chunkTimeout)
+		if shouldSplitBatch(batch.groups, ctx, chunkCtx, batchErr) {
+			for start := 0; start < len(batch.groups); start += telemetryFallbackIDsPerQuery {
+				subgroups := batch.groups[start:min(start+telemetryFallbackIDsPerQuery, len(batch.groups))]
+				if circuitErr != nil {
+					executed = append(executed, executedChunk{dialect: batch.dialect, devices: groupDevices(subgroups), err: circuitErr})
+					continue
+				}
+				subRaw, subDevices, _, subErr := queryChunk(ctx, query, batch.dialect, subgroups, at, chunkTimeout)
+				recordChunk(batch.dialect, subDevices, subRaw, subErr)
+			}
+			continue
+		}
+		recordChunk(batch.dialect, devices, raw, batchErr)
+	}
+	instances := make([]string, 0, len(instanceSet))
+	for inst := range instanceSet {
+		instances = append(instances, inst)
+	}
+	sort.Strings(instances)
+	targets := map[provider.TelemetryTarget]provider.TelemetryTargetEvidence{}
+	failedInstances := map[string]error{}
+	for start := 0; start < len(instances); start += telemetryIDsPerQuery {
+		chunk := instances[start:min(start+telemetryIDsPerQuery, len(instances))]
+		if circuitErr != nil {
+			for _, inst := range chunk {
+				failedInstances[inst] = circuitErr
+			}
+			continue
+		}
+		escaped := make([]string, len(chunk))
+		for i, inst := range chunk {
+			escaped[i] = regexp.QuoteMeta(inst)
+		}
+		filter := fmt.Sprintf("{instance=~%q}", strings.Join(escaped, "|"))
+		upCtx, upCancel := context.WithTimeout(ctx, chunkTimeout)
+		up, upErr := queryFamilies(upCtx, query, []string{"up"}, filter, at)
+		upCancel()
+		if upErr != nil {
+			errs = append(errs, upErr)
+			if errors.Is(upErr, prom.ErrCircuitOpen) {
+				circuitErr = upErr
+			}
+			for _, inst := range chunk {
+				failedInstances[inst] = upErr
+			}
+			continue
+		}
+		for target, evidence := range targetEvidence(up["up"], at) {
+			targets[target] = evidence
+		}
+	}
+	for _, chunk := range executed {
+		source := chunk.dialect.SourceName()
+		memoryScale := chunk.dialect.MemoryScale()
+		for _, device := range chunk.devices {
 			id := device.Identity
-			key := batch.dialect.DeviceKey(device)
-			r := provider.FailedPhysicalReadings(batchErr)
-			if batchErr == nil {
-				r = batch.dialect.ReadDevice(device, byID[key], at, born[id.NodeUID], targets)
+			key := chunk.dialect.DeviceKey(device)
+			var r provider.PhysicalReadings
+			if chunk.err != nil {
+				r = provider.FailedPhysicalReadings(chunk.err)
+			} else if instErr := sampleInstanceError(chunk.byID[key], failedInstances); instErr != nil {
+				r = provider.FailedPhysicalReadings(instErr)
+			} else {
+				r = chunk.dialect.ReadDevice(device, chunk.byID[key], at, born[id.NodeUID], targets)
 			}
 			old := previous[id]
 			observations[id] = resourceview.DeviceObservation{
@@ -247,6 +372,20 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 	s.observations = observations
 	s.observationsMu.Unlock()
 	return errors.Join(errs...)
+}
+
+func sampleInstanceError(samples provider.TelemetryRawFamilies, failedInstances map[string]error) error {
+	if len(failedInstances) == 0 {
+		return nil
+	}
+	for _, rows := range samples {
+		for _, sample := range rows {
+			if err, failed := failedInstances[sample.Labels["instance"]]; failed {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func snapshotChanged(snapshot resourceview.Snapshot) bool {

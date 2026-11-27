@@ -148,7 +148,7 @@ func TestSyntheticTelemetryDialectRequiresZeroCoreChanges(t *testing.T) {
 		}
 		base := model.Metric{"job": "acme-exp", "instance": "acme-node:9100", "node": "acme-node", "acme_id": "acme-0", "chip_idx": "0", "slot": "0", "model": "Acme-X1"}
 		switch {
-		case strings.Contains(expr, "timestamp(up)"):
+		case strings.Contains(expr, "timestamp(up"):
 			add("up", model.Metric{"job": "acme-exp", "instance": "acme-node:9100", "node": "acme-node"}, 1)
 		case strings.Contains(expr, "acme_gpu_util"):
 			add("acme_gpu_util", base, 75)
@@ -226,7 +226,7 @@ func TestSingleTelemetryFlowFeedsBothLegacyAndSchema2Metrics(t *testing.T) {
 			ts["__name__"] = sampleTimePrefix + name
 			rows = append(rows, promVectorEntry{Metric: ts, Value: [2]any{float64(at.UnixMilli()) / 1000, strconv.FormatFloat(sampledSec, 'f', -1, 64)}})
 		}
-		if strings.Contains(expr, "timestamp(up)") {
+		if strings.Contains(expr, "timestamp(up") {
 			add("up", map[string]string{"job": "dcgm", "instance": "node-single-flow:9400", "node": nodeName}, 1)
 		} else if strings.Contains(expr, "DCGM_FI_DEV_GPU_UTIL") {
 			base := map[string]string{"job": "dcgm", "instance": "node-single-flow:9400", "node": nodeName, "UUID": deviceID}

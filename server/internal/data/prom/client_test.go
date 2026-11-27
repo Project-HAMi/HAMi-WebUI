@@ -3,6 +3,7 @@ package prom
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	stdlog "log"
@@ -14,10 +15,12 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
+	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 )
@@ -652,4 +655,447 @@ func request(t *testing.T, client *Client, address string) error {
 	}
 	_, _, err = connection.Do(context.Background(), req)
 	return err
+}
+
+func TestClientEnforcesConcurrencyLimitAndHonorsContextCancellation(t *testing.T) {
+	var inFlight, maxSeen atomic.Int32
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	server := newPrometheusAPIServer(t, func(w http.ResponseWriter, req *http.Request) {
+		cur := inFlight.Add(1)
+		for {
+			prev := maxSeen.Load()
+			if cur <= prev || maxSeen.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-req.Context().Done():
+		}
+		inFlight.Add(-1)
+		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	})
+	client := newTestClient(t, server.URL, TLSConfig{})
+
+	errs := make(chan error, 5)
+	for i := 0; i < 4; i++ {
+		go func() {
+			_, err := client.Query(context.Background(), "up")
+			errs <- err
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		<-entered
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	waiterErr := make(chan error, 1)
+	go func() {
+		_, err := client.QueryRange(canceledCtx, "up", v1.Range{Start: time.Unix(0, 0), End: time.Unix(60, 0), Step: time.Minute})
+		waiterErr <- err
+	}()
+	select {
+	case <-entered:
+		t.Fatal("5th query bypassed concurrency cap of 4")
+	case <-time.After(30 * time.Millisecond):
+	}
+	cancel()
+	if err := <-waiterErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled waiter error = %v, want context.Canceled", err)
+	}
+
+	close(release)
+	for i := 0; i < 4; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("admitted query error = %v", err)
+		}
+	}
+	if maxSeen.Load() != 4 {
+		t.Fatalf("max concurrent queries = %d, want 4", maxSeen.Load())
+	}
+	if _, err := client.Query(context.Background(), "up"); err != nil {
+		t.Fatalf("canceled waiter tripped breaker: %v", err)
+	}
+}
+
+func TestClientRejectsOversizedQueryResponseWithoutOpeningCircuit(t *testing.T) {
+	exactPayload := `{"status":"success","data":{"resultType":"vector","result":[]}}`
+	oversized := exactPayload + strings.Repeat(" ", 128)
+	var mode atomic.Int32 // 0=chunked oversized, 1=content-length oversized, 2=exact within limit
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if req.URL.Path == "/api/v1/targets" {
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"activeTargets":[{"discoveredLabels":{"job":"`+strings.Repeat("a", 256)+`"},"scrapeUrl":"http://target:9100/metrics","health":"up"}]}}`)
+			return
+		}
+		switch mode.Load() {
+		case 0:
+			if flusher, ok := w.(http.Flusher); ok {
+				w.WriteHeader(http.StatusOK)
+				_, _ = fmt.Fprint(w, oversized[:32])
+				flusher.Flush()
+				_, _ = fmt.Fprint(w, oversized[32:])
+				return
+			}
+			_, _ = fmt.Fprint(w, oversized)
+		case 1:
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(oversized)))
+			_, _ = fmt.Fprint(w, oversized)
+		default:
+			_, _ = fmt.Fprint(w, exactPayload)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server.URL, TLSConfig{})
+	client.queryClient, _ = newLimitedAPIClient(server.URL, time.Second, int64(len(exactPayload)))
+
+	for m := int32(0); m < 2; m++ {
+		mode.Store(m)
+		for i := 0; i < 4; i++ {
+			if _, err := client.Query(context.Background(), "up"); !errors.Is(err, ErrResponseTooLarge) {
+				t.Fatalf("mode %d attempt %d error = %v, want ErrResponseTooLarge", m, i, err)
+			}
+		}
+	}
+
+	mode.Store(2)
+	if _, err := client.Query(context.Background(), "up"); err != nil {
+		t.Fatalf("oversized responses wrongly opened circuit: %v", err)
+	}
+
+	var count int
+	if err := client.WalkActiveTargets(context.Background(), func(v1.ActiveTarget) { count++ }); err != nil || count != 1 {
+		t.Fatalf("WalkActiveTargets should stay exempt from query byte limit: count=%d err=%v", count, err)
+	}
+
+	mode.Store(1)
+	conn, err := client.Conn()
+	if err != nil {
+		t.Fatalf("Conn() error = %v", err)
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/api/v1/query?query=up", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if _, body, err := conn.Do(context.Background(), req); err != nil || len(body) <= len(exactPayload) {
+		t.Fatalf("Conn().Do should stay exempt from query byte limit: len=%d err=%v", len(body), err)
+	}
+}
+
+func newLimitedAPIClient(address string, timeout time.Duration, limit int64) (api.Client, error) {
+	return api.NewClient(api.Config{
+		Address: address,
+		Client: &http.Client{
+			Transport: &responseLimitRoundTripper{limit: limit, next: http.DefaultTransport},
+			Timeout:   timeout,
+		},
+	})
+}
+
+func TestClientCircuitBreakerOpensAfterThreeUpstreamFailuresAndRecoversWithSingleProbe(t *testing.T) {
+	var failCode atomic.Int32
+	var hits atomic.Int32
+	failCode.Store(http.StatusServiceUnavailable)
+	server := newPrometheusAPIServer(t, func(w http.ResponseWriter, req *http.Request) {
+		hits.Add(1)
+		switch code := failCode.Load(); code {
+		case http.StatusBadRequest:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"status":"error","errorType":"bad_data","error":"parse error"}`)
+		case http.StatusServiceUnavailable:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, "unavailable")
+		default:
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		}
+	})
+	now := time.Unix(1760000000, 0)
+	client := newTestClient(t, server.URL, TLSConfig{})
+	client.now = func() time.Time { return now }
+	client.cooldown = 15 * time.Second
+
+	// 4xx bad_data must not count toward breaker failure threshold.
+	failCode.Store(http.StatusBadRequest)
+	for i := 0; i < 4; i++ {
+		if _, err := client.Query(context.Background(), "bad("); err == nil {
+			t.Fatal("expected bad_data error")
+		}
+	}
+
+	// Two 503 failures keep breaker closed; a third opens it.
+	failCode.Store(http.StatusServiceUnavailable)
+	for i := 0; i < 2; i++ {
+		if _, err := client.Query(context.Background(), "up"); err == nil || errors.Is(err, ErrCircuitOpen) {
+			t.Fatalf("attempt %d unexpectedly opened circuit: %v", i+1, err)
+		}
+	}
+	if _, err := client.Query(context.Background(), "up"); err == nil || errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("3rd failure should return upstream error, got %v", err)
+	}
+
+	beforeOpenHits := hits.Load()
+	if _, err := client.Query(context.Background(), "up"); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("4th call while open = %v, want ErrCircuitOpen", err)
+	}
+	if hits.Load() != beforeOpenHits {
+		t.Fatalf("open breaker still hit Prometheus (%d -> %d)", beforeOpenHits, hits.Load())
+	}
+
+	// After cooldown, only one half-open probe is admitted; concurrent callers get ErrCircuitOpen.
+	now = now.Add(15 * time.Second)
+	probeStarted := make(chan struct{}, 1)
+	releaseProbe := make(chan struct{})
+	probeServer := newPrometheusAPIServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		probeStarted <- struct{}{}
+		<-releaseProbe
+		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	})
+	probeClient := newTestClient(t, probeServer.URL, TLSConfig{})
+	probeClient.now = func() time.Time { return now }
+	probeClient.cooldown = 15 * time.Second
+	probeClient.circuit = circuitOpen
+	probeClient.openUntil = now
+
+	probeDone := make(chan error, 1)
+	go func() {
+		_, err := probeClient.Query(context.Background(), "up")
+		probeDone <- err
+	}()
+	<-probeStarted
+	if _, err := probeClient.Query(context.Background(), "up"); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("concurrent caller during half-open probe = %v, want ErrCircuitOpen", err)
+	}
+	close(releaseProbe)
+	if err := <-probeDone; err != nil {
+		t.Fatalf("successful probe error = %v", err)
+	}
+	if _, err := probeClient.Query(context.Background(), "up"); err != nil {
+		t.Fatalf("breaker did not close after successful probe: %v", err)
+	}
+}
+
+func TestClientCircuitBreakerConcurrencyInvariants(t *testing.T) {
+	t.Run("queued callers fail fast after open and stale success preserves cooldown", func(t *testing.T) {
+		var mode atomic.Int32 // 0=pre-seed 503, 1=hold 3 OKs + 1 fail, 2=should not be reached
+		var serverHits atomic.Int32
+		failStarted := make(chan struct{}, 1)
+		releaseFail := make(chan struct{})
+		okStarted := make(chan struct{}, 3)
+		releaseOK := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-releaseFail:
+			default:
+				close(releaseFail)
+			}
+			select {
+			case <-releaseOK:
+			default:
+				close(releaseOK)
+			}
+		})
+		server := newPrometheusAPIServer(t, func(w http.ResponseWriter, req *http.Request) {
+			serverHits.Add(1)
+			switch mode.Load() {
+			case 0:
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = fmt.Fprint(w, "unavailable")
+			case 1:
+				if strings.Contains(req.FormValue("query"), "fail3") {
+					failStarted <- struct{}{}
+					select {
+					case <-releaseFail:
+					case <-req.Context().Done():
+					}
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = fmt.Fprint(w, "unavailable")
+					return
+				}
+				okStarted <- struct{}{}
+				select {
+				case <-releaseOK:
+				case <-req.Context().Done():
+				}
+				_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+			}
+		})
+		now := time.Unix(1760000000, 0)
+		client := newTestClient(t, server.URL, TLSConfig{})
+		client.now = func() time.Time { return now }
+		client.cooldown = 15 * time.Second
+
+		// Seed 2 failures while closed (threshold = 3).
+		for i := 0; i < 2; i++ {
+			if _, err := client.Query(context.Background(), "up"); err == nil {
+				t.Fatal("expected upstream 503 failure")
+			}
+		}
+
+		// Saturate all 4 semaphore permits: 3 slow 200 OKs + 1 slow 3rd failure.
+		mode.Store(1)
+		okErrs := make(chan error, 3)
+		for i := 0; i < 3; i++ {
+			go func() {
+				_, err := client.Query(context.Background(), "up")
+				okErrs <- err
+			}()
+		}
+		for i := 0; i < 3; i++ {
+			<-okStarted
+		}
+		fail3Err := make(chan error, 1)
+		go func() {
+			_, err := client.Query(context.Background(), "fail3")
+			fail3Err <- err
+		}()
+		<-failStarted
+
+		// 5th call queues on c.sem before circuit opens.
+		waiterDone := make(chan error, 1)
+		go func() {
+			_, err := client.Query(context.Background(), "waiter")
+			waiterDone <- err
+		}()
+		time.Sleep(25 * time.Millisecond)
+
+		// Release only the 3rd failure; it opens the circuit BEFORE releasing its single permit to waiter.
+		hitsBeforeRelease := serverHits.Load()
+		close(releaseFail)
+		if err := <-fail3Err; err == nil {
+			t.Fatal("expected 3rd upstream 503 failure")
+		}
+		if err := <-waiterDone; !errors.Is(err, ErrCircuitOpen) {
+			t.Fatalf("queued waiter after circuit opened = %v, want ErrCircuitOpen", err)
+		}
+		if serverHits.Load() != hitsBeforeRelease {
+			t.Fatalf("queued waiter hit Prometheus (%d -> %d)", hitsBeforeRelease, serverHits.Load())
+		}
+
+		// Stale in-flight 200 OK calls finish; cooldown must still hold.
+		close(releaseOK)
+		for i := 0; i < 3; i++ {
+			if err := <-okErrs; err != nil {
+				t.Fatalf("stale in-flight success error = %v", err)
+			}
+		}
+		hitsBefore := serverHits.Load()
+		if _, err := client.Query(context.Background(), "up"); !errors.Is(err, ErrCircuitOpen) {
+			t.Fatalf("stale in-flight success cleared breaker cooldown: err=%v", err)
+		}
+		if serverHits.Load() != hitsBefore {
+			t.Fatalf("open breaker still hit Prometheus (%d -> %d)", hitsBefore, serverHits.Load())
+		}
+	})
+
+	t.Run("stale success during half-open probe does not close circuit", func(t *testing.T) {
+		var seq atomic.Int32
+		staleStarted := make(chan struct{}, 1)
+		releaseStale := make(chan struct{})
+		probeStarted := make(chan struct{}, 1)
+		releaseProbe := make(chan struct{})
+		t.Cleanup(func() {
+			select {
+			case <-releaseStale:
+			default:
+				close(releaseStale)
+			}
+			select {
+			case <-releaseProbe:
+			default:
+				close(releaseProbe)
+			}
+		})
+		server := newPrometheusAPIServer(t, func(w http.ResponseWriter, req *http.Request) {
+			if seq.Add(1) == 1 {
+				staleStarted <- struct{}{}
+				select {
+				case <-releaseStale:
+				case <-req.Context().Done():
+				}
+				_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+				return
+			}
+			probeStarted <- struct{}{}
+			select {
+			case <-releaseProbe:
+			case <-req.Context().Done():
+			}
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		})
+		now := time.Unix(1760000000, 0)
+		var mu sync.Mutex
+		client := newTestClient(t, server.URL, TLSConfig{})
+		client.now = func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		}
+		client.cooldown = 15 * time.Second
+
+		staleDone := make(chan error, 1)
+		go func() {
+			_, err := client.Query(context.Background(), "up")
+			staleDone <- err
+		}()
+		<-staleStarted
+
+		// Simulate circuit opening after other concurrent failures while the 1st call stayed in flight.
+		client.circuitMu.Lock()
+		client.circuit = circuitOpen
+		client.circuitEpoch++
+		client.openUntil = now.Add(15 * time.Second)
+		client.circuitMu.Unlock()
+
+		mu.Lock()
+		now = now.Add(15 * time.Second)
+		mu.Unlock()
+
+		probeDone := make(chan error, 1)
+		go func() {
+			_, err := client.Query(context.Background(), "up")
+			probeDone <- err
+		}()
+		<-probeStarted
+
+		// Stale in-flight request completes with 200 OK while half-open probe is active.
+		close(releaseStale)
+		if err := <-staleDone; err != nil {
+			t.Fatalf("stale call error = %v", err)
+		}
+		// Single half-open probe is still running, so another concurrent caller must be rejected.
+		if _, err := client.Query(context.Background(), "up"); !errors.Is(err, ErrCircuitOpen) {
+			t.Fatalf("stale success prematurely closed half-open probe: err=%v", err)
+		}
+
+		close(releaseProbe)
+		if err := <-probeDone; err != nil {
+			t.Fatalf("probe error = %v", err)
+		}
+	})
+
+	t.Run("pre-expired deadlines do not hit upstream or open circuit", func(t *testing.T) {
+		var hits atomic.Int32
+		server := newPrometheusAPIServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		})
+		client := newTestClient(t, server.URL, TLSConfig{})
+		for i := 0; i < 4; i++ {
+			expiredCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			_, err := client.Query(expiredCtx, "up")
+			cancel()
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("attempt %d error = %v, want DeadlineExceeded", i, err)
+			}
+		}
+		if hits.Load() != 0 {
+			t.Fatalf("pre-expired contexts hit Prometheus %d times", hits.Load())
+		}
+		if _, err := client.Query(context.Background(), "up"); err != nil {
+			t.Fatalf("pre-expired contexts opened circuit: %v", err)
+		}
+	})
 }
