@@ -182,6 +182,23 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 	}
 
 	seenQueries = nil
+	hcuID, err := resourceview.DeviceID("HCU", "worker-1", "HCU-serial-01")
+	if err != nil {
+		t.Fatalf("DeviceID(HCU) error = %v", err)
+	}
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope:    "device",
+		DeviceId: hcuID,
+	}); err != nil {
+		t.Fatalf("HCU device trends failed: %v", err)
+	}
+	if len(seenQueries) != 6 ||
+		seenQueries[4] != `avg(hami_device_temperature{node="worker-1",device_uuid="serial-01"})` ||
+		seenQueries[5] != `avg(hami_device_power{node="worker-1",device_uuid="serial-01"})` {
+		t.Fatalf("HCU device sensor queries = %v", seenQueries)
+	}
+
+	seenQueries = nil
 	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
 		Scope: "cluster",
 	}); err != nil {

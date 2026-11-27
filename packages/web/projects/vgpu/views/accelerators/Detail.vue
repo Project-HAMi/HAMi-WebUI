@@ -546,13 +546,13 @@ const toFiniteNumber = (value) => {
 };
 
 const computeTotalText = computed(() => {
-  if (!isDetailReady.value) return '--';
+  if (!isDetailReady.value || detail.value?.unconfigured) return '--';
   const total = toFiniteNumber(detail.value?.coreTotal);
   return total === undefined || total <= 0 ? '--' : `${roundToDecimal(total / 100, 1)}`;
 });
 
 const memoryTotalText = computed(() => {
-  if (!isDetailReady.value) return '--';
+  if (!isDetailReady.value || detail.value?.unconfigured) return '--';
   const totalMiB = toFiniteNumber(detail.value?.memoryTotal);
   return totalMiB === undefined || totalMiB <= 0 ? '--' : `${roundToDecimal(totalMiB / 1024, 1)} GiB`;
 });
@@ -574,7 +574,9 @@ const computeAllocUncounted = computed(() => {
 });
 
 const computeAllocUsedRaw = computed(() => (
-  !isDetailReady.value || detail.value?.isExternal ? undefined : toFiniteNumber(detail.value?.coreUsed)
+  !isDetailReady.value || detail.value?.isExternal || detail.value?.unconfigured
+    ? undefined
+    : toFiniteNumber(detail.value?.coreUsed)
 ));
 
 const computeAllocNothingCounted = computed(() =>
@@ -596,7 +598,9 @@ const computeUsageUsedText = computed(() =>
 );
 
 const memoryAllocUsedMiB = computed(() => (
-  !isDetailReady.value || detail.value?.isExternal ? undefined : toFiniteNumber(detail.value?.memoryUsed)
+  !isDetailReady.value || detail.value?.isExternal || detail.value?.unconfigured
+    ? undefined
+    : toFiniteNumber(detail.value?.memoryUsed)
 ));
 
 const memoryAllocUsedText = computed(() =>

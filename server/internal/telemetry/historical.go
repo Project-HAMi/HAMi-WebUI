@@ -687,7 +687,11 @@ func buildTrendSpecs(q parsedTrendsQuery) []namedTrendSpec {
 func buildDeviceSensorTrendSpecs(deviceID string) []namedTrendSpec {
 	selector := fmt.Sprintf("device_uuid=%s", strconv.Quote(deviceID))
 	if parts, err := resourceview.ParseDeviceID(deviceID); err == nil {
-		selector = fmt.Sprintf("node=%s,device_uuid=%s", strconv.Quote(parts[1]), strconv.Quote(parts[2]))
+		rawUUID := parts[2]
+		if parts[0] == "HCU" {
+			rawUUID = strings.TrimPrefix(rawUUID, "HCU-")
+		}
+		selector = fmt.Sprintf("node=%s,device_uuid=%s", strconv.Quote(parts[1]), strconv.Quote(rawUUID))
 	}
 	return []namedTrendSpec{
 		{

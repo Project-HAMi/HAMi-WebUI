@@ -1601,6 +1601,12 @@ func TestSumMigInstanceMemoryAndDeviceSupplementalObservations(t *testing.T) {
 	if _, _, ok := sumMigInstanceMemory(procRows[2:], uuid); ok {
 		t.Fatal("expected process-only GI rows to be rejected")
 	}
+	if _, _, ok := sumMigInstanceMemory([]*pb.Sample{
+		usedZero,
+		sample("1", "USED", 5120, map[string]string{"pod_uid": "workload-uid"}),
+	}, uuid); ok {
+		t.Fatal("expected missing instance-wide reading on GI 1 to withhold MIG aggregate")
+	}
 
 	now := time.Unix(1760000000, 0).UTC()
 	migUUID := "GPU-mig-1"
@@ -1658,5 +1664,80 @@ func TestSumMigInstanceMemoryAndDeviceSupplementalObservations(t *testing.T) {
 	}
 	if obs.MigMemoryTotalBytes.Value == nil || obs.MigMemoryTotalBytes.Value.Value() != 8192*1024*1024 {
 		t.Fatalf("MigMemoryTotalBytes = %+v, want 8GiB", obs.MigMemoryTotalBytes.Value)
+	}
+}
+
+func TestLegacyVendorMetricsSurviveSecondRefreshWithSupplementalSensorsAndHCUKey(t *testing.T) {
+	now := time.Unix(1760000000, 0).UTC()
+	mluDev := &biz.DeviceInfo{
+		Id:       "MLU-0",
+		AliasId:  "MLU-0",
+		NodeName: "node-1",
+		NodeUid:  "node-uid-1",
+		Provider: biz.CambriconGPUDevice,
+		Type:     "MLU370",
+		Devmem:   24576,
+	}
+	hcuDev := &biz.DeviceInfo{
+		Id:       "serial-01",
+		AliasId:  "HCU-serial-01",
+		NodeName: "node-1",
+		NodeUid:  "node-uid-1",
+		Provider: biz.HygonHCUDevice,
+		Type:     "HCU",
+		Devmem:   32768,
+	}
+	gen := &MetricsGenerator{
+		nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{mluDev, hcuDev}}, log.NewStdLogger(io.Discard)),
+		monitorService: &fakeInstantQuerier{query: func(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+			q := req.GetQuery()
+			switch {
+			case strings.Contains(q, "mlu_memory_used"):
+				return instantValue(4096 * bytesPerMiB), nil
+			case strings.Contains(q, "mlu_memory_total"):
+				return instantValue(24576 * bytesPerMiB), nil
+			case strings.Contains(q, "mlu_utilization"):
+				return instantValue(37), nil
+			case strings.Contains(q, "mlu_temperature"):
+				return instantValue(49), nil
+			case strings.Contains(q, "mlu_power_usage"):
+				return instantValue(95), nil
+			case strings.Contains(q, "hcu_temp{"):
+				return instantValue(58), nil
+			case strings.Contains(q, "hcu_power_usage"):
+				return instantValue(160), nil
+			default:
+				return &pb.InstantResponse{}, nil
+			}
+		}},
+		now: func() time.Time { return now },
+		log: log.NewHelper(log.NewStdLogger(io.Discard)),
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(gen) })
+
+	for cycle := 1; cycle <= 2; cycle++ {
+		if err := gen.GenerateDeviceMetrics(context.Background()); err != nil {
+			t.Fatalf("cycle %d GenerateDeviceMetrics() error = %v", cycle, err)
+		}
+	}
+	mluLabels := []string{"node-1", biz.CambriconGPUDevice, "MLU370", "MLU-0", "", ""}
+	assertTrackedGaugeValue(t, gen, HamiMemoryUsed, mluLabels, 4096)
+	assertTrackedGaugeValue(t, gen, HamiMemorySize, mluLabels, 24576)
+	assertTrackedGaugeValue(t, gen, HamiCoreUtil, mluLabels, 37)
+
+	hcuObs, ok := gen.DeviceObservations()[resourceview.DeviceIdentity{
+		Provider: biz.HygonHCUDevice,
+		Node:     "node-1",
+		NodeUID:  "node-uid-1",
+		DeviceID: "HCU-serial-01",
+	}]
+	if !ok {
+		t.Fatal("missing supplemental observation keyed by HCU alias ID")
+	}
+	if v, ok := hcuObs.TemperatureCelsius.KnownValue(); !ok || v != 58 {
+		t.Fatalf("HCU temperature = (%v, %v), want (58, true)", v, ok)
+	}
+	if v, ok := hcuObs.PowerWatts.KnownValue(); !ok || v != 160 {
+		t.Fatalf("HCU power = (%v, %v), want (160, true)", v, ok)
 	}
 }

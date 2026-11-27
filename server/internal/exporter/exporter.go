@@ -145,6 +145,10 @@ func (s *MetricsGenerator) activeTelemetryDialects() []provider.TelemetryDialect
 	return registry.DefaultTelemetryDialects()
 }
 
+func hasPhysicalObservation(obs resourceview.DeviceObservation) bool {
+	return obs.MemoryUsedBytes.State != nil || obs.MemoryPhysicalBytes.State != nil || obs.UtilizationRatio.State != nil
+}
+
 func lookupDeviceObservation(
 	observations resourceview.DeviceObservations,
 	providerName, nodeName, nodeUID, deviceID, aliasID string,
@@ -157,12 +161,12 @@ func lookupDeviceObservation(
 	}
 	uid := types.UID(nodeUID)
 	if deviceID != "" {
-		if obs, ok := observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, NodeUID: uid, DeviceID: deviceID}]; ok {
+		if obs, ok := observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, NodeUID: uid, DeviceID: deviceID}]; ok && hasPhysicalObservation(obs) {
 			return obs, true
 		}
 	}
 	if aliasID != "" && aliasID != deviceID {
-		if obs, ok := observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, NodeUID: uid, DeviceID: aliasID}]; ok {
+		if obs, ok := observations[resourceview.DeviceIdentity{Provider: providerName, Node: nodeName, NodeUID: uid, DeviceID: aliasID}]; ok && hasPhysicalObservation(obs) {
 			return obs, true
 		}
 	}
@@ -552,11 +556,15 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			if normProvider == metax.MetaxSGPUDevice {
 				normProvider = biz.MetaxGPUDevice
 			}
+			deviceID := device.Id
+			if provider == biz.HygonHCUDevice && device.AliasId != "" {
+				deviceID = device.AliasId
+			}
 			id := resourceview.DeviceIdentity{
 				Provider: normProvider,
 				Node:     device.NodeName,
 				NodeUID:  types.UID(device.NodeUid),
-				DeviceID: device.Id,
+				DeviceID: deviceID,
 			}
 			supplemental[id] = obsEntry
 		}
@@ -653,6 +661,11 @@ func sumMigInstanceMemory(samples []*pb.Sample, uuid string) (int64, *int64, boo
 		source = src
 		hasSource = true
 
+		acc := instances[id]
+		if acc == nil {
+			acc = &migInstanceAcc{}
+			instances[id] = acc
+		}
 		// DCGM emits a separate FB_USED with Pod UID for each process-attributed Pod.
 		// FREE stays instance-wide even when DCGM copies it onto multiple Pods.
 		if kind == "USED" && (m["pod_uid"] != "" || m["exported_pod_uid"] != "" || m["vgpu"] != "" || m["exported_vgpu"] != "") {
@@ -667,11 +680,6 @@ func sumMigInstanceMemory(samples []*pb.Sample, uuid string) (int64, *int64, boo
 			return 0, nil, false
 		}
 		bytesVal := int64(scaled)
-		acc := instances[id]
-		if acc == nil {
-			acc = &migInstanceAcc{}
-			instances[id] = acc
-		}
 		if kind == "USED" {
 			if acc.hasUsed && acc.usedBytes != bytesVal {
 				return 0, nil, false
