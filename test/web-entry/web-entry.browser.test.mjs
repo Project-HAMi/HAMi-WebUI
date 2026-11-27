@@ -1073,7 +1073,7 @@ test('unknown routes render a local, responsive HAMi page', async(t) => {
       assert.equal(requestedURLs.some((url) => url.includes('wallstcn')), false)
 
       await page.locator('.lang-select-container').click()
-      await page.locator('.lang-dropdown-popper .t-dropdown__item')
+      await page.locator('.lang-dropdown-popper [role="menuitemradio"]')
         .filter({ hasText: '中文' })
         .click()
       await page.locator('html[lang="zh-CN"]').waitFor()
@@ -1081,7 +1081,7 @@ test('unknown routes render a local, responsive HAMi page', async(t) => {
       assert.equal(page.url(), `${target}${unknownRoute}`)
 
       await page.locator('.lang-select-container').click()
-      await page.locator('.lang-dropdown-popper .t-dropdown__item')
+      await page.locator('.lang-dropdown-popper [role="menuitemradio"]')
         .filter({ hasText: 'English' })
         .click()
       await page.locator('html[lang="en"]').waitFor()

@@ -101,7 +101,7 @@ const overviewRoute = { name: 'overview' };
 
 .not-found-header {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;

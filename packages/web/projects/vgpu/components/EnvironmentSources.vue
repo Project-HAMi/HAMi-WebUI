@@ -1,80 +1,97 @@
 <template>
   <div ref="root" class="environment-sources">
-    <t-tabs v-model="selected" :aria-label="t('about.sources.vendor')">
-      <t-tab-panel v-for="tab in tabs" :key="tab" :value="tab" :destroy-on-hide="false" lazy>
-        <template #label>
-          <span class="vendor-tag">
-            <LayersIcon v-if="tab === 'cluster'" aria-hidden="true" />
-            <VendorMark v-else :vendor="tab" :size="15" />
-            {{ tab === 'cluster' ? t('catalog.cluster') : vendorName(tab) }}
-          </span>
-        </template>
-        <div v-if="tab === selected" class="component-columns" :class="{ 'vendor-details': selected !== 'cluster' }">
-          <section v-for="group in groups" :key="group.key" class="component-column">
-            <header class="column-heading">
-              <h4>{{ t('about.sources.' + group.key) }}</h4>
-              <span v-if="selected === 'cluster' && group.rows.some(row => row.counts)">{{ t('catalog.counts.' + group.key) }}</span>
-            </header>
-            <template v-if="selected === 'cluster'">
-              <div v-if="group.rows.length" class="tile-row">
-                <component
-                  :is="tabs.includes(row.vendor) ? 'button' : 'div'"
-                  v-for="row in group.rows"
-                  :key="row.id"
-                  :type="tabs.includes(row.vendor) ? 'button' : undefined"
-                  class="component-tile"
-                  :class="row.tone"
-                  :title="[row.name, row.version, row.summary].filter(Boolean).join(' · ')"
-                  :aria-label="[row.name, row.version, row.summary].filter(Boolean).join(' · ')"
-                  @click="openVendor(row.vendor)"
-                >
-                  <span class="tile-brand">
-                    <VendorMark :vendor="row.vendor" :size="20"><LayersIcon aria-hidden="true" /></VendorMark>
-                    <ErrorCircleIcon v-if="row.tone === 'is-warning'" class="tile-alert" aria-hidden="true" />
-                  </span>
-                  <span v-if="row.counts" class="tile-ratio">{{ row.counts.good }}<small> / {{ row.counts.total }}</small></span>
-                  <span v-else class="tile-ratio">—</span>
-                  <span class="tile-version">{{ shortVersion(row.version) }}</span>
-                </component>
-              </div>
-              <p v-else class="source-empty">{{ t('about.sources.' + group.emptyMessage) }}</p>
-            </template>
-            <template v-else>
-              <ul v-if="details[group.key].length" class="detail-list">
-                <li v-for="entry in details[group.key]" :key="entry.id">
-                  <div class="entry-title">
-                    <span class="entry-name">{{ entry.name }}</span>
-                    <span v-if="entry.archived" class="entry-badge">{{ t('catalog.archived') }}</span>
-                    <VersionTag v-if="entry.version" :version="entry.version" />
-                  </div>
-                  <span class="entry-state" :class="entry.tone">{{ entry.status }}</span>
-                  <div v-if="entry.repository || entry.docs" class="entry-links">
-                    <a v-if="entry.repository" class="entry-link" :href="entry.repository" target="_blank" rel="noopener noreferrer">
-                      {{ repositoryName(entry.repository) }}<JumpIcon aria-hidden="true" />
-                    </a>
-                    <a v-if="entry.docs" class="entry-link" :href="entry.docs" target="_blank" rel="noopener noreferrer">
-                      {{ t('catalog.guide') }}<JumpIcon aria-hidden="true" />
-                    </a>
-                  </div>
-                </li>
-              </ul>
-              <p v-else class="source-empty">{{ t('catalog.noEntry') }}</p>
-            </template>
-          </section>
-        </div>
-        <p v-if="tab === selected && selectedCatalog?.componentsOnly" class="coverage-note">
-          <span>{{ t('catalog.componentsOnly') }}</span>
-          <a class="entry-link" href="https://github.com/Project-HAMi/HAMi-WebUI/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
-            {{ t('catalog.contributeMonitoring') }}<JumpIcon aria-hidden="true" />
-          </a>
-        </p>
-      </t-tab-panel>
-    </t-tabs>
+    <div
+      role="tablist"
+      :aria-label="t('about.sources.vendor')"
+      class="source-tabs"
+      @keydown="onTabKeydown"
+    >
+      <button
+        v-for="tab in tabs"
+        :key="tab"
+        :id="tabId(tab)"
+        type="button"
+        role="tab"
+        :aria-selected="selected === tab"
+        :aria-controls="panelId"
+        :tabindex="selected === tab ? 0 : -1"
+        class="source-tab"
+        :class="{ 'is-active': selected === tab }"
+        @click="selected = tab"
+      >
+        <span class="vendor-tag">
+          <LayersIcon v-if="tab === 'cluster'" aria-hidden="true" />
+          <VendorMark v-else :vendor="tab" :size="15" />
+          {{ tab === 'cluster' ? t('catalog.cluster') : vendorName(tab) }}
+        </span>
+      </button>
+    </div>
+    <div :id="panelId" role="tabpanel" :aria-labelledby="tabId(selected)">
+      <div class="component-columns" :class="{ 'vendor-details': selected !== 'cluster' }">
+        <section v-for="group in groups" :key="group.key" class="component-column">
+          <header class="column-heading">
+            <h4>{{ t('about.sources.' + group.key) }}</h4>
+            <span v-if="selected === 'cluster' && group.rows.some(row => row.counts)">{{ t('catalog.counts.' + group.key) }}</span>
+          </header>
+          <template v-if="selected === 'cluster'">
+            <div v-if="group.rows.length" class="tile-row">
+              <component
+                :is="tabs.includes(row.vendor) ? 'button' : 'div'"
+                v-for="row in group.rows"
+                :key="row.id"
+                :type="tabs.includes(row.vendor) ? 'button' : undefined"
+                class="component-tile"
+                :class="row.tone"
+                :title="[row.name, row.version, row.summary].filter(Boolean).join(' · ')"
+                :aria-label="[row.name, row.version, row.summary].filter(Boolean).join(' · ')"
+                @click="openVendor(row.vendor)"
+              >
+                <span class="tile-brand">
+                  <VendorMark :vendor="row.vendor" :size="20"><LayersIcon aria-hidden="true" /></VendorMark>
+                  <ErrorCircleIcon v-if="row.tone === 'is-warning'" class="tile-alert" aria-hidden="true" />
+                </span>
+                <span v-if="row.counts" class="tile-ratio">{{ row.counts.good }}<small> / {{ row.counts.total }}</small></span>
+                <span v-else class="tile-ratio">—</span>
+                <span class="tile-version">{{ shortVersion(row.version) }}</span>
+              </component>
+            </div>
+            <p v-else class="source-empty">{{ t('about.sources.' + group.emptyMessage) }}</p>
+          </template>
+          <template v-else>
+            <ul v-if="details[group.key].length" class="detail-list">
+              <li v-for="entry in details[group.key]" :key="entry.id">
+                <div class="entry-title">
+                  <span class="entry-name">{{ entry.name }}</span>
+                  <span v-if="entry.archived" class="entry-badge">{{ t('catalog.archived') }}</span>
+                  <VersionTag v-if="entry.version" :version="entry.version" />
+                </div>
+                <span class="entry-state" :class="entry.tone">{{ entry.status }}</span>
+                <div v-if="entry.repository || entry.docs" class="entry-links">
+                  <a v-if="entry.repository" class="entry-link" :href="entry.repository" target="_blank" rel="noopener noreferrer">
+                    {{ repositoryName(entry.repository) }}<JumpIcon aria-hidden="true" />
+                  </a>
+                  <a v-if="entry.docs" class="entry-link" :href="entry.docs" target="_blank" rel="noopener noreferrer">
+                    {{ t('catalog.guide') }}<JumpIcon aria-hidden="true" />
+                  </a>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="source-empty">{{ t('catalog.noEntry') }}</p>
+          </template>
+        </section>
+      </div>
+      <p v-if="selectedCatalog?.componentsOnly" class="coverage-note">
+        <span>{{ t('catalog.componentsOnly') }}</span>
+        <a class="entry-link" href="https://github.com/Project-HAMi/HAMi-WebUI/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
+          {{ t('catalog.contributeMonitoring') }}<JumpIcon aria-hidden="true" />
+        </a>
+      </p>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ErrorCircleIcon, JumpIcon, LayersIcon } from 'tdesign-icons-vue-next';
 import VersionTag from './VersionTag.vue';
@@ -85,15 +102,37 @@ import { componentCatalog } from './about-catalog.mjs';
 const props = defineProps({ groups: { type: Array, required: true }, checkedKeys: Array });
 const selected = defineModel({ type: String, required: true });
 const { t, te } = useI18n();
+const idPrefix = useId();
+const panelId = `${idPrefix}-panel`;
+const tabId = (tab) => `${idPrefix}-tab-${tab}`;
 const tabs = computed(() => [...new Set(['cluster', ...componentCatalog.map(item => item.vendor),
   ...props.groups.flatMap(group => group.rows.map(row => row.vendor).filter(Boolean))])]);
 const vendorName = name => te('catalog.vendors.' + name) ? t('catalog.vendors.' + name) : name;
 const root = ref(null);
+async function focusActiveTab() {
+  await nextTick();
+  const activeTab = root.value?.querySelector('[role="tab"][aria-selected="true"]');
+  activeTab?.focus();
+  activeTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
 async function openVendor(vendor) {
   if (!tabs.value.includes(vendor)) return;
   selected.value = vendor;
-  await nextTick();
-  root.value?.querySelector('[role="tab"][aria-selected="true"]')?.focus();
+  await focusActiveTab();
+}
+async function onTabKeydown(event) {
+  const list = tabs.value;
+  const current = list.indexOf(selected.value);
+  if (current < 0 || list.length === 0) return;
+  let next;
+  if (event.key === 'ArrowRight') next = (current + 1) % list.length;
+  else if (event.key === 'ArrowLeft') next = (current - 1 + list.length) % list.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = list.length - 1;
+  else return;
+  event.preventDefault();
+  selected.value = list[next];
+  await focusActiveTab();
 }
 
 const selectedCatalog = computed(() => componentCatalog.find(item => item.vendor === selected.value));
@@ -121,22 +160,20 @@ function repositoryName(url) {
 
 <style scoped>
 .environment-sources { min-width: 0; background: white; border: 1px solid #dce4ed; border-radius: 8px; overflow: hidden; }
-.environment-sources :deep(.t-tabs__header) { margin: 0; padding: 5px 9px; border-bottom: 1px solid #e2e8f0; }
-.environment-sources :deep(.t-tabs__nav-container::after), .environment-sources :deep(.t-tabs__bar) { display: none; }
-.environment-sources :deep(.t-tabs__nav-item) { padding: 0 1px; height: 33px; line-height: 33px; }
-.environment-sources :deep(.t-tabs__nav-item-wrapper) { padding: 0; background: transparent; }
-.environment-sources :deep(.t-tabs__btn) {
-  display: grid; place-items: center;
-  width: 28px; height: 28px; border-radius: 5px; line-height: 1; font-size: 14px; color: #526477;
+.source-tabs {
+  display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none;
+  padding: 5px 9px; border-bottom: 1px solid #e2e8f0;
 }
-.environment-sources :deep(.t-tabs__btn:hover:not(.t-is-disabled)) {
-  color: #183455; background: #e9eff6;
+.source-tabs::-webkit-scrollbar { display: none; }
+.source-tab {
+  flex: 0 0 auto; border: 0; padding: 0; background: transparent; cursor: pointer; font: inherit;
+  border-radius: 5px;
 }
-.environment-sources :deep(.t-tabs__btn.t-is-disabled) { color: #b8c3ce; cursor: default; }
+.source-tab:focus-visible { outline: 2px solid var(--td-brand-color, #2563eb); outline-offset: -2px; }
 .vendor-tag { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 5px; color: #526477; font-size: 12px; line-height: 18px; }
 .vendor-tag svg { width: 15px; height: 15px; }
-.environment-sources :deep(.t-tabs__nav-item:hover) .vendor-tag { background: #f2f5f8; }
-.environment-sources :deep(.t-tabs__nav-item.t-is-active) .vendor-tag { background: #e9eff6; color: #183455; font-weight: 600; }
+.source-tab:hover .vendor-tag { background: #f2f5f8; }
+.source-tab.is-active .vendor-tag { background: #e9eff6; color: #183455; font-weight: 600; }
 .coverage-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 4px; margin: 0; padding: 8px 14px; border-top: 1px solid #e2e8f0; color: #526477; font-size: 12px; }
 .component-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .component-column { min-width: 0; padding: 14px; }

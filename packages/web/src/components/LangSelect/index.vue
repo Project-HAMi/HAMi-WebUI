@@ -23,57 +23,58 @@
       </button>
     </t-tooltip>
   </div>
-  <t-dropdown
+  <div
     v-else
-    trigger="click"
+    ref="dropdownRoot"
+    class="lang-dropdown-wrap"
     :class="{ 'lang-select--sidebar': sidebar, 'is-collapsed': collapsed }"
-    :placement="sidebar ? 'top-left' : 'bottom-right'"
-    :popup-props="dropdownPopupProps"
-    @click="(item) => handleSetLanguage(item.value)"
+    @focusout="onDropdownFocusout"
   >
     <button
+      ref="triggerButton"
       type="button"
       class="lang-select-container"
       :aria-label="`${$t('common.switchLanguage')}: ${currentLanguage}`"
       :aria-expanded="menuVisible"
       aria-haspopup="menu"
       :title="collapsed ? `${$t('common.switchLanguage')}: ${currentLanguage}` : undefined"
+      @click="toggleMenu"
+      @keydown="onTriggerKeydown"
     >
       <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
       <span v-if="!collapsed" class="lang-text">{{ currentLanguage }}</span>
       <ChevronDownIcon v-if="!collapsed" class="lang-chevron" aria-hidden="true" />
     </button>
-    <template #dropdown>
-      <t-dropdown-menu class="lang-dropdown">
-        <t-dropdown-item
-          value="zh"
-          :active="language === 'zh'"
-          class="lang-item"
-          :class="{ 'is-selected': language === 'zh' }"
-        >
-          <div class="lang-item-row">
-            <span class="dropdown-item-text">{{ $t('common.lang.zh') }}</span>
-            <span v-if="language === 'zh'" class="check-mark">✓</span>
-          </div>
-        </t-dropdown-item>
-        <t-dropdown-item
-          value="en"
-          :active="language === 'en'"
-          class="lang-item"
-          :class="{ 'is-selected': language === 'en' }"
-        >
-          <div class="lang-item-row">
-            <span class="dropdown-item-text">{{ $t('common.lang.en') }}</span>
-            <span v-if="language === 'en'" class="check-mark">✓</span>
-          </div>
-        </t-dropdown-item>
-      </t-dropdown-menu>
-    </template>
-  </t-dropdown>
+    <div
+      v-if="menuVisible"
+      ref="menuElement"
+      role="menu"
+      :aria-label="$t('common.switchLanguage')"
+      class="lang-dropdown-popper lang-dropdown"
+      @keydown="onMenuKeydown"
+    >
+      <button
+        v-for="(option, index) in menuOptions"
+        :key="option.value"
+        type="button"
+        role="menuitemradio"
+        :aria-checked="language === option.value"
+        :tabindex="activeIndex === index ? 0 : -1"
+        class="lang-item"
+        :class="{ 'is-selected': language === option.value }"
+        @click="selectMenuLanguage(option.value)"
+      >
+        <span class="lang-item-row">
+          <span class="dropdown-item-text">{{ option.label }}</span>
+          <span v-if="language === option.value" class="check-mark" aria-hidden="true">✓</span>
+        </span>
+      </button>
+    </div>
+  </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Cookies from 'js-cookie';
 import { LANG_KEY } from '@/locales';
@@ -94,13 +95,15 @@ const nextLanguage = computed(() => language.value === 'zh' ? 'en' : 'zh');
 const switchLanguageLabel = computed(() => i18n.t('common.switchToLanguage', {
   language: i18n.t(`common.lang.${nextLanguage.value}`),
 }));
+const dropdownRoot = ref(null);
+const triggerButton = ref(null);
+const menuElement = ref(null);
 const menuVisible = ref(false);
-const dropdownPopupProps = {
-  overlayClassName: 'lang-dropdown-popper',
-  onVisibleChange: (visible) => {
-    menuVisible.value = visible;
-  },
-};
+const activeIndex = ref(0);
+const menuOptions = computed(() => [
+  { value: 'zh', label: i18n.t('common.lang.zh') },
+  { value: 'en', label: i18n.t('common.lang.en') },
+]);
 const languageOptions = computed(() => [
   { value: 'zh', label: i18n.t('common.lang.zh'), ariaLabel: i18n.t('common.lang.zh') },
   { value: 'en', label: 'EN', ariaLabel: i18n.t('common.lang.en') },
@@ -111,6 +114,91 @@ const handleSetLanguage = (lang) => {
   i18n.locale.value = lang;
   Cookies.set(LANG_KEY, lang);
 };
+
+const focusMenuItem = async (index) => {
+  const count = menuOptions.value.length;
+  activeIndex.value = ((index % count) + count) % count;
+  await nextTick();
+  menuElement.value?.querySelectorAll('[role="menuitemradio"]')?.[activeIndex.value]?.focus();
+};
+
+const closeMenu = async (restoreFocus = false) => {
+  if (!menuVisible.value) return;
+  menuVisible.value = false;
+  if (restoreFocus) {
+    await nextTick();
+    triggerButton.value?.focus();
+  }
+};
+
+const openMenu = (startIndex) => {
+  const currentIdx = menuOptions.value.findIndex((option) => option.value === language.value);
+  menuVisible.value = true;
+  focusMenuItem(startIndex ?? (currentIdx >= 0 ? currentIdx : 0));
+};
+
+const toggleMenu = () => {
+  if (menuVisible.value) {
+    closeMenu();
+    return;
+  }
+  openMenu();
+};
+
+const selectMenuLanguage = (lang) => {
+  handleSetLanguage(lang);
+  closeMenu(true);
+};
+
+const onTriggerKeydown = (event) => {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    openMenu(0);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    openMenu(menuOptions.value.length - 1);
+  } else if (event.key === 'Escape' && menuVisible.value) {
+    event.preventDefault();
+    closeMenu(true);
+  }
+};
+
+const onMenuKeydown = (event) => {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    focusMenuItem(activeIndex.value + 1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    focusMenuItem(activeIndex.value - 1);
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    focusMenuItem(0);
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    focusMenuItem(menuOptions.value.length - 1);
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu(true);
+  } else if (event.key === 'Tab') {
+    closeMenu();
+  }
+};
+
+const onDropdownFocusout = (event) => {
+  if (menuVisible.value && event.relatedTarget && !dropdownRoot.value?.contains(event.relatedTarget)) {
+    menuVisible.value = false;
+  }
+};
+
+const onDocumentPointerDown = (event) => {
+  if (menuVisible.value && !dropdownRoot.value?.contains(event.target)) {
+    menuVisible.value = false;
+  }
+};
+
+onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocumentPointerDown));
 </script>
 
 <style lang="scss" scoped>
@@ -223,60 +311,76 @@ const handleSetLanguage = (lang) => {
   flex: 0 0 102px;
 }
 
+.lang-dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.lang-dropdown-popper {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 2500;
+  min-width: 120px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid #e4e7ed;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.lang-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 4px;
+  margin: 2px 0;
+  line-height: 1.5;
+  font: inherit;
+  font-weight: 400;
+  text-align: left;
+  color: #606266;
+  cursor: pointer;
+
+  &:hover {
+    background-color: #f5f7fa;
+    color: var(--td-brand-color, #2563eb);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--td-brand-color, #2563eb);
+    outline-offset: -2px;
+  }
+
+  &.is-selected {
+    color: var(--td-brand-color, #2563eb);
+    font-weight: 600;
+    background-color: var(--td-brand-color-light, #eff6ff);
+  }
+}
+
+.lang-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.dropdown-item-text {
+  flex: 1;
+}
+
+.check-mark {
+  font-weight: bold;
+  font-size: 14px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lang-select-container {
     transition: none;
-  }
-}
-</style>
-
-<style lang="scss">
-// The dropdown is teleported outside this component, so these overrides must stay global.
-.lang-dropdown-popper {
-  .t-popup__content {
-    padding: 6px;
-    border-radius: 8px;
-    border: 1px solid #e4e7ed;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  }
-
-  .t-dropdown__item {
-    padding: 8px 16px;
-    border-radius: 4px;
-    margin: 2px 0;
-    line-height: 1.5;
-    font-weight: 400;
-    min-width: 120px;
-    color: #606266;
-
-    &:hover {
-      background-color: #f5f7fa;
-      color: var(--td-brand-color, #2563eb);
-    }
-
-    &.is-selected,
-    &.t-dropdown__item--active {
-      color: var(--td-brand-color, #2563eb);
-      font-weight: 600;
-      background-color: var(--td-brand-color-light, #eff6ff);
-    }
-  }
-
-  .lang-item-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    width: 100%;
-  }
-
-  .dropdown-item-text {
-    flex: 1;
-  }
-
-  .check-mark {
-    font-weight: bold;
-    font-size: 14px;
   }
 }
 </style>
