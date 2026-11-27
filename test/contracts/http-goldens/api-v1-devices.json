@@ -1,0 +1,22 @@
+{
+  "list": [
+    {
+      "uuid": "GPU-1",
+      "nodeName": "node-1",
+      "type": "NVIDIA A100",
+      "vgpuUsed": 1,
+      "vgpuTotal": 4,
+      "coreUsed": 50,
+      "coreTotal": 100,
+      "memoryUsed": 20480,
+      "memoryTotal": 81920,
+      "nodeUid": "node-uid-1",
+      "health": true,
+      "mode": "hami-core",
+      "coreUsedKnown": true,
+      "unconfigured": false,
+      "vendor": "NVIDIA",
+      "migProfiles": []
+    }
+  ]
+}

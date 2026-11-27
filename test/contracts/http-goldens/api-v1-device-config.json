@@ -1,0 +1,33 @@
+{
+  "state": "loaded",
+  "reason": "",
+  "namespace": "kube-system",
+  "name": "hami-device-config",
+  "key": "device-config.yaml",
+  "resourceVersion": "1",
+  "observedAt": "2023-11-14T22:13:20Z",
+  "issues": [],
+  "ascendModels": [
+    {
+      "commonWord": "Ascend910",
+      "chipName": "910",
+      "resourceName": "huawei.com/Ascend910",
+      "resourceMemoryName": "huawei.com/Ascend910-memory",
+      "resourceCoreName": "huawei.com/Ascend910-core",
+      "memoryAllocatable": "32768",
+      "memoryCapacity": "32768",
+      "aiCore": 32,
+      "aiCpu": 8,
+      "templates": [
+        {
+          "name": "vir08",
+          "memory": "8192",
+          "aiCore": 8,
+          "aiCpu": 2,
+          "computeShare": 25
+        }
+      ],
+      "superPod": false
+    }
+  ]
+}

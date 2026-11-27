@@ -1,0 +1,6 @@
+{
+  "code": 404,
+  "reason": "RESOURCE_CONTAINER_NOT_FOUND",
+  "message": "Allocated container was not found",
+  "metadata": {}
+}

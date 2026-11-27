@@ -76,6 +76,7 @@ func NewHTTPServer(c *conf.Bootstrap,
 	v1.RegisterSchedulingHTTPServer(srv, scheduling)
 	v1.RegisterWorkloadHTTPServer(srv, workload)
 	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
+	v1.RegisterResourcesHTTPServer(srv, service.NewResourcesService(node, card, ctr, workload, scheduling, deviceConfig, about))
 	pb.RegisterOverviewHTTPServer(srv, overview)
 	pb.RegisterTelemetryHTTPServer(srv, telemetrySvc)
 	v1.RegisterAboutHTTPServer(srv, about)

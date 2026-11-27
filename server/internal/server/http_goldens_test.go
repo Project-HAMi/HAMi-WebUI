@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/prometheus"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -25,6 +26,7 @@ import (
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
+	"vgpu/internal/devicecatalog"
 	"vgpu/internal/resourceview"
 	"vgpu/internal/service"
 	"vgpu/internal/telemetry"
@@ -70,8 +72,14 @@ func (r *goldenNodeRepo) FindDeviceByAliasId(aliasID string) (*biz.DeviceInfo, e
 
 type goldenPodRepo struct{ containers []*biz.Container }
 
-func (r *goldenPodRepo) NodeHolders(context.Context, string, string) (biz.NodeHolders, error) {
-	return biz.NodeHolders{}, nil
+func (r *goldenPodRepo) NodeHolders(_ context.Context, node, uid string) (biz.NodeHolders, error) {
+	var matched []*biz.Container
+	for _, c := range r.containers {
+		if c.NodeName == node && c.NodeUID == uid {
+			matched = append(matched, c)
+		}
+	}
+	return biz.NodeHolders{Containers: matched}, nil
 }
 func (r *goldenPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
 	return r.containers, nil
@@ -85,13 +93,82 @@ func (r *goldenPodRepo) FindOne(_ context.Context, podUID, name string) (*biz.Co
 	return nil, os.ErrNotExist
 }
 
-type goldenSchedulingRepo struct{}
+type goldenSchedulingRepo struct {
+	at time.Time
+}
 
 func (goldenSchedulingRepo) ListSchedulingPods(context.Context) ([]*biz.SchedulingPod, error) {
 	return nil, nil
 }
-func (goldenSchedulingRepo) GetSchedulingPod(context.Context, string, string, string) (*biz.SchedulingDetail, error) {
-	return nil, os.ErrNotExist
+func (r goldenSchedulingRepo) GetSchedulingPod(_ context.Context, namespace, name, uid string) (*biz.SchedulingDetail, error) {
+	if namespace == "default" && name == "train-job-0" && uid == "pod-uid-1" {
+		return &biz.SchedulingDetail{
+			Pod: &biz.SchedulingPod{
+				Name:                "train-job-0",
+				Namespace:           "default",
+				UID:                 "pod-uid-1",
+				CreatedAt:           r.at,
+				SchedulerName:       "hami-scheduler",
+				NodeName:            "node-1",
+				Stage:               "bound",
+				ReasonCodes:         []string{"scheduled"},
+				ReasonSource:        "hami",
+				Preallocated:        true,
+				AllocatedContainers: []string{"trainer"},
+				Condition: &biz.SchedulingCondition{
+					Status:       "True",
+					Reason:       "Scheduled",
+					TransitionAt: r.at,
+				},
+				Requests: []biz.SchedulingContainerRequest{{
+					Container:     "trainer",
+					ContainerKind: "regular",
+					Resources: []biz.SchedulingResource{{
+						Name:   "nvidia.com/gpu",
+						Value:  "1",
+						Unit:   "count",
+						Kind:   "count",
+						Vendor: "NVIDIA",
+					}},
+				}},
+			},
+			Events: biz.SchedulingEvents{
+				Status:    "available",
+				FetchedAt: r.at,
+				Items: []biz.SchedulingEvent{{
+					UID:            "event-1",
+					Reason:         "Scheduled",
+					Type:           "Normal",
+					Message:        "Successfully assigned default/train-job-0 to node-1",
+					Source:         "hami-scheduler",
+					LastObservedAt: r.at,
+					Count:          1,
+				}},
+			},
+		}, nil
+	}
+	return nil, errors.NotFound("POD_NOT_FOUND", "The selected Pod is no longer available")
+}
+
+type goldenClusterRepo struct{}
+
+func (goldenClusterRepo) ServerVersion(context.Context) (string, error) { return "v1.31.0", nil }
+func (goldenClusterRepo) Components(context.Context) (biz.ClusterComponents, error) {
+	return biz.ClusterComponents{
+		HAMi: []*biz.HAMiComponent{{
+			Name:      biz.HAMiScheduler,
+			Namespace: "kube-system",
+			Pods:      1,
+			Ready:     1,
+			Nodes:     1,
+			Members: []biz.HAMiPod{{
+				UID:       "sched-uid-1",
+				Name:      "hami-scheduler-0",
+				Namespace: "kube-system",
+				IPs:       []string{"10.0.0.2"},
+			}},
+		}},
+	}, nil
 }
 
 func newGoldenQuantity(dec string, unit, source string) resourceview.Quantity {
@@ -128,7 +205,7 @@ func (q goldenRangeQuerier) QueryRange(_ context.Context, _ string, _ promv1.Ran
 	}, nil
 }
 
-func newGoldenHTTPHandler(empty bool) nethttp.Handler {
+func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 	logger := log.NewStdLogger(io.Discard)
 	at := time.Unix(1700000000, 0).UTC()
 
@@ -233,28 +310,91 @@ func newGoldenHTTPHandler(empty bool) nethttp.Handler {
 
 	nodeUC := biz.NewNodeUsecase(nodeRepo, logger)
 	podUC := biz.NewPodUseCase(podRepo, logger)
-	schedUC := biz.NewSchedulingUsecase(goldenSchedulingRepo{})
+	summaryUC := biz.NewSummaryUseCase(nodeRepo, podRepo, logger)
+	schedUC := biz.NewSchedulingUsecase(goldenSchedulingRepo{at: at})
+	snapSource := resourceview.WithObservations(goldenSnapshotSource{snapshot: snap}, obs)
+	nodeSvc := service.NewNodeService(nodeUC, podUC, summaryUC, snapSource)
 	ctrSvc := service.NewContainerService(nodeUC, podUC)
+	schedSvc := service.NewSchedulingService(schedUC)
+	deviceConfigSvc := service.NewDeviceConfigService(devicecatalog.Static{
+		Current: &devicecatalog.Snapshot{
+			State:           devicecatalog.StateLoaded,
+			Ref:             devicecatalog.Ref{Namespace: "kube-system", Name: "hami-device-config", Key: "device-config.yaml"},
+			ResourceVersion: "1",
+			ObservedAt:      at,
+			Ascend: map[string]devicecatalog.AscendModel{
+				"Ascend910": {
+					CommonWord:         "Ascend910",
+					ChipName:           "910",
+					ResourceName:       "huawei.com/Ascend910",
+					ResourceMemoryName: "huawei.com/Ascend910-memory",
+					ResourceCoreName:   "huawei.com/Ascend910-core",
+					MemoryAllocatable:  32768,
+					MemoryCapacity:     32768,
+					AICore:             32,
+					AICPU:              8,
+					Templates: []devicecatalog.AscendTemplate{{
+						Name:   "vir08",
+						Memory: 8192,
+						AICore: 8,
+						AICPU:  2,
+					}},
+				},
+			},
+		},
+	})
+
+	promServer := httptest.NewServer(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/targets":
+			_, _ = io.WriteString(w, `{"status":"success","data":{"activeTargets":[]}}`)
+		case "/api/v1/status/buildinfo":
+			_, _ = io.WriteString(w, `{"status":"success","data":{"version":"2.55.0"}}`)
+		case "/api/v1/query":
+			if err := r.ParseForm(); err != nil {
+				nethttp.Error(w, "bad query", nethttp.StatusBadRequest)
+				return
+			}
+			switch r.Form.Get("query") {
+			case "hami_build_info":
+				_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"version":"v2.10.0","revision":"rev-1","build_date":"2026-11-01","job":"hami-scheduler","instance":"10.0.0.2:31993","pod":"hami-scheduler-0"},"value":[1,"1"]}]}}`)
+			case "max(hami_webui_metrics_refresh_last_success_timestamp_seconds)":
+				_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"1700000000"]}]}}`)
+			default:
+				_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+			}
+		default:
+			nethttp.Error(w, "not found", nethttp.StatusNotFound)
+		}
+	}))
+	promClient, err := prom.NewClient(promServer.URL, time.Second, prom.HTTPConfig{}, logger)
+	if err != nil {
+		promServer.Close()
+		panic(err)
+	}
+	aboutSvc := service.NewAboutService(promClient, nodeUC, goldenClusterRepo{}, logger)
 
 	telemetrySvc := service.NewTelemetryServiceWithReader(
 		telemetry.NewHistoricalObservationReaderWithQuerier(goldenRangeQuerier{at: at, circuitOpen: empty}),
 	)
 
-	return NewHTTPServer(
+	handler := NewHTTPServer(
 		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
-		nil,
+		nodeSvc,
 		service.NewCardService(nodeUC, podUC),
 		ctrSvc,
 		nil,
-		nil,
+		schedSvc,
 		service.NewWorkloadService(ctrSvc, schedUC),
-		nil,
-		service.NewOverviewService(resourceview.WithObservations(goldenSnapshotSource{snapshot: snap}, obs)),
+		deviceConfigSvc,
+		service.NewOverviewService(snapSource),
 		telemetrySvc,
-		nil,
+		aboutSvc,
 		prometheus.NewRegistry(),
 		logger,
 	).Handler
+	return handler, promServer.Close
 }
 
 func TestHTTPJSONGoldens(t *testing.T) {
@@ -278,11 +418,24 @@ func TestHTTPJSONGoldens(t *testing.T) {
 		{name: "telemetry-trends-cluster.json", empty: false, method: "GET", target: "/api/v1/telemetry/trends?scope=cluster&start=2023-11-14T22:11:00Z&end=2023-11-14T22:13:00Z&step=60s", wantStatus: 200},
 		{name: "telemetry-trends-circuit-open.json", empty: true, method: "GET", target: "/api/v1/telemetry/trends?scope=cluster&start=2023-11-14T22:11:00Z&end=2023-11-14T22:13:00Z&step=60s", wantStatus: 200},
 		{name: "telemetry-trends-invalid.json", empty: false, method: "GET", target: "/api/v1/telemetry/trends?scope=invalid", wantStatus: 400},
+		{name: "api-v1-nodes.json", empty: false, method: "GET", target: "/api/v1/nodes", wantStatus: 200},
+		{name: "api-v1-node-detail.json", empty: false, method: "GET", target: "/api/v1/nodes/node-uid-1", wantStatus: 200},
+		{name: "api-v1-node-not-found.json", empty: false, method: "GET", target: "/api/v1/nodes/node-missing", wantStatus: 404},
+		{name: "api-v1-node-containers.json", empty: false, method: "GET", target: "/api/v1/nodes/node-uid-1/containers?node_name=node-1", wantStatus: 200},
+		{name: "api-v1-devices.json", empty: false, method: "GET", target: "/api/v1/devices", wantStatus: 200},
+		{name: "api-v1-device-detail.json", empty: false, method: "GET", target: "/api/v1/device?id=GPU-1&node_uid=node-uid-1", wantStatus: 200},
+		{name: "api-v1-containers.json", empty: false, method: "GET", target: "/api/v1/containers?page=1&page_size=20", wantStatus: 200},
+		{name: "api-v1-container-detail.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/trainer", wantStatus: 200},
+		{name: "api-v1-container-not-found.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/missing", wantStatus: 404},
+		{name: "api-v1-scheduling-pod.json", empty: false, method: "GET", target: "/api/v1/scheduling/pods/default/train-job-0?uid=pod-uid-1", wantStatus: 200},
+		{name: "api-v1-device-config.json", empty: false, method: "GET", target: "/api/v1/device-config", wantStatus: 200},
+		{name: "api-v1-about.json", empty: false, method: "GET", target: "/api/v1/about", wantStatus: 200},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			handler := newGoldenHTTPHandler(tc.empty)
+			handler, cleanup := newGoldenHTTPHandler(tc.empty)
+			defer cleanup()
 			var reqBody io.Reader
 			if tc.body != "" {
 				reqBody = bytes.NewBufferString(tc.body)
@@ -297,8 +450,30 @@ func TestHTTPJSONGoldens(t *testing.T) {
 				t.Fatalf("%s %s status=%d want=%d body=%s", tc.method, tc.target, rec.Code, tc.wantStatus, rec.Body.String())
 			}
 
+			rawBody := rec.Body.Bytes()
+			var gotObj any
+			if err := json.Unmarshal(rawBody, &gotObj); err != nil {
+				t.Fatalf("invalid JSON response %s: %v\nraw=%s", tc.name, err, rec.Body.String())
+			}
+			if tc.name == "api-v1-about.json" {
+				aboutObj, ok := gotObj.(map[string]any)
+				if !ok {
+					t.Fatalf("unexpected about payload %T", gotObj)
+				}
+				checkedAt, _ := aboutObj["checkedAt"].(string)
+				if _, err := time.Parse(time.RFC3339, checkedAt); err != nil {
+					t.Fatalf("invalid checkedAt %q: %v", checkedAt, err)
+				}
+				aboutObj["checkedAt"] = "2023-11-14T22:13:20Z"
+				normalized, err := json.Marshal(aboutObj)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rawBody = normalized
+			}
+
 			var formatted bytes.Buffer
-			if err := json.Indent(&formatted, rec.Body.Bytes(), "", "  "); err != nil {
+			if err := json.Indent(&formatted, rawBody, "", "  "); err != nil {
 				t.Fatalf("invalid JSON response %s: %v\nraw=%s", tc.name, err, rec.Body.String())
 			}
 			formatted.WriteByte('\n')
@@ -318,18 +493,36 @@ func TestHTTPJSONGoldens(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read golden %s: %v (run with UPDATE_HTTP_GOLDENS=1 to generate)", goldenPath, err)
 			}
-			var gotObj, wantObj any
-			if err := json.Unmarshal(rec.Body.Bytes(), &gotObj); err != nil {
-				t.Fatal(err)
-			}
+			var wantObj any
 			if err := json.Unmarshal(want, &wantObj); err != nil {
 				t.Fatal(err)
 			}
 			gotCanonical, _ := json.Marshal(gotObj)
 			wantCanonical, _ := json.Marshal(wantObj)
 			if !bytes.Equal(gotCanonical, wantCanonical) {
-				t.Fatalf("HTTP JSON golden drift for %s:\ngot:  %s\nwant: %s", tc.name, rec.Body.String(), string(want))
+				t.Fatalf("HTTP JSON golden drift for %s:\ngot:  %s\nwant: %s", tc.name, string(rawBody), string(want))
 			}
 		})
+	}
+}
+
+func TestHTTPDeviceRouteAcceptsEncodedSlash(t *testing.T) {
+	handler, cleanup := newGoldenHTTPHandler(false)
+	defer cleanup()
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/v1/device?id=GPU%2Fwith+space", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var errBody struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Reason != "RESOURCE_GPU_NOT_FOUND" {
+		t.Fatalf("reason = %q, want RESOURCE_GPU_NOT_FOUND (route must dispatch encoded slash id cleanly)", errBody.Reason)
 	}
 }

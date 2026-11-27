@@ -1,0 +1,58 @@
+{
+  "pod": {
+    "name": "train-job-0",
+    "namespace": "default",
+    "uid": "pod-uid-1",
+    "createdAt": "2023-11-14T22:13:20Z",
+    "schedulerName": "hami-scheduler",
+    "nodeName": "node-1",
+    "stage": "bound",
+    "reasonCodes": [
+      "scheduled"
+    ],
+    "reasonSource": "hami",
+    "condition": {
+      "status": "True",
+      "reason": "Scheduled",
+      "message": "",
+      "transitionAt": "2023-11-14T22:13:20Z",
+      "messageTruncated": false
+    },
+    "requests": [
+      {
+        "container": "trainer",
+        "containerKind": "regular",
+        "resources": [
+          {
+            "name": "nvidia.com/gpu",
+            "value": "1",
+            "unit": "count",
+            "kind": "count",
+            "vendor": "NVIDIA"
+          }
+        ]
+      }
+    ],
+    "gates": [],
+    "constraints": [],
+    "preallocated": true,
+    "allocatedContainers": [
+      "trainer"
+    ]
+  },
+  "events": [
+    {
+      "uid": "event-1",
+      "reason": "Scheduled",
+      "type": "Normal",
+      "message": "Successfully assigned default/train-job-0 to node-1",
+      "source": "hami-scheduler",
+      "lastObservedAt": "2023-11-14T22:13:20Z",
+      "count": 1,
+      "messageTruncated": false
+    }
+  ],
+  "eventStatus": "available",
+  "eventsIncomplete": false,
+  "eventsFetchedAt": "2023-11-14T22:13:20Z"
+}

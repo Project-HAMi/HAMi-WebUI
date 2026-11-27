@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package api.v1;
+
+import "google/api/annotations.proto";
+import "api/v1/about.proto";
+import "api/v1/card.proto";
+import "api/v1/container.proto";
+import "api/v1/device_config.proto";
+import "api/v1/node.proto";
+import "api/v1/scheduling.proto";
+import "api/v1/workload.proto";
+
+option go_package = "vgpu/api/v1;v1";
+
+service Resources {
+  rpc ListNodes (ListNodesRequest) returns (NodesReply) {
+    option (google.api.http) = { get: "/api/v1/nodes" };
+  }
+
+  rpc GetNode (GetResourceNodeRequest) returns (NodeReply) {
+    option (google.api.http) = { get: "/api/v1/nodes/{uid}" };
+  }
+
+  rpc ListNodeContainers (ListNodeContainersRequest) returns (ContainersReply) {
+    option (google.api.http) = { get: "/api/v1/nodes/{uid}/containers" };
+  }
+
+  rpc ListDevices (ListDevicesRequest) returns (GPUsReply) {
+    option (google.api.http) = { get: "/api/v1/devices" };
+  }
+
+  rpc GetDevice (GetDeviceRequest) returns (GPUReply) {
+    option (google.api.http) = { get: "/api/v1/device" };
+  }
+
+  rpc ListContainers (ListContainersRequest) returns (WorkloadsReply) {
+    option (google.api.http) = { get: "/api/v1/containers" };
+  }
+
+  rpc GetContainer (GetResourceContainerRequest) returns (ContainerReply) {
+    option (google.api.http) = { get: "/api/v1/containers/{pod_uid}/{container}" };
+  }
+
+  rpc GetSchedulingPod (GetResourceSchedulingPodRequest) returns (SchedulingPodReply) {
+    option (google.api.http) = { get: "/api/v1/scheduling/pods/{namespace}/{name}" };
+  }
+
+  rpc GetDeviceConfig (GetDeviceConfigReq) returns (DeviceConfigReply) {
+    option (google.api.http) = { get: "/api/v1/device-config" };
+  }
+
+  rpc GetAbout (GetAboutReq) returns (AboutReply) {
+    option (google.api.http) = { get: "/api/v1/about" };
+  }
+}
+
+message ListNodesRequest {
+  string ip = 1;
+  string type = 2;
+  string is_schedulable = 3;
+}
+
+message GetResourceNodeRequest {
+  string uid = 1;
+}
+
+message ListNodeContainersRequest {
+  string uid = 1;
+  string node_name = 2;
+}
+
+message ListDevicesRequest {
+  string id = 1;
+  string type = 2;
+  string node_name = 3;
+  string node_uid = 4;
+  string provider = 5;
+}
+
+message GetDeviceRequest {
+  string id = 1;
+  string node_uid = 2;
+}
+
+message ListContainersRequest {
+  string name = 1;
+  string node_name = 2;
+  string status = 3;
+  string device_id = 4;
+  string node_uid = 5;
+  string namespace = 6;
+  string priority = 7;
+  string keyword = 8;
+  int32 page = 9;
+  int32 page_size = 10;
+}
+
+message GetResourceContainerRequest {
+  string pod_uid = 1;
+  string container = 2;
+  string device_id = 3;
+}
+
+message GetResourceSchedulingPodRequest {
+  string namespace = 1;
+  string name = 2;
+  string uid = 3;
+}

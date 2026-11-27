@@ -270,18 +270,16 @@ func (s *ContainerService) GetContainer(ctx context.Context, req *pb.GetContaine
 	var selected biz.ContainerDevices
 	var vendors []string
 	for _, containerDevice := range container.ContainerDevices {
-		if req.DeviceId != "" && req.DeviceId != containerDevice.UUID {
+		deviceID, vendor := containerDevice.UUID, containerDevice.Vendor
+		if device, err := s.node.FindDeviceByAliasId(containerDevice.UUID); err == nil {
+			deviceID, vendor = device.Id, device.Provider
+		}
+		if req.DeviceId != "" && req.DeviceId != deviceID && req.DeviceId != containerDevice.UUID {
 			continue
 		}
 		selected = append(selected, containerDevice)
-		device, err := s.node.FindDeviceByAliasId(containerDevice.UUID)
-		if err != nil {
-			ctrReply.DeviceIds = append(ctrReply.DeviceIds, containerDevice.UUID)
-			vendors = append(vendors, containerDevice.Vendor)
-		} else {
-			ctrReply.DeviceIds = append(ctrReply.DeviceIds, device.Id)
-			vendors = append(vendors, device.Provider)
-		}
+		ctrReply.DeviceIds = append(ctrReply.DeviceIds, deviceID)
+		vendors = append(vendors, vendor)
 		ctrReply.AllocatedCores = ctrReply.AllocatedCores + containerDevice.Usedcores
 		if containerDevice.CoreAllocationUnknown {
 			allocatedCoresKnown = false
