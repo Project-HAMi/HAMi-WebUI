@@ -19,7 +19,10 @@ const minimumInventoryMaxAge = 5 * time.Minute
 // process-wide HAMi, Go runtime and scrape-handler metrics.
 func NewMetricsGatherer(generator *MetricsGenerator) prometheus.Gatherer {
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(newResourceMetricCollector(generator))
+	registry.MustRegister(
+		newResourceMetricCollector(generator),
+		newSelfObservabilityCollector(generator),
+	)
 	return prometheus.Gatherers{prometheus.DefaultGatherer, registry}
 }
 

@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
@@ -118,6 +119,7 @@ type MetricsGenerator struct {
 	resourceSource    resourceview.SnapshotSource
 	telemetryDialects []provider.TelemetryDialect
 	batchTimeout      time.Duration
+	splitCounts       [len(batchSplitReasons)]atomic.Uint64
 	observationsMu    sync.RWMutex
 	resourceSnapshot  *resourceview.Snapshot
 	physicalGroups    []resourceview.PhysicalGroup

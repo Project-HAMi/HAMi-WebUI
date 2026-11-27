@@ -189,14 +189,20 @@ func groupDevices(groups []telemetryKeyGroup) []resourceview.Device {
 	return devices
 }
 
-func shouldSplitBatch(groups []telemetryKeyGroup, parentCtx, chunkCtx context.Context, err error) bool {
+func batchSplitReason(groups []telemetryKeyGroup, parentCtx, chunkCtx context.Context, err error) (int, bool) {
 	if err == nil || len(groups) <= telemetryFallbackIDsPerQuery || parentCtx.Err() != nil || errors.Is(err, prom.ErrCircuitOpen) {
-		return false
+		return 0, false
 	}
-	return errors.Is(err, prom.ErrResponseTooLarge) ||
-		errors.Is(err, errTelemetrySeriesLimit) ||
-		errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(chunkCtx.Err(), context.DeadlineExceeded)
+	switch {
+	case errors.Is(err, prom.ErrResponseTooLarge):
+		return splitReasonOverflow, true
+	case errors.Is(err, errTelemetrySeriesLimit):
+		return splitReasonSeriesLimit, true
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(chunkCtx.Err(), context.DeadlineExceeded):
+		return splitReasonTimeout, true
+	default:
+		return 0, false
+	}
 }
 
 func queryChunk(
@@ -292,7 +298,8 @@ func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query qu
 			continue
 		}
 		raw, devices, chunkCtx, batchErr := queryChunk(ctx, query, batch.dialect, batch.groups, at, chunkTimeout)
-		if shouldSplitBatch(batch.groups, ctx, chunkCtx, batchErr) {
+		if reason, split := batchSplitReason(batch.groups, ctx, chunkCtx, batchErr); split {
+			s.splitCounts[reason].Add(1)
 			for start := 0; start < len(batch.groups); start += telemetryFallbackIDsPerQuery {
 				subgroups := batch.groups[start:min(start+telemetryFallbackIDsPerQuery, len(batch.groups))]
 				if circuitErr != nil {
