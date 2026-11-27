@@ -146,15 +146,24 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 	seenQueries = nil
 	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
 		Scope:    "device",
-		DeviceId: "dev-1",
+		DeviceId: `dev-1",or="inject`,
 		NodeUid:  "node-uid-2",
 	}); err != nil {
 		t.Fatalf("device trends with node_uid failed: %v", err)
 	}
-	for _, q := range seenQueries {
-		if !strings.Contains(q, `device_id="dev-1",node_uid="node-uid-2"`) {
+	if len(seenQueries) != 6 {
+		t.Fatalf("device queries = %d, want 6: %v", len(seenQueries), seenQueries)
+	}
+	for _, q := range seenQueries[:4] {
+		if !strings.Contains(q, `device_id="dev-1\",or=\"inject",node_uid="node-uid-2"`) {
 			t.Fatalf("device query missing optional node_uid filter: %s", q)
 		}
+	}
+	if seenQueries[4] != `avg(hami_device_temperature{device_uuid="dev-1\",or=\"inject"})` {
+		t.Fatalf("device temperature query = %q", seenQueries[4])
+	}
+	if seenQueries[5] != `avg(hami_device_power{device_uuid="dev-1\",or=\"inject"})` {
+		t.Fatalf("device power query = %q", seenQueries[5])
 	}
 
 	seenQueries = nil

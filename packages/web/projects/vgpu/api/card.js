@@ -1,5 +1,5 @@
 import request from '@/utils/request';
-import resourcesApi from './resources';
+import apiClient from '@/api/client.mjs';
 import { physicalDeviceKey, readOverviewInventory } from './overview-inventory.mjs';
 import { physicalModelDistribution } from './model-distribution.mjs';
 import { matchDeviceRegistration, registrationDetail } from './device-detail-link.mjs';
@@ -16,10 +16,10 @@ class cardApi {
     };
   }
 
-  async getPhysicalCardList() {
+  async getPhysicalCardList(signal) {
     const [inventory, registrations] = await Promise.all([
-      resourcesApi.overviewInventory().then(readOverviewInventory),
-      request({ ...this.getCardList(), errorFeedback: 'inline' }).catch(() => null),
+      apiClient.getOverviewInventory({ signal }).then(readOverviewInventory),
+      apiClient.listDevices({}, { signal }).catch(() => null),
     ]);
     if (!inventory.deviceCoverage.complete && !inventory.devices.length) throw new Error('Physical inventory unavailable');
     const byNode = new Map(inventory.nodes.map(node => [node.name, node.uid]));
@@ -36,25 +36,13 @@ class cardApi {
     return { list, models: physicalModelDistribution(inventory.devices, inventory.deviceCoverage) };
   }
 
-  getCardType(data = { filters: {} }) {
-    return {
-      url: apiPrefix + '/v1/gpu-types',
-      method: 'POST',
-      data,
-    };
-  }
-
   getCardListReq(data) {
     return request(this.getCardList(data));
   }
 
-  getCardTypeReq(data = { filters: {} }) {
-    return request({ ...this.getCardType(data), errorFeedback: 'inline' });
-  }
-
   // The registration detail returns a boolean even when its health field was absent.
   async getDetailHealth(card, signal) {
-    const inventory = readOverviewInventory(await resourcesApi.overviewInventory(signal));
+    const inventory = readOverviewInventory(await apiClient.getOverviewInventory({ signal }));
     const node = inventory.nodes.find(row => row.name === card.nodeName);
     if (!node?.uid || node.uid !== card.nodeUid) return {};
     const match = matchDeviceRegistration([card]);

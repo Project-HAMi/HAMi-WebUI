@@ -272,9 +272,15 @@
       </template>
     </block-box>
 
-    <TrendTimeFilter v-model="times" :loading="trendLoading" class="card-trend-filter" />
+    <TrendTimeFilter
+      v-model="times"
+      :loading="trendLoading"
+      :min-range-ms="DEVICE_TREND_MIN_RANGE_MS"
+      :max-range-ms="DEVICE_TREND_MAX_RANGE_MS"
+      class="card-trend-filter"
+    />
     <div class="line-box">
-      <ResourceTrend kind="compute" :series="computeTrend" :allocation-label="computeAllocLegend" :vendor="detail.vendor" />
+      <ResourceTrend kind="compute" :series="computeTrend" :vendor="detail.vendor" />
       <ResourceTrend kind="memory" :series="memoryTrend" :vendor="detail.vendor" />
 
       <block-box
@@ -303,24 +309,23 @@ import BlockBox from '@/components/BlockBox.vue';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onUnmounted } from 'vue';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
-import useRangeVector from '~/vgpu/hooks/useRangeVector';
 import { METRIC_STATUS, readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
 import {
   isLowerBound,
   isNothingCounted,
   lowerBoundMessage,
   nothingCountedMessage,
-  readTrendUncounted,
   readUncountedMetric,
 } from '~/vgpu/metrics/uncounted.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource.js';
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
+import apiClient, { ApiClientError } from '@/api/client.mjs';
+import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
 import cardApi from '~/vgpu/api/card';
 import WorkloadSemiProgress from './components/WorkloadSemiProgress.vue';
-import nodeApi from '~/vgpu/api/node';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import MetricChart from '~/vgpu/components/MetricChart.vue';
 import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
@@ -339,7 +344,6 @@ import { buildNodeDetailLocation } from '~/vgpu/views/nodes/detail-location.mjs'
 import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 import { getAllocationSlotDisplay } from './allocation-slot-display.mjs';
 import DeviceFacts from './components/DeviceFacts.vue';
-import deviceConfigApi from '~/vgpu/api/deviceConfig';
 import { deviceWording, isNpuVendor } from '~/vgpu/components/device-copy.mjs';
 import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs';
 import { buildAllocationOptions, findAscendModel, getDeviceConfigStateKey } from './device-config-display.mjs';
@@ -348,19 +352,47 @@ import { migInstanceMemoryQuery, sumMigInstanceMemory } from './mig-instance-mem
 import { cardHealthDisplay } from './card-health.mjs';
 import DeviceSplit from '~/vgpu/components/DeviceSplit.vue';
 import { parseDeviceSplitPage } from '~/vgpu/components/device-split.mjs';
-import taskApi from '~/vgpu/api/task';
+
+const DEVICE_TREND_MIN_RANGE_MS = 30 * 1000;
+const DEVICE_TREND_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+const DEVICE_TREND_METRICS = [
+  { key: 'compute-allocation', metric: 'compute_allocation_percent', sectionIndex: 'compute' },
+  { key: 'compute-usage', metric: 'compute_utilization_percent', sectionIndex: 'compute' },
+  { key: 'memory-allocation', metric: 'memory_allocation_percent', sectionIndex: 'memory' },
+  { key: 'memory-usage', metric: 'memory_utilization_percent', sectionIndex: 'memory' },
+  { key: 'temperature', metric: 'temperature_celsius', sectionIndex: 'temperature' },
+  { key: 'power', metric: 'power_watts', sectionIndex: 'power' },
+];
 
 const route = useRoute();
 const { t } = useI18n();
 
 const routeCardUuid = computed(() => route.params.uuid);
+const routeNodeUid = computed(() => {
+  const value = route.query.nodeUid;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+  return '';
+});
 const {
   data: detail,
   status: detailStatus,
   retry: retryDetail,
 } = useDetailResource({
   source: routeCardUuid,
-  request: (uuid, signal) => cardApi.getCardDetail({ uid: uuid }, signal),
+  request: async (uuid, signal) => {
+    try {
+      return await apiClient.getDevice(uuid, {
+        nodeUid: routeNodeUid.value || undefined,
+        signal,
+      });
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 404 && error.reason === 'RESOURCE_GPU_NOT_FOUND') {
+        return {};
+      }
+      throw error;
+    }
+  },
   classify: (payload, uuid) =>
     classifyDetailPayload(payload, {
       identityKeys: ['uuid'],
@@ -386,23 +418,30 @@ const splitTotal = ref(undefined);
 const splitTruncated = ref(false);
 const splitStatus = ref('loading');
 let splitGeneration = 0;
+let splitController = null;
 const loadSplit = async () => {
+  splitController?.abort();
+  splitController = null;
   const generation = ++splitGeneration;
   const uuid = detailCardUuid.value;
   splitStatus.value = 'loading';
   splitTotal.value = undefined;
   splitTruncated.value = false;
   if (!uuid || !splitVisible.value) return;
+  const controller = new AbortController();
+  splitController = controller;
   try {
-    const result = await taskApi.getWorkloads({ filters: { deviceId: uuid }, page: 1, pageSize: 100 });
-    if (generation !== splitGeneration) return;
+    const result = await apiClient.listContainers({ deviceId: uuid, page: 1, pageSize: 100 }, { signal: controller.signal });
+    if (controller.signal.aborted || generation !== splitGeneration) return;
     const page = parseDeviceSplitPage(result, 100);
     cardContainers.value = page.items;
     splitTotal.value = page.totalContainers;
     splitTruncated.value = page.truncated;
     splitStatus.value = 'ready';
   } catch {
-    if (generation === splitGeneration) splitStatus.value = 'error';
+    if (!controller.signal.aborted && generation === splitGeneration) splitStatus.value = 'error';
+  } finally {
+    if (splitController === controller) splitController = null;
   }
 };
 watch(detailCardUuid, loadSplit, { immediate: true });
@@ -437,9 +476,19 @@ const headerStatusDisplay = computed(() =>
 );
 
 const deviceConfig = ref({ state: 'loading' });
-deviceConfigApi.getDeviceConfig()
-  .then((reply) => { deviceConfig.value = reply || { state: 'error' }; })
-  .catch(() => { deviceConfig.value = { state: 'error' }; });
+const deviceConfigController = new AbortController();
+apiClient.getDeviceConfig({ signal: deviceConfigController.signal })
+  .then((reply) => {
+    if (!deviceConfigController.signal.aborted) deviceConfig.value = reply || { state: 'error' };
+  })
+  .catch(() => {
+    if (!deviceConfigController.signal.aborted) deviceConfig.value = { state: 'error' };
+  });
+onUnmounted(() => {
+  splitController?.abort();
+  splitController = null;
+  deviceConfigController.abort();
+});
 const ascendModel = computed(() => findAscendModel(deviceConfig.value, detail.value?.type));
 const npuSpecVisible = computed(() => isDetailReady.value && Boolean(
   ascendModel.value || (deviceConfig.value.state !== 'loaded' && isNpuVendor(detail.value?.vendor)),
@@ -486,7 +535,6 @@ const _gaugeConfigBase = [
     percent: 0,
     query: computeAllocationQueries.query,
     totalQuery: computeAllocationQueries.totalQuery,
-    percentQuery: computeAllocationQueries.percentQuery,
     total: 0,
     used: 0,
     unit: ' ',
@@ -496,7 +544,6 @@ const _gaugeConfigBase = [
     percent: 0,
     query: memoryAllocationQueries.query,
     totalQuery: memoryAllocationQueries.totalQuery,
-    percentQuery: memoryAllocationQueries.percentQuery,
     total: 0,
     used: 0,
     unit: 'GiB',
@@ -505,7 +552,6 @@ const _gaugeConfigBase = [
     titleKey: 'dashboard.computeUsageRate',
     percent: 0,
     query: `avg(sum(hami_core_util{device_uuid=$device_uuid}) by (instance))`,
-    percentQuery: `avg(sum(hami_core_util_avg{device_uuid=$device_uuid}) by (instance))`,
     total: 100,
     used: 0,
     unit: ' ',
@@ -515,7 +561,6 @@ const _gaugeConfigBase = [
     percent: 0,
     query: memoryUsageQueries.query,
     totalQuery: memoryUsageQueries.totalQuery,
-    percentQuery: memoryUsageQueries.percentQuery,
     total: 0,
     used: 0,
     unit: 'GiB',
@@ -526,34 +571,29 @@ const renderCardQuery = (query) => renderPromQLTemplate(query, {
   device_uuid: detailCardUuid.value,
 });
 
-// Current values only: each trend chart reads its lines from one range group below.
+// Current values only: trend charts below subscribe to /api/v1/telemetry/trends.
 const gaugeData = useInstantVector(
-  _gaugeConfigBase.map(({ percentQuery, ...item }) => ({ ...item, title: t(item.titleKey) })),
+  _gaugeConfigBase.map((item) => ({ ...item, title: t(item.titleKey) })),
   renderCardQuery,
-  times,
 );
 
 // The card's allocation rate leaves out allocations whose share HAMi does not
 // state, so it reads as a lower bound unless none are confirmed.
 const uncountedQuery = buildUnknownComputeShareQuery({ selector: cardMetricSelector });
-const uncountedMetric = useInstantVector([{ query: uncountedQuery }], renderCardQuery, times);
+const uncountedMetric = useInstantVector([{ query: uncountedQuery }], renderCardQuery);
 const computeAllocUncounted = computed(() => readUncountedMetric(uncountedMetric.value[0]));
-// A chart's lines, and the count that qualifies one, share a group: they settle
-// for one range together, or the chart keeps its last range and says so.
-const trendQuery = (index) => _gaugeConfigBase[index].percentQuery;
-const { data: computeTrend } = useRangeVector(
-  [{ query: trendQuery(0) }, { query: trendQuery(2) }, { query: uncountedQuery, optional: true }],
-  renderCardQuery,
+
+const trendParams = computed(() => (detailCardUuid.value
+  ? { deviceId: detailCardUuid.value, nodeUid: detail.value?.nodeUid || detail.value?.node_uid || undefined }
+  : {}));
+const { data: rangeSeries } = useTelemetryTrends({
+  scope: 'device',
+  params: trendParams,
+  metrics: DEVICE_TREND_METRICS,
   times,
-);
-const { data: memoryTrend } = useRangeVector(
-  [{ query: trendQuery(1) }, { query: trendQuery(3) }],
-  renderCardQuery,
-  times,
-);
-const computeAllocLegend = computed(() => t(isLowerBound(readTrendUncounted(computeTrend.value[2]))
-  ? 'dashboard.allocRateLowerBoundLegend'
-  : 'dashboard.allocRateLegend'));
+});
+const computeTrend = computed(() => rangeSeries.value.filter((item) => item.sectionIndex === 'compute'));
+const memoryTrend = computed(() => rangeSeries.value.filter((item) => item.sectionIndex === 'memory'));
 
 const gaugeConfig = computed(() =>
   gaugeData.value.map((item) => ({
@@ -691,14 +731,12 @@ const lineTools = [
     unit: 'W',
   },
 ];
-// Each line is its own range group: it keeps its last result while a new range loads.
-const { data: telemetryTrend } = useRangeVector(
-  lineTools.map(({ query }, sectionIndex) => ({ query, sectionIndex })),
-  renderCardQuery,
-  times,
-);
-const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value, ...telemetryTrend.value]
-  .some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
+const telemetryTrend = computed(() => rangeSeries.value.filter(
+  (item) => item.sectionIndex === 'temperature' || item.sectionIndex === 'power',
+));
+const trendLoading = computed(() => rangeSeries.value.some(
+  (item) => item.refreshing || item.status === REQUEST_STATUS.LOADING,
+));
 // The current readings do not depend on the chart range.
 const telemetryNow = useInstantVector(lineTools.map(({ query }) => ({ query })), renderCardQuery);
 
@@ -746,7 +784,7 @@ watch(
     detail.value?.node_uid,
     detail.value?.nodeName,
   ],
-  async ([status, , directNodeUid, legacyNodeUid, nodeName]) => {
+  async ([status, , directNodeUid, legacyNodeUid, nodeName], _, onCleanup) => {
     const generation = ++nodeEnrichmentGeneration;
     nodeUid.value = '';
     if (status !== REQUEST_STATUS.READY) return;
@@ -758,13 +796,15 @@ watch(
     }
     if (!nodeName) return;
 
+    const controller = new AbortController();
+    onCleanup(() => controller.abort());
     try {
-      const { list = [] } = await nodeApi.getNodes({ filters: {} });
-      if (generation !== nodeEnrichmentGeneration) return;
+      const { list = [] } = await apiClient.listNodes({}, { signal: controller.signal });
+      if (controller.signal.aborted || generation !== nodeEnrichmentGeneration) return;
       const node = list.find((item) => item?.name === nodeName);
       nodeUid.value = node?.uid || '';
     } catch {
-      if (generation === nodeEnrichmentGeneration) {
+      if (!controller.signal.aborted && generation === nodeEnrichmentGeneration) {
         nodeUid.value = '';
       }
     }

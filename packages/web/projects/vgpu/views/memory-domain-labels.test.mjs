@@ -87,23 +87,20 @@ test('overview and details use the same trend card while keeping their own data 
   for (const source of [nodeDetail, cardDetail]) {
     assert.match(source, /<ResourceTrend kind="compute" :series="computeTrend"/);
     assert.match(source, /<ResourceTrend kind="memory" :series="memoryTrend"/);
+    assert.doesNotMatch(source, /allocRateLowerBoundLegend/);
   }
-  assert.doesNotMatch(nodeDetail, /allocRateLowerBoundLegend/);
-  assert.match(cardDetail, /:allocation-label="computeAllocLegend"/);
-  assert.match(cardDetail, /'dashboard\.allocRateLowerBoundLegend'\s*:\s*'dashboard\.allocRateLegend'/);
   assert.match(resourceTrend, /note-placement="legend"/);
 });
 
 test('a detail trend chart draws its lines from one range group', () => {
   for (const source of [cardDetail, nodeDetail]) {
     assert.doesNotMatch(source, /gaugeConfig\[\d\]\??\.data/);
+    assert.match(source, /useTelemetryTrends\(/);
+    assert.match(source, /const computeTrend = computed\(\(\) => rangeSeries\.value\.filter\(\(item\) => item\.sectionIndex === 'compute'\)\)/);
+    assert.match(source, /const memoryTrend = computed\(\(\) => rangeSeries\.value\.filter\(\(item\) => item\.sectionIndex === 'memory'\)\)/);
   }
-  assert.match(cardDetail, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
-  assert.match(cardDetail, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
-  assert.match(cardDetail, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
   assert.match(nodeDetail, /useTelemetryTrends\(\{[\s\S]*?scope: 'node'/);
-  assert.match(nodeDetail, /const computeTrend = computed\(\(\) => rangeSeries\.value\.filter\(\(item\) => item\.sectionIndex === 'compute'\)\)/);
-  assert.match(nodeDetail, /const memoryTrend = computed\(\(\) => rangeSeries\.value\.filter\(\(item\) => item\.sectionIndex === 'memory'\)\)/);
+  assert.match(cardDetail, /useTelemetryTrends\(\{[\s\S]*?scope: 'device'/);
   assert.match(resourceTrend, /:refresh-error=/);
   assert.match(metricChart, /common\.refreshFailedShowingPreviousResult/);
 });
