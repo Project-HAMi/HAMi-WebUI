@@ -1,0 +1,73 @@
+{
+  "list": [
+    {
+      "ip": "",
+      "isSchedulable": true,
+      "isReady": true,
+      "type": [
+        "NVIDIA A100"
+      ],
+      "memoryTotal": 81920,
+      "uid": "node-uid-1",
+      "name": "node-1",
+      "cardCnt": 1,
+      "osImage": "",
+      "operatingSystem": "",
+      "kernelVersion": "",
+      "containerRuntimeVersion": "",
+      "kubeletVersion": "",
+      "kubeProxyVersion": "",
+      "architecture": "",
+      "creationTimestamp": "",
+      "inventoryCoverage": {
+        "entity": "device",
+        "observed": 1,
+        "total": 1,
+        "complete": true,
+        "sources": [
+          {
+            "source": "shared_node_informer",
+            "state": "known",
+            "reason": "",
+            "params": {}
+          }
+        ],
+        "fields": {}
+      }
+    }
+  ],
+  "inventoryCoverage": {
+    "entity": "node",
+    "observed": 1,
+    "total": 1,
+    "complete": true,
+    "sources": [
+      {
+        "source": "shared_node_informer",
+        "state": "known",
+        "reason": "",
+        "params": {}
+      }
+    ],
+    "fields": {
+      "ready": {
+        "entity": "",
+        "known": 1,
+        "stale": 0,
+        "unknown": 0,
+        "conflict": 0,
+        "notApplicable": 0,
+        "reasons": {}
+      },
+      "schedulable": {
+        "entity": "",
+        "known": 1,
+        "stale": 0,
+        "unknown": 0,
+        "conflict": 0,
+        "notApplicable": 0,
+        "reasons": {}
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "checkedAt": "2023-11-14T22:13:20Z",
+  "deviceSources": {
+    "checkedKeys": [
+      "nvidia-hami",
+      "ascend-hami",
+      "hcu-plugin",
+      "legacy-dcu",
+      "metax-native",
+      "mlu-plugin",
+      "amd-hami",
+      "gcu-plugin",
+      "vxpu",
+      "neuron",
+      "biren-plugin",
+      "vastai-plugin",
+      "dcgm",
+      "npu",
+      "hcu-exporter",
+      "dcu-exporter",
+      "mx",
+      "mlu-exporter",
+      "amd-metrics",
+      "ix-exporter",
+      "gcu-exporter",
+      "neuron-monitor",
+      "xpu-exporter"
+    ],
+    "exporters": [],
+    "exportersChecked": true,
+    "plugins": [],
+    "pluginsChecked": true
+  },
+  "hami": {
+    "components": [
+      {
+        "name": "hami-scheduler",
+        "namespace": "kube-system",
+        "nodes": 1,
+        "pods": 1,
+        "ready": 1,
+        "restarts": 0
+      }
+    ],
+    "state": "ok",
+    "supported": [
+      "2.10",
+      "2.11"
+    ],
+    "versions": [
+      {
+        "buildDate": "2026-11-01",
+        "revision": "rev-1",
+        "support": "supported",
+        "targets": [
+          {
+            "component": "hami-scheduler",
+            "instance": "10.0.0.2:31993",
+            "job": "hami-scheduler",
+            "pod": "hami-scheduler-0",
+            "podUid": "sched-uid-1"
+          }
+        ],
+        "version": "v2.10.0"
+      }
+    ]
+  },
+  "kubelets": [],
+  "kubernetesVersion": "v1.31.0",
+  "prometheus": {
+    "metricsRefreshedAt": "2023-11-14T22:13:20Z",
+    "reachable": true,
+    "refreshQueryFailed": false,
+    "version": "2.55.0"
+  },
+  "webui": {
+    "commit": "",
+    "version": "dev"
+  }
+}
