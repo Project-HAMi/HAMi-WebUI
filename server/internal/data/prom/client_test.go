@@ -1099,3 +1099,76 @@ func TestClientCircuitBreakerConcurrencyInvariants(t *testing.T) {
 		}
 	})
 }
+
+func TestClientQueryStatsTrackOutcomesAndBreakerOpens(t *testing.T) {
+	exactPayload := `{"status":"success","data":{"resultType":"vector","result":[]}}`
+	var mode atomic.Int32 // 0=ok, 1=oversized, 2=503
+	server := newPrometheusAPIServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		switch mode.Load() {
+		case 0:
+			_, _ = fmt.Fprint(w, exactPayload)
+		case 1:
+			_, _ = fmt.Fprint(w, exactPayload+strings.Repeat(" ", 64))
+		case 2:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, "unavailable")
+		}
+	})
+	now := time.Unix(1760000000, 0)
+	var clockMu sync.Mutex
+	client := newTestClient(t, server.URL, TLSConfig{})
+	client.now = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return now
+	}
+	client.cooldown = 15 * time.Second
+	client.queryClient, _ = newLimitedAPIClient(server.URL, time.Second, int64(len(exactPayload)))
+
+	if _, err := client.Query(context.Background(), "up"); err != nil {
+		t.Fatalf("ok query failed: %v", err)
+	}
+	mode.Store(1)
+	if _, err := client.Query(context.Background(), "up"); !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("oversized query error = %v", err)
+	}
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Query(canceledCtx, "up"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled query error = %v", err)
+	}
+	mode.Store(2)
+	for i := 0; i < 4; i++ {
+		_, _ = client.Query(context.Background(), "up")
+	}
+
+	got := client.Stats()
+	want := QueryStats{
+		QueriesOK:              1,
+		QueriesError:           3,
+		QueriesRejectedCircuit: 1,
+		QueriesTooLarge:        1,
+		QueriesCanceled:        1,
+		CircuitOpens:           1,
+		CircuitOpen:            true,
+	}
+	if got != want {
+		t.Fatalf("Stats() = %+v, want %+v", got, want)
+	}
+
+	// Breaker must stay reported as open after cooldown expires until a recovery probe succeeds.
+	clockMu.Lock()
+	now = now.Add(client.cooldown + time.Second)
+	clockMu.Unlock()
+	if afterCooldown := client.Stats(); !afterCooldown.CircuitOpen {
+		t.Fatalf("Stats().CircuitOpen after cooldown before probe = false, want true")
+	}
+
+	mode.Store(0)
+	if _, err := client.Query(context.Background(), "up"); err != nil {
+		t.Fatalf("recovery probe error = %v", err)
+	}
+	if recovered := client.Stats(); recovered.CircuitOpen || recovered.QueriesOK != 2 {
+		t.Fatalf("Stats() after recovery probe = %+v, want CircuitOpen=false QueriesOK=2", recovered)
+	}
+}

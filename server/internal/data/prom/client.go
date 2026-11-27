@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
@@ -56,6 +57,43 @@ type Client struct {
 	openUntil        time.Time
 	failureThreshold int
 	cooldown         time.Duration
+
+	queriesOK              atomic.Uint64
+	queriesError           atomic.Uint64
+	queriesRejectedCircuit atomic.Uint64
+	queriesTooLarge        atomic.Uint64
+	queriesCanceled        atomic.Uint64
+	circuitOpens           atomic.Uint64
+}
+
+// QueryStats reports bounded-client query outcomes and circuit-breaker state.
+type QueryStats struct {
+	QueriesOK              uint64
+	QueriesError           uint64
+	QueriesRejectedCircuit uint64
+	QueriesTooLarge        uint64
+	QueriesCanceled        uint64
+	CircuitOpens           uint64
+	CircuitOpen            bool
+}
+
+// Stats returns a point-in-time snapshot of Prometheus query counters and breaker state.
+func (c *Client) Stats() QueryStats {
+	if c == nil {
+		return QueryStats{}
+	}
+	c.circuitMu.Lock()
+	circuitOpen := c.circuit != circuitClosed
+	c.circuitMu.Unlock()
+	return QueryStats{
+		QueriesOK:              c.queriesOK.Load(),
+		QueriesError:           c.queriesError.Load(),
+		QueriesRejectedCircuit: c.queriesRejectedCircuit.Load(),
+		QueriesTooLarge:        c.queriesTooLarge.Load(),
+		QueriesCanceled:        c.queriesCanceled.Load(),
+		CircuitOpens:           c.circuitOpens.Load(),
+		CircuitOpen:            circuitOpen,
+	}
 }
 
 type TLSConfig struct {
@@ -373,6 +411,7 @@ func (c *Client) afterQuery(isProbe bool, epoch uint64, err, ctxErr error) {
 		c.circuit = circuitOpen
 		c.openUntil = now.Add(cooldown)
 		c.circuitEpoch++
+		c.circuitOpens.Add(1)
 		c.circuitMu.Unlock()
 		return
 	}
@@ -386,6 +425,7 @@ func (c *Client) afterQuery(isProbe bool, epoch uint64, err, ctxErr error) {
 		c.circuit = circuitOpen
 		c.openUntil = now.Add(cooldown)
 		c.circuitEpoch++
+		c.circuitOpens.Add(1)
 		opened = true
 	}
 	fails := c.consecutiveFails
@@ -411,26 +451,47 @@ func isUpstreamAvailabilityFailure(err error) bool {
 	return true
 }
 
+func (c *Client) recordOutcome(err, ctxErr error) {
+	switch {
+	case err == nil:
+		c.queriesOK.Add(1)
+	case errors.Is(err, ErrCircuitOpen):
+		c.queriesRejectedCircuit.Add(1)
+	case errors.Is(ctxErr, context.Canceled) || errors.Is(err, context.Canceled):
+		c.queriesCanceled.Add(1)
+	case errors.Is(err, ErrResponseTooLarge):
+		c.queriesTooLarge.Add(1)
+	default:
+		c.queriesError.Add(1)
+	}
+}
+
 func (c *Client) runBounded(ctx context.Context, fn func() error) error {
 	if c.isCircuitRejected() {
+		c.recordOutcome(ErrCircuitOpen, nil)
 		return ErrCircuitOpen
 	}
 	if err := ctx.Err(); err != nil {
+		c.recordOutcome(err, err)
 		return err
 	}
 	if c.sem != nil {
 		select {
 		case c.sem <- struct{}{}:
 		case <-ctx.Done():
-			return ctx.Err()
+			err := ctx.Err()
+			c.recordOutcome(err, err)
+			return err
 		}
 		defer func() { <-c.sem }()
 		if err := ctx.Err(); err != nil {
+			c.recordOutcome(err, err)
 			return err
 		}
 	}
 	isProbe, epoch, err := c.beforeQuery()
 	if err != nil {
+		c.recordOutcome(err, nil)
 		return err
 	}
 	completed := false
@@ -441,7 +502,9 @@ func (c *Client) runBounded(ctx context.Context, fn func() error) error {
 	}()
 	queryErr := fn()
 	completed = true
-	c.afterQuery(isProbe, epoch, queryErr, ctx.Err())
+	ctxErr := ctx.Err()
+	c.afterQuery(isProbe, epoch, queryErr, ctxErr)
+	c.recordOutcome(queryErr, ctxErr)
 	return queryErr
 }
 

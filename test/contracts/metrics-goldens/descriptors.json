@@ -1,0 +1,564 @@
+[
+  {
+    "name": "hami_container_core_used",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_core_util",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_memory_used",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_memory_util",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_vcore_allocated",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "container_pod_uuid",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_vcore_allocation_known",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "container_pod_uuid",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_vgpu_allocated",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "container_pod_uuid",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_container_vmemory_allocated",
+    "type": "gauge",
+    "labels": [
+      "container_name",
+      "container_pod_uuid",
+      "device_type",
+      "device_uuid",
+      "namespace_name",
+      "node",
+      "pod_name",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_core_size",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_core_used",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_core_used_avg",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_core_util",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_core_util_avg",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_device_fan_speed_p",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_device_fan_speed_r",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_device_last_xid_error_code",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_device_memory_temperature",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_device_power",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_device_temperature",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_memory_size",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_memory_used",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_memory_util",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_vcore_scaling",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_vcore_size",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_vgpu_count",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_vmemory_scaling",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_vmemory_size",
+    "type": "gauge",
+    "labels": [
+      "device_no",
+      "device_type",
+      "device_uuid",
+      "driver_version",
+      "node",
+      "provider"
+    ]
+  },
+  {
+    "name": "hami_webui_device_compute_allocated_ratio",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_compute_capacity_ratio",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_compute_unknown_occupancies",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_info",
+    "type": "gauge",
+    "labels": [
+      "configured",
+      "device_id",
+      "device_kind",
+      "device_no",
+      "device_uuid",
+      "driver_version",
+      "mode",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "resource",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_memory_allocated_bytes",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_memory_capacity_bytes",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_memory_physical_bytes",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "source",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_memory_used_bytes",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "source",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_slots_allocated",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_slots_capacity",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_device_utilization_ratio",
+    "type": "gauge",
+    "labels": [
+      "device_id",
+      "device_kind",
+      "device_uuid",
+      "model",
+      "node",
+      "node_uid",
+      "parent_device_id",
+      "provider",
+      "source",
+      "vendor"
+    ]
+  },
+  {
+    "name": "hami_webui_metrics_refresh_duration_seconds",
+    "type": "gauge",
+    "labels": []
+  },
+  {
+    "name": "hami_webui_metrics_refresh_last_success_timestamp_seconds",
+    "type": "gauge",
+    "labels": []
+  },
+  {
+    "name": "hami_webui_metrics_refresh_success",
+    "type": "gauge",
+    "labels": []
+  },
+  {
+    "name": "hami_webui_metrics_schema_info",
+    "type": "gauge",
+    "labels": [
+      "schema"
+    ]
+  },
+  {
+    "name": "hami_webui_prom_circuit_breaker_open",
+    "type": "gauge",
+    "labels": []
+  },
+  {
+    "name": "hami_webui_prom_circuit_breaker_opens_total",
+    "type": "counter",
+    "labels": []
+  },
+  {
+    "name": "hami_webui_prom_queries_total",
+    "type": "counter",
+    "labels": [
+      "outcome"
+    ]
+  },
+  {
+    "name": "hami_webui_telemetry_batch_splits_total",
+    "type": "counter",
+    "labels": [
+      "reason"
+    ]
+  },
+  {
+    "name": "hami_webui_telemetry_observations",
+    "type": "gauge",
+    "labels": [
+      "state"
+    ]
+  }
+]
