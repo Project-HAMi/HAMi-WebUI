@@ -3,7 +3,12 @@
     <div class="vgpu-admin-page-title">{{ $t('node.title') }}</div>
 
     <div class="node-admin-top-wrap">
-      <preview-bar :handle-click="handleClick" />
+      <preview-bar
+        :handle-click="handleClick"
+        :model-distribution="vendorDistribution"
+        :rankings="rankings"
+        :ranking-status="tableStatus"
+      />
     </div>
 
     <div class="node-admin-table-wrap">
@@ -77,7 +82,7 @@
 </template>
 
 <script setup lang="jsx">
-import nodeApi from '~/vgpu/api/node';
+import apiClient from '@/api/client.mjs';
 import { useRouter, useRoute } from 'vue-router';
 import PreviewBar from '~/vgpu/components/previewBar.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
@@ -104,6 +109,7 @@ import {
   getNodeSchedulingEligibilityStatus,
   matchesNodeSchedulingEligibility,
 } from '~/vgpu/views/node/node-status.mjs';
+import { buildNodeRankings, buildNodeVendorDistribution } from './node-rankings.mjs';
 
 const router = useRouter();
 const route = useRoute();
@@ -114,7 +120,13 @@ const filters = reactive({
   keyword: '',
 });
 // Filter the full result before paginating so option counts cover every match.
-const tableState = useFetchList(() => nodeApi.getInventoryNodes(), { immediate: false });
+const tableState = useFetchList(async () => {
+  const reply = await apiClient.listNodes();
+  if (reply?.inventoryCoverage?.entity !== 'node') {
+    throw new Error('Node inventory coverage is missing');
+  }
+  return reply;
+}, { immediate: false });
 const {
   data: tableData,
   refresh: refreshTable,
@@ -123,6 +135,8 @@ const {
   status: tableStatus,
 } = tableState;
 const filterOption = createOptionFilter();
+const vendorDistribution = computed(() => buildNodeVendorDistribution(tableData.value));
+const rankings = computed(() => buildNodeRankings(tableData.value));
 const nodeModels = computed(() => [...new Set(tableData.value.flatMap((node) => node.type ?? []))]
   .filter(Boolean).sort());
 const statusOptions = computed(() => [
@@ -140,9 +154,9 @@ const cardTypeOptions = computed(() => [
   })),
 ]);
 
-const handleClick = ({ data: { name } }) => {
-  const node = tableData.value.find((row) => row.name === name);
-  const to = buildNodeDetailLocation({ uid: node?.uid, nodeName: name });
+const handleClick = ({ data: { uid, name } = {} }) => {
+  const node = tableData.value.find((row) => (uid && row.uid === uid) || row.name === name);
+  const to = buildNodeDetailLocation({ uid: node?.uid, nodeName: node?.name || name });
   if (to) router.push(to);
   else MessagePlugin.error(t('node.nodeNotFound'));
 };

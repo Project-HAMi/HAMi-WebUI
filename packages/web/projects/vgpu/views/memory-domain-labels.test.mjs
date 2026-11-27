@@ -101,8 +101,9 @@ test('a detail trend chart draws its lines from one range group', () => {
   assert.match(cardDetail, /_gaugeConfigBase\.map\(\(\{ percentQuery, \.\.\.item \}\)/);
   assert.match(cardDetail, /\[\{ query: trendQuery\(0\) \}, \{ query: trendQuery\(2\) \}, \{ query: \w+, optional: true \}\]/);
   assert.match(cardDetail, /\[\{ query: trendQuery\(1\) \}, \{ query: trendQuery\(3\) \}\]/);
-  assert.match(nodeDetail, /\[\{ query: computeAllocation\.percentQuery \}, \{ query: computeUsage\.percentQuery \}\]/);
-  assert.match(nodeDetail, /\[\{ query: memoryAllocation\.percentQuery \}, \{ query: memoryUsage\.percentQuery \}\]/);
+  assert.match(nodeDetail, /useTelemetryTrends\(\{[\s\S]*?scope: 'node'/);
+  assert.match(nodeDetail, /const computeTrend = computed\(\(\) => rangeSeries\.value\.filter\(\(item\) => item\.sectionIndex === 'compute'\)\)/);
+  assert.match(nodeDetail, /const memoryTrend = computed\(\(\) => rangeSeries\.value\.filter\(\(item\) => item\.sectionIndex === 'memory'\)\)/);
   assert.match(resourceTrend, /:refresh-error=/);
   assert.match(metricChart, /common\.refreshFailedShowingPreviousResult/);
 });

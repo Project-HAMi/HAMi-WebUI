@@ -133,7 +133,7 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 	podUC := biz.NewPodUseCase(podRepo, log.DefaultLogger)
 	summaryUC := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
 
-	nodeSvc := NewNodeService(nodeUC, podUC, summaryUC, staticSnapshotSource{snap: resourceview.Snapshot{At: now}})
+	nodeSvc := NewNodeService(nodeUC, podUC, summaryUC, resourceview.WithObservations(staticSnapshotSource{snap: resourceview.Snapshot{At: now}}, nil))
 	cardSvc := NewCardService(nodeUC, podUC)
 	ctrSvc := NewContainerService(nodeUC, podUC)
 	workloadSvc := NewWorkloadService(ctrSvc, biz.NewSchedulingUsecase(resourcesTestSchedulingRepo{}))

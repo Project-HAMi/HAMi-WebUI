@@ -237,6 +237,49 @@ func TestNodeAllocationPercentRoundsOnlyAfterDividing(t *testing.T) {
 
 func equalOptional[T comparable](a, b *T) bool { return a == b || (a != nil && b != nil && *a == *b) }
 
+func TestNodeInventoryUsageAndProviders(t *testing.T) {
+	node := testNode("hygon-node", proto.Bool(true))
+	d1 := testCard(node, "DCU", "0", "DCU-0", "K100")
+	d1.Configured = proto.Bool(true)
+	d1.UtilizationRatio = testMetric("0.4", "ratio")
+	d1.MemoryUsedBytes = testMetric("4Gi", "bytes")
+	d1.MemoryPhysicalBytes = testMetric("16Gi", "bytes")
+
+	// Unconfigured physical card still contributes observed utilization, memory usage, and canonical provider.
+	d2 := testCard(node, "HCU", "1", "HCU-1", "K100")
+	d2.Configured = proto.Bool(false)
+	d2.UtilizationRatio = testMetric("0.8", "ratio")
+	d2.MemoryUsedBytes = testMetric("12Gi", "bytes")
+	d2.MemoryPhysicalBytes = testMetric("16Gi", "bytes")
+
+	// Conflicting sample is omitted from usage averages cleanly.
+	d3 := testCard(node, "NVIDIA", "2", "GPU-2", "A100")
+	d3.UtilizationRatio = resourceview.Quantity{State: &view.FieldState{State: resourceview.Conflict}}
+	d3.MemoryUsedBytes = testMetric("20Gi", "bytes")
+	d3.MemoryPhysicalBytes = testMetric("16Gi", "bytes")
+
+	src := overviewSource{
+		Nodes:        []resourceview.Node{node},
+		Devices:      []resourceview.Device{d1, d2, d3},
+		NodeCoverage: &view.Coverage{Entity: "node", Complete: true},
+	}
+	reply, err := (&NodeService{source: &src}).GetAllNodes(context.Background(), &pb.GetAllNodesReq{UseResourceInventory: true})
+	if err != nil || len(reply.List) != 1 {
+		t.Fatalf("GetAllNodes = %v, err = %v", reply, err)
+	}
+	row := reply.List[0]
+	wantProviders := []string{"Hygon", "NVIDIA"}
+	if len(row.Providers) != len(wantProviders) || row.Providers[0] != wantProviders[0] || row.Providers[1] != wantProviders[1] {
+		t.Fatalf("Providers = %v, want %v", row.Providers, wantProviders)
+	}
+	if row.ComputeUtilizationPercent == nil || math.Abs(*row.ComputeUtilizationPercent-60) > 1e-12 {
+		t.Fatalf("ComputeUtilizationPercent = %v, want 60", row.ComputeUtilizationPercent)
+	}
+	if row.MemoryUsagePercent == nil || math.Abs(*row.MemoryUsagePercent-50) > 1e-12 {
+		t.Fatalf("MemoryUsagePercent = %v, want 50", row.MemoryUsagePercent)
+	}
+}
+
 func BenchmarkInventoryNodeList(b *testing.B) {
 	for _, n := range []int{501, 10000} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {

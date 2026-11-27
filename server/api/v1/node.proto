@@ -104,6 +104,11 @@ message NodeReply {
   // Percentages over physical cards with both known allocation and capacity.
   optional double core_allocation_percent = 24;
   optional double memory_allocation_percent = 25;
+  // Current physical utilization and memory occupancy percentages observed on this node.
+  optional double compute_utilization_percent = 26;
+  optional double memory_usage_percent = 27;
+  // Sorted accelerator providers observed on physical devices of this node.
+  repeated string providers = 28;
 }
 
 message NodesReply {

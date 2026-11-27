@@ -9,7 +9,6 @@ import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
 import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
-import { buildPhysicalAllocationQueries, buildPhysicalUsageQueries } from '../../packages/web/projects/vgpu/metrics/physical-resource-queries.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -634,7 +633,7 @@ async function localRangeAsUTC(page, values) {
 const overviewTrendCount = 1
 const trendPages = [
   ['overview', overviewTrendCount],
-  ['nodes/node-1?nodeName=node-1', 4],
+  ['nodes/node-1?nodeName=node-1', 1],
   ['accelerators/gpu-1', 7],
   ['workloads/pod-1/containers/worker', 2]
 ]
@@ -894,6 +893,94 @@ before(async() => {
           }
         ],
         total: 3
+      }
+    } else if (pathname === '/api/v1/nodes') {
+      const nodes = [
+        {
+          name: 'node-1',
+          uid: 'node-1',
+          ip: '192.0.2.10',
+          isExternal: false,
+          isReady: true,
+          isSchedulable: true,
+          providers: ['NVIDIA'],
+          coreAllocationPercent: 40,
+          computeUtilizationPercent: 40,
+          memoryAllocationPercent: 25,
+          memoryUsagePercent: 25,
+        },
+        {
+          name: 'node-readability',
+          uid: 'node-readability',
+          ip: '192.0.2.11',
+          isExternal: false,
+          isReady: false,
+          isSchedulable: true,
+          providers: ['NVIDIA'],
+        },
+        {
+          name: 'node-cordoned',
+          uid: 'node-cordoned',
+          ip: '192.0.2.12',
+          isExternal: false,
+          isReady: true,
+          isSchedulable: false,
+          providers: ['NVIDIA'],
+        },
+      ]
+      payload = listFixture('nodes', nodes)
+    } else if (/^\/api\/v1\/nodes\/[^/]+$/.test(pathname)) {
+      const uid = decodeURIComponent(pathname.slice('/api/v1/nodes/'.length))
+      const requestKey = `node:${uid}`
+      const attempt = countBackendRequest(requestKey)
+      if (uid === 'node-retry' && attempt === 1) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          code: 503,
+          reason: 'TEMPORARILY_UNAVAILABLE',
+          message: 'temporary node lookup failure'
+        }))
+        return
+      }
+      payload = {
+        uid,
+        name: uid,
+        ip: '192.0.2.10',
+        isSchedulable: uid !== 'node-cordoned',
+        isReady: uid !== 'node-readability',
+        type: ['NVIDIA'],
+        providers: ['NVIDIA'],
+        vgpuUsed: 0,
+        vgpuTotal: 1,
+        coreUsed: 0,
+        coreTotal: 100,
+        memoryUsed: 0,
+        memoryTotal: 16_384,
+        cardCnt: 1,
+        coreAllocationPercent: 40,
+        computeUtilizationPercent: 40,
+        memoryAllocationPercent: 25,
+        memoryUsagePercent: 25,
+        inventoryCoverage: coverageFixture('device', 1),
+      }
+    } else if (/^\/api\/v1\/nodes\/[^/]+\/containers$/.test(pathname)) {
+      const uid = decodeURIComponent(pathname.slice('/api/v1/nodes/'.length, -'/containers'.length))
+      payload = {
+        code: 0,
+        allocationNodeUid: uid,
+        items: [{
+          name: 'worker',
+          podName: 'job-1',
+          appName: 'job-1',
+          podUid: 'pod-1',
+          namespace: 'default',
+          nodeName: requestURL.searchParams.get('node_name') || uid,
+          nodeUid: uid,
+          allocatedMem: 4096,
+          allocatedCores: 30,
+          devices: [],
+        }],
+        total: 1,
       }
     } else if (pathname === '/api/v1/overview/inventory') {
       payload = {
@@ -2009,7 +2096,7 @@ test('runtime language updates the document and TDesign services', async() => {
 
   try {
     await page.goto(
-      `${target}${basePath}nodes`,
+      `${target}${basePath}accelerators`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('html[lang="en"]').waitFor()
@@ -2051,6 +2138,18 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
     return query
   })
   const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
+  const nodeRankingRows = [0, 1, 2].map((i) => ({
+    uid: `node-${i}`,
+    name: `node-${i}`,
+    providers: ['NVIDIA'],
+    isReady: true,
+    isSchedulable: true,
+    coreAllocationPercent: [7, 31, 18][i],
+    computeUtilizationPercent: [42, 9, 26][i],
+    memoryAllocationPercent: [14, 6, 21][i],
+    memoryUsagePercent: [1, 33, 12][i],
+  }))
+  await page.route('**/api/v1/nodes', route => route.fulfill({ json: listFixture('nodes', nodeRankingRows) }))
   const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
   const physicalCards = [0, 1, 2].map(i => {
     const [coreUsed, utilization, memoryUsed, occupancy] = deviceQueries.map(query => fixtures.get(query).data[i].value)
@@ -2411,7 +2510,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
 test('detail loading shells follow each page layout and container breakpoints', { timeout: 120_000 }, async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const fixtures = [
-    { name: 'node', route: 'nodes/node-1?nodeName=node-1', api: /\/v1\/node\?/, charts: 2, legendCounts: [2, 2], shells: '.node-overview-panel',
+    { name: 'node', route: 'nodes/node-1?nodeName=node-1', api: /\/api\/v1\/nodes\/[^/?]+$/, charts: 2, legendCounts: [2, 2], shells: '.node-overview-panel',
       groups: { '.node-overview-panel': 2, '.node-system-resource-cards > li': 2 } },
     { name: 'card', route: 'accelerators/gpu-1', api: /\/v1\/gpu\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
       groups: { '.fact-identities > .fact': 2, '.device-facts__grid > .fact': 2, '.fact--sensors > .fact__sensor': 2, '.resource-overview-cards > li': 2 } },
@@ -2757,7 +2856,7 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
           assert.equal(requests.length, seriesCount)
           for (const request of requests) {
-            const expected = route === 'overview'
+            const expected = route === 'overview' || route.startsWith('nodes/')
               ? { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z' }
               : { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' }
             assert.deepEqual(request.range, expected)
@@ -2767,7 +2866,7 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * 2)
           for (const request of requests.slice(seriesCount)) {
-            const expected = route === 'overview'
+            const expected = route === 'overview' || route.startsWith('nodes/')
               ? { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z' }
               : { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' }
             assert.deepEqual(request.range, expected)
@@ -4052,6 +4151,19 @@ test('distribution legends keep each name and its count on one line', async() =>
     })))
   await routePhysicalFixture(page, devices)
   await page.route('**/v1/gpus', route => route.fulfill({ json: { list: devices } }))
+  const legendNodes = legends['count by (provider)'].flatMap(([provider, count]) =>
+    Array.from({ length: count }, (_, index) => ({
+      name: `${provider.toLowerCase()}-node-${index}`,
+      uid: `${provider.toLowerCase()}-${index}`,
+      providers: [provider],
+      isReady: true,
+      isSchedulable: true,
+      coreAllocationPercent: Math.max(0, 100 - index),
+      computeUtilizationPercent: 40,
+      memoryAllocationPercent: 50,
+      memoryUsagePercent: 25,
+    })))
+  await page.route('**/api/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', legendNodes) }))
   const legendRows = () => page.locator('.nodeCard-legend li').evaluateAll((items) => items.map((item) => {
     const text = item.querySelector('.ellipsis-text')
     const range = document.createRange()
@@ -4844,23 +4956,27 @@ function nodeAllocationFixture(count = 8) {
 async function installNodeAllocationFixture(page, state) {
   const requests = []
   page.on('request', (request) => {
-    const path = new URL(request.url()).pathname
-    if (/\/v1\/(?:gpus?|containers?|workloads)$/.test(path)) {
-      requests.push({ path: path.slice(path.lastIndexOf('/')), body: request.postDataJSON() })
+    const parsed = new URL(request.url())
+    const path = parsed.pathname
+    if (/\/api\/v1\/(?:devices|nodes\/[^/]+\/containers)$/.test(path)) {
+      requests.push({
+        path: path.endsWith('/devices') ? '/devices' : '/containers',
+        query: Object.fromEntries(parsed.searchParams),
+      })
     }
   })
-  await page.route('**/v1/node?**', (route) => route.fulfill({ json: {
+  await page.route(`**/api/v1/nodes/${allocationNode.uid}`, (route) => route.fulfill({ json: {
     ...allocationNode, ip: '192.0.2.30', isReady: true, isSchedulable: true,
     inventoryCoverage: coverageFixture('device', state.devices.length),
-    type: ['NVIDIA'], cardCnt: state.devices.length,
+    type: ['NVIDIA'], providers: ['NVIDIA'], cardCnt: state.devices.length,
     vgpuUsed: state.devices.length * 2, vgpuTotal: state.devices.length * 10,
     coreUsed: state.devices.length * 30, coreTotal: state.devices.length * 100,
     memoryUsed: state.devices.length * 12288, memoryTotal: state.devices.length * 81920,
   } }))
-  await page.route('**/v1/gpus', (route) => route.fulfill({ json: {
+  await page.route('**/api/v1/devices?*', (route) => route.fulfill({ json: {
     code: 0, list: state.devices, total: state.devices.length,
   } }))
-  await page.route('**/v1/containers', (route) => route.fulfill({
+  await page.route(`**/api/v1/nodes/${allocationNode.uid}/containers?*`, (route) => route.fulfill({
     status: state.containerStatus ?? 200,
     json: state.containerPayload ?? { code: 0, allocationNodeUid: allocationNode.uid, items: state.containers, total: state.containers.length },
   }))
@@ -4868,9 +4984,9 @@ async function installNodeAllocationFixture(page, state) {
 }
 
 function assertNodeAllocationRequests(requests) {
-  assert.deepEqual(requests.map(({ path }) => path).sort(), ['/containers', '/gpus'], 'Node allocation must use two batch requests without per-device detail or workload requests')
-  assert.deepEqual(requests.find(({ path }) => path === '/gpus').body, { filters: { nodeName: allocationNode.name, nodeUid: allocationNode.uid } })
-  assert.deepEqual(requests.find(({ path }) => path === '/containers').body, { filters: { nodeName: allocationNode.name, nodeUid: allocationNode.uid }, useNodeAllocation: true })
+  assert.deepEqual(requests.map(({ path }) => path).sort(), ['/containers', '/devices'], 'Node allocation must use two batch requests without per-device detail or workload requests')
+  assert.deepEqual(requests.find(({ path }) => path === '/devices').query, { node_name: allocationNode.name, node_uid: allocationNode.uid })
+  assert.deepEqual(requests.find(({ path }) => path === '/containers').query, { node_name: allocationNode.name })
 }
 
 test('node device allocation uses two node-scoped batches and shows at most four devices initially', async() => {
@@ -5921,7 +6037,7 @@ test('typing over a calendar preview preserves invalid drafts without selecting 
 test('list loading tables reuse visible column geometry and retain rows during refresh', { timeout: 120_000 }, async(t) => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const fixtures = [
-    { name: 'node', route: 'nodes', api: /\/api\/vgpu\/v1\/nodes$/, table: '.node-table',
+    { name: 'node', route: 'nodes', api: /\/api\/v1\/nodes$/, table: '.node-table',
       layout: 'auto', widths: ['', '', '', '', ''], minWidths: ['200px', '200px', '100px', '280px', '280px'] },
     { name: 'card', route: 'accelerators', api: /\/api\/vgpu\/v1\/gpus$/, table: '.accelerator-table',
       layout: 'fixed', widths: ['250px', '150px', '170px', '200px', '220px', '180px', '220px', '180px'],
@@ -6196,7 +6312,11 @@ test('node allocation loading follows identity and both allocation snapshots wit
         const promise = new Promise((resolve) => { release = resolve })
         return [key, { promise, release, delivered: false }]
       }))
-      for (const [key, pattern] of [['node', '**/v1/node?**'], ['devices', '**/v1/gpus'], ['containers', '**/v1/containers']]) {
+      for (const [key, pattern] of [
+        ['node', `**/api/v1/nodes/${allocationNode.uid}`],
+        ['devices', '**/api/v1/devices?*'],
+        ['containers', `**/api/v1/nodes/${allocationNode.uid}/containers?*`],
+      ]) {
         await page.route(pattern, async(route) => {
           await gates[key].promise
           await route.fallback()
@@ -6464,7 +6584,7 @@ test('list no-match recovery fits common screen widths in both languages', { tim
     for (const config of listSearchCases) {
       const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
       if (config.endpoint === 'gpus') await routePhysicalFixture(page, [])
-      await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } }))
+      await page.route(config.endpoint === 'nodes' ? '**/api/v1/nodes' : `**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } }))
       try {
         await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
         await page.getByTestId('stateful-table-empty').waitFor()
@@ -6571,12 +6691,15 @@ const localSearchPages = [
 ]
 const mockLocalSearchLists = async(page, counts = {}) => {
   await routePhysicalFixture(page, localSearchRows.gpus)
-  for (const endpoint of ['nodes', 'gpus']) {
-    await page.route(`**/api/vgpu/v1/${endpoint}`, (route) => {
-      counts[endpoint] = (counts[endpoint] ?? 0) + 1
-      return route.fulfill({ json: listFixture(endpoint, localSearchRows[endpoint]) })
-    })
-  }
+  await page.route('**/api/v1/nodes', (route) => {
+    counts.nodes = (counts.nodes ?? 0) + 1
+    return route.fulfill({ json: listFixture('nodes', localSearchRows.nodes) })
+  })
+  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', localSearchRows.nodes) }))
+  await page.route('**/api/vgpu/v1/gpus', (route) => {
+    counts.gpus = (counts.gpus ?? 0) + 1
+    return route.fulfill({ json: listFixture('gpus', localSearchRows.gpus) })
+  })
   const types = [...new Set(localSearchRows.gpus.map((gpu) => gpu.type))].map((type) => ({ type }))
   await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: types } }))
   return counts
@@ -6633,7 +6756,7 @@ test('node pagination keeps the detail return position and adjusts to filters an
   let nodes = Array.from({ length: 25 }, (_, i) => ({
     ...localSearchRows.nodes[0], name: `gpu-${i + 1}`, uid: `node-${i + 1}`,
   }))
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', nodes) }))
+  await page.route('**/api/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', nodes) }))
   const rows = page.locator('.node-table tbody tr')
   const expectPage = async(firstNode, count) => {
     await rows.first().getByText(firstNode, { exact: true }).waitFor()
@@ -6680,20 +6803,15 @@ test('node rankings open the same node UID as the current table after a node is 
   const page = await browser.newPage({ locale: 'en-US' })
   const name = 'gpu-worker'
   let uid = 'old-node'
-  const reads = []
-  await page.route('**/api/vgpu/v1/nodes', (route) => {
-    reads.push(route.request().postDataJSON())
+  let nodeListCalls = 0
+  await page.route('**/api/v1/nodes', (route) => {
+    nodeListCalls += 1
     return route.fulfill({ json: listFixture('nodes', [
-      { name, uid, ip: '192.0.2.2', type: [], isReady: true, isSchedulable: true },
-      { name: 'registered', uid: 'registered-uid', ip: '192.0.2.3', type: ['A100'], isReady: true, isSchedulable: true,
+      { name, uid, ip: '192.0.2.2', type: [], providers: ['NVIDIA'], computeUtilizationPercent: 80, isReady: true, isSchedulable: true },
+      { name: 'registered', uid: 'registered-uid', ip: '192.0.2.3', type: ['A100'], providers: ['NVIDIA'], isReady: true, isSchedulable: true,
         coreTotal: 100, coreUsed: 0, coreAllocationPercent: 0, memoryTotal: 1024 },
     ]) })
   })
-  const query = buildGroupedResourceTopQueries('node').computeUsage
-  await page.route('**/v1/monitor/query/instant-vector', (route) =>
-    route.request().postDataJSON()?.query === query
-      ? route.fulfill({ json: { data: [{ metric: { node: name }, value: 80 }] } })
-      : route.continue())
   try {
     await page.goto(`${target}${basePath}nodes`, { waitUntil: 'networkidle' })
     const row = page.locator('.node-table').getByRole('link', { name, exact: true })
@@ -6710,12 +6828,11 @@ test('node rankings open the same node UID as the current table after a node is 
     uid = 'replacement-node'
     await page.getByRole('button', { name: 'Refresh', exact: true }).click()
     await waitUntil(async() => (await row.getAttribute('href')).includes(uid), 'Refresh must show the replacement')
-    const detailRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/v1/node'))
+    const detailRequest = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith(`/api/v1/nodes/${uid}`))
     await ranking.click()
     await page.waitForURL(`**/nodes/${uid}?nodeName=${name}`)
-    assert.equal(new URL((await detailRequest).url()).searchParams.get('useResourceInventory'), 'true')
-    assert.deepEqual(reads, [{ useResourceInventory: true }, { useResourceInventory: true }],
-      'Both links must use the same accelerator roster per load or refresh')
+    await detailRequest
+    assert.equal(nodeListCalls, 2, 'Both links must use the same accelerator roster per load or refresh')
   } finally {
     await page.close()
   }
@@ -6724,26 +6841,17 @@ test('node rankings open the same node UID as the current table after a node is 
 test('Ascend node rates and capacity come from one inventory snapshot, with per-node physical allocation history', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
-  const node = { uid: 'ascend-uid', name: 'ascend-host', coreAllocationPercent: 29.6875, memoryAllocationPercent: 0,
+  const node = { uid: 'ascend-uid', name: 'ascend-host', providers: ['Ascend'], coreAllocationPercent: 29.6875, memoryAllocationPercent: 0,
+    computeUtilizationPercent: 25, memoryUsagePercent: 50,
     coreTotal: 800, memoryTotal: 8192, isReady: true, isSchedulable: true }
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', [node]) }))
-  await page.route('**/v1/node?**', (route) => route.fulfill({ json: { ...node, inventoryCoverage: coverageFixture('device', 8) } }))
-  const grouped = buildGroupedResourceTopQueries('node')
-  const usage = buildPhysicalUsageQueries({ byNode: true, selector: `node="${node.name}",node_uid="${node.uid}"` })
-  const instantValues = new Map([
-    [grouped.computeAllocation, node.coreAllocationPercent], [grouped.memoryAllocation, node.memoryAllocationPercent],
-    [usage.computeUsage.query, 25], [usage.memoryUsage.query, 2], [usage.memoryUsage.totalQuery, 4]
-  ])
-  await page.route('**/v1/monitor/query/instant-vector', (route) => {
-    const value = instantValues.get(route.request().postDataJSON()?.query)
-    return value === undefined ? route.continue() : route.fulfill({ json: { data: [{ metric: { node: node.name }, value }] } })
-  })
-  const ranges = []
-  const instant = []
+  await page.route('**/api/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', [node]) }))
+  await page.route(`**/api/v1/nodes/${node.uid}`, (route) => route.fulfill({ json: { ...node, inventoryCoverage: coverageFixture('device', 8) } }))
+  const trendQueries = []
   page.on('request', (request) => {
-    const path = new URL(request.url()).pathname
-    if (path.endsWith('/range-vector')) ranges.push(request.postDataJSON().query)
-    if (path.endsWith('/instant-vector')) instant.push(request.postDataJSON().query)
+    const parsed = new URL(request.url())
+    if (parsed.pathname.endsWith('/api/v1/telemetry/trends')) {
+      trendQueries.push(Object.fromEntries(parsed.searchParams))
+    }
   })
   try {
     await page.goto(`${target}${basePath}nodes`, { waitUntil: 'networkidle' })
@@ -6753,22 +6861,16 @@ test('Ascend node rates and capacity come from one inventory snapshot, with per-
     const rankings = page.locator('.tab-top-list')
     await rankings.nth(0).getByText('29.69 %', { exact: true }).waitFor()
     await rankings.nth(1).getByText('0 %', { exact: true }).waitFor()
-    assert.equal(instant.some((query) => query.includes('hami_container_vcore_allocation_known')), false)
-    instant.length = 0
     await row.getByRole('link', { name: node.name, exact: true }).click()
     const cards = page.locator('.node-system-resource-cards .resource-card')
     await cards.first().getByText('29.69%', { exact: true }).waitFor()
     await cards.last().getByText('0.00%', { exact: true }).waitFor()
     assert.equal(await cards.first().locator('.resource-card-value').innerText(), '8')
     assert.equal(await cards.last().locator('.resource-card-value').innerText(), '8.00 GiB')
-    const scoped = buildPhysicalAllocationQueries({ selector: `node="${node.name}",node_uid="${node.uid}"` })
-    await waitUntil(() => [scoped.computeAllocation, scoped.memoryAllocation].every((metric) => ranges.includes(metric.percentQuery)),
-      'Both allocation trends must scope the physical formula to the opened node')
+    await waitUntil(() => trendQueries.some((q) => q.scope === 'node' && q.node === node.name && q.node_uid === node.uid),
+      'Node trends must scope /api/v1/telemetry/trends to the opened node')
     await cards.first().getByText('25.00%', { exact: true }).waitFor()
     await cards.last().getByText('50.00%', { exact: true }).waitFor()
-    await waitUntil(() => [usage.computeUsage, usage.memoryUsage].every((metric) => ranges.includes(metric.percentQuery)),
-      'Both usage trends must measure the same physical devices as the node ranking')
-    assert.equal(instant.some((query) => query.includes('allocated')), false, 'Current allocation must use the same snapshot as its capacity')
   } finally {
     await page.close()
   }
@@ -6778,7 +6880,7 @@ test('node detail distinguishes a removed node from an incomplete inventory or a
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
   let response
-  await page.route('**/v1/node?**', (route) => route.fulfill(response))
+  await page.route('**/api/v1/nodes/*', (route) => route.fulfill(response))
   try {
     for (const [status, json, state] of [
       [404, { reason: 'RESOURCE_NODE_NOT_FOUND' }, 'missing'],
@@ -6790,7 +6892,7 @@ test('node detail distinguishes a removed node from an incomplete inventory or a
       await page.goto(`${target}${basePath}nodes/removed-uid`)
       await page.getByTestId(`detail-page-${state}`).waitFor()
     }
-    await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: [] } }))
+    await page.route('**/api/v1/nodes', (route) => route.fulfill({ json: { list: [] } }))
     await page.goto(`${target}${basePath}nodes`)
     await page.getByTestId('stateful-table-error').waitFor()
     assert.equal(await page.getByTestId('stateful-table-empty').count(), 0, 'An older roster cannot confirm there are no nodes')
@@ -7194,7 +7296,7 @@ test('node and accelerator dropdown counts wait for a loaded list and fit their 
     const held = []
     const isGPU = config.endpoint === 'gpus'
     const fixture = list => isGPU ? physicalFixture(list) : listFixture(config.endpoint, list)
-    await page.route(isGPU ? '**/api/v1/overview/inventory' : '**/api/vgpu/v1/nodes', (route) => {
+    await page.route(isGPU ? '**/api/v1/overview/inventory' : '**/api/v1/nodes', (route) => {
       if (answer === 'hold') held.push(route)
       else if (answer === 'fail') route.fulfill({ status: 500, json: { message: 'unavailable' } })
       else route.fulfill({ json: fixture(answer === 'empty' ? [] : localSearchRows[config.endpoint]) })

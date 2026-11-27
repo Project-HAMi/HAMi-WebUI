@@ -24,8 +24,12 @@ type NodeService struct {
 	source  resourceview.SnapshotSource
 }
 
-func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.SummaryUseCase, source resourceview.SnapshotSource) *NodeService {
-	return &NodeService{uc: uc, pod: pod, summary: summary, source: source}
+func NewNodeService(uc *biz.NodeUsecase, pod *biz.PodUseCase, summary *biz.SummaryUseCase, source *resourceview.ObservedSnapshotSource) *NodeService {
+	var snapSource resourceview.SnapshotSource
+	if source != nil {
+		snapSource = source
+	}
+	return &NodeService{uc: uc, pod: pod, summary: summary, source: snapSource}
 }
 
 func (s *NodeService) GetSummary(ctx context.Context, req *pb.GetSummaryReq) (*pb.DeviceSummaryReply, error) {

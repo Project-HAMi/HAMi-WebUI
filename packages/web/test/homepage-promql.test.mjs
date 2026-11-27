@@ -5,15 +5,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { buildPhysicalAllocationQueries, buildPhysicalResourceQueries } from '../projects/vgpu/metrics/physical-resource-queries.mjs';
+import {
+  buildPhysicalAllocationQueries,
+  buildPhysicalResourceQueries,
+  buildPhysicalUsageQueries,
+} from '../projects/vgpu/metrics/physical-resource-queries.mjs';
 
 import { nodeVendorDistributionQuery } from '../projects/vgpu/metrics/query-contract.mjs';
-import { nodeResourceQueries } from '../projects/vgpu/views/node/admin/metric-config.mjs';
 import { renderPromQLTemplate } from '../projects/vgpu/metrics/promql-template.mjs';
 
 const promtool = process.env.PROMTOOL || 'promtool';
 const queries = buildPhysicalResourceQueries();
 const nodeQueries = buildPhysicalResourceQueries({ byNode: true });
+const nodeResourceQueries = {
+  ...buildPhysicalAllocationQueries({ selector: 'node=$node,node_uid=$uid' }),
+  ...buildPhysicalUsageQueries({ selector: 'node=$node,node_uid=$uid', byNode: true }),
+};
 const scopedNode = buildPhysicalAllocationQueries({ selector: 'node="node-a"' });
 const nodeDetail = buildPhysicalResourceQueries({ byNode: true, selector: 'node="node-a"' });
 const metricNames = {

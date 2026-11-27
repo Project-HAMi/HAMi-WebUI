@@ -223,7 +223,13 @@
 
     <NodeDeviceAllocation :node="allocationNode" />
 
-    <TrendTimeFilter v-model="times" class="node-trend-filter" :loading="trendLoading" />
+    <TrendTimeFilter
+      v-model="times"
+      class="node-trend-filter"
+      :loading="trendLoading"
+      :min-range-ms="NODE_TREND_MIN_RANGE_MS"
+      :max-range-ms="NODE_TREND_MAX_RANGE_MS"
+    />
 
     <div class="line-box">
       <ResourceTrend kind="compute" :series="computeTrend" />
@@ -248,17 +254,22 @@ import {
   classifyDetailPayload,
 } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
-import useInstantVector from '~/vgpu/hooks/useInstantVector';
-import useRangeVector from '~/vgpu/hooks/useRangeVector';
-import { readReadyMetricField } from '~/vgpu/hooks/instant-vector-state.mjs';
-import nodeApi from '~/vgpu/api/node';
+import apiClient, { ApiClientError } from '@/api/client.mjs';
+import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
 import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
-import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
-import { nodeResourceQueries, nodeUsageGaugeConfigs } from './metric-config.mjs';
 import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
 import NodeDeviceAllocation from './NodeDeviceAllocation.vue';
+
+const NODE_TREND_MIN_RANGE_MS = 30 * 1000;
+const NODE_TREND_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+const NODE_TREND_METRICS = [
+  { key: 'compute-allocation', metric: 'compute_allocation_percent', sectionIndex: 'compute' },
+  { key: 'compute-usage', metric: 'compute_utilization_percent', sectionIndex: 'compute' },
+  { key: 'memory-allocation', metric: 'memory_allocation_percent', sectionIndex: 'memory' },
+  { key: 'memory-usage', metric: 'memory_utilization_percent', sectionIndex: 'memory' },
+];
 
 const route = useRoute();
 const { t, locale } = useI18n();
@@ -274,7 +285,20 @@ const {
   retry: retryDetail,
 } = useDetailResource({
   source: nodeSource,
-  request: (uid, signal) => nodeApi.getInventoryNode(uid, signal),
+  request: async (uid, signal) => {
+    try {
+      const reply = await apiClient.getNode(uid, { signal });
+      if (reply?.inventoryCoverage?.entity !== 'device') {
+        throw new Error('Node inventory coverage is missing');
+      }
+      return reply;
+    } catch (error) {
+      if (error instanceof ApiClientError && error.status === 404 && error.reason === 'RESOURCE_NODE_NOT_FOUND') {
+        return {};
+      }
+      throw error;
+    }
+  },
   classify: (payload, uid) =>
     classifyDetailPayload(payload, {
       identityKeys: ['uid', 'name'],
@@ -295,29 +319,24 @@ const start = new Date();
 start.setTime(start.getTime() - 3600 * 1000);
 
 const times = ref([start, end]);
-const { computeAllocation, computeUsage, memoryAllocation, memoryUsage } = nodeResourceQueries;
+const trendParams = computed(() => (allocationNode.value
+  ? { node: allocationNode.value.name, nodeUid: allocationNode.value.uid }
+  : {}));
 
-const renderNodeQuery = (query) => renderPromQLTemplate(query, {
-  node: allocationNode.value?.name ?? 'undefined',
-  uid: allocationNode.value?.uid ?? 'undefined',
+// Current allocation, capacity, and physical usage come from one inventory snapshot.
+const { data: rangeSeries } = useTelemetryTrends({
+  scope: 'node',
+  params: trendParams,
+  metrics: NODE_TREND_METRICS,
+  times,
 });
-
-// Current allocation and its capacity come from the same inventory response as the list.
-const usageGauges = useInstantVector(nodeUsageGaugeConfigs, renderNodeQuery);
-const { data: computeTrend } = useRangeVector(
-  [{ query: computeAllocation.percentQuery }, { query: computeUsage.percentQuery }],
-  renderNodeQuery, times,
-);
-const { data: memoryTrend } = useRangeVector(
-  [{ query: memoryAllocation.percentQuery }, { query: memoryUsage.percentQuery }],
-  renderNodeQuery, times,
-);
-const trendLoading = computed(() => [...computeTrend.value, ...memoryTrend.value]
-  .some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
+const computeTrend = computed(() => rangeSeries.value.filter((item) => item.sectionIndex === 'compute'));
+const memoryTrend = computed(() => rangeSeries.value.filter((item) => item.sectionIndex === 'memory'));
+const trendLoading = computed(() => rangeSeries.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
 const computeAllocPercentRaw = computed(() => detail.value.coreAllocationPercent);
 const memoryAllocPercentRaw = computed(() => detail.value.memoryAllocationPercent);
-const computeUsagePercentRaw = computed(() => readReadyMetricField(usageGauges.value[0], 'percent'));
-const memoryUsagePercentRaw = computed(() => readReadyMetricField(usageGauges.value[1], 'percent'));
+const computeUsagePercentRaw = computed(() => detail.value.computeUtilizationPercent);
+const memoryUsagePercentRaw = computed(() => detail.value.memoryUsagePercent);
 
 const buildPercentViews = (raw) => {
   const progress = computed(() => Number.isFinite(raw.value) ? Math.max(0, Math.min(100, raw.value)) : undefined);
