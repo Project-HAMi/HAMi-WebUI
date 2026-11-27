@@ -7,7 +7,7 @@
 </template>
 
 <script setup>
-import VendorMark from '../../../components/VendorMark.vue';
+import VendorMark from '../../components/VendorMark.vue';
 import { RouterLink } from 'vue-router';
 defineProps({
   row: { type: Object, required: true },

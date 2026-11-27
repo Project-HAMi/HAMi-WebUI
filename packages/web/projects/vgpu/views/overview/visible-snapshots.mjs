@@ -1,4 +1,4 @@
-import { formatQueryTimestamp } from '../../../../../src/utils/query-time.mjs';
+import { formatQueryTimestamp } from '../../../../src/utils/query-time.mjs';
 
 const interval = 30_000;
 

@@ -147,16 +147,16 @@
 
 <script setup>
 import UsageMark from './UsageMark.vue';
-import VendorMark from '../../../components/VendorMark.vue';
-import { gpuVendor } from '../../../metrics/vendor-colors.mjs';
+import VendorMark from '../../components/VendorMark.vue';
+import { gpuVendor } from '../../metrics/vendor-colors.mjs';
 import { computed, nextTick, onMounted, onBeforeUnmount, provide, ref, shallowRef, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
 import Block from './Block.vue';
 import { ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon } from 'tdesign-icons-vue-next';
 import { binWidth, makeUsageSeries, validRate } from './device-usage-series.mjs';
-import useLocalPagination from '../../../hooks/useLocalPagination';
-import { buildNodeDetailLocation } from '../../node/detail-location.mjs';
+import useLocalPagination from '../../hooks/useLocalPagination';
+import { buildNodeDetailLocation } from '../nodes/detail-location.mjs';
 
 const emit = defineEmits(['details-visible']);
 const props = defineProps({

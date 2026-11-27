@@ -1,4 +1,4 @@
-import { buildNodeDetailLocation } from '../../node/detail-location.mjs';
+import { buildNodeDetailLocation } from '../nodes/detail-location.mjs';
 
 export const isCount = value => Number.isSafeInteger(value) && value >= 0;
 

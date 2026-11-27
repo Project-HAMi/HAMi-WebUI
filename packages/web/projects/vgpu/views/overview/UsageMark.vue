@@ -11,7 +11,7 @@
 
 <script setup>
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
-import { LONG_TEXT_TOOLTIP_STYLE } from '../../../components/tooltip-policy.mjs';
+import { LONG_TEXT_TOOLTIP_STYLE } from '../../components/tooltip-policy.mjs';
 
 defineOptions({ inheritAttrs: false });
 const props = defineProps({ text: { type: String, required: true }, disabled: Boolean });

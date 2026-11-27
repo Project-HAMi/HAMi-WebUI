@@ -91,7 +91,7 @@ import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import TextPlus from '@/components/TextPlus.vue';
-import { buildNodeDetailLocation } from '../detail-location.mjs';
+import { buildNodeDetailLocation } from './detail-location.mjs';
 import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { MessagePlugin } from 'tdesign-vue-next';
@@ -108,7 +108,7 @@ import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import {
   getNodeSchedulingEligibilityStatus,
   matchesNodeSchedulingEligibility,
-} from '~/vgpu/views/node/node-status.mjs';
+} from '~/vgpu/views/nodes/node-status.mjs';
 import { buildNodeRankings, buildNodeVendorDistribution } from './node-rankings.mjs';
 
 const router = useRouter();

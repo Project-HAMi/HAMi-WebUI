@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import english from '../../../../../src/locales/en.js';
-import chinese from '../../../../../src/locales/zh.js';
+import english from '../../../../src/locales/en.js';
+import chinese from '../../../../src/locales/zh.js';
 import {
   describeSchedulingConstraints, formatSchedulingAgo, formatSchedulingDuration, formatSchedulingResource, formatSchedulingWait, formatToleration, getSchedulingChecks,
   getSchedulingDetailError, getSchedulingReasons, getSchedulingRequestTiles, getWorkloadRequestTotals, getSchedulingSummary, schedulingIdentity, tokenizeJSON,

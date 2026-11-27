@@ -54,9 +54,9 @@ test('detail queries do not regex-match exact resource identities', () => {
   const exactIdentityRegex =
     /\b(?:node|pod|pod_name|container|container_name|namespace|namespace_name|device_uuid)=~/;
   const detailFiles = [
-    '../views/node/admin/Detail.vue',
-    '../views/card/admin/Detail.vue',
-    '../views/task/admin/Detail.vue',
+    '../views/nodes/Detail.vue',
+    '../views/accelerators/Detail.vue',
+    '../views/workloads/Detail.vue',
   ];
 
   for (const file of detailFiles) {

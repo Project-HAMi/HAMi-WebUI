@@ -1,7 +1,7 @@
-import { physicalModelDistribution } from '../../../api/model-distribution.mjs';
-import { physicalDeviceKey, readCoverageCount, readOverviewInventory } from '../../../api/overview-inventory.mjs';
-import { isNodeSchedulingEligible } from '../../node/node-status.mjs';
-import { optionCountOf, readOptionCounts } from '../../task/admin/option-counts.mjs';
+import { physicalModelDistribution } from '../../api/model-distribution.mjs';
+import { physicalDeviceKey, readCoverageCount, readOverviewInventory } from '../../api/overview-inventory.mjs';
+import { isNodeSchedulingEligible } from '../nodes/node-status.mjs';
+import { optionCountOf, readOptionCounts } from '../workloads/option-counts.mjs';
 import { readWorkloadTotal } from './overview-state.mjs';
 
 // Both cards describe the same physical inventory, including unnamed models.

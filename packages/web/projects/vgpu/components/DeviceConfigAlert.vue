@@ -9,7 +9,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import apiClient from '@/api/client.mjs';
-import { getDeviceConfigStateKey, shouldWarnAboutDeviceConfig } from '~/vgpu/views/card/admin/device-config-display.mjs';
+import { getDeviceConfigStateKey, shouldWarnAboutDeviceConfig } from '~/vgpu/views/accelerators/device-config-display.mjs';
 
 const { t, locale } = useI18n();
 const config = ref(null);

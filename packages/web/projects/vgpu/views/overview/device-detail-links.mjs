@@ -1,4 +1,4 @@
-import { matchDeviceRegistration, registrationDetail } from '../../../api/device-detail-link.mjs';
+import { matchDeviceRegistration, registrationDetail } from '../../api/device-detail-link.mjs';
 
 export function attachLegacyDeviceLinks(insights, legacyRows) {
   const match = matchDeviceRegistration(legacyRows);
