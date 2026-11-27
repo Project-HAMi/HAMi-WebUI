@@ -423,7 +423,7 @@ func TestHTTPJSONGoldens(t *testing.T) {
 		{name: "api-v1-node-not-found.json", empty: false, method: "GET", target: "/api/v1/nodes/node-missing", wantStatus: 404},
 		{name: "api-v1-node-containers.json", empty: false, method: "GET", target: "/api/v1/nodes/node-uid-1/containers?node_name=node-1", wantStatus: 200},
 		{name: "api-v1-devices.json", empty: false, method: "GET", target: "/api/v1/devices", wantStatus: 200},
-		{name: "api-v1-device-detail.json", empty: false, method: "GET", target: "/api/v1/devices/GPU-1", wantStatus: 200},
+		{name: "api-v1-device-detail.json", empty: false, method: "GET", target: "/api/v1/device?id=GPU-1&node_uid=node-uid-1", wantStatus: 200},
 		{name: "api-v1-containers.json", empty: false, method: "GET", target: "/api/v1/containers?page=1&page_size=20", wantStatus: 200},
 		{name: "api-v1-container-detail.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/trainer", wantStatus: 200},
 		{name: "api-v1-container-not-found.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/missing", wantStatus: 404},
@@ -503,5 +503,26 @@ func TestHTTPJSONGoldens(t *testing.T) {
 				t.Fatalf("HTTP JSON golden drift for %s:\ngot:  %s\nwant: %s", tc.name, string(rawBody), string(want))
 			}
 		})
+	}
+}
+
+func TestHTTPDeviceRouteAcceptsEncodedSlash(t *testing.T) {
+	handler, cleanup := newGoldenHTTPHandler(false)
+	defer cleanup()
+
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/v1/device?id=GPU%2Fwith+space", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var errBody struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errBody); err != nil {
+		t.Fatal(err)
+	}
+	if errBody.Reason != "RESOURCE_GPU_NOT_FOUND" {
+		t.Fatalf("reason = %q, want RESOURCE_GPU_NOT_FOUND (route must dispatch encoded slash id cleanly)", errBody.Reason)
 	}
 }

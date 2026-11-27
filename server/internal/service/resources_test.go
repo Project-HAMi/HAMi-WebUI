@@ -185,4 +185,63 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 	if detail.AllocatedDevices != 1 || detail.PodUid != "pod-uid-1" {
 		t.Fatalf("GetContainer = %+v", detail)
 	}
+
+	// Public HCU ID differs from internal alias HCU-<serial>; filtering by public ID must match.
+	hcuDev := &biz.DeviceInfo{
+		Id: "serial-with-hyphens", AliasId: "HCU-serial-with-hyphens",
+		Count: 1, Devmem: 16384, Devcore: 100, Type: "HCU", Health: true,
+		NodeName: "node-1", NodeUid: "node-uid-1", Provider: biz.HygonGPUDevice,
+	}
+	dcuNode1 := &biz.DeviceInfo{
+		Id: "DCU-3", AliasId: "DCU-3",
+		Count: 1, Devmem: 16384, Devcore: 100, Type: "DCU", Health: true,
+		NodeName: "node-1", NodeUid: "node-uid-1", Provider: biz.HygonGPUDevice,
+	}
+	dcuNode2 := &biz.DeviceInfo{
+		Id: "DCU-3", AliasId: "DCU-3",
+		Count: 1, Devmem: 16384, Devcore: 100, Type: "DCU", Health: true,
+		NodeName: "node-2", NodeUid: "node-uid-2", Provider: biz.HygonGPUDevice,
+	}
+	slashDev := &biz.DeviceInfo{
+		Id: "GPU/with space", AliasId: "GPU/with space",
+		Count: 1, Devmem: 16384, Devcore: 100, Type: "NVIDIA", Health: true,
+		NodeName: "node-1", NodeUid: "node-uid-1", Provider: biz.NvidiaGPUDevice,
+	}
+	nodeRepo.devices = append(nodeRepo.devices, hcuDev, dcuNode1, dcuNode2, slashDev)
+	podRepo.containers = append(podRepo.containers,
+		&biz.Container{
+			Name: "hcu-worker", PodUID: "pod-hcu-1", PodName: "hcu-pod", Namespace: "default",
+			NodeName: "node-1", NodeUID: "node-uid-1", Status: biz.ContainerStatusSuccess, CreateTime: now,
+			ContainerDevices: biz.ContainerDevices{{UUID: "HCU-serial-with-hyphens", Type: "HCU", Vendor: biz.HygonGPUDevice, Usedmem: 4096, Usedcores: 50}},
+		},
+		&biz.Container{
+			Name: "dcu-n1", PodUID: "pod-dcu-1", PodName: "dcu-pod-1", Namespace: "default",
+			NodeName: "node-1", NodeUID: "node-uid-1", Status: biz.ContainerStatusSuccess, CreateTime: now,
+			ContainerDevices: biz.ContainerDevices{{UUID: "DCU-3", Type: "DCU", Vendor: biz.HygonGPUDevice, Usedmem: 2048, Usedcores: 25}},
+		},
+		&biz.Container{
+			Name: "dcu-n2", PodUID: "pod-dcu-2", PodName: "dcu-pod-2", Namespace: "default",
+			NodeName: "node-2", NodeUID: "node-uid-2", Status: biz.ContainerStatusSuccess, CreateTime: now,
+			ContainerDevices: biz.ContainerDevices{{UUID: "DCU-3", Type: "DCU", Vendor: biz.HygonGPUDevice, Usedmem: 8192, Usedcores: 75}},
+		},
+	)
+
+	hcuDetail, err := res.GetContainer(context.Background(), &pb.GetResourceContainerRequest{
+		PodUid: "pod-hcu-1", Container: "hcu-worker", DeviceId: "serial-with-hyphens",
+	})
+	if err != nil || hcuDetail.AllocatedDevices != 1 || len(hcuDetail.DeviceIds) != 1 || hcuDetail.DeviceIds[0] != "serial-with-hyphens" {
+		t.Fatalf("HCU public device_id lookup got (%+v, %v)", hcuDetail, err)
+	}
+
+	if _, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "DCU-3"}); !kratoserrors.IsConflict(err) {
+		t.Fatalf("ambiguous device without node_uid err = %v, want 409 Conflict", err)
+	}
+	dcu2, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "DCU-3", NodeUid: "node-uid-2"})
+	if err != nil || dcu2.NodeUid != "node-uid-2" || dcu2.MemoryUsed != 8192 || dcu2.CoreUsed != 75 {
+		t.Fatalf("disambiguated device detail = (%+v, %v), want node-uid-2 with 8192MiB/75 cores", dcu2, err)
+	}
+	slashDetail, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "GPU/with space", NodeUid: "node-uid-1"})
+	if err != nil || slashDetail.Uuid != "GPU/with space" {
+		t.Fatalf("slash device detail = (%+v, %v)", slashDetail, err)
+	}
 }

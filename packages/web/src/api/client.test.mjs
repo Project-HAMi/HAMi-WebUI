@@ -40,10 +40,13 @@ test('createApiClient encodes path segments, validates required params, and forw
     },
   });
 
-  await client.getDevice('GPU/with space', { signal: controller.signal });
-  assert.equal(seen[0].url, '/gpu-ui/api/v1/devices/GPU%2Fwith%20space');
+  await client.getDevice('GPU/with space', { nodeUid: 'node-uid-1', signal: controller.signal });
+  assert.equal(seen[0].url, '/gpu-ui/api/v1/device?id=GPU%2Fwith+space&node_uid=node-uid-1');
   assert.equal(seen[0].init.method, 'GET');
   assert.equal(seen[0].init.signal, controller.signal);
+
+  await client.getNode('node/a b', { signal: controller.signal });
+  assert.equal(seen[1].url, '/gpu-ui/api/v1/nodes/node%2Fa%20b');
 
   await assert.rejects(() => client.getNode(' '), TypeError);
   await assert.rejects(() => client.listNodeContainers('uid-1', ''), TypeError);
@@ -83,7 +86,7 @@ test('createApiClient parses every frozen /api/v1 HTTP golden payload cleanly', 
     ['/api/v1/nodes/node-uid-1', { status: 200, file: 'api-v1-node-detail.json' }],
     ['/api/v1/nodes/node-uid-1/containers?node_name=node-1', { status: 200, file: 'api-v1-node-containers.json' }],
     ['/api/v1/devices?node_name=node-1&node_uid=node-uid-1&provider=NVIDIA', { status: 200, file: 'api-v1-devices.json' }],
-    ['/api/v1/devices/GPU-1', { status: 200, file: 'api-v1-device-detail.json' }],
+    ['/api/v1/device?id=GPU-1&node_uid=node-uid-1', { status: 200, file: 'api-v1-device-detail.json' }],
     ['/api/v1/containers?page=1&page_size=20', { status: 200, file: 'api-v1-containers.json' }],
     ['/api/v1/containers/pod-uid-1/trainer', { status: 200, file: 'api-v1-container-detail.json' }],
     ['/api/v1/scheduling/pods/default/train-job-0?uid=pod-uid-1', { status: 200, file: 'api-v1-scheduling-pod.json' }],
@@ -124,7 +127,7 @@ test('createApiClient parses every frozen /api/v1 HTTP golden payload cleanly', 
   const devices = await client.listDevices({ nodeName: 'node-1', nodeUid: 'node-uid-1', provider: 'NVIDIA' });
   assert.equal(devices.list[0].uuid, 'GPU-1');
 
-  const device = await client.getDevice('GPU-1');
+  const device = await client.getDevice('GPU-1', { nodeUid: 'node-uid-1' });
   assert.equal(device.vendor, 'NVIDIA');
 
   const containers = await client.listContainers({ page: 1, pageSize: 20 });

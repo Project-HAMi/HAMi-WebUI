@@ -490,7 +490,7 @@ export interface ApiClient {
   getNode(uid: string, options?: RequestOptions): Promise<NodeItem>;
   listNodeContainers(uid: string, nodeName: string, options?: RequestOptions): Promise<NodeContainersReply>;
   listDevices(query?: ListDevicesQuery, options?: RequestOptions): Promise<DevicesReply>;
-  getDevice(id: string, options?: RequestOptions): Promise<DeviceItem>;
+  getDevice(id: string, options?: RequestOptions & { nodeUid?: string }): Promise<DeviceItem>;
   listContainers(query?: ListContainersQuery, options?: RequestOptions): Promise<ContainersPageReply>;
   getContainer(
     podUid: string,

@@ -148,42 +148,77 @@ func (s *CardService) GetAllGPUTypes(ctx context.Context, req *pb.GetAllGpusReq)
 }
 
 func (s *CardService) GetGPU(ctx context.Context, req *pb.GetGpuReq) (*pb.GPUReply, error) {
-	deviceUid := strings.TrimSpace(req.GetUid())
-	if deviceUid == "" {
+	return s.getDevice(ctx, req.GetUid(), "", false)
+}
+
+func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, rejectAmbiguous bool) (*pb.GPUReply, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	nodeUID = strings.TrimSpace(nodeUID)
+	if deviceID == "" {
 		return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Device uid is required")
 	}
 	devices, err := s.node.ListAllDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
+	var matched []*biz.DeviceInfo
 	for _, device := range devices {
-		if deviceUid != device.Id {
+		if device.Id != deviceID {
 			continue
 		}
-		vGPU, core, memory, coreKnown, err := s.pod.StatisticsByDeviceId(ctx, device.AliasId)
+		if nodeUID != "" && device.NodeUid != nodeUID {
+			continue
+		}
+		matched = append(matched, device)
+	}
+	if len(matched) == 0 {
+		return nil, kratoserrors.NotFound("RESOURCE_GPU_NOT_FOUND", "Accelerator device was not found")
+	}
+	if rejectAmbiguous && len(matched) > 1 {
+		return nil, kratoserrors.Conflict("AMBIGUOUS_DEVICE_ID", "Multiple devices match this id; specify node_uid")
+	}
+	device := matched[0]
+	var (
+		vGPU, core, memory int32
+		coreKnown          bool
+	)
+	if nodeUID != "" {
+		containers, err := s.pod.ListAllContainers(ctx)
 		if err != nil {
 			return nil, err
 		}
-		return &pb.GPUReply{
-			Uuid:          device.Id,
-			NodeName:      device.NodeName,
-			Type:          device.Type,
-			VgpuTotal:     device.Count,
-			CoreTotal:     biz.PhysicalCoreBaselinePerDevice,
-			MemoryTotal:   device.Devmem,
-			NodeUid:       device.NodeUid,
-			Health:        device.Health,
-			Mode:          device.Mode,
-			Unconfigured:  device.Unconfigured,
-			Vendor:        device.Provider,
-			MigProfiles:   migProfiles(device.MigProfiles),
-			VgpuUsed:      vGPU,
-			CoreUsed:      core,
-			CoreUsedKnown: &coreKnown,
-			MemoryUsed:    memory,
-		}, nil
+		var scoped []*biz.Container
+		for _, c := range containers {
+			if c.NodeUID == device.NodeUid {
+				scoped = append(scoped, c)
+			}
+		}
+		vGPU, core, memory, coreKnown = biz.ContainersStatisticsInfo(scoped, device.AliasId)
+	} else {
+		var err error
+		vGPU, core, memory, coreKnown, err = s.pod.StatisticsByDeviceId(ctx, device.AliasId)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return nil, kratoserrors.NotFound("RESOURCE_GPU_NOT_FOUND", "Accelerator device was not found")
+	return &pb.GPUReply{
+		Uuid:          device.Id,
+		NodeName:      device.NodeName,
+		Type:          device.Type,
+		VgpuTotal:     device.Count,
+		CoreTotal:     biz.PhysicalCoreBaselinePerDevice,
+		MemoryTotal:   device.Devmem,
+		NodeUid:       device.NodeUid,
+		Health:        device.Health,
+		Mode:          device.Mode,
+		Unconfigured:  device.Unconfigured,
+		Vendor:        device.Provider,
+		MigProfiles:   migProfiles(device.MigProfiles),
+		VgpuUsed:      vGPU,
+		CoreUsed:      core,
+		CoreUsedKnown: &coreKnown,
+		MemoryUsed:    memory,
+	}, nil
 }
 
 func migProfiles(profiles []biz.MigProfile) []*pb.MigProfile {

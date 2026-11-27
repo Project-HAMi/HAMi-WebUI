@@ -142,7 +142,7 @@ func (s *ResourcesService) GetDevice(ctx context.Context, req *pb.GetDeviceReque
 	if id == "" {
 		return nil, kratoserrors.BadRequest("INVALID_ARGUMENT", "Device id is required")
 	}
-	return s.cards.GetGPU(ctx, &pb.GetGpuReq{Uid: id})
+	return s.cards.getDevice(ctx, id, strings.TrimSpace(req.GetNodeUid()), true)
 }
 
 func (s *ResourcesService) ListContainers(ctx context.Context, req *pb.ListContainersRequest) (*pb.WorkloadsReply, error) {

@@ -31,7 +31,7 @@ service Resources {
   }
 
   rpc GetDevice (GetDeviceRequest) returns (GPUReply) {
-    option (google.api.http) = { get: "/api/v1/devices/{id}" };
+    option (google.api.http) = { get: "/api/v1/device" };
   }
 
   rpc ListContainers (ListContainersRequest) returns (WorkloadsReply) {
@@ -80,6 +80,7 @@ message ListDevicesRequest {
 
 message GetDeviceRequest {
   string id = 1;
+  string node_uid = 2;
 }
 
 message ListContainersRequest {

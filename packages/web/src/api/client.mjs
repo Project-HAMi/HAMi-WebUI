@@ -146,7 +146,13 @@ export function createApiClient({
     },
 
     async getDevice(id, options = {}) {
-      return requestJson(`devices/${requireSegment('id', id)}`, { signal: options.signal });
+      return requestJson('device', {
+        query: {
+          id: requireNonEmpty('id', id),
+          node_uid: options.nodeUid,
+        },
+        signal: options.signal,
+      });
     },
 
     async listContainers(query = {}, options = {}) {
