@@ -38,7 +38,7 @@ func (inv overviewInventory) compactInventory() *pb.InventoryReply {
 	var summary summaryAccumulator
 	nodes, coverage := inv.nodeRows("", func(n *inventoryNode, g resourceview.PhysicalGroup) string {
 		sample := g.Observation(deviceObservation)
-		d := compactDeviceWithSample(g, sample)
+		d := compactDevice(g, sample)
 		reply.Devices = append(reply.Devices, d)
 		countRow(reply.DeviceCoverage, nil)
 		countRow(n.deviceCoverage, nil)
@@ -128,11 +128,7 @@ func (a *summaryAccumulator) build() *pb.InventoryResourceSummary {
 	return out
 }
 
-func compactDevice(group resourceview.PhysicalGroup) *pb.InventoryDevice {
-	return compactDeviceWithSample(group, group.Observation(deviceObservation))
-}
-
-func compactDeviceWithSample(group resourceview.PhysicalGroup, sample resourceview.DeviceObservation) *pb.InventoryDevice {
+func compactDevice(group resourceview.PhysicalGroup, sample resourceview.DeviceObservation) *pb.InventoryDevice {
 	id := group.Members[0].Identity
 	model, _ := group.Model()
 	healthy, _ := group.Health()

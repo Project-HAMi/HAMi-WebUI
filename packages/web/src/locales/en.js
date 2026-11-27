@@ -296,7 +296,7 @@ export default {
       'Total allocated memory ÷ total schedulable memory (including overcommit). Only cards with both values are included.',
     memAllocRateDescription:
       'Accelerator memory allocated to workloads divided by the schedulable memory registered by HAMi. With memory overcommit, the denominator includes expanded virtual capacity.',
-    computeUsageRateDescription: 'Average compute utilization of physical devices over the last 5 minutes. Each sample includes only devices with a reading.',
+    computeUsageRateDescription: 'Average compute utilization of physical devices in the current snapshot. Only devices with a reading are included.',
     overviewMemUsageRateDescription:
       'Total physical memory in use ÷ total physical memory. Only cards with both values are included.',
     memUsageRateDescription: 'Used physical memory divided by total physical memory.',
@@ -729,6 +729,8 @@ export default {
     invalid: 'The time range is incomplete or invalid. The previous range has been restored.',
     order: 'End time must be after start time. The previous range has been restored.',
     future: 'End time cannot be in the future. The previous range has been restored.',
+    minRange: 'Time range must be at least 30 seconds. The previous range has been restored.',
+    maxRange: 'Time range cannot exceed 31 days. The previous range has been restored.',
     last7d: 'Last 7 days',
     last5d: 'Last 5 days',
     last3d: 'Last 3 days',

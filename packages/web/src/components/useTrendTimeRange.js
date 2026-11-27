@@ -1,6 +1,8 @@
 import { ref, watch } from 'vue';
 
 const HOUR = 60 * 60 * 1000;
+const MIN_RANGE_MS = 30 * 1000;
+const MAX_RANGE_MS = 31 * 24 * HOUR;
 const PRESET_HOURS = [1, 3, 6, 24, 168, 720];
 
 const timestamps = (range) => {
@@ -17,6 +19,8 @@ const rangeError = (range, now) => {
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 'invalid';
   if (start >= end) return 'order';
   if (end > now) return 'future';
+  if (end - start < MIN_RANGE_MS) return 'minRange';
+  if (end - start > MAX_RANGE_MS) return 'maxRange';
   return '';
 };
 

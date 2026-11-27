@@ -11,29 +11,30 @@ import { useI18n } from 'vue-i18n';
 import apiClient from '@/api/client.mjs';
 import { getDeviceConfigStateKey, shouldWarnAboutDeviceConfig } from '~/vgpu/views/card/admin/device-config-display.mjs';
 
-const props = defineProps({
-  deviceTypes: {
-    type: Array,
-    default: null,
-  },
-});
-
 const { t, locale } = useI18n();
 const config = ref(null);
-const fetchedDeviceTypes = ref([]);
+const deviceTypes = ref([]);
 let controller = null;
 
 onMounted(async () => {
-  controller = new AbortController();
-  const requests = [apiClient.getDeviceConfig({ signal: controller.signal })];
-  if (props.deviceTypes === null) {
-    requests.push(apiClient.listDevices({}, { signal: controller.signal }));
+  const currentController = new AbortController();
+  controller = currentController;
+  try {
+    const read = await apiClient.getDeviceConfig({ signal: currentController.signal });
+    if (currentController.signal.aborted) return;
+    config.value = read;
+  } catch {
+    return;
   }
-  const [read, types] = await Promise.allSettled(requests);
-  if (controller.signal.aborted) return;
-  if (read.status === 'fulfilled') config.value = read.value;
-  if (types?.status === 'fulfilled') {
-    fetchedDeviceTypes.value = (types.value?.list || []).map((item) => item?.type).filter(Boolean);
+  if (!config.value?.state || config.value.state === 'loaded' || config.value.state === 'loading') {
+    return;
+  }
+  try {
+    const types = await apiClient.listDevices({}, { signal: currentController.signal });
+    if (currentController.signal.aborted) return;
+    deviceTypes.value = (types?.list || []).map((item) => item?.type).filter(Boolean);
+  } catch {
+    // Ignore aborted or failed registration lookup; alert stays hidden without confirmed Ascend types.
   }
 });
 
@@ -42,10 +43,8 @@ onUnmounted(() => {
   controller = null;
 });
 
-const effectiveDeviceTypes = computed(() => props.deviceTypes ?? fetchedDeviceTypes.value);
-
 const message = computed(() => {
-  if (!shouldWarnAboutDeviceConfig(config.value, effectiveDeviceTypes.value)) return '';
+  if (!shouldWarnAboutDeviceConfig(config.value, deviceTypes.value)) return '';
   const state = t(getDeviceConfigStateKey(config.value), {
     namespace: config.value.namespace || '--',
     name: config.value.name || '--',

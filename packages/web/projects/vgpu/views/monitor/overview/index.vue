@@ -9,7 +9,7 @@
       />
     </header>
     <div class="home">
-      <DeviceConfigAlert :device-types="overviewDeviceTypes" />
+      <DeviceConfigAlert />
 
       <Block class="home-gpu-metrics" :title="$t('dashboard.cardResource')" all-to="/accelerators" :all-label="$t('dashboard.viewAllGpuResources')">
         <div class="card-overview">
@@ -114,15 +114,6 @@ const workloadState = useInventorySource(
   (signal) => resourcesApi.listContainers({ page: 1, pageSize: 1 }, { signal }),
   readContainerSummary,
 );
-
-const overviewDeviceTypes = computed(() => {
-  const data = inventoryState.value.data;
-  if (!data) return [];
-  return [
-    ...(data.nodes || []).flatMap((node) => node.models || []),
-    ...(data.devices || []).flatMap((device) => [device.model, device.provider]),
-  ].filter(Boolean);
-});
 
 const cardGaugeConfig = computed(() =>
   readOverviewGauges(inventoryState.value.data?.resourceSummary, inventoryState.value.status).map((item) => ({

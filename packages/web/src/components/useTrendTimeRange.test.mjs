@@ -160,6 +160,8 @@ test('empty, incomplete, malformed, reversed, equal, and future custom ranges ca
     [[new Date(NOW), new Date(NOW - HOUR)], 'order'],
     [[new Date(NOW), new Date(NOW)], 'order'],
     [range(1, NOW + 1), 'future'],
+    [[new Date(NOW - 19_000), new Date(NOW)], 'minRange'],
+    [[new Date(NOW - 40 * 24 * HOUR), new Date(NOW)], 'maxRange'],
   ];
   for (const [selected, error] of invalidRanges) {
     state.applyCustomRange(selected);
@@ -170,8 +172,12 @@ test('empty, incomplete, malformed, reversed, equal, and future custom ranges ca
   }
   assert.equal(updates.length, 0);
   assert.equal(queries.length, 1);
-  state.applyCustomRange(range(6));
+  state.applyCustomRange([new Date(NOW - 30_000), new Date(NOW)]);
   await nextTick();
   assert.equal(state.validationError.value, '');
   assert.equal(updates.length, 1);
+  state.applyCustomRange([new Date(NOW - 31 * 24 * HOUR), new Date(NOW)]);
+  await nextTick();
+  assert.equal(state.validationError.value, '');
+  assert.equal(updates.length, 2);
 });

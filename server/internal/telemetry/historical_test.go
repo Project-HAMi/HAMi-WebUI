@@ -159,6 +159,16 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 
 	seenQueries = nil
 	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope: "cluster",
+	}); err != nil {
+		t.Fatalf("cluster trends failed: %v", err)
+	}
+	if len(seenQueries) != 4 || !strings.Contains(seenQueries[2], "sum_over_time(sum(") || !strings.Contains(seenQueries[2], "[5m:30s]") {
+		t.Fatalf("cluster compute_utilization_percent must use 5m smoothing window: %v", seenQueries)
+	}
+
+	seenQueries = nil
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
 		Scope:     "container",
 		Namespace: "ml",
 		Pod:       "trainer-0",

@@ -112,3 +112,48 @@ test('useTelemetryTrends aborts stale requests and preserves resolved data on re
   resolveFirst?.();
   scope.stop();
 });
+
+test('useTelemetryTrends preserves failed chart section on partial refresh without blocking healthy section', async () => {
+  let call = 0;
+  const times = ref([new Date('2026-10-06T11:00:00Z'), new Date('2026-10-06T12:00:00Z')]);
+  const client = {
+    getTelemetryTrends() {
+      call += 1;
+      if (call === 1) return Promise.resolve(clusterGolden);
+      return Promise.resolve({
+        ...clusterGolden,
+        series: clusterGolden.series.map((item) => (
+          item.metric.startsWith('memory_')
+            ? { metric: item.metric, state: { state: 'unknown', reason: 'query_failed' }, points: [] }
+            : { ...item, points: [{ at: '2026-10-06T12:00:00Z', value: 88 }] }
+        )),
+      });
+    },
+  };
+
+  const scope = effectScope();
+  const state = scope.run(() => useTelemetryTrends({
+    scope: 'cluster',
+    metrics: OVERVIEW_METRICS,
+    times,
+    client,
+  }));
+
+  await new Promise((r) => setTimeout(r, 10));
+  await state.refresh();
+
+  const compute = state.data.value.filter((item) => item.sectionIndex === 'compute');
+  const memory = state.data.value.filter((item) => item.sectionIndex === 'memory');
+  for (const item of compute) {
+    assert.equal(item.status, REQUEST_STATUS.READY);
+    assert.equal(item.refreshError, null);
+    assert.deepEqual(item.data.map((point) => point.value), [88]);
+  }
+  for (const item of memory) {
+    assert.equal(item.status, REQUEST_STATUS.READY);
+    assert.ok(item.refreshError instanceof Error);
+    assert.deepEqual(item.data.map((point) => point.value), [null, 42.5, 50]);
+  }
+
+  scope.stop();
+});

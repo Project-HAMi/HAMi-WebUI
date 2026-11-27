@@ -68,6 +68,19 @@ function hasDrawableOutcome(seriesList) {
   );
 }
 
+const groupKey = (item) => item?.sectionIndex ?? '__default__';
+const isFailedStatus = (status) => status === REQUEST_STATUS.ERROR || status === REQUEST_STATUS.INVALID;
+
+function groupIndicesBySection(metricConfigs) {
+  const groups = new Map();
+  metricConfigs.forEach((config, index) => {
+    const key = groupKey(config);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(index);
+  });
+  return groups;
+}
+
 function initialSeries(metricConfigs) {
   return metricConfigs.map((config) => ({
     ...config,
@@ -97,10 +110,11 @@ export function useTelemetryTrends({ scope, params, metrics = [], times, client 
   let requestId = 0;
   let activeController = null;
   let resolvedScopeKey = null;
-  let resolvedDrawable = false;
+  let drawableGroups = new Set();
+  const metricGroups = groupIndicesBySection(metrics);
 
   const resolvedParams = computed(() => {
-    const raw = typeof params === 'function' ? params() : unref(params);
+    const raw = unref(params);
     return raw && typeof raw === 'object' ? raw : {};
   });
 
@@ -129,15 +143,18 @@ export function useTelemetryTrends({ scope, params, metrics = [], times, client 
 
     if (!hasRequiredScopeParams(currentScope, currentParams)) {
       resolvedScopeKey = null;
-      resolvedDrawable = false;
+      drawableGroups = new Set();
       data.value = initialSeries(metrics);
       return;
     }
 
-    const canKeepPrevious = resolvedScopeKey === currentKey && resolvedDrawable;
-    data.value = canKeepPrevious
-      ? data.value.map((item) => ({ ...item, refreshing: true, refreshError: null }))
-      : initialSeries(metrics);
+    const sameScope = resolvedScopeKey === currentKey;
+    if (!sameScope) drawableGroups = new Set();
+    data.value = metrics.map((config, index) => (
+      sameScope && drawableGroups.has(groupKey(config))
+        ? { ...data.value[index], refreshing: true, refreshError: null }
+        : { ...config, status: REQUEST_STATUS.LOADING, data: [], refreshing: false, refreshError: null }
+    ));
 
     const controller = new AbortController();
     activeController = controller;
@@ -155,41 +172,47 @@ export function useTelemetryTrends({ scope, params, metrics = [], times, client 
       if (controller.signal.aborted || myRequestId !== requestId) return;
 
       const projected = projectTrendSeries(reply, metrics);
-      const drawable = hasDrawableOutcome(projected);
-      if (!drawable && canKeepPrevious) {
-        data.value = data.value.map((item) => ({
-          ...item,
-          refreshing: false,
-          refreshError: new Error('Telemetry refresh unavailable'),
-        }));
-        return;
+      const nextSeries = new Array(metrics.length);
+      for (const [gKey, indices] of metricGroups.entries()) {
+        const wasDrawable = sameScope && drawableGroups.has(gKey);
+        const groupProjected = indices.map((index) => projected[index]);
+        if (wasDrawable && groupProjected.some((item) => isFailedStatus(item.status))) {
+          for (const index of indices) {
+            nextSeries[index] = {
+              ...data.value[index],
+              refreshing: false,
+              refreshError: new Error('Telemetry refresh unavailable'),
+            };
+          }
+          continue;
+        }
+        for (const index of indices) {
+          nextSeries[index] = {
+            ...projected[index],
+            refreshing: false,
+            refreshError: null,
+          };
+        }
+        if (hasDrawableOutcome(groupProjected)) drawableGroups.add(gKey);
+        else drawableGroups.delete(gKey);
       }
 
-      data.value = projected.map((item) => ({
-        ...item,
-        refreshing: false,
-        refreshError: null,
-      }));
+      data.value = nextSeries;
       resolvedScopeKey = currentKey;
-      resolvedDrawable = drawable;
     } catch (error) {
       if (controller.signal.aborted || myRequestId !== requestId) return;
-      if (canKeepPrevious) {
-        data.value = data.value.map((item) => ({
-          ...item,
-          refreshing: false,
-          refreshError: error,
-        }));
-      } else {
-        data.value = initialSeries(metrics).map((item) => ({
-          ...item,
-          status: REQUEST_STATUS.ERROR,
-          refreshing: false,
-          refreshError: null,
-        }));
-        resolvedScopeKey = currentKey;
-        resolvedDrawable = false;
+      const nextSeries = new Array(metrics.length);
+      for (const [gKey, indices] of metricGroups.entries()) {
+        const wasDrawable = sameScope && drawableGroups.has(gKey);
+        for (const index of indices) {
+          nextSeries[index] = wasDrawable
+            ? { ...data.value[index], refreshing: false, refreshError: error }
+            : { ...metrics[index], status: REQUEST_STATUS.ERROR, data: [], refreshing: false, refreshError: null };
+        }
+        if (!wasDrawable) drawableGroups.delete(gKey);
       }
+      data.value = nextSeries;
+      resolvedScopeKey = currentKey;
     } finally {
       if (activeController === controller) activeController = null;
     }
@@ -204,5 +227,3 @@ export function useTelemetryTrends({ scope, params, metrics = [], times, client 
     refresh: fetchTrends,
   };
 }
-
-export default useTelemetryTrends;
