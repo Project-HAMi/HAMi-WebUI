@@ -42,3 +42,25 @@ message WorkloadsReply {
   map<string, int32> node_counts = 4;
   map<string, int32> device_counts = 5;
 }
+
+message EntityCountRankingItem {
+  string name = 1;
+  string node_uid = 2;
+  int32 count = 3;
+}
+
+message ContainerAllocationRankingItem {
+  string pod_uid = 1;
+  string name = 2;
+  string app_name = 3;
+  string namespace = 4;
+  double value = 5;
+}
+
+message WorkloadRankingsReply {
+  repeated EntityCountRankingItem by_node = 1;
+  repeated EntityCountRankingItem by_device = 2;
+  repeated ContainerAllocationRankingItem by_compute = 3;
+  repeated ContainerAllocationRankingItem by_memory = 4;
+  repeated ContainerAllocationRankingItem by_vgpu = 5;
+}

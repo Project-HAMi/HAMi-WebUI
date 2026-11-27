@@ -376,6 +376,7 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 		if deviceIdx < len(bizContainerDevices) {
 			containerDevices = bizContainerDevices[deviceIdx]
 		}
+		cpuLimit, memoryLimit := containerResourceLimits(ctr.Resources.Limits)
 		c := &biz.Container{
 			Name:             ctr.Name,
 			UUID:             containerID,
@@ -390,6 +391,8 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 			Namespace:        pod.Namespace,
 			CreateTime:       r.GetCreateTime(pod),
 			ContainerDevices: containerDevices,
+			CPULimitCores:    cpuLimit,
+			MemoryLimitBytes: memoryLimit,
 		}
 		// Not every device type carries a priority, and those that do may not sort first.
 		for _, device := range containerDevices {
@@ -415,6 +418,22 @@ func mergeContainerDevicesBySlot(totalContainers int, podDevices biz.PodDevices)
 		}
 	}
 	return containerDevices
+}
+
+func containerResourceLimits(limits corev1.ResourceList) (*float64, *int64) {
+	var (
+		cpuLimit    *float64
+		memoryLimit *int64
+	)
+	if q, ok := limits[corev1.ResourceCPU]; ok && q.Sign() > 0 {
+		cores := float64(q.MilliValue()) / 1000.0
+		cpuLimit = &cores
+	}
+	if q, ok := limits[corev1.ResourceMemory]; ok && q.Sign() > 0 {
+		bytes := q.Value()
+		memoryLimit = &bytes
+	}
+	return cpuLimit, memoryLimit
 }
 
 const nodeReadTimeout = 10 * time.Second

@@ -336,6 +336,8 @@ export interface ContainerItem {
   vendor: string;
   devices: ContainerDeviceAllocation[];
   allocationShapeReason: string;
+  cpuLimitCores?: number;
+  memoryLimitBytes?: string | number;
 }
 
 export interface NodeContainersReply {
@@ -471,6 +473,28 @@ export interface DeviceSources {
   exportersChecked: boolean;
 }
 
+export interface EntityCountRankingItem {
+  name: string;
+  nodeUid: string;
+  count: number;
+}
+
+export interface ContainerAllocationRankingItem {
+  podUid: string;
+  name: string;
+  appName: string;
+  namespace: string;
+  value: number;
+}
+
+export interface WorkloadRankingsReply {
+  byNode: EntityCountRankingItem[];
+  byDevice: EntityCountRankingItem[];
+  byCompute: ContainerAllocationRankingItem[];
+  byMemory: ContainerAllocationRankingItem[];
+  byVgpu: ContainerAllocationRankingItem[];
+}
+
 export interface AboutReply {
   webui: WebUIBuild;
   hami: HamiVersions;
@@ -507,6 +531,7 @@ export interface ApiClient {
   listDevices(query?: ListDevicesQuery, options?: RequestOptions): Promise<DevicesReply>;
   getDevice(id: string, options?: RequestOptions & { nodeUid?: string }): Promise<DeviceItem>;
   listContainers(query?: ListContainersQuery, options?: RequestOptions): Promise<ContainersPageReply>;
+  getContainerRankings(options?: RequestOptions): Promise<WorkloadRankingsReply>;
   getContainer(
     podUid: string,
     container: string,

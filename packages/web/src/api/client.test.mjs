@@ -88,6 +88,7 @@ test('createApiClient parses every frozen /api/v1 HTTP golden payload cleanly', 
     ['/api/v1/devices?node_name=node-1&node_uid=node-uid-1&provider=NVIDIA', { status: 200, file: 'api-v1-devices.json' }],
     ['/api/v1/device?id=GPU-1&node_uid=node-uid-1', { status: 200, file: 'api-v1-device-detail.json' }],
     ['/api/v1/containers?page=1&page_size=20', { status: 200, file: 'api-v1-containers.json' }],
+    ['/api/v1/containers/rankings', { status: 200, file: 'api-v1-containers-rankings.json' }],
     ['/api/v1/containers/pod-uid-1/trainer', { status: 200, file: 'api-v1-container-detail.json' }],
     ['/api/v1/scheduling/pods/default/train-job-0?uid=pod-uid-1', { status: 200, file: 'api-v1-scheduling-pod.json' }],
     ['/api/v1/device-config', { status: 200, file: 'api-v1-device-config.json' }],
@@ -136,6 +137,12 @@ test('createApiClient parses every frozen /api/v1 HTTP golden payload cleanly', 
 
   const container = await client.getContainer('pod-uid-1', 'trainer');
   assert.equal(container.podUid, 'pod-uid-1');
+  assert.equal(container.cpuLimitCores, 4);
+  assert.equal(container.memoryLimitBytes, '8589934592');
+
+  const rankings = await client.getContainerRankings();
+  assert.equal(rankings.byNode[0].nodeUid, 'node-uid-1');
+  assert.equal(rankings.byCompute[0].podUid, 'pod-uid-1');
 
   const scheduling = await client.getSchedulingPod('default', 'train-job-0', 'pod-uid-1');
   assert.equal(scheduling.pod.stage, 'bound');

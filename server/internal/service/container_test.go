@@ -106,6 +106,36 @@ func TestGetAllContainersMarksUnknownAscendCoreAllocation(t *testing.T) {
 	}
 }
 
+func TestContainerServicePreservesResourceLimits(t *testing.T) {
+	cpu := 2.5
+	mem := int64(4294967296)
+	containers := []*biz.Container{{
+		Name: "worker", PodName: "limited-pod", Status: biz.ContainerStatusSuccess, PodUID: "pod-limited", NodeName: "node-1",
+		CPULimitCores: &cpu, MemoryLimitBytes: &mem,
+		ContainerDevices: biz.ContainerDevices{{UUID: "gpu-0", Usedcores: 50, Usedmem: 4096}},
+	}}
+	svc := NewContainerService(
+		biz.NewNodeUsecase(&containerTestNodeRepo{}, log.DefaultLogger),
+		biz.NewPodUseCase(&telemetryTestPodRepo{containerTestPodRepo: containerTestPodRepo{containers: containers}}, log.DefaultLogger),
+	)
+
+	listReply, err := svc.GetAllContainers(context.Background(), &pb.GetAllContainersReq{})
+	if err != nil || len(listReply.Items) != 1 {
+		t.Fatalf("GetAllContainers() = %v, %v", listReply, err)
+	}
+	if listReply.Items[0].GetCpuLimitCores() != cpu || listReply.Items[0].GetMemoryLimitBytes() != mem {
+		t.Fatalf("list limits = (%v, %v), want (%v, %v)", listReply.Items[0].CpuLimitCores, listReply.Items[0].MemoryLimitBytes, cpu, mem)
+	}
+
+	detailReply, err := svc.GetContainer(context.Background(), &pb.GetContainerReq{PodUid: "pod-limited", Name: "worker"})
+	if err != nil {
+		t.Fatalf("GetContainer() error = %v", err)
+	}
+	if detailReply.GetCpuLimitCores() != cpu || detailReply.GetMemoryLimitBytes() != mem {
+		t.Fatalf("detail limits = (%v, %v), want (%v, %v)", detailReply.CpuLimitCores, detailReply.MemoryLimitBytes, cpu, mem)
+	}
+}
+
 type containerTestPodRepo struct {
 	biz.NodeHolderReader
 

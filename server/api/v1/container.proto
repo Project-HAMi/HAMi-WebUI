@@ -92,6 +92,8 @@ message ContainerReply {
   repeated ContainerDevice devices = 30;
   // Why allocation_shape is unknown.
   string allocation_shape_reason = 31;
+  optional double cpu_limit_cores = 32;
+  optional int64 memory_limit_bytes = 33;
 }
 
 message ContainerDevice {

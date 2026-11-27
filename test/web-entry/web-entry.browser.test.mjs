@@ -8,7 +8,6 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 
 import { expectedIconIds } from '../../packages/web/test/expected-icon-catalog.mjs'
-import { buildGroupedResourceTopQueries, buildTaskAllocationTopQueries, buildTaskCountQueries } from '../../packages/web/projects/vgpu/metrics/query-contract.mjs'
 import { launchWebEntry } from './launch-web-entry.mjs'
 
 const host = '127.0.0.1'
@@ -330,15 +329,13 @@ async function assertChartRuntime(target) {
   await page.clock.install()
   const runtimeErrors = []
   let rangeRequests = 0
-  const nodeRankQueries = new Set(Object.values(buildGroupedResourceTopQueries('node')))
-  const requestedNodeRanks = []
+  let rankingRequests = 0
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
   page.on('request', (request) => {
     if (request.url().includes('/v1/monitor/query/range-vector') || request.url().includes('/api/v1/telemetry/trends')) {
       rangeRequests += 1
-    } else if (request.url().endsWith('/v1/monitor/query/instant-vector')) {
-      const query = request.postDataJSON()?.query
-      if (nodeRankQueries.has(query)) requestedNodeRanks.push(query)
+    } else if (request.url().includes('/api/v1/containers/rankings')) {
+      rankingRequests += 1
     }
   })
   page.on('console', (message) => {
@@ -356,7 +353,7 @@ async function assertChartRuntime(target) {
   )
   await page.locator('.gpu-distribution .distribution-group').first().waitFor()
   assert.equal(await page.locator('.tab-top-switch').count(), 0, 'The overview must not show the node resource rankings')
-  assert.deepEqual(requestedNodeRanks, [], 'The overview must not fetch the four node ranking series')
+  assert.equal(rankingRequests, 0, 'The overview must not fetch workload rankings')
 
   const gaugeHelp = page.locator('.gauge-card__help').first()
   await gaugeHelp.hover()
@@ -1063,6 +1060,14 @@ before(async() => {
       }
     } else if (pathname === '/v1/containers' || pathname === '/v1/workloads' || pathname === '/api/v1/containers') {
       payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }], total: 1, statusCounts: { all: 1, success: 1 } }
+    } else if (pathname === '/api/v1/containers/rankings') {
+      payload = {
+        byNode: [{ name: 'node-1', nodeUid: 'node-1', count: 1 }],
+        byDevice: [{ name: 'gpu-1', nodeUid: 'node-1', count: 1 }],
+        byCompute: [{ podUid: 'pod-1', name: 'worker', appName: 'job-1', namespace: 'default', value: 0.4 }],
+        byMemory: [{ podUid: 'pod-1', name: 'worker', appName: 'job-1', namespace: 'default', value: 0.4 }],
+        byVgpu: [{ podUid: 'pod-1', name: 'worker', appName: 'job-1', namespace: 'default', value: 0.4 }],
+      }
     } else if (pathname === '/api/v1/device-config') {
       payload = { state: 'loaded', reason: '', issues: [], ascendModels: [] }
     } else if (pathname === '/api/v1/about') {
@@ -2158,7 +2163,7 @@ test('runtime language updates the document and TDesign services', async() => {
 
   try {
     await page.goto(
-      `${target}${basePath}workloads`,
+      `${target}${basePath}accelerators/gpu-1`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('html[lang="en"]').waitFor()
@@ -2190,50 +2195,57 @@ test('runtime language updates the document and TDesign services', async() => {
 test('compact Top5 switches retain sorted data, keyboard operation and readable bilingual headers', { timeout: 60_000 }, async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1280, height: 900 } })
-  const fixtures = new Map()
-  const fixtureQueries = (nameKey, queries) => Object.values(queries).map((query, index) => {
-    const values = [[7, 31, 18], [42, 9, 26], [14, 6, 21], [1, 33, 12]][index]
-    const data = values.map((value, position) => ({
-      metric: { [nameKey]: `${nameKey === 'container_pod_uuid' ? 'worker:ranking-fixture' : nameKey}-${position}` }, value
-    }))
-    fixtures.set(query, { nameKey, data })
-    return query
-  })
-  const nodeQueries = fixtureQueries('node', buildGroupedResourceTopQueries('node'))
+  const rowValues = [[7, 31, 18], [42, 9, 26], [14, 6, 21], [1, 33, 12]]
+  const buildSeries = (prefix, values) => values.map((value, i) => ({ label: `${prefix}-${i}`, value }))
+  const nodeTabs = rowValues.map((values) => buildSeries('node', values))
   const nodeRankingRows = [0, 1, 2].map((i) => ({
     uid: `node-${i}`,
     name: `node-${i}`,
     providers: ['NVIDIA'],
     isReady: true,
     isSchedulable: true,
-    coreAllocationPercent: [7, 31, 18][i],
-    computeUtilizationPercent: [42, 9, 26][i],
-    memoryAllocationPercent: [14, 6, 21][i],
-    memoryUsagePercent: [1, 33, 12][i],
+    coreAllocationPercent: rowValues[0][i],
+    computeUtilizationPercent: rowValues[1][i],
+    memoryAllocationPercent: rowValues[2][i],
+    memoryUsagePercent: rowValues[3][i],
   }))
   await page.route('**/api/v1/nodes', route => route.fulfill({ json: listFixture('nodes', nodeRankingRows) }))
-  const deviceQueries = fixtureQueries('device_uuid', buildGroupedResourceTopQueries('device_uuid'))
-  const physicalCards = [0, 1, 2].map(i => {
-    const [coreUsed, utilization, memoryUsed, occupancy] = deviceQueries.map(query => fixtures.get(query).data[i].value)
-    return { uuid: `device_uuid-${i}`, nodeName: 'worker', nodeUid: 'uid', vendor: 'NVIDIA', type: 'A100', health: i !== 1,
-      coreUsed, coreTotal: 100, memoryUsed, memoryTotal: 100, utilizationRatio: utilization / 100, memoryUsageRatio: occupancy / 100 }
-  })
+  const deviceTabs = rowValues.map((values) => buildSeries('device_uuid', values))
+  const physicalCards = [0, 1, 2].map(i => ({
+    uuid: `device_uuid-${i}`,
+    nodeName: 'worker',
+    nodeUid: 'uid',
+    vendor: 'NVIDIA',
+    type: 'A100',
+    health: i !== 1,
+    coreUsed: rowValues[0][i],
+    coreTotal: 100,
+    utilizationRatio: rowValues[1][i] / 100,
+    memoryUsed: rowValues[2][i],
+    memoryTotal: 100,
+    memoryUsageRatio: rowValues[3][i] / 100,
+  }))
   await routePhysicalFixture(page, physicalCards)
   const module = { ...physicalCards[0], uuid: 'module-only', vendor: 'Ascend', type: 'Ascend910C', coreUsed: 100, memoryUsed: 100 }
   await page.route('**/api/v1/devices', route => route.fulfill({ json: { list: [...physicalCards, module] } }))
-  const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
-  const workloadQueries = fixtureQueries('container_pod_uuid', buildTaskAllocationTopQueries())
+  const workloadRankings = {
+    byNode: rowValues[0].map((count, i) => ({ name: `node-${i}`, nodeUid: `node-${i}`, count })),
+    byDevice: rowValues[1].map((count, i) => ({ name: `device_uuid-${i}`, nodeUid: 'uid', count })),
+    byCompute: rowValues[0].map((value, i) => ({ podUid: `ranking-fixture-${i}`, name: 'worker', appName: '', namespace: 'default', value })),
+    byMemory: rowValues[1].map((value, i) => ({ podUid: `ranking-fixture-${i}`, name: 'worker', appName: '', namespace: 'default', value })),
+    byVgpu: rowValues[2].map((value, i) => ({ podUid: `ranking-fixture-${i}`, name: 'worker', appName: '', namespace: 'default', value })),
+  }
+  await page.route('**/api/v1/containers/rankings', route => route.fulfill({ json: workloadRankings }))
+  const workloadTabs = [
+    [buildSeries('node', rowValues[0]), buildSeries('device_uuid', rowValues[1])],
+    [buildSeries('ranking-fixture', rowValues[0]), buildSeries('ranking-fixture', rowValues[1]), buildSeries('ranking-fixture', rowValues[2])],
+  ]
   const requests = trackMonitorRequests(page)
-  await page.route('**/v1/monitor/query/instant-vector', (route) => {
-    const fixture = fixtures.get(route.request().postDataJSON()?.query)
-    if (deviceQueries.includes(route.request().postDataJSON()?.query)) return route.fulfill({ json: { code: 0, data: [] } })
-    return fixture ? route.fulfill({ json: { code: 0, data: fixture.data } }) : route.continue()
-  })
   try {
-    for (const [path, queries] of [
-      ['nodes', [nodeQueries.slice(0, 2), nodeQueries.slice(2)]],
-      ['accelerators', [deviceQueries.slice(0, 2), deviceQueries.slice(2)]],
-      ['workloads', [countQueries, workloadQueries]]
+    for (const [path, tabGroups] of [
+      ['nodes', [nodeTabs.slice(0, 2), nodeTabs.slice(2)]],
+      ['accelerators', [deviceTabs.slice(0, 2), deviceTabs.slice(2)]],
+      ['workloads', workloadTabs]
     ]) {
       await page.goto(`${target}${basePath}${path}`, { waitUntil: 'networkidle' })
       const cards = page.locator('.home-block').filter({ has: page.locator('.tab-top-switch') })
@@ -2244,21 +2256,20 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
         await waitUntil(async() => await page.locator('.accelerator-table tbody tr').count() === 1, 'health tab did not filter the table')
       }
       const beforeSwitch = requests.length
-      for (const [cardIndex, options] of queries.entries()) {
+      for (const [cardIndex, options] of tabGroups.entries()) {
         const card = cards.nth(cardIndex)
         const buttons = card.locator('.tab-top-switch button')
         assert.equal(await buttons.count(), options.length)
-        for (const [index, query] of options.entries()) {
+        for (const [index, series] of options.entries()) {
           await buttons.nth(index).press(index % 2 ? 'Space' : 'Enter')
           assert.equal(await buttons.nth(index).getAttribute('aria-pressed'), 'true')
-          const fixture = fixtures.get(query)
-          const expected = fixture.data.slice().sort((left, right) => right.value - left.value)
+          const expected = series.slice().sort((left, right) => right.value - left.value)
           const rows = card.locator('.tab-top-item')
           await waitUntil(async() => await rows.count() === expected.length, 'Top5 switch did not show its data')
           assert.deepEqual(await rows.locator('.tab-top-value').evaluateAll((elements) => elements.map((element) => Number(element.textContent.match(/[\d.]+/)[0]))), expected.map((item) => item.value))
           for (const [position, item] of expected.entries()) {
             const name = await rows.nth(position).evaluate((element) => element.querySelector('.ranking-workload-link')?.getAttribute('aria-label') || element.querySelector('.tab-top-name')?.getAttribute('title'))
-            assert.ok(name.includes(item.metric[fixture.nameKey].split(':').at(-1)), `${path}: switching metrics changed value-to-name ordering: ${JSON.stringify({ cardIndex, index, position, name, expected: item.metric[fixture.nameKey] })}`)
+            assert.ok(name.includes(item.label), `${path}: switching metrics changed value-to-name ordering: ${JSON.stringify({ cardIndex, index, position, name, expected: item.label })}`)
           }
         }
       }
@@ -2320,18 +2331,24 @@ test('workload rankings show Pod and container names independently of list filte
     const items = name ? workloads.filter((item) => item.name === name) : workloads
     return fulfillWorkloadFixture(route, { code: 0, items, total: items.length })
   })
-  await page.route('**/api/vgpu/v1/monitor/query/instant-vector', (route) => {
-    if (!route.request().postDataJSON()?.query?.includes('container_pod_uuid')) return route.continue()
-    return route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ code: 0, data: [
+  await page.route('**/api/v1/containers/rankings', (route) => route.fulfill({
+    json: {
+      byNode: [{ name: 'node-1', nodeUid: 'node-1', count: workloads.length }],
+      byDevice: [{ name: 'gpu-1', nodeUid: 'node-1', count: workloads.length }],
+      byCompute: [
         ...workloads.map((item, index) => ({
-          metric: { container_pod_uuid: `${item.name}:${item.podUid}` }, value: 1 - index * 0.2
+          podUid: item.podUid,
+          name: item.name,
+          appName: item.appName,
+          namespace: item.namespace,
+          value: 1 - index * 0.2
         })),
-        { metric: { container_pod_uuid: 'main:pod-no-longer-in-inventory' }, value: 0.1 }
-      ] })
-    })
-  })
+        { podUid: 'pod-no-longer-in-inventory', name: 'main', appName: '', namespace: '', value: 0.1 }
+      ],
+      byMemory: [],
+      byVgpu: []
+    }
+  }))
 
   try {
     await page.goto(`${target}${basePath}workloads`, { waitUntil: 'domcontentloaded' })
@@ -2438,13 +2455,11 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
   })
 
   const initialGate = createGate()
-  // The table and the unfiltered ranking inventory each load once.
-  // Both requests share the same response so their arrival order is irrelevant.
+  // Only the workload table reads /api/v1/containers; rankings come from /api/v1/containers/rankings.
   const initialResponse = async(route) => {
     await initialGate.promise
     await fulfill(route, { invalid: true })
   }
-  enqueue(initialResponse)
   enqueue(initialResponse)
 
   try {
@@ -2458,7 +2473,7 @@ test('workload list exposes deterministic loading, empty, error and refresh stat
       'true'
     )
 
-    await waitUntil(() => receivedRequests === 2, 'Initial table and ranking inventory requests did not start')
+    await waitUntil(() => receivedRequests === 1, 'Initial table request did not start')
     initialGate.release()
     await page.locator('[data-testid="stateful-table-error"]').waitFor()
     await page.getByText('The server returned an invalid list response. Please try again.')

@@ -1,0 +1,43 @@
+{
+  "byNode": [
+    {
+      "name": "node-1",
+      "nodeUid": "node-uid-1",
+      "count": 1
+    }
+  ],
+  "byDevice": [
+    {
+      "name": "GPU-1",
+      "nodeUid": "node-uid-1",
+      "count": 1
+    }
+  ],
+  "byCompute": [
+    {
+      "podUid": "pod-uid-1",
+      "name": "trainer",
+      "appName": "train-job-0",
+      "namespace": "default",
+      "value": 0.5
+    }
+  ],
+  "byMemory": [
+    {
+      "podUid": "pod-uid-1",
+      "name": "trainer",
+      "appName": "train-job-0",
+      "namespace": "default",
+      "value": 20
+    }
+  ],
+  "byVgpu": [
+    {
+      "podUid": "pod-uid-1",
+      "name": "trainer",
+      "appName": "train-job-0",
+      "namespace": "default",
+      "value": 1
+    }
+  ]
+}

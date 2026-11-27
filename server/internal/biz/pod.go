@@ -25,6 +25,8 @@ type Container struct {
 	Priority         string
 	NodeUID          string
 	Namespace        string
+	CPULimitCores    *float64
+	MemoryLimitBytes *int64
 }
 
 type ContainerStatusDetail struct {

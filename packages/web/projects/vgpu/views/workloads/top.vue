@@ -2,7 +2,7 @@
   <div class="task-top-box">
     <TabTop class="item" v-for="config in topConfig" :key="config.key" v-bind="config" :onClick="handleChartClick">
       <template v-if="config.key === 'apply'" #item-name="{ item }">
-        <WorkloadRankingName :workload="resolveWorkloadRankingIdentity(item.name, workloadIdentityIndex)" />
+        <WorkloadRankingName :workload="item.workload" />
       </template>
     </TabTop>
   </div>
@@ -15,74 +15,76 @@ import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import apiClient from '@/api/client.mjs';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import WorkloadRankingName from './WorkloadRankingName.vue';
-import {
-  buildWorkloadIdentityIndex,
-  createWorkloadDetailLocation,
-  resolveWorkloadRankingIdentity,
-} from './workload-identity.mjs';
-import {
-  buildTaskAllocationTopQueries,
-  buildTaskCountQueries,
-} from '~/vgpu/metrics/query-contract.mjs';
-
-const WORKLOAD_INVENTORY_PAGE_SIZE = 100;
-const WORKLOAD_INVENTORY_MAX_PAGES = 10;
+import { createWorkloadDetailLocation } from './workload-identity.mjs';
 
 const router = useRouter();
 const { t } = useI18n();
-const taskCountQueries = buildTaskCountQueries();
-const taskAllocationTopQueries = buildTaskAllocationTopQueries();
 
-// Rankings cover the cluster, so their names must not depend on table filters.
-const workloadInventory = ref([]);
-let inventoryController = null;
+const rankings = ref(null);
+const rankingStatus = ref(REQUEST_STATUS.LOADING);
+let rankingsController = null;
 
-const loadWorkloadInventory = async () => {
-  inventoryController?.abort();
+const loadRankings = async () => {
+  rankingsController?.abort();
   const controller = new AbortController();
-  inventoryController = controller;
+  rankingsController = controller;
+  rankingStatus.value = REQUEST_STATUS.LOADING;
   try {
-    const items = [];
-    for (let page = 1; page <= WORKLOAD_INVENTORY_MAX_PAGES; page += 1) {
-      const result = await apiClient.listContainers(
-        { page, pageSize: WORKLOAD_INVENTORY_PAGE_SIZE },
-        { signal: controller.signal },
-      );
-      if (controller.signal.aborted) return;
-      const pageItems = Array.isArray(result?.items) ? result.items : [];
-      items.push(...pageItems);
-      const total = Number(result?.total ?? items.length);
-      if (pageItems.length === 0 || items.length >= total) break;
-    }
-    workloadInventory.value = items;
+    const reply = await apiClient.getContainerRankings({ signal: controller.signal });
+    if (controller.signal.aborted) return;
+    rankings.value = reply;
+    rankingStatus.value = REQUEST_STATUS.READY;
   } catch {
-    if (!controller.signal.aborted) workloadInventory.value = [];
+    if (!controller.signal.aborted) rankingStatus.value = REQUEST_STATUS.ERROR;
   } finally {
-    if (inventoryController === controller) inventoryController = null;
+    if (rankingsController === controller) rankingsController = null;
   }
 };
 
 onMounted(() => {
-  loadWorkloadInventory();
+  loadRankings();
 });
 onBeforeUnmount(() => {
-  inventoryController?.abort();
-  inventoryController = null;
+  rankingsController?.abort();
+  rankingsController = null;
 });
 
-const workloadIdentityIndex = computed(() => buildWorkloadIdentityIndex(workloadInventory.value));
+const toCountRows = (items = []) => items.map((item) => ({
+  name: item.name || '-',
+  nodeUid: item.nodeUid || '',
+  value: Number(item.count) || 0,
+}));
+
+const toAllocationRows = (items = []) => items.map((item) => {
+  const metricName = `${item.name || ''}:${item.podUid || ''}`;
+  return {
+    name: metricName,
+    value: Number(item.value) || 0,
+    workload: {
+      metricName,
+      identity: item.name && item.podUid ? { name: item.name, podUid: item.podUid } : null,
+      appName: item.appName || '',
+      namespace: item.namespace || '',
+    },
+  };
+});
 
 const handleChartClick = async (params) => {
   const name = params.data.name;
   const activeTabKey = params.tabActive;
   if (activeTabKey === 'node') {
+    const uid = params.data.nodeUid;
+    if (uid) {
+      router.push({ name: 'node-detail', params: { uid }, query: { nodeName: name } });
+      return;
+    }
     try {
       const { list = [] } = await apiClient.listNodes();
       const node = list.find((item) => item.name === name);
       if (node) {
-        const uuid = node.uid;
-        router.push(`/nodes/${uuid}?nodeName=${name}`);
+        router.push(`/nodes/${node.uid}?nodeName=${name}`);
       } else {
         MessagePlugin.error(t('node.nodeNotFound'));
       }
@@ -90,8 +92,11 @@ const handleChartClick = async (params) => {
       MessagePlugin.error(t('node.nodeNotFound'));
     }
   } else if (activeTabKey === 'device_uuid') {
+    const nodeUid = params.data.nodeUid;
     router.push({
-      path: `/accelerators/${name}`,
+      name: 'accelerator-detail',
+      params: { uuid: name },
+      ...(nodeUid ? { query: { nodeUid } } : {}),
     });
   } else {
     const location = createWorkloadDetailLocation(name);
@@ -99,60 +104,59 @@ const handleChartClick = async (params) => {
   }
 };
 
-const topConfig = computed(() => [
-  {
-    title: t('task.topCount'),
-    key: 'total',
-    config: [
-      {
-        tab: t('dashboard.node'),
-        key: 'node',
-        nameKey: 'node',
-        data: [],
-        unit: ' ',
-        query: taskCountQueries.byNode,
-      },
-      {
-        tab: t('dashboard.card'),
-        key: 'device_uuid',
-        data: [],
-        nameKey: 'device_uuid',
-        unit: ' ',
-        query: taskCountQueries.byDevice,
-      },
-    ],
-  },
-  {
-    title: t('task.topApply'),
-    key: 'apply',
-    config: [
-      {
-        tab: t('dashboard.compute'),
-        key: 'core',
-        data: [],
-        nameKey: 'container_pod_uuid',
-        unit: t('dashboard.acceleratorEquivalentUnit'),
-        query: taskAllocationTopQueries.compute,
-      },
-      {
-        tab: t('dashboard.memory'),
-        key: 'memory',
-        data: [],
-        unit: 'GiB',
-        nameKey: 'container_pod_uuid',
-        query: taskAllocationTopQueries.memory,
-      },
-      {
-        tab: 'vGPU',
-        key: 'vgpu',
-        data: [],
-        nameKey: 'container_pod_uuid',
-        unit: t('dashboard.vgpuSlotUnit'),
-        query: taskAllocationTopQueries.vgpu,
-      },
-    ],
-  },
-]);
+const topConfig = computed(() => {
+  const current = rankings.value;
+  const status = rankingStatus.value;
+  return [
+    {
+      title: t('task.topCount'),
+      key: 'total',
+      config: [
+        {
+          tab: t('dashboard.node'),
+          key: 'node',
+          status,
+          data: toCountRows(current?.byNode),
+          unit: ' ',
+        },
+        {
+          tab: t('dashboard.card'),
+          key: 'device_uuid',
+          status,
+          data: toCountRows(current?.byDevice),
+          unit: ' ',
+        },
+      ],
+    },
+    {
+      title: t('task.topApply'),
+      key: 'apply',
+      config: [
+        {
+          tab: t('dashboard.compute'),
+          key: 'core',
+          status,
+          data: toAllocationRows(current?.byCompute),
+          unit: t('dashboard.acceleratorEquivalentUnit'),
+        },
+        {
+          tab: t('dashboard.memory'),
+          key: 'memory',
+          status,
+          data: toAllocationRows(current?.byMemory),
+          unit: 'GiB',
+        },
+        {
+          tab: 'vGPU',
+          key: 'vgpu',
+          status,
+          data: toAllocationRows(current?.byVgpu),
+          unit: t('dashboard.vgpuSlotUnit'),
+        },
+      ],
+    },
+  ];
+});
 </script>
 
 <style scoped lang="scss">

@@ -287,7 +287,6 @@ import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { ref, watch, computed, onBeforeUnmount } from 'vue';
 import { Tooltip as TTooltip } from 'tdesign-vue-next';
-import useInstantVector from '~/vgpu/hooks/useInstantVector';
 
 import apiClient from '@/api/client.mjs';
 import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
@@ -300,10 +299,6 @@ import { useI18n } from 'vue-i18n';
 import { formatWorkloadName } from './workload-identity.mjs';
 import WorkloadStatus from './WorkloadStatus.vue';
 import { getWorkloadStatus } from './workload-status.mjs';
-import {
-  METRIC_STATUS,
-  readReadyMetricField,
-} from '~/vgpu/hooks/instant-vector-state.mjs';
 import DetailPageState from '~/vgpu/components/DetailPageState.vue';
 import LoadingValue from '~/vgpu/components/LoadingValue.vue';
 import MetricHelp from '~/vgpu/components/MetricHelp.vue';
@@ -319,11 +314,6 @@ import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { parseDeviceSplitPage } from '~/vgpu/components/device-split.mjs';
 import { buildNodeDetailLocation } from '~/vgpu/views/nodes/detail-location.mjs';
-import {
-  buildTaskContainerResourceQueries,
-  buildTaskResourceOverviewQueries,
-} from '~/vgpu/metrics/query-contract.mjs';
-import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
 
 const route = useRoute();
 const router = useRouter();
@@ -536,81 +526,46 @@ watch(basicImageTooltip, dismissImageTooltip);
 const basicCreateTime = computed(() => (
   detail.value?.createTime ? timeParse(detail.value.createTime) : '--'
 ));
-const taskAllocationSelector =
-  'container_name=$container,pod_name=$pod,namespace_name=$namespace';
-const taskResourceOverviewQueries = buildTaskResourceOverviewQueries({
-  selector: taskAllocationSelector,
-});
-const taskContainerResourceQueries = buildTaskContainerResourceQueries();
-const resourceOverviewData = useInstantVector(
-  [
-    {
-      key: 'gpuCards',
-      query: taskResourceOverviewQueries.gpuCards,
-    },
-    {
-      key: 'computeLimit',
-      query: taskResourceOverviewQueries.computeLimit,
-    },
-    {
-      key: 'singleCardMemory',
-      query: taskResourceOverviewQueries.singleCardMemory,
-    },
-    {
-      key: 'cpuLimit',
-      query: taskContainerResourceQueries.cpuLimit,
-    },
-    {
-      key: 'memoryLimit',
-      query: taskContainerResourceQueries.memoryLimit,
-    },
-    {
-      key: 'containerInfo',
-      query: taskContainerResourceQueries.containerInfo,
-    },
-  ],
-  (query) => {
-    if (detailStatus.value !== REQUEST_STATUS.READY) return 'undefined';
-    return renderPromQLTemplate(query, {
-      container: detail.value.name || '',
-      namespace: detail.value.namespace || '',
-      pod: detail.value.appName || '',
-      pod_uid: detail.value.podUid || requestedIdentity.value.podUid || '',
-    });
-  },
-);
-const toNumOrUndefined = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+const formatPositiveNumber = (value, formatter) => {
+  const number = Number(value);
+  return value !== null && value !== undefined && Number.isFinite(number) && number > 0
+    ? formatter(number)
+    : undefined;
 };
 const resourceOverviewTexts = computed(() => {
-  const getMetric = (key) => resourceOverviewData.value.find((item) => item.key === key);
-  const get = (key) => readReadyMetricField(getMetric(key), 'count');
-  const containerInfo = getMetric('containerInfo');
-  const hasContainerInfo =
-    containerInfo?.hasData === true && Number(containerInfo.count) > 0;
-  const formatLimit = (key, formatter) => {
-    const metric = getMetric(key);
-    if (metric?.hasData === true) {
-      const value = toNumOrUndefined(metric.count);
-      return value === undefined ? '--' : formatter(value);
-    }
-    if (metric?.status === METRIC_STATUS.MISSING && hasContainerInfo) {
-      return t('common.notLimited');
-    }
-    return '--';
-  };
-  const gpuCards = toNumOrUndefined(get('gpuCards'));
-  const computeLimit = toNumOrUndefined(get('computeLimit'));
-  const singleCardMemory = toNumOrUndefined(get('singleCardMemory'));
-  return {
-    gpuCards: gpuCards === undefined ? '--' : `${Math.round(gpuCards)}`,
-    computeLimit: isUnreservedSoftSplit(detail.value || {}) ? t('common.notLimited')
-      : computeLimit === undefined ? '--' : `${roundToDecimal(computeLimit / 100, 2)}`,
-    singleCardMemory: singleCardMemory === undefined ? '--' : `${roundToDecimal(singleCardMemory, 2)} GiB`,
-    cpuLimit: formatLimit('cpuLimit', (value) => `${roundToDecimal(value, 3)} Core`),
-    memoryLimit: formatLimit('memoryLimit', (value) => `${value.toFixed(1)} GiB`),
-  };
+  if (detailStatus.value !== REQUEST_STATUS.READY || !detail.value) {
+    return {
+      gpuCards: '--',
+      computeLimit: '--',
+      singleCardMemory: '--',
+      cpuLimit: '--',
+      memoryLimit: '--',
+    };
+  }
+  const current = detail.value;
+  const allocatedDevices = Number(current.allocatedDevices);
+  const allocatedCores = Number(current.allocatedCores);
+  const allocatedMem = Number(current.allocatedMem);
+  const gpuCards = Number.isFinite(allocatedDevices) && allocatedDevices > 0
+    ? `${Math.round(allocatedDevices)}`
+    : '--';
+  const computeLimit = isUnreservedSoftSplit(current)
+    ? t('common.notLimited')
+    : current.allocatedCoresKnown !== false && Number.isFinite(allocatedCores)
+      ? `${roundToDecimal(allocatedCores / 100, 2)}`
+      : '--';
+  const singleCardMemory = Number.isFinite(allocatedDevices) && allocatedDevices > 0 && Number.isFinite(allocatedMem)
+    ? `${roundToDecimal(allocatedMem / allocatedDevices / 1024, 2)} GiB`
+    : '--';
+  const cpuLimit = formatPositiveNumber(
+    current.cpuLimitCores,
+    (cores) => `${roundToDecimal(cores, 3)} Core`,
+  ) || t('common.notLimited');
+  const memoryLimit = formatPositiveNumber(
+    current.memoryLimitBytes,
+    (bytes) => `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
+  ) || t('common.notLimited');
+  return { gpuCards, computeLimit, singleCardMemory, cpuLimit, memoryLimit };
 });
 
 const handleGpuJump = (uuid) => {
