@@ -29,15 +29,16 @@
       data-testid="stateful-table-error"
       role="alert"
     >
-      <el-empty :description="blockingMessage">
-        <el-button
-          type="primary"
+      <div class="stateful-table__empty">
+        <p class="stateful-table__empty-text">{{ blockingMessage }}</p>
+        <t-button
+          theme="primary"
           data-testid="stateful-table-retry"
           @click="$emit('retry')"
         >
           {{ $t('common.retry') }}
-        </el-button>
-      </el-empty>
+        </t-button>
+      </div>
     </div>
 
     <template v-else>
@@ -67,11 +68,14 @@
         data-testid="stateful-table-empty"
         role="status"
       >
-        <el-empty :description="$t(filtered ? 'common.noMatchingResults' : 'common.noData')">
+        <div class="stateful-table__empty">
+          <p class="stateful-table__empty-text">
+            {{ $t(filtered ? 'common.noMatchingResults' : 'common.noData') }}
+          </p>
           <t-button v-if="filtered" variant="outline" @mousedown.prevent @click="$emit('clearFilters')">
             {{ $t('common.clearFilters') }}
           </t-button>
-        </el-empty>
+        </div>
       </div>
       <template v-else>
         <slot />
@@ -197,6 +201,22 @@ const blockingMessage = computed(() => (
 
 .stateful-table__feedback--empty {
   min-height: 300px;
+}
+
+.stateful-table__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+.stateful-table__empty-text {
+  margin: 0;
+  color: #6b7785;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .stateful-table__notice {

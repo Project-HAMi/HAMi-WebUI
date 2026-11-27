@@ -105,6 +105,7 @@ export default {
     confirmLogout: 'Are you sure you want to log out?',
     cancel: 'Cancel',
     confirm: 'Confirm',
+    back: 'Back',
     success: 'Success',
     error: 'Error',
     loading: 'Loading...',

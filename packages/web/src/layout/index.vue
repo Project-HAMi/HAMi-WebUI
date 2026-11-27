@@ -1,23 +1,24 @@
 <template>
-  <el-container class="page">
-    <template v-if="!isNoSidebar">
-      <el-aside :width="sidebarWidth + 'px'" class="page-aside">
-        <Sidebar
-          :collapsed="isSidebarCollapsed"
-          @toggle="toggleSidebar"
-        />
-      </el-aside>
-    </template>
-    <el-main class="page-main">
+  <div class="page">
+    <aside
+      v-if="!isNoSidebar"
+      :style="{ width: sidebarWidth + 'px' }"
+      class="page-aside"
+    >
+      <Sidebar
+        :collapsed="isSidebarCollapsed"
+        @toggle="toggleSidebar"
+      />
+    </aside>
+    <main class="page-main">
       <AppMain :show-language-switch="isNoSidebar" />
-    </el-main>
-  </el-container>
+    </main>
+  </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import '@tabler/core/dist/css/tabler.min.css';
 import { AppMain, Sidebar } from './components';
 
 const route = useRoute();
@@ -47,6 +48,7 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 <style lang="scss" scoped>
 .page {
   --app-frame-inset: 8px;
+  position: relative;
   display: flex;
   flex-direction: row;
   padding: 0;
@@ -67,9 +69,10 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 }
 
 .page-main {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  padding: var(--app-frame-inset) !important;
+  padding: var(--app-frame-inset);
   background-color: #f5f7fa;
   box-sizing: border-box;
   overflow: hidden;
@@ -77,7 +80,7 @@ const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 }
 
 .page-aside + .page-main {
-  padding-left: 0 !important;
+  padding-left: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -77,22 +77,6 @@ module.exports = {
       },
     ],
   },
-  overrides: [
-    {
-      files: [
-        'src/App.vue',
-        'src/components/Confirm/index.vue',
-        'src/components/LangSelect/index.vue',
-        'src/layout/index.vue',
-        'src/plugins/element.js',
-        'src/utils/request.js',
-        'projects/vgpu/views/task/admin/top.vue',
-      ],
-      rules: {
-        'no-restricted-imports': 'off',
-      },
-    },
-  ],
   globals: {
     globals: 'readonly',
     // Vue 3.3+ compiler macros, not covered by the installed

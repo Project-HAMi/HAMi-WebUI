@@ -327,7 +327,7 @@ onBeforeUnmount(() => {
   }
 
   &[aria-checked='true'] &__track {
-    background: var(--el-color-primary);
+    background: var(--td-brand-color);
 
     > span { transform: translateX(12px); }
   }
@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
       width: 100%;
       height: 100%;
       border-radius: 2px;
-      background: var(--el-color-primary);
+      background: var(--td-brand-color);
       transform-origin: left center;
     }
   }
@@ -529,7 +529,7 @@ onBeforeUnmount(() => {
 .resource-rotation:focus-visible,
 .resource-panel:focus-visible,
 .resource-status__main:focus-visible {
-  outline: 2px solid var(--el-color-primary);
+  outline: 2px solid var(--td-brand-color);
   outline-offset: 2px;
   border-radius: 4px;
 }

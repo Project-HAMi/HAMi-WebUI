@@ -24,7 +24,9 @@
       data-testid="detail-page-missing"
       role="status"
     >
-      <el-empty :description="$t('common.resourceNotFound')" />
+      <div class="detail-page-empty">
+        <p class="detail-page-empty__text">{{ $t('common.resourceNotFound') }}</p>
+      </div>
     </div>
 
     <div
@@ -33,11 +35,12 @@
       data-testid="detail-page-error"
       role="alert"
     >
-      <el-empty :description="$t('common.loadFailed')">
-        <el-button type="primary" data-testid="detail-page-retry" @click="$emit('retry')">
+      <div class="detail-page-empty">
+        <p class="detail-page-empty__text">{{ $t('common.loadFailed') }}</p>
+        <t-button theme="primary" data-testid="detail-page-retry" @click="$emit('retry')">
           {{ $t('common.retry') }}
-        </el-button>
-      </el-empty>
+        </t-button>
+      </div>
     </div>
 
     <slot v-else />
@@ -71,6 +74,21 @@ defineEmits(['retry']);
   border: 1px solid #e4ebf1;
   border-radius: 12px;
   background: #fff;
+}
+
+.detail-page-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.detail-page-empty__text {
+  margin: 0;
+  color: #6b7785;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 .detail-page-state__sr-only {

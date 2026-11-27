@@ -1,7 +1,6 @@
 @import './variables.scss';
 @import './mixin.scss';
 @import './transition.scss';
-@import './element-ui.scss';
 @import './btn.scss';
 @import './luck.scss';
 @import './table.scss';
@@ -13,19 +12,6 @@ body {
   text-rendering: optimizeLegibility;
   font-family: -apple-system, BlinkMacSystemFont, var(--td-font-family);
   background-color: #f5f7fa;
-
-  .el-message-box{
-    --el-messagebox-border-radius: 8px;
-    --el-messagebox-font-size: 16px;
-    --el-messagebox-padding-primary:20px;
-    .el-message-box__title{
-      font-weight: bold;
-    }
-    .el-message-box__headerbtn{
-      top:10px;
-      right: 10px;
-    }
-  }
 }
 
 pre {
@@ -225,18 +211,6 @@ aside {
   margin-bottom: 20px;
   border-radius: 10px;
   box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.12);
-}
-
-.el-drawer{
-  border-radius:12px 0 0 12px;
-}
-
-.el-menu-item.is-active {
-  border-radius: 4px;
-  background: #2563eb!important;
-  span {
-    color: #fff!important;
-  }
 }
 
 .t-radio-group.t-radio-group__outline {

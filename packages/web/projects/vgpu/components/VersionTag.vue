@@ -1,38 +1,33 @@
 <template>
-  <el-tooltip
+  <t-tooltip
     v-model:visible="hintOpen"
     :disabled="!showFullVersion"
-    ref="tooltip"
-    :content="version"
-    :trigger="['hover', 'focus']"
-    placement="bottom-start"
-    effect="light"
+    trigger="hover"
+    placement="bottom-left"
+    theme="light"
     :show-arrow="false"
-    :offset="4"
-    popper-class="about-version-hint"
-    append-to=".t-dialog__ctx:has(.about-dialog)"
-    :popper-options="placementOptions"
+    overlay-class-name="about-version-hint"
+    attach=".t-dialog__ctx:has(.about-dialog)"
   >
+    <template #content><span role="tooltip">{{ version }}</span></template>
     <component
       :is="showFullVersion ? 'button' : 'span'"
       ref="tag"
       :type="showFullVersion ? 'button' : undefined"
       class="version-tag"
       :aria-label="showFullVersion ? version : undefined"
-      @click="showFullVersion && tooltip?.onOpen()"
+      @focus="showFullVersion && (hintOpen = true)"
+      @blur="hintOpen = false"
+      @click="showFullVersion && (hintOpen = true)"
       @keydown.esc="onEscape"
     >{{ label }}</component>
-  </el-tooltip>
+  </t-tooltip>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue';
 import { shortVersion } from './about-display.mjs';
 
-const placementOptions = {
-  strategy: 'fixed',
-  modifiers: [{ name: 'preventOverflow', options: { padding: 12 } }],
-};
 const props = defineProps({ version: { type: String, required: true } });
 const label = computed(() => shortVersion(props.version));
 const tag = ref(null);
@@ -47,7 +42,6 @@ watch([tag, label], ([element], _, onCleanup) => {
   observer.observe(element);
   onCleanup(() => observer.disconnect());
 }, { flush: 'post' });
-const tooltip = ref(null);
 const hintOpen = ref(false);
 function onEscape(event) {
   if (hintOpen.value) {
@@ -77,9 +71,9 @@ function onEscape(event) {
 }
 button.version-tag { cursor: pointer; }
 button.version-tag:hover, button.version-tag:focus-visible { background: #e5ebf1; color: #32475a; }
-button.version-tag:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 2px; }
+button.version-tag:focus-visible { outline: 2px solid var(--td-brand-color, #2563eb); outline-offset: 2px; }
 /* Keep the overlay in the modal layer, outside the centered dialog and scrollable tabs. */
-:global(.el-popper.about-version-hint) {
+:global(.t-popup.about-version-hint .t-popup__content) {
   box-sizing: border-box;
   width: max-content;
   max-width: min(440px, calc(100vw - 24px));

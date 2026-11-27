@@ -105,6 +105,7 @@ export default {
     confirmLogout: '确定要退出登录吗？',
     cancel: '取消',
     confirm: '确定',
+    back: '返回',
     success: '成功',
     error: '错误',
     loading: '加载中...',

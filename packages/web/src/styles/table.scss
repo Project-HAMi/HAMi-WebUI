@@ -130,7 +130,7 @@
   }
 
   &:hover, &:focus-visible, &:active {
-    color: var(--el-color-primary, #2563eb);
+    color: var(--td-brand-color, #2563eb);
     --resource-link-underline: currentColor;
     &::after { background: currentColor; }
   }

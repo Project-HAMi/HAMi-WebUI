@@ -121,9 +121,9 @@ const modelLabel = computed(() => deviceWording(t('card.model'), props.device.ve
   color: inherit;
   border-radius: 3px;
   text-decoration: none;
-  &:hover, &:focus-visible { color: var(--el-color-primary); }
+  &:hover, &:focus-visible { color: var(--td-brand-color); }
   &:hover span, &:focus-visible span { text-decoration: underline; text-underline-offset: 3px; }
-  &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+  &:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 2px; }
 }
 .fact--sensors {
   display: grid;

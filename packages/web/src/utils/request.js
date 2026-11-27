@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
+import { DialogPlugin, MessagePlugin, NotifyPlugin } from 'tdesign-vue-next';
 import i18n from '@/locales';
 import { getBasePath } from '@/utils/base-path.mjs';
 import { createRequestErrorNotificationGate } from '@/utils/request-error-notification.mjs';
@@ -54,7 +54,21 @@ service.interceptors.response.use(
       // 50008: Illegal token; 50012: Other clients logged in; 50014: Token expired;
       if (res.code === 50008 || res.code === 50012 || res.code === 50014) {
         // to re-login
-        await ElMessageBox.alert(i18n.global.t('common.requestError'), i18n.global.t('common.tip'));
+        await new Promise((resolve) => {
+          const dialog = DialogPlugin.alert({
+            header: i18n.global.t('common.tip'),
+            body: i18n.global.t('common.requestError'),
+            confirmBtn: i18n.global.t('common.confirm'),
+            onConfirm: () => {
+              dialog.destroy();
+              resolve();
+            },
+            onClose: () => {
+              dialog.destroy();
+              resolve();
+            },
+          });
+        });
       } else if (
         shouldNotifyRequestError({
           kind: 'domain',
@@ -65,11 +79,10 @@ service.interceptors.response.use(
           message: res.message,
         })
       ) {
-        ElNotification({
+        NotifyPlugin.error({
           title: res.reason,
-          message: res.message,
-          type: 'error',
-          position: 'bottom-right',
+          content: res.message,
+          placement: 'bottom-right',
         });
       }
       return Promise.reject(new Error(res.message || 'Error'));
@@ -88,10 +101,7 @@ service.interceptors.response.use(
         message: error.message,
       })
     ) {
-      ElMessage({
-        message: error.message,
-        type: 'error',
-      });
+      MessagePlugin.error(error.message);
     }
     return Promise.reject(error);
   },

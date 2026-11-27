@@ -1,26 +1,30 @@
 <template>
-  <el-tooltip
+  <t-tooltip
     v-if="tooltipEnabled"
-    ref="tooltipRef"
-    effect="dark"
+    v-model:visible="tooltipVisible"
+    theme="default"
     placement="top"
-    :content="text"
-    :show-after="300"
-    :popper-class="tooltipClass"
-    :append-to="tooltipAppendTo"
-    :trigger="focusable ? ['hover', 'focus'] : 'hover'"
+    :delay="300"
+    :attach="tooltipAppendTo || 'body'"
+    :overlay-class-name="popupOverlayClass"
+    trigger="hover"
   >
+    <template #content>
+      <span role="tooltip" :class="tooltipClass" class="ellipsis-tooltip-body">{{ text }}</span>
+    </template>
     <span
       ref="textRef"
       class="ellipsis-text"
       :class="linesClass"
       :style="clampStyle"
       :tabindex="focusable ? 0 : undefined"
-      @keydown.esc="tooltipRef?.onClose(undefined, 0)"
+      @focus="focusable && (tooltipVisible = true)"
+      @blur="tooltipVisible = false"
+      @keydown.esc="tooltipVisible = false"
     >
       {{ displayText }}
     </span>
-  </el-tooltip>
+  </t-tooltip>
 
   <span
     v-else
@@ -57,7 +61,7 @@ const props = defineProps({
     type: String,
     default: 'overflow', // 'none' | 'always' | 'overflow'
   },
-  tooltipAppendTo: Object,
+  tooltipAppendTo: [String, Object],
   tooltipClass: {
     type: String,
     default: 'vgpu-long-text-tooltip',
@@ -74,10 +78,11 @@ const props = defineProps({
 });
 
 const textRef = ref(null);
-const tooltipRef = ref(null);
+const tooltipVisible = ref(false);
 const isOverflow = ref(false);
 
 const linesClass = computed(() => (props.lines > 1 ? 'is-multiline' : 'is-singleline'));
+const popupOverlayClass = computed(() => `${props.tooltipClass} ellipsis-tooltip-popup`.trim());
 const clampStyle = computed(() => ({
   '--ellipsis-lines': String(Math.max(1, props.lines)),
 }));
@@ -97,6 +102,10 @@ const tooltipEnabled = computed(() => {
   if (props.tooltip === 'none') return false;
   if (props.tooltip === 'always') return true;
   return displayText.value !== props.text || isOverflow.value;
+});
+
+watch(tooltipEnabled, (enabled) => {
+  if (!enabled) tooltipVisible.value = false;
 });
 
 // scrollWidth and clientWidth are whole pixels, so they miss a text the browser cuts by a fraction of one.
@@ -177,5 +186,13 @@ watch(
   max-width: none;
   white-space: nowrap;
   overflow-wrap: normal;
+}
+
+.ellipsis-tooltip-popup > .t-popup__content {
+  max-width: inherit;
+}
+
+.ellipsis-tooltip-body {
+  display: block;
 }
 </style>

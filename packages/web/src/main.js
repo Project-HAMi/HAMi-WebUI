@@ -1,23 +1,17 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import router from './router';
-import installElementPlus from './plugins/element';
 import installTDesign from './plugins/tdesign';
 import './plugins/echarts';
-import 'normalize.css/normalize.css'; // a modern alternative to CSS resets
-import '@/styles/index.scss'; // global css
+import 'normalize.css/normalize.css';
+import '@/styles/index.scss';
 
 import installIcons from '@/icons';
-import Message from '@/components/Message/index.js';
-import Confirm from '@/components/Confirm/index.js';
-import '@/styles/element/index.scss';
-
 import i18n from '@/locales';
 
 const app = createApp(App);
 app.use(i18n);
-installElementPlus(app);
 installTDesign(app);
 installIcons(app);
 
-app.use(router).use(Confirm).use(Message).mount('#app');
+app.use(router).mount('#app');
