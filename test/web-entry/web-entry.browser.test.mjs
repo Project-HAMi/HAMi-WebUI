@@ -70,13 +70,28 @@ async function readJSONBody(req) {
   }
 }
 
-const workloadListPattern = /\/api\/vgpu\/v1\/(?:containers|workloads)$/
+const workloadListPattern = /\/api\/v1\/containers(?:$|\?)/
+
+function readWorkloadQuery(route) {
+  const params = new URL(route.request().url()).searchParams
+  return {
+    isInventoryRead: params.get('page_size') === '100',
+    filters: {
+      ...(params.get('keyword') ? { keyword: params.get('keyword') } : {}),
+      ...(params.get('status') ? { status: params.get('status') } : {}),
+      ...(params.get('node_name') ? { nodeName: params.get('node_name') } : {}),
+      ...(params.get('device_id') ? { deviceId: params.get('device_id') } : {}),
+    },
+    page: Number(params.get('page') || 1),
+    pageSize: Number(params.get('page_size') || 10),
+  }
+}
 
 function fulfillWorkloadFixture(route, payload, status = 200) {
-  if (new URL(route.request().url()).pathname.endsWith('/v1/workloads') && Array.isArray(payload.items)) {
-    const query = route.request().postDataJSON() || {}
-    const size = Math.max(1, Math.min(100, Number(query.pageSize || 10)))
-    const start = (Math.max(1, Number(query.page || 1)) - 1) * size
+  const url = new URL(route.request().url())
+  if (url.pathname.endsWith('/api/v1/containers') && Array.isArray(payload.items)) {
+    const size = Math.max(1, Math.min(100, Number(url.searchParams.get('page_size') || 10)))
+    const start = (Math.max(1, Number(url.searchParams.get('page') || 1)) - 1) * size
     payload = { ...payload, total: payload.items.length, items: payload.items.slice(start, start + size) }
   }
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
@@ -635,7 +650,7 @@ const trendPages = [
   ['overview', overviewTrendCount],
   ['nodes/node-1?nodeName=node-1', 1],
   ['accelerators/gpu-1', 3],
-  ['workloads/pod-1/containers/worker', 2]
+  ['workloads/pod-1/containers/worker', 1]
 ]
 
 function trendRangeButton(page, value) {
@@ -816,6 +831,42 @@ before(async() => {
         memoryUsed: 0,
         memoryTotal: 16_384,
         cardCnt: 1
+      }
+    } else if (/^\/api\/v1\/containers\/[^/]+\/[^/]+$/.test(pathname)) {
+      const [, rawPodUid = '', rawName = ''] = pathname.match(/^\/api\/v1\/containers\/([^/]+)\/([^/]+)$/) || []
+      const podUid = decodeURIComponent(rawPodUid)
+      const name = decodeURIComponent(rawName)
+      countBackendRequest(`container:${podUid}:${name}`)
+      if (name === 'missing-worker') {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          code: 404,
+          reason: 'RESOURCE_CONTAINER_NOT_FOUND',
+          message: 'Allocated container was not found',
+        }))
+        return
+      }
+      payload = {
+        name,
+        status: 'success',
+        appName: name === 'long-image-worker' ? detailPodName : 'job-1',
+        nodeName: 'node-1',
+        allocatedDevices: 1,
+        allocatedCores: 100,
+        allocatedMem: 1024,
+        type: 'NVIDIA',
+        podUid,
+        nodeUid: 'node-1',
+        namespace: 'default',
+        deviceIds: ['gpu-1'],
+        images: name === 'multi-image-worker'
+          ? [
+              'example.invalid/worker:latest',
+              'example.invalid/sidecar:latest'
+            ]
+          : [name === 'long-image-worker'
+              ? longImageReference
+              : 'example.invalid/worker:latest']
       }
     } else if (pathname === '/v1/container') {
       const name = requestURL.searchParams.get('name') ?? ''
@@ -1011,9 +1062,11 @@ before(async() => {
         total: 1
       }
     } else if (pathname === '/v1/containers' || pathname === '/v1/workloads' || pathname === '/api/v1/containers') {
-      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1' }], total: 1, statusCounts: { all: 1, success: 1 } }
+      payload = { code: 0, items: [{ name: 'worker', podName: 'job-1', appName: 'job-1', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }], total: 1, statusCounts: { all: 1, success: 1 } }
     } else if (pathname === '/api/v1/device-config') {
       payload = { state: 'loaded', reason: '', issues: [], ascendModels: [] }
+    } else if (pathname === '/api/v1/about') {
+      payload = { checkedAt: '2026-11-17T12:00:00Z', kubernetesVersion: 'v1.30.0' }
     } else if (pathname === '/api/v1/telemetry/trends') {
       const scope = requestURL.searchParams.get('scope') || 'cluster'
       const start = requestURL.searchParams.get('start') || new Date((now - 60) * 1000).toISOString().replace('.000Z', 'Z')
@@ -1257,7 +1310,7 @@ test('Escape dismisses the full version before closing the About dialog', async(
   const page = await browser.newPage()
   const fullVersion = 'v2.11.0+test.123'
   try {
-    await page.route('**/api/vgpu/v1/about', route => route.fulfill({
+    await page.route('**/api/v1/about', route => route.fulfill({
       json: { checkedAt: '2026-11-17T12:00:00Z', kubernetesVersion: fullVersion },
     }))
     await page.goto(`${target}${deepRoute}`)
@@ -2033,10 +2086,7 @@ test('device holders omit duplicate shared counts while keeping allocation distr
   await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, {
     items: current.empty ? [] : [workload()],
   }))
-  await page.route('**/api/v1/containers?*', (route) => fulfillWorkloadFixture(route, {
-    items: current.empty ? [] : [workload()],
-  }))
-  await page.route('**/v1/container?**', (route) => route.fulfill({ json: workload() }))
+  await page.route('**/api/v1/containers/*/*', (route) => route.fulfill({ json: workload() }))
   try {
     for (const scenario of cases) {
       current = scenario
@@ -2091,11 +2141,11 @@ test('device holders omit duplicate shared counts while keeping allocation distr
 test('runtime language updates the document and TDesign services', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
-  let failNextNodesRequest = true
+  let failNextMonitorRequest = true
 
-  await page.route('**/api/vgpu/v1/nodes**', (route) => {
-    if (!failNextNodesRequest) return route.continue()
-    failNextNodesRequest = false
+  await page.route('**/api/vgpu/v1/monitor/query/instant-vector**', (route) => {
+    if (!failNextMonitorRequest) return route.continue()
+    failNextMonitorRequest = false
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -2122,7 +2172,7 @@ test('runtime language updates the document and TDesign services', async() => {
     await page.getByRole('button', { name: '中文', exact: true }).click()
     await page.locator('html[lang="zh-CN"]').waitFor()
 
-    failNextNodesRequest = true
+    failNextMonitorRequest = true
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.locator('html[lang="zh-CN"]').waitFor()
     await messageBox.waitFor()
@@ -2264,7 +2314,8 @@ test('workload rankings show Pod and container names independently of list filte
   ].map((item) => ({ ...item, nodeName: 'node-1', status: 'success', deviceIds: ['gpu-1'], createTime: '2026-09-12T00:00:00Z' }))
   let filteredRequests = 0
   await page.route(workloadListPattern, (route) => {
-    const name = route.request().postDataJSON()?.filters?.keyword
+    const query = readWorkloadQuery(route)
+    const name = query.filters.keyword
     if (name) filteredRequests += 1
     const items = name ? workloads.filter((item) => item.name === name) : workloads
     return fulfillWorkloadFixture(route, { code: 0, items, total: items.length })
@@ -2526,7 +2577,7 @@ test('detail loading shells follow each page layout and container breakpoints', 
       groups: { '.node-overview-panel': 2, '.node-system-resource-cards > li': 2 } },
     { name: 'card', route: 'accelerators/gpu-1', api: /\/api\/v1\/device\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
       groups: { '.fact-identities > .fact': 2, '.device-facts__grid > .fact': 2, '.fact--sensors > .fact__sensor': 2, '.resource-overview-cards > li': 2 } },
-    { name: 'workload', route: 'workloads/pod-1/containers/worker', api: /\/v1\/container\?/,
+    { name: 'workload', route: 'workloads/pod-1/containers/worker', api: /\/api\/v1\/containers\/[^/]+\/[^/?]+$/,
       charts: 2, legendCounts: [0, 0], shells: '.basic-info-block, .workload-overview', groups: { '.basic-info-cards > .basic-info-card': 4, '.workload-overview .row-card': 5 } },
   ]
   const viewports = [
@@ -3355,7 +3406,10 @@ test('workload status segments keep same-selection no-op behavior when shared co
   const page = await browser.newPage({ locale: 'en-US' })
   const requests = []
   page.on('request', (request) => {
-    if (new URL(request.url()).pathname.endsWith('/v1/workloads')) requests.push(request.postDataJSON())
+    const parsed = new URL(request.url())
+    if (parsed.pathname.endsWith('/api/v1/containers') && parsed.searchParams.get('page_size') !== '100') {
+      requests.push(readWorkloadQuery({ request: () => request }))
+    }
   })
   try {
     await page.goto(`${target}${basePath}workloads`, { waitUntil: 'networkidle' })
@@ -3990,8 +4044,9 @@ test('workload status labels stay concise while accessible help explains contain
   const fulfill = (route, payload) => fulfillWorkloadFixture(route, { code: 0, ...payload })
   const requestedStatuses = []
   await page.route(workloadListPattern, (route) => {
-    const status = route.request().postDataJSON()?.filters?.status
-    requestedStatuses.push(status)
+    const query = readWorkloadQuery(route)
+    const status = query.filters.status
+    if (!query.isInventoryRead) requestedStatuses.push(status)
     const items = status === 'abnormal'
       ? workloads.filter((item) => ['not_ready', 'error', 'failed', 'unknown'].includes(item.status))
       : status ? workloads.filter((item) => item.status === status) : workloads
@@ -4001,9 +4056,9 @@ test('workload status labels stay concise while accessible help explains contain
     }
     return fulfill(route, { items, statusCounts })
   })
-  await page.route('**/api/vgpu/v1/container?*', (route) => {
-    const params = new URL(route.request().url()).searchParams
-    const workload = workloads.find((item) => item.name === params.get('name') && item.podUid === params.get('podUid'))
+  await page.route('**/api/v1/containers/*/*', (route) => {
+    const [, rawPodUid = '', rawName = ''] = new URL(route.request().url()).pathname.match(/\/api\/v1\/containers\/([^/]+)\/([^/]+)$/) || []
+    const workload = workloads.find((item) => item.name === decodeURIComponent(rawName) && item.podUid === decodeURIComponent(rawPodUid))
     assert.ok(workload, 'Unexpected workload details identity')
     return fulfill(route, workload)
   })
@@ -4605,7 +4660,6 @@ test('overview workload count matches the workload list total', async() => {
     containerQueries.push(Object.fromEntries(new URL(route.request().url()).searchParams))
     return respond(route)
   })
-  await page.route('**/api/vgpu/v1/workloads', (route) => respond(route))
   const workloadTab = page.locator('[role="tab"][id$="-workloads"]')
   const cardCount = () => workloadTab.locator('.resource-tab__count').innerText()
 
@@ -4762,13 +4816,9 @@ test('one workload table combines pending requests and allocations with shared f
   const firstDetail = new Promise((resolve) => { releaseDetail = resolve })
   const reply = (route, payload, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) })
   const allocatedRow = { name: 'main', appName: 'already-bound', podUid: 'bound-uid', namespace: 'research', nodeName: 'node-1', status: 'error', deviceIds: ['gpu-1'], allocatedCores: 1, allocatedMem: 64 }
-  await page.route('**/api/vgpu/v1/containers', (route) => reply(route, { items: [
-    allocatedRow,
-    { name: 'main', appName: 'only-preallocated', podUid: 'preallocated-uid', namespace: 'research', nodeName: '', status: 'waiting', deviceIds: ['gpu-1'] },
-  ] }))
-  await page.route('**/api/vgpu/v1/workloads', (route) => {
-    const query = route.request().postDataJSON()
-    listQueries.push(query)
+  await page.route(workloadListPattern, (route) => {
+    const query = readWorkloadQuery(route)
+    if (!query.isInventoryRead) listQueries.push(query)
     const rows = [allocatedRow, ...pods.map(pendingWorkloadFixture)]
     if (detailMode === 'bound') rows[1] = { ...allocatedRow, appName: pods[0].name, podUid: pods[0].uid, status: 'waiting' }
     const filters = query.filters || {}
@@ -4777,11 +4827,14 @@ test('one workload table combines pending requests and allocations with shared f
       && (!filters.nodeName || row.nodeName === filters.nodeName))
     return fulfillWorkloadFixture(route, { items: filtered })
   })
-  await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+  await page.route('**/api/v1/scheduling/pods/*/*?*', async(route) => {
     detailRequests += 1
-    const query = new URL(route.request().url()).searchParams
+    const parsed = new URL(route.request().url())
+    const [, rawNamespace = '', rawName = ''] = parsed.pathname.match(/\/api\/v1\/scheduling\/pods\/([^/]+)\/([^/]+)$/) || []
+    const query = parsed.searchParams
     assert.equal(query.get('uid'), pods[0].uid)
-    assert.equal(query.get('namespace'), 'research')
+    assert.equal(decodeURIComponent(rawNamespace), 'research')
+    assert.equal(decodeURIComponent(rawName), pods[0].name)
     if (detailRequests === 1) await firstDetail
     if (detailMode === 'recreated') return reply(route, { reason: 'POD_RECREATED', message: 'Pod was recreated' }, 409)
     if (detailMode === 'gone') return reply(route, { reason: 'POD_NOT_FOUND', message: 'Pod was deleted' }, 404)
@@ -4900,8 +4953,8 @@ test('a GPU container assigned without HAMi allocation opens diagnosis with its 
     statusDetail: { containerState: 'Waiting', reason: 'CreateContainerError', ready: false, restartCount: 0, podPhase: 'Pending' },
   }
   let eventRequests = 0
-  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [row] }))
-  await page.route('**/api/vgpu/v1/scheduling/pod?**', (route) => {
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { items: [row] }))
+  await page.route('**/api/v1/scheduling/pods/*/*?*', (route) => {
     eventRequests += 1
     assert.equal(new URL(route.request().url()).searchParams.get('uid'), pod.uid)
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ pod, events: [], eventStatus: 'empty' }) })
@@ -5369,10 +5422,9 @@ test('node device allocation retains the same allocation display when opening de
     return route.fulfill({ json: state.devices.find((device) => device.uuid === uid) || {} })
   })
   await page.route('**/api/v1/containers?*', (route) => fulfillWorkloadFixture(route, { items: state.containers }))
-  await page.route('**/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: state.containers }))
-  await page.route('**/v1/container?**', (route) => {
-    const name = new URL(route.request().url()).searchParams.get('name')
-    const container = state.containers.find((item) => item.name === name)
+  await page.route('**/api/v1/containers/*/*', (route) => {
+    const [, rawPodUid = '', rawName = ''] = new URL(route.request().url()).pathname.match(/\/api\/v1\/containers\/([^/]+)\/([^/]+)$/) || []
+    const container = state.containers.find((item) => item.podUid === decodeURIComponent(rawPodUid) && item.name === decodeURIComponent(rawName))
     return route.fulfill({ json: container ? {
       ...container, type: state.devices[0].type,
       allocatedDevices: container.devices.length,
@@ -5436,8 +5488,8 @@ test('closing a scheduling diagnosis prevents its delayed response from replacin
   let releaseFirst
   const delayed = new Promise((resolve) => { releaseFirst = resolve })
   const requested = []
-  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: pods.map(pendingWorkloadFixture) }))
-  await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { items: pods.map(pendingWorkloadFixture) }))
+  await page.route('**/api/v1/scheduling/pods/*/*?*', async(route) => {
     const uid = new URL(route.request().url()).searchParams.get('uid')
     requested.push(uid)
     if (uid === pods[0].uid) await delayed
@@ -6281,8 +6333,8 @@ test('scheduling loading preserves its snapshot and refresh record position', { 
       let release
       let gate = new Promise((resolve) => { release = resolve })
       let requested = 0
-      await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [pendingWorkloadFixture(pod)] }))
-      await page.route('**/api/vgpu/v1/scheduling/pod?**', async(route) => {
+      await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { items: [pendingWorkloadFixture(pod)] }))
+      await page.route('**/api/v1/scheduling/pods/*/*?*', async(route) => {
         requested += 1
         await gate
         await route.fulfill({ json: { pod, events: [], eventStatus: 'empty' } })
@@ -6519,8 +6571,8 @@ test('chart loading reserves the painted plot and legend rows on narrow hourly a
 
 const listSearchCases = [
   { route: 'nodes', endpoint: 'nodes', local: true, row: { name: 'node-1', uid: 'node-1', ip: '192.0.2.10', type: ['NVIDIA'], isSchedulable: true }, selector: '.node-table' },
-  { route: 'accelerators', endpoint: 'gpus', local: true, row: { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', health: true }, selector: '.accelerator-table' },
-  { route: 'workloads', endpoint: 'workloads', field: 'keyword', placeholder: 'Name or namespace', value: 'worker', partial: 'work', row: { name: 'worker', appName: 'training-job', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }, selector: '.workload-table' },
+  { route: 'accelerators', endpoint: 'devices', local: true, row: { uuid: 'gpu-1', nodeName: 'node-1', type: 'NVIDIA', health: true }, selector: '.accelerator-table' },
+  { route: 'workloads', endpoint: 'containers', field: 'keyword', placeholder: 'Name or namespace', value: 'worker', partial: 'work', row: { name: 'worker', appName: 'training-job', podUid: 'pod-1', namespace: 'default', nodeName: 'node-1', status: 'success' }, selector: '.workload-table' },
 ]
 // Node and accelerator lists load once and filter locally; only workloads search on the server.
 const serverSearchCases = listSearchCases.filter((config) => !config.local)
@@ -6531,9 +6583,9 @@ test('list searches distinguish empty, unmatched and failed results and recover 
     const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
     const queries = []
     let inventoryEmpty = true
-    await page.route(`**/api/vgpu/v1/${config.endpoint}`, async(route) => {
-      const query = route.request().postDataJSON()
-      queries.push(query)
+    await page.route(workloadListPattern, async(route) => {
+      const query = readWorkloadQuery(route)
+      if (!query.isInventoryRead) queries.push(query)
       const value = query?.filters?.[config.field]
       if (value === 'fail') return route.fulfill({ status: 503, json: { code: 503, message: 'unavailable' } })
       const matches = !value || config.row.name.includes(value) || config.row.appName.includes(value)
@@ -6601,8 +6653,8 @@ test('list no-match recovery fits common screen widths in both languages', { tim
   for (const locale of ['en-US', 'zh-CN']) {
     for (const config of listSearchCases) {
       const page = await browser.newPage({ locale, viewport: { width: 1366, height: 900 } })
-      if (config.endpoint === 'gpus') await routePhysicalFixture(page, [])
-      await page.route(config.endpoint === 'nodes' ? '**/api/v1/nodes' : `**/api/vgpu/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } }))
+      if (config.endpoint === 'devices') await routePhysicalFixture(page, [])
+      await page.route(config.endpoint === 'containers' ? workloadListPattern : `**/api/v1/${config.endpoint}`, (route) => route.fulfill({ json: config.local ? listFixture(config.endpoint === 'devices' ? 'gpus' : config.endpoint, []) : { items: [], total: 0 } }))
       try {
         await page.goto(`${target}${basePath}${config.route}`, { waitUntil: 'domcontentloaded' })
         await page.getByTestId('stateful-table-empty').waitFor()
@@ -6639,8 +6691,9 @@ test('clearing list filters removes route filters while the input clear preserve
   ]) {
     const page = await browser.newPage({ locale: 'en-US' })
     const queries = []
-    await page.route(`**/api/vgpu/v1/${config.endpoint}`, (route) => {
-      queries.push(route.request().postDataJSON())
+    await page.route(workloadListPattern, (route) => {
+      const query = readWorkloadQuery(route)
+      if (!query.isInventoryRead) queries.push(query)
       return route.fulfill({ json: config.local ? listFixture(config.endpoint, []) : { items: [], total: 0 } })
     })
     try {
@@ -6713,17 +6766,10 @@ const mockLocalSearchLists = async(page, counts = {}) => {
     counts.nodes = (counts.nodes ?? 0) + 1
     return route.fulfill({ json: listFixture('nodes', localSearchRows.nodes) })
   })
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', localSearchRows.nodes) }))
   await page.route('**/api/v1/devices', (route) => {
     counts.gpus = (counts.gpus ?? 0) + 1
     return route.fulfill({ json: listFixture('gpus', localSearchRows.gpus) })
   })
-  await page.route('**/api/vgpu/v1/gpus', (route) => {
-    counts.gpus = (counts.gpus ?? 0) + 1
-    return route.fulfill({ json: listFixture('gpus', localSearchRows.gpus) })
-  })
-  const types = [...new Set(localSearchRows.gpus.map((gpu) => gpu.type))].map((type) => ({ type }))
-  await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: types } }))
   return counts
 }
 
@@ -7016,9 +7062,9 @@ test('workload keywords search after a pause, at once on Enter or clear, and not
     { name: 'worker-0', appName: 'Training-Job', podUid: 'pod-a', namespace: 'team-a', nodeName: 'node-1', status: 'success' },
     { name: 'main', appName: 'inference', podUid: 'pod-b', namespace: 'team-b', nodeName: 'node-1', status: 'success' },
   ]
-  await page.route('**/api/vgpu/v1/workloads', (route) => {
-    const query = route.request().postDataJSON()
-    queries.push(query)
+  await page.route(workloadListPattern, (route) => {
+    const query = readWorkloadQuery(route)
+    if (!query.isInventoryRead) queries.push(query)
     const keyword = (query?.filters?.keyword ?? '').toLowerCase()
     const items = rows.filter((row) => !keyword || [row.name, row.appName, row.namespace].some((field) => field.toLowerCase().includes(keyword)))
     return fulfillWorkloadFixture(route, { items, total: items.length })
@@ -7085,9 +7131,9 @@ test('long workload device dropdowns keep keyboard picks correct after the node 
   page.on('pageerror', (error) => errors.push(error.message))
   const nodes = ['node-a', 'node-b', 'node-c'].map((name, index) => ({ name, uid: `uid-${name}`, ip: `10.0.${index}.1`, type: ['NVIDIA-A100-SXM4-80GB'], isSchedulable: true, isReady: true }))
   const gpus = Array.from({ length: 150 }, (_, index) => ({ uuid: `GPU-${String(index).padStart(3, '0')}`, nodeName: nodes[Math.floor(index / 50)].name, type: 'NVIDIA-A100-SXM4-80GB', health: true }))
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
-  await page.route('**/api/vgpu/v1/gpus', (route) => route.fulfill({ json: { list: gpus } }))
-  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [], total: 0 }))
+  await page.route('**/api/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  await page.route('**/api/v1/devices', (route) => route.fulfill({ json: { list: gpus } }))
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { items: [], total: 0 }))
   const options = page.locator('.t-select__dropdown:visible .t-select-option')
   const popupClosed = () => waitUntil(async() => await page.locator('.t-select__dropdown:visible').count() === 0, 'The popup must close')
   try {
@@ -7173,7 +7219,7 @@ test('dropdown searches start from every option after the popup closes', { timeo
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
   await mockLocalSearchLists(page)
-  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [], total: 0 }))
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { items: [], total: 0 }))
   const options = page.locator('.t-select__dropdown:visible .t-select-option')
   try {
     for (const [path, scope, index] of [['workloads', '.workload-filters', 0], ['accelerators', '.table-toolbar', 1]]) {
@@ -7212,7 +7258,7 @@ test('workload dropdowns show how many workloads each node and device would list
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
   await mockLocalSearchLists(page)
   let counts = { nodeCounts: { 'gpu-node-a': 3, 'gpu-node-b': 1 }, deviceCounts: { 'GPU-f95362fb-79f5-57bb-9972-86156cd5f525': 2 } }
-  await page.route('**/api/vgpu/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: [], total: 0, ...counts }))
+  await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, { items: [], total: 0, ...counts }))
   const options = page.locator('.t-select__dropdown:visible .t-select-option')
   const countOf = async(name) => {
     // Match the main label only; another popup may still be fading out with the name as a hint.
@@ -7412,8 +7458,10 @@ test('model and node dropdowns filter their options while typing', { timeout: 60
     await waitUntil(async() => await options.count() === 1, 'Typing a model fragment must leave one device')
     assert.match(await options.first().textContent(), /GPU-0b1c2d3e.*NVIDIA-H100-SXM5-80GB.*gpu-node-b/)
     // Closing the page while the picked list is still loading would abort that request at the backend.
-    const listed = page.waitForResponse((response) => workloadListPattern.test(new URL(response.url()).pathname) &&
-      response.request().postDataJSON()?.filters?.deviceId === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0')
+    const listed = page.waitForResponse((response) => {
+      const parsed = new URL(response.url())
+      return workloadListPattern.test(parsed.pathname) && parsed.searchParams.get('device_id') === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0'
+    })
     await options.first().click()
     await waitUntil(() => new URL(page.url()).searchParams.get('deviceId') === 'GPU-0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0', 'Picking the device must update the URL')
     await listed

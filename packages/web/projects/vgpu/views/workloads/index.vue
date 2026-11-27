@@ -1,8 +1,8 @@
 <template>
-  <div class="task-admin-page vgpu-admin-page" :class="{ 'is-embedded': hideTitle }">
-    <div v-if="!hideTitle" class="vgpu-admin-page-title">{{ $t('task.title') }}</div>
+  <div class="task-admin-page vgpu-admin-page">
+    <div class="vgpu-admin-page-title">{{ $t('task.title') }}</div>
 
-    <div class="task-admin-top-wrap" v-if="!hideTitle">
+    <div class="task-admin-top-wrap">
       <Top />
     </div>
 
@@ -83,7 +83,6 @@
           :data="tableData"
           :columns="visibleColumns"
           table-layout="auto"
-          :style="style"
         />
         <template #footer>
           <table-pagination
@@ -108,15 +107,12 @@
 </template>
 
 <script setup lang="jsx">
-import taskApi from '~/vgpu/api/task';
-import nodeApi from '~/vgpu/api/node';
-import cardApi from '~/vgpu/api/card';
+import apiClient from '@/api/client.mjs';
 import Toolbar from '@/components/TablePlus/Toolbar.vue';
 import TablePagination from '@/components/TablePlus/Pagination.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
 import { roundToDecimal, timeParse } from '@/utils';
-import request from '@/utils/request';
 import { SearchIcon } from 'tdesign-icons-vue-next';
 import { reactive, ref, computed, onBeforeUnmount, onMounted, toRefs, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
@@ -138,17 +134,15 @@ import SelectOptionLabel from '@/components/SelectOptionLabel.vue';
 import { limitOptions } from '@/utils/keyword-search.mjs';
 import { optionCountOf, readOptionCounts } from './option-counts.mjs';
 
-const props = defineProps(['hideTitle', 'filters', 'style']);
 const { t, locale } = useI18n();
 const tableWrap = ref(null);
 const selectedSchedulingPod = ref(null);
 const selectedSchedulingContainer = ref('');
-const hasManualNodeScope = ref(false);
 const filters = reactive({
-  keyword: props.filters?.name || '',
-  nodeName: props.filters?.nodeName,
-  status: props.filters?.status || '',
-  deviceId: props.filters?.deviceId,
+  keyword: '',
+  nodeName: undefined,
+  status: '',
+  deviceId: undefined,
 });
 const rawNodes = ref([]);
 const rawCards = ref([]);
@@ -211,12 +205,17 @@ const statusTabOptions = computed(() => {
   ];
 });
 
+let filterOptionsController = null;
 const fetchFilterOptions = async () => {
+  filterOptionsController?.abort();
+  const controller = new AbortController();
+  filterOptionsController = controller;
   try {
     const [{ list: nodeList = [] }, { list: cardList = [] }] = await Promise.all([
-      request(nodeApi.getNodeList({ filters: {} })),
-      request(cardApi.getCardList({ filters: {} })),
+      apiClient.listNodes({}, { signal: controller.signal }),
+      apiClient.listDevices({}, { signal: controller.signal }),
     ]);
+    if (controller.signal.aborted) return;
     rawNodes.value = nodeList
       .filter((item) => item?.name)
       .map((item) => ({ name: item.name, ip: item.ip }));
@@ -224,8 +223,11 @@ const fetchFilterOptions = async () => {
       .filter((item) => item?.uuid)
       .map((item) => ({ uuid: item.uuid, nodeName: item.nodeName, type: item.type }));
   } catch {
+    if (controller.signal.aborted) return;
     rawNodes.value = [];
     rawCards.value = [];
+  } finally {
+    if (filterOptionsController === controller) filterOptionsController = null;
   }
 };
 
@@ -376,7 +378,6 @@ const pagination = reactive({ total: 0, current: 1, pageSize: 10, pageSizeOption
 // Keep filters and page in the address so Back restores them.
 const route = useRoute();
 const router = useRouter();
-const syncsRoute = !props.hideTitle && !props.filters;
 const listPath = route.path;
 const ROUTE_STATUSES = ['pending', 'waiting', 'success', 'abnormal'];
 const DEFAULT_PAGE_SIZE = 10;
@@ -387,7 +388,7 @@ const queryText = (query, key) => {
 };
 const sameQuery = (left = {}, right = {}) => [...new Set([...Object.keys(left), ...Object.keys(right)])]
   .every((key) => queryText(left, key) === queryText(right, key));
-let lastRouteQuery = syncsRoute ? { ...route.query } : {};
+let lastRouteQuery = { ...route.query };
 const applyRouteQuery = (query) => {
   const status = queryText(query, 'status');
   const page = Number(queryText(query, 'page'));
@@ -397,12 +398,11 @@ const applyRouteQuery = (query) => {
   filters.nodeName = queryText(query, 'nodeName') || undefined;
   filters.deviceId = queryText(query, 'deviceId') || undefined;
   filters.status = ROUTE_STATUSES.includes(status) ? status : '';
-  hasManualNodeScope.value = Boolean(filters.nodeName);
   pagination.current = Number.isInteger(page) && page > 0 ? page : 1;
   pagination.pageSize = pagination.pageSizeOptions.includes(pageSize) ? pageSize : DEFAULT_PAGE_SIZE;
 };
 const syncRouteQuery = () => {
-  if (!syncsRoute || route.path !== listPath) return;
+  if (route.path !== listPath) return;
   const keyword = typeof filters.keyword === 'string' ? filters.keyword.trim() : '';
   const query = {
     ...(filters.status ? { status: filters.status } : {}),
@@ -417,14 +417,13 @@ const syncRouteQuery = () => {
 };
 const displayedFiltered = ref(false);
 const clearFilters = () => {
-  filters.keyword = props.filters?.name || '';
-  filters.nodeName = props.filters?.nodeName;
-  filters.deviceId = props.filters?.deviceId;
-  filters.status = props.filters?.status || '';
-  hasManualNodeScope.value = false;
+  filters.keyword = '';
+  filters.nodeName = undefined;
+  filters.deviceId = undefined;
+  filters.status = '';
   applyFilters();
 };
-let tableController;
+let tableController = null;
 let submittedKeyword = '';
 const fetchTableData = async () => {
   cancelKeywordTimer();
@@ -433,36 +432,24 @@ const fetchTableData = async () => {
   const hasResolved = tableState.hasResolved && tableState.status === REQUEST_STATUS.READY;
   const requestId = startRequest(tableState, { hasResolved });
   tableController?.abort();
-  tableController = new AbortController();
-  const baseFilters = { ...(props.filters || {}) };
-  delete baseFilters.nodeName;
-  delete baseFilters.nodeUid;
-  delete baseFilters.name;
-  delete baseFilters.status;
-  delete baseFilters.deviceId;
-  const nodeName = hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName;
-  const nodeUid = hasManualNodeScope.value ? undefined : props.filters?.nodeUid;
+  const controller = new AbortController();
+  tableController = controller;
   const filtered = Boolean(
-    getTrimValue(filters.keyword) !== getTrimValue(props.filters?.name || '')
-    || (filters.nodeName || '') !== (props.filters?.nodeName || '')
-    || (filters.deviceId || '') !== (props.filters?.deviceId || '')
-    || (filters.status || '') !== (props.filters?.status || '')
+    submittedKeyword
+    || filters.nodeName
+    || filters.deviceId
+    || filters.status
   );
-  const payload = {
-    filters: {
-      ...baseFilters,
+  try {
+    const result = await apiClient.listContainers({
       ...(submittedKeyword ? { keyword: submittedKeyword } : {}),
-      ...(nodeName ? { nodeName } : {}),
-      ...(nodeUid ? { nodeUid } : {}),
+      ...(filters.nodeName ? { nodeName: filters.nodeName } : {}),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.deviceId ? { deviceId: filters.deviceId } : {}),
-    },
-    page: pagination.current,
-    pageSize: pagination.pageSize,
-  };
-  try {
-    const result = await taskApi.getWorkloads(payload, tableController.signal);
-    if (!isLatestRequest(tableState, requestId)) return;
+      page: pagination.current,
+      pageSize: pagination.pageSize,
+    }, { signal: controller.signal });
+    if (controller.signal.aborted || !isLatestRequest(tableState, requestId)) return;
     const total = Number(result?.total ?? 0);
     if (!Array.isArray(result?.items) || !Number.isInteger(total) || total < 0) {
       rejectRequest(tableState, new TypeError('Expected workload items and a nonnegative total'), {
@@ -491,7 +478,10 @@ const fetchTableData = async () => {
       })),
     });
   } catch (error) {
+    if (controller.signal.aborted || !isLatestRequest(tableState, requestId)) return;
     rejectRequest(tableState, error, { requestId, hasResolved });
+  } finally {
+    if (tableController === controller) tableController = null;
   }
 };
 const {
@@ -550,7 +540,6 @@ const onKeywordCompositionEnd = () => {
 };
 watch(() => filters.keyword, scheduleKeyword);
 const onNodeNameChange = () => {
-  hasManualNodeScope.value = true;
   // The card dropdown is scoped to the selected node; drop a previously chosen
   // card if it doesn't belong to that node so the table isn't filtered by an
   // out-of-scope device.
@@ -572,34 +561,16 @@ onBeforeUnmount(() => {
   cancelKeywordTimer();
   tableState.requestId += 1;
   tableController?.abort();
+  tableController = null;
+  filterOptionsController?.abort();
+  filterOptionsController = null;
 });
 
-watch(
-  () => [
-    props.filters?.name,
-    props.filters?.nodeName,
-    props.filters?.nodeUid,
-    props.filters?.status,
-    props.filters?.deviceId,
-  ],
-  () => {
-    if (syncsRoute) {
-      applyRouteQuery(route.query);
-      fetchTableData();
-      return;
-    }
-    hasManualNodeScope.value = false;
-    filters.keyword = props.filters?.name || '';
-    filters.nodeName = props.filters?.nodeName;
-    filters.status = props.filters?.status;
-    filters.deviceId = props.filters?.deviceId;
-    applyFilters();
-  },
-  { immediate: true },
-);
+applyRouteQuery(route.query);
+fetchTableData();
 // Links to this page, such as the sidebar entry, reset the filters.
 watch(() => route.query, (query) => {
-  if (!syncsRoute || route.path !== listPath || sameQuery(query, lastRouteQuery)) return;
+  if (route.path !== listPath || sameQuery(query, lastRouteQuery)) return;
   applyRouteQuery(query);
   fetchTableData();
 });
@@ -623,14 +594,6 @@ watch(() => route.query, (query) => {
   svg {
     width: 100%;
     height: 100%;
-  }
-}
-
-.task-admin-page {
-  &.is-embedded {
-    .task-admin-table-wrap {
-      margin-top: 15px;
-    }
   }
 }
 

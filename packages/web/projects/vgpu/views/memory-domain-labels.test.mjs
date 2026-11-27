@@ -11,6 +11,7 @@ const overview = readSource('./overview/index.vue');
 const resourceTrend = readSource('../components/ResourceTrend.vue');
 const nodeDetail = readSource('./nodes/Detail.vue');
 const cardDetail = readSource('./accelerators/Detail.vue');
+const workloadDetail = readSource('./workloads/Detail.vue');
 const metricHelp = readSource('../components/MetricHelp.vue');
 const metricChart = readSource('../components/MetricChart.vue');
 const enLocale = readSource('../../../src/locales/en.js');
@@ -101,6 +102,9 @@ test('a detail trend chart draws its lines from one range group', () => {
   }
   assert.match(nodeDetail, /useTelemetryTrends\(\{[\s\S]*?scope: 'node'/);
   assert.match(cardDetail, /useTelemetryTrends\(\{[\s\S]*?scope: 'device'/);
+  assert.match(workloadDetail, /useTelemetryTrends\(\{[\s\S]*?scope: 'container'/);
+  assert.doesNotMatch(workloadDetail, /supportsTaskMonitoring|primaryDeviceType/);
+  assert.doesNotMatch(workloadDetail, /startsWith\(['"](?:NVIDIA|MXC)/);
   assert.match(resourceTrend, /:refresh-error=/);
   assert.match(metricChart, /common\.refreshFailedShowingPreviousResult/);
 });

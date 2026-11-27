@@ -144,7 +144,7 @@ export const getWorkloadRequestTotals = (request) => {
 export const schedulingIdentity = (pod = {}) => [pod.namespace, pod.name, pod.uid].join('/');
 
 export const getSchedulingDetailError = (error) => {
-  const status = error?.response?.status;
+  const status = error?.status ?? error?.response?.status;
   if (status === 404) return 'gone';
   if (status === 409) return 'recreated';
   return 'loadFailed';

@@ -8,14 +8,6 @@ import { normalizeRangeVectorResponse } from '../metrics/range-vector-state.mjs'
 const apiPrefix = '/api/vgpu';
 
 class cardApi {
-  getCardList(data = { filters: {} }) {
-    return {
-      url: apiPrefix + '/v1/gpus',
-      method: 'POST',
-      data,
-    };
-  }
-
   async getPhysicalCardList(signal) {
     const [inventory, registrations] = await Promise.all([
       apiClient.getOverviewInventory({ signal }).then(readOverviewInventory),
@@ -36,10 +28,6 @@ class cardApi {
     return { list, models: physicalModelDistribution(inventory.devices, inventory.deviceCoverage) };
   }
 
-  getCardListReq(data) {
-    return request(this.getCardList(data));
-  }
-
   // The registration detail returns a boolean even when its health field was absent.
   async getDetailHealth(card, signal) {
     const inventory = readOverviewInventory(await apiClient.getOverviewInventory({ signal }));
@@ -53,23 +41,6 @@ class cardApi {
     // registration. An unmatched physical ID provides no health evidence.
     const moduleRegistration = card.vendor === 'Ascend' && card.type === 'Ascend910C';
     return moduleRegistration ? card : {};
-  }
-
-  async getCardDetail(params, signal) {
-    try {
-      return await request({
-        url: apiPrefix + '/v1/gpu',
-        method: 'get',
-        errorFeedback: 'inline',
-        params,
-        signal,
-      });
-    } catch (error) {
-      if (error.response?.status === 404 && error.response.data?.reason === 'RESOURCE_GPU_NOT_FOUND') {
-        return {};
-      }
-      throw error;
-    }
   }
 
   getRangeVector(data) {

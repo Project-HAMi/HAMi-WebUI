@@ -11,12 +11,10 @@
 <script setup>
 import TabTop from '~/vgpu/components/TabTop.vue';
 import { useRouter } from 'vue-router';
-import nodeApi from '~/vgpu/api/node';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
-import { computed } from 'vue';
-import taskApi from '~/vgpu/api/task';
-import useFetchList from '@/hooks/useFetchList';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import apiClient from '@/api/client.mjs';
 import WorkloadRankingName from './WorkloadRankingName.vue';
 import {
   buildWorkloadIdentityIndex,
@@ -28,28 +26,67 @@ import {
   buildTaskCountQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
 
+const WORKLOAD_INVENTORY_PAGE_SIZE = 100;
+const WORKLOAD_INVENTORY_MAX_PAGES = 10;
+
 const router = useRouter();
 const { t } = useI18n();
 const taskCountQueries = buildTaskCountQueries();
 const taskAllocationTopQueries = buildTaskAllocationTopQueries();
 
 // Rankings cover the cluster, so their names must not depend on table filters.
-const { data: workloadInventory } = useFetchList(
-  () => taskApi.getTaskListReq({ filters: {} }),
-  { path: 'items' },
-);
+const workloadInventory = ref([]);
+let inventoryController = null;
+
+const loadWorkloadInventory = async () => {
+  inventoryController?.abort();
+  const controller = new AbortController();
+  inventoryController = controller;
+  try {
+    const items = [];
+    for (let page = 1; page <= WORKLOAD_INVENTORY_MAX_PAGES; page += 1) {
+      const result = await apiClient.listContainers(
+        { page, pageSize: WORKLOAD_INVENTORY_PAGE_SIZE },
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted) return;
+      const pageItems = Array.isArray(result?.items) ? result.items : [];
+      items.push(...pageItems);
+      const total = Number(result?.total ?? items.length);
+      if (pageItems.length === 0 || items.length >= total) break;
+    }
+    workloadInventory.value = items;
+  } catch {
+    if (!controller.signal.aborted) workloadInventory.value = [];
+  } finally {
+    if (inventoryController === controller) inventoryController = null;
+  }
+};
+
+onMounted(() => {
+  loadWorkloadInventory();
+});
+onBeforeUnmount(() => {
+  inventoryController?.abort();
+  inventoryController = null;
+});
+
 const workloadIdentityIndex = computed(() => buildWorkloadIdentityIndex(workloadInventory.value));
 
 const handleChartClick = async (params) => {
   const name = params.data.name;
   const activeTabKey = params.tabActive;
   if (activeTabKey === 'node') {
-    const { list } = await nodeApi.getNodes({ filters: {} });
-    const node = list.find((node) => node.name === name);
-    if (node) {
-      const uuid = node.uid;
-      router.push(`/nodes/${uuid}?nodeName=${name}`);
-    } else {
+    try {
+      const { list = [] } = await apiClient.listNodes();
+      const node = list.find((item) => item.name === name);
+      if (node) {
+        const uuid = node.uid;
+        router.push(`/nodes/${uuid}?nodeName=${name}`);
+      } else {
+        MessagePlugin.error(t('node.nodeNotFound'));
+      }
+    } catch {
       MessagePlugin.error(t('node.nodeNotFound'));
     }
   } else if (activeTabKey === 'device_uuid') {
