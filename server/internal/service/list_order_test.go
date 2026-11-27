@@ -93,7 +93,7 @@ func TestGetAllGPUTypesOrderIsIndependentOfRepositoryOrder(t *testing.T) {
 		{Type: "NVIDIA-A10", Provider: biz.NvidiaGPUDevice},
 	}
 	repo := &capacityTestNodeRepo{}
-	service := NewCardService(biz.NewNodeUsecase(repo, log.DefaultLogger), nil)
+	service := NewCardService(biz.NewNodeUsecase(repo, log.DefaultLogger), nil, nil)
 	tests := []struct {
 		name    string
 		filters *pb.GetAllGpusReq_Filters

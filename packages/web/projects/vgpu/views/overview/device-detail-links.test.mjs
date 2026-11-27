@@ -4,7 +4,11 @@ import { attachLegacyDeviceLinks } from './device-detail-links.mjs';
 
 const source = { node: 'worker', nodeUid: 'node-a', id: 'GPU-1', provider: 'NVIDIA' };
 const target = { nodeName: 'worker', nodeUid: 'node-a', uuid: 'GPU-1', vendor: 'NVIDIA' };
-const route = uuid => ({ name: 'accelerator-detail', params: { uuid } });
+const route = (uuid, nodeUid = 'node-a') => ({
+  name: 'accelerator-detail',
+  params: { uuid },
+  ...(nodeUid ? { query: { nodeUid } } : {}),
+});
 
 function links(device, inventory) {
   const nodeIssue = { kind: 'nodeNotReady', node: device.node };

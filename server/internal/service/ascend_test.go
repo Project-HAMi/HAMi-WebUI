@@ -74,7 +74,7 @@ func TestUnconfiguredDevicesAddNoSchedulableCapacity(t *testing.T) {
 	if err != nil || summary.VgpuTotal != 4 || summary.MemoryTotal != 65536 || summary.VgpuUsed != 1 || summary.MemoryUsed != 16384 || summary.GpuCount != 2 {
 		t.Fatalf("summary = %+v, %v", summary, err)
 	}
-	cards, err := NewCardService(nodeUsecase, podUsecase).GetAllGPUs(context.Background(), &pb.GetAllGpusReq{})
+	cards, err := NewCardService(nodeUsecase, podUsecase, nil).GetAllGPUs(context.Background(), &pb.GetAllGpusReq{})
 	if err != nil || len(cards.List) != 2 || cards.List[0].Unconfigured || !cards.List[1].Unconfigured || cards.List[0].Vendor != "Ascend" {
 		t.Fatalf("cards = %+v, %v", cards, err)
 	}

@@ -159,11 +159,35 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 			t.Fatalf("device query missing optional node_uid filter: %s", q)
 		}
 	}
-	if seenQueries[4] != `avg(hami_device_temperature{device_uuid="dev-1\",or=\"inject"})` {
-		t.Fatalf("device temperature query = %q", seenQueries[4])
+	const wantFallbackPresence = `hami_webui_device_info{device_kind="physical",device_id="dev-1\",or=\"inject",node_uid="node-uid-2"}`
+	if seenQueries[4] != `avg(avg by (node, provider, device_uuid) (hami_device_temperature{device_uuid="dev-1\",or=\"inject"}) and on (node, provider, device_uuid) max by (node, provider, device_uuid) (`+wantFallbackPresence+`))` {
+		t.Fatalf("device temperature fallback query = %q", seenQueries[4])
 	}
-	if seenQueries[5] != `avg(hami_device_power{device_uuid="dev-1\",or=\"inject"})` {
-		t.Fatalf("device power query = %q", seenQueries[5])
+	if seenQueries[5] != `avg(avg by (node, provider, device_uuid) (hami_device_power{device_uuid="dev-1\",or=\"inject"}) and on (node, provider, device_uuid) max by (node, provider, device_uuid) (`+wantFallbackPresence+`))` {
+		t.Fatalf("device power fallback query = %q", seenQueries[5])
+	}
+
+	opaqueHCU, err := resourceview.DeviceID("HCU", `worker-1",bad`, "HCU-serial-01")
+	if err != nil {
+		t.Fatalf("resourceview.DeviceID failed: %v", err)
+	}
+	seenQueries = nil
+	if _, err := reader.Trends(context.Background(), &obsv1.TrendsRequest{
+		Scope:    "device",
+		DeviceId: opaqueHCU,
+		NodeUid:  "node-uid-3",
+	}); err != nil {
+		t.Fatalf("opaque device trends failed: %v", err)
+	}
+	if len(seenQueries) != 6 {
+		t.Fatalf("opaque device queries = %d, want 6: %v", len(seenQueries), seenQueries)
+	}
+	wantOpaquePresence := fmt.Sprintf(`hami_webui_device_info{device_kind="physical",device_id=%q,node_uid="node-uid-3"}`, opaqueHCU)
+	if seenQueries[4] != `avg(avg by (node, provider, device_uuid) (hami_device_temperature{node="worker-1\",bad",provider="HCU",device_uuid="serial-01"}) and on (node, provider) max by (node, provider) (`+wantOpaquePresence+`))` {
+		t.Fatalf("opaque HCU temperature query = %q", seenQueries[4])
+	}
+	if seenQueries[5] != `avg(avg by (node, provider, device_uuid) (hami_device_power{node="worker-1\",bad",provider="HCU",device_uuid="serial-01"}) and on (node, provider) max by (node, provider) (`+wantOpaquePresence+`))` {
+		t.Fatalf("opaque HCU power query = %q", seenQueries[5])
 	}
 
 	seenQueries = nil

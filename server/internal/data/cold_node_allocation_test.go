@@ -392,7 +392,7 @@ func TestNodeDetailWithUnreadableAllocation(t *testing.T) {
 				{Id: "other", AliasId: "unrelated", NodeName: node.Name, NodeUid: uid, Provider: "Other"},
 			}
 			nodes := &nodeRepo{nodes: map[k8stypes.UID]*biz.Node{node.UID: {Devices: devices}}}
-			cards := service.NewCardService(biz.NewNodeUsecase(nodes, log.DefaultLogger), biz.NewPodUseCase(repo, log.DefaultLogger))
+			cards := service.NewCardService(biz.NewNodeUsecase(nodes, log.DefaultLogger), biz.NewPodUseCase(repo, log.DefaultLogger), nil)
 			reply, err := cards.GetAllGPUs(context.Background(), &pb.GetAllGpusReq{Filters: &pb.GetAllGpusReq_Filters{NodeName: node.Name, NodeUid: uid}})
 			if err != nil {
 				t.Fatal(err)

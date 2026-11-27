@@ -31,7 +31,7 @@ func TestSplitRepliesCarryEveryMIGField(t *testing.T) {
 	pods := biz.NewPodUseCase(&containerTestPodRepo{containers: containers}, log.DefaultLogger)
 	nodeUsecase := biz.NewNodeUsecase(nodes, log.DefaultLogger)
 
-	cards := NewCardService(nodeUsecase, pods)
+	cards := NewCardService(nodeUsecase, pods, nil)
 	gpu, err := cards.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "GPU-M"})
 	if err != nil {
 		t.Fatal(err)

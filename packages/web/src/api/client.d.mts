@@ -200,6 +200,7 @@ export interface DeviceItem {
   migProfiles: MigProfile[];
   nodeAllocationComplete?: boolean;
   hasInitReservation?: boolean;
+  telemetryDeviceId?: string;
 }
 
 export interface DevicesReply {

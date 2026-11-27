@@ -39,7 +39,7 @@ func TestRequestsTreatMissingFiltersAsEmpty(t *testing.T) {
 		biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger),
 		nil,
 	)
-	cards := NewCardService(nodeUsecase, podUsecase)
+	cards := NewCardService(nodeUsecase, podUsecase, nil)
 	containers := NewContainerService(nodeUsecase, podUsecase)
 
 	tests := []struct {

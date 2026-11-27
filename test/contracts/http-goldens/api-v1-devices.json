@@ -16,7 +16,8 @@
       "coreUsedKnown": true,
       "unconfigured": false,
       "vendor": "NVIDIA",
-      "migProfiles": []
+      "migProfiles": [],
+      "telemetryDeviceId": ""
     }
   ]
 }

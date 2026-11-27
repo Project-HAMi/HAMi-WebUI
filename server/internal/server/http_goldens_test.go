@@ -382,7 +382,7 @@ func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 	handler := NewHTTPServer(
 		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
 		nodeSvc,
-		service.NewCardService(nodeUC, podUC),
+		service.NewCardService(nodeUC, podUC, snapSource),
 		ctrSvc,
 		nil,
 		schedSvc,

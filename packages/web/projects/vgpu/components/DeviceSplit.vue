@@ -14,7 +14,7 @@
             </span>
             <t-tag v-if="modeText" class="device-split__mode" size="small" theme="primary" variant="light" max-width="100%" :title="modeText">{{ modeText }}</t-tag>
           </span>
-          <RouterLink class="device-split__uuid" :to="`/accelerators/${encodeURIComponent(device.uuid)}`" :title="device.uuid" :aria-label="$t('card.split.deviceLink', { id: device.uuid })">
+          <RouterLink class="device-split__uuid" :to="{ name: 'accelerator-detail', params: { uuid: device.uuid }, ...(device.nodeUid ? { query: { nodeUid: device.nodeUid } } : {}) }" :title="device.uuid" :aria-label="$t('card.split.deviceLink', { id: device.uuid })">
             {{ device.uuid }}
           </RouterLink>
         </div>

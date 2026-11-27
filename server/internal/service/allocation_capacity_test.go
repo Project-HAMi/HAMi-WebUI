@@ -40,7 +40,7 @@ func TestAllocationCapacityUsesDeterministicPhysicalCoreBaseline(t *testing.T) {
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
 	summaryUsecase := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
 	nodeService := NewNodeService(nodeUsecase, podUsecase, summaryUsecase, nil)
-	cardService := NewCardService(nodeUsecase, podUsecase)
+	cardService := NewCardService(nodeUsecase, podUsecase, nil)
 
 	nodes, err := nodeService.GetAllNodes(
 		context.Background(),
@@ -178,7 +178,7 @@ func TestGetGPUValidationNotFoundAndLargeScaleAggregation(t *testing.T) {
 	podUsecase := biz.NewPodUseCase(podRepo, log.DefaultLogger)
 	summaryUsecase := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
 	nodeService := NewNodeService(nodeUsecase, podUsecase, summaryUsecase, nil)
-	cardService := NewCardService(nodeUsecase, podUsecase)
+	cardService := NewCardService(nodeUsecase, podUsecase, nil)
 
 	if _, err := cardService.GetGPU(context.Background(), &pb.GetGpuReq{Uid: "   "}); kratoserrors.FromError(err).GetCode() != 400 {
 		t.Fatalf("expected 400 INVALID_ARGUMENT, got %v", err)

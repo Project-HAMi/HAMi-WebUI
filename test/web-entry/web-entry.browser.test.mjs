@@ -786,7 +786,8 @@ before(async() => {
         memoryTotal: 16_384,
         nodeUid: 'node-1',
         health: true,
-        mode: ''
+        mode: '',
+        telemetryDeviceId: Buffer.from(`NVIDIA\0node-1\0${uid}`).toString('base64url'),
       }
     } else if (pathname === '/v1/node') {
       const uid = requestURL.searchParams.get('uid') ?? ''
@@ -4671,7 +4672,7 @@ test('resource names navigate while decorative table icons do not', async() => {
       path: 'accelerators',
       icon: '.accelerator-table .card-id-cell-icon',
       name: 'gpu-1',
-      detail: 'accelerators/gpu-1',
+      detail: 'accelerators/gpu-1?nodeUid=node-1',
     },
     {
       path: 'workloads',
@@ -5027,7 +5028,7 @@ test('node device allocation uses two node-scoped batches and shows at most four
       assert.equal(await expand.count(), count > 4 ? 1 : 0)
       if (count) {
         const deviceLink = cards.first().getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true })
-        assert.equal(await deviceLink.getAttribute('href'), `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+        assert.equal(await deviceLink.getAttribute('href'), `${basePath}accelerators/${allocationDeviceIDs[0]}?nodeUid=${allocationNode.uid}`)
         assert.match(await cards.first().textContent(), /2 workloads/)
         assert.doesNotMatch(await cards.first().textContent(), /[·•]/)
       }
@@ -5406,7 +5407,7 @@ test('node device allocation retains the same allocation display when opening de
     await captureTrendScreenshot(page, 'node-shared-device-split')
 
     await firstCard.getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true }).click()
-    await page.waitForURL((url) => url.pathname === `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+    await page.waitForURL((url) => url.pathname === `${basePath}accelerators/${allocationDeviceIDs[0]}` && url.searchParams.get('nodeUid') === allocationNode.uid)
     const deviceSplit = page.locator('.device-split-block .device-split[aria-busy="false"]')
     assert.deepEqual(await allocationDisplay(deviceSplit), nodeDisplay, 'The device detail changed the allocation values or collapsed the per-holder segments')
     assert.equal(await deviceSplit.locator('.split-row').count(), 2)
@@ -5418,7 +5419,7 @@ test('node device allocation retains the same allocation display when opening de
     await page.waitForURL((url) => url.pathname === `${basePath}workloads/${container.podUid}/containers/${container.name}`)
     const workloadSplits = page.locator('.workload-split .device-split[aria-busy="false"]')
     await waitUntil(async() => await workloadSplits.count() === 8, 'The eight-device workload lost one of its allocation displays')
-    const workloadSplit = workloadSplits.filter({ has: page.locator(`a[href="${basePath}accelerators/${allocationDeviceIDs[0]}"]`) })
+    const workloadSplit = workloadSplits.filter({ has: page.locator(`a[href="${basePath}accelerators/${allocationDeviceIDs[0]}?nodeUid=${allocationNode.uid}"]`) })
     assert.deepEqual(await allocationDisplay(workloadSplit), nodeDisplay, 'The workload detail changed the same device allocation values or segments')
     assert.equal(await workloadSplit.locator('.split-row.is-current').count(), 1, 'The selected container must remain highlighted in its device allocation')
     assert.equal(await workloadSplit.locator('.split-row').count(), 2)
@@ -7605,6 +7606,87 @@ test('old physical bookmarks are replaced by the standard accelerator list and k
     await page.goBack()
     await page.waitForURL(target + basePath + 'nodes')
   } finally {
+    await page.close()
+  }
+})
+
+test('accelerator detail preserves nodeUid across duplicate-ID navigation and scopes holders and trends', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const seenDevices = []
+  const seenContainers = []
+  const seenTrends = []
+  const telemetryIdA = Buffer.from('DCU\0node-a\0DCU-3').toString('base64url')
+  const telemetryIdB = Buffer.from('DCU\0node-b\0DCU-3').toString('base64url')
+  let releaseNodeA
+  const gateNodeA = new Promise((resolve) => { releaseNodeA = resolve })
+
+  await page.route('**/api/v1/device?**', async(route) => {
+    const params = new URL(route.request().url()).searchParams
+    const nodeUid = params.get('node_uid') || ''
+    seenDevices.push({ id: params.get('id'), nodeUid })
+    if (nodeUid === 'node-a') await gateNodeA
+    return route.fulfill({ json: {
+      uuid: 'DCU-3',
+      type: 'DCU',
+      vendor: 'Hygon',
+      nodeName: nodeUid === 'node-b' ? 'worker-b' : 'worker-a',
+      nodeUid,
+      health: true,
+      mode: 'hami-core',
+      vgpuUsed: 1,
+      vgpuTotal: 4,
+      coreTotal: 100,
+      memoryTotal: 16_384,
+      telemetryDeviceId: nodeUid === 'node-b' ? telemetryIdB : telemetryIdA,
+    } })
+  })
+  await page.route('**/api/v1/containers?*', (route) => {
+    const params = new URL(route.request().url()).searchParams
+    const nodeUid = params.get('node_uid') || ''
+    seenContainers.push({ deviceId: params.get('device_id'), nodeUid })
+    return fulfillWorkloadFixture(route, {
+      items: [{
+        name: `worker-${nodeUid}`,
+        appName: `job-${nodeUid}`,
+        podUid: `pod-${nodeUid}`,
+        namespace: 'default',
+        nodeName: nodeUid === 'node-b' ? 'worker-b' : 'worker-a',
+        nodeUid,
+        status: 'success',
+        type: 'DCU',
+        deviceIds: ['DCU-3'],
+        allocatedDevices: 1,
+        allocatedCores: 25,
+        allocatedMem: 4096,
+        devices: [{ id: 'DCU-3', allocationShape: 'soft', allocatedCores: 25, allocatedCoresKnown: true, allocatedMem: 4096 }],
+      }],
+    })
+  })
+  await page.route('**/api/v1/telemetry/trends?**', (route) => {
+    const params = new URL(route.request().url()).searchParams
+    seenTrends.push({ deviceId: params.get('device_id'), nodeUid: params.get('node_uid') })
+    return route.continue()
+  })
+
+  try {
+    await page.goto(`${target}${basePath}accelerators/DCU-3?nodeUid=node-a`, { waitUntil: 'domcontentloaded' })
+    await waitUntil(() => seenDevices.some((item) => item.nodeUid === 'node-a'), 'Pending node-a device request did not start')
+
+    await page.evaluate(async() => {
+      const app = document.querySelector('#app')?.__vue_app__
+      await app?.config.globalProperties.$router.push('/accelerators/DCU-3?nodeUid=node-b')
+    })
+    await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    await page.locator('.device-facts').getByText('worker-b', { exact: true }).waitFor()
+    releaseNodeA()
+    await delay(100)
+    await page.locator('.device-facts').getByText('worker-b', { exact: true }).waitFor()
+    await waitUntil(() => seenContainers.some((item) => item.nodeUid === 'node-b'), 'Containers query did not scope to node-b')
+    await waitUntil(() => seenTrends.some((item) => item.deviceId === telemetryIdB && item.nodeUid === 'node-b'), 'Trends query did not use node-b telemetryDeviceId')
+    assert.ok(!seenTrends.some((item) => item.deviceId === telemetryIdA), 'Stale node-a trends query ran under node-b route')
+  } finally {
+    releaseNodeA()
     await page.close()
   }
 })

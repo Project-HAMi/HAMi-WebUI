@@ -374,16 +374,22 @@ const routeNodeUid = computed(() => {
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
   return '';
 });
+const routeDeviceTarget = computed(() => {
+  const uuid = routeCardUuid.value;
+  if (!uuid) return null;
+  return { uuid: String(uuid), nodeUid: routeNodeUid.value };
+});
 const {
   data: detail,
   status: detailStatus,
   retry: retryDetail,
 } = useDetailResource({
-  source: routeCardUuid,
-  request: async (uuid, signal) => {
+  source: routeDeviceTarget,
+  isValidSource: (target) => Boolean(target?.uuid),
+  request: async ({ uuid, nodeUid: targetNodeUid }, signal) => {
     try {
       return await apiClient.getDevice(uuid, {
-        nodeUid: routeNodeUid.value || undefined,
+        nodeUid: targetNodeUid || undefined,
         signal,
       });
     } catch (error) {
@@ -393,10 +399,10 @@ const {
       throw error;
     }
   },
-  classify: (payload, uuid) =>
+  classify: (payload, { uuid, nodeUid: targetNodeUid }) =>
     classifyDetailPayload(payload, {
       identityKeys: ['uuid'],
-      expectedIdentity: { uuid },
+      expectedIdentity: targetNodeUid ? { uuid, nodeUid: targetNodeUid } : { uuid },
     }),
 });
 const isDetailReady = computed(
@@ -410,6 +416,9 @@ const splitModeText = computed(() => {
 const splitModeIcon = computed(() => (isDetailReady.value ? getSplitIcon(detail.value?.mode) : ''));
 const detailCardUuid = computed(() =>
   isDetailReady.value ? detail.value.uuid : undefined,
+);
+const detailNodeUid = computed(() =>
+  isDetailReady.value ? detail.value.nodeUid || detail.value.node_uid || '' : '',
 );
 // Plugins that register no split mode leave nothing to lay out.
 const splitVisible = computed(() => Boolean(isDetailReady.value && getSplitModeKey(detail.value?.mode)));
@@ -431,7 +440,12 @@ const loadSplit = async () => {
   const controller = new AbortController();
   splitController = controller;
   try {
-    const result = await apiClient.listContainers({ deviceId: uuid, page: 1, pageSize: 100 }, { signal: controller.signal });
+    const result = await apiClient.listContainers({
+      deviceId: uuid,
+      nodeUid: detailNodeUid.value || undefined,
+      page: 1,
+      pageSize: 100,
+    }, { signal: controller.signal });
     if (controller.signal.aborted || generation !== splitGeneration) return;
     const page = parseDeviceSplitPage(result, 100);
     cardContainers.value = page.items;
@@ -444,7 +458,7 @@ const loadSplit = async () => {
     if (splitController === controller) splitController = null;
   }
 };
-watch(detailCardUuid, loadSplit, { immediate: true });
+watch([detailCardUuid, detailNodeUid], loadSplit, { immediate: true });
 const headerName = computed(() =>
   isDetailReady.value ? detail.value.uuid : routeCardUuid.value || '',
 );
@@ -460,6 +474,7 @@ const headerHealth = ref(null);
 watch(detail, async (card, _, onCleanup) => {
   headerHealth.value = null;
   if (!card?.uuid || card.uuid !== routeCardUuid.value) return;
+  if (routeNodeUid.value && card.nodeUid && card.nodeUid !== routeNodeUid.value) return;
   const controller = new AbortController();
   onCleanup(() => controller.abort());
   try {
@@ -584,7 +599,10 @@ const uncountedMetric = useInstantVector([{ query: uncountedQuery }], renderCard
 const computeAllocUncounted = computed(() => readUncountedMetric(uncountedMetric.value[0]));
 
 const trendParams = computed(() => (detailCardUuid.value
-  ? { deviceId: detailCardUuid.value, nodeUid: detail.value?.nodeUid || detail.value?.node_uid || undefined }
+  ? {
+      deviceId: detail.value?.telemetryDeviceId || detailCardUuid.value,
+      nodeUid: detailNodeUid.value || undefined,
+    }
   : {}));
 const { data: rangeSeries } = useTelemetryTrends({
   scope: 'device',
