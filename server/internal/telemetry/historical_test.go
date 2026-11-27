@@ -467,6 +467,97 @@ func TestHistoricalReaderCancelsUpstreamWhenAllWaitersCancelAndBoundsConcurrency
 	}
 }
 
+func TestHistoricalReaderCanceledFlightDoesNotPopulateCacheForReplacement(t *testing.T) {
+	baseNow := time.Unix(1760000100, 0).UTC()
+	var calls atomic.Int32
+	var pauseNextNow atomic.Bool
+	pausedBeforePublish := make(chan struct{})
+	releasePublish := make(chan struct{})
+	flight2Started := make(chan struct{})
+	releaseFlight2 := make(chan struct{})
+
+	reader := NewHistoricalObservationReaderWithQuerier(fakeRangeQuerier{
+		fn: func(_ context.Context, _ string, _ promv1.Range) (model.Value, error) {
+			n := calls.Add(1)
+			if n <= 4 {
+				if n == 4 {
+					pauseNextNow.Store(true)
+				}
+				return model.Matrix{&model.SampleStream{
+					Values: []model.SamplePair{{Timestamp: model.Time(baseNow.UnixMilli()), Value: 10}},
+				}}, nil
+			}
+			if n == 5 {
+				close(flight2Started)
+				<-releaseFlight2
+			}
+			return model.Matrix{&model.SampleStream{
+				Values: []model.SamplePair{{Timestamp: model.Time(baseNow.UnixMilli()), Value: 99}},
+			}}, nil
+		},
+	})
+	reader.now = func() time.Time {
+		if pauseNextNow.CompareAndSwap(true, false) {
+			close(pausedBeforePublish)
+			<-releasePublish
+		}
+		return baseNow
+	}
+
+	req := &obsv1.TrendsRequest{
+		Scope: "cluster",
+		Start: baseNow.Add(-time.Minute).Format(time.RFC3339),
+		End:   baseNow.Format(time.RFC3339),
+		Step:  "60s",
+	}
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	errCh1 := make(chan error, 1)
+	go func() {
+		_, err := reader.Trends(ctx1, req)
+		errCh1 <- err
+	}()
+
+	<-pausedBeforePublish
+	cancel1()
+	if err := <-errCh1; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled waiter err = %v, want Canceled", err)
+	}
+
+	reply2Ch := make(chan *obsv1.TrendsReply, 1)
+	go func() {
+		reply, err := reader.Trends(context.Background(), req)
+		if err != nil {
+			t.Errorf("replacement flight failed: %v", err)
+			return
+		}
+		reply2Ch <- reply
+	}()
+	<-flight2Started
+
+	close(releasePublish)
+	time.Sleep(20 * time.Millisecond)
+	reader.cacheMu.Lock()
+	cachedCount := len(reader.cache)
+	reader.cacheMu.Unlock()
+	if cachedCount != 0 {
+		t.Fatalf("stale canceled flight populated cache before replacement finished: count=%d", cachedCount)
+	}
+
+	close(releaseFlight2)
+	reply2 := <-reply2Ch
+	if got := reply2.Series[0].Points[1].GetValue(); got != 99 {
+		t.Fatalf("replacement value = %v, want 99", got)
+	}
+	cached, err := reader.Trends(context.Background(), req)
+	if err != nil {
+		t.Fatalf("cache hit failed: %v", err)
+	}
+	if got := cached.Series[0].Points[1].GetValue(); got != 99 {
+		t.Fatalf("cached value = %v, want 99", got)
+	}
+}
+
 func parsedCacheKey(t *testing.T, req *obsv1.TrendsRequest, now time.Time) string {
 	t.Helper()
 	parsed, err := parseTrendsQuery(req, now)

@@ -234,13 +234,37 @@ func (r *HistoricalObservationReader) runFlight(fetchCtx context.Context, cancel
 	}
 
 	reply, cacheable := r.fetchTrends(fetchCtx, parsed)
-	if errors.Is(fetchCtx.Err(), context.Canceled) {
-		return
+	var (
+		stored *obsv1.TrendsReply
+		size   int
+		now    time.Time
+	)
+	if cacheable && reply != nil {
+		maxBytes := r.maxCacheBytes
+		if maxBytes <= 0 {
+			maxBytes = defaultMaxCacheBytes
+		}
+		candidate := proto.Clone(reply).(*obsv1.TrendsReply)
+		candidateSize := proto.Size(candidate)
+		if candidateSize <= 0 {
+			candidateSize = 1
+		}
+		if candidateSize <= maxBytes {
+			stored = candidate
+			size = candidateSize
+			now = r.clockNow()
+		}
 	}
-	f.reply = reply
-	if cacheable {
-		r.putCached(key, reply, r.clockNow())
+
+	r.cacheMu.Lock()
+	if r.flights[key] == f && !errors.Is(fetchCtx.Err(), context.Canceled) {
+		f.reply = reply
+		if stored != nil {
+			r.putCachedLocked(key, stored, size, now)
+		}
+		delete(r.flights, key)
 	}
+	r.cacheMu.Unlock()
 }
 
 func (r *HistoricalObservationReader) unavailableReply(q parsedTrendsQuery, reason string) *obsv1.TrendsReply {
@@ -424,8 +448,8 @@ func (q parsedTrendsQuery) cacheKey() string {
 	}, "\x00")
 }
 
-func (r *HistoricalObservationReader) putCached(key string, reply *obsv1.TrendsReply, now time.Time) {
-	if r == nil || reply == nil {
+func (r *HistoricalObservationReader) putCachedLocked(key string, stored *obsv1.TrendsReply, size int, now time.Time) {
+	if r == nil || stored == nil {
 		return
 	}
 	maxEntries := r.maxCacheEntries
@@ -436,17 +460,6 @@ func (r *HistoricalObservationReader) putCached(key string, reply *obsv1.TrendsR
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxCacheBytes
 	}
-	stored := proto.Clone(reply).(*obsv1.TrendsReply)
-	size := proto.Size(stored)
-	if size <= 0 {
-		size = 1
-	}
-	if size > maxBytes {
-		return
-	}
-
-	r.cacheMu.Lock()
-	defer r.cacheMu.Unlock()
 
 	for _, existing := range slicesClone(r.cacheOrder) {
 		if entry, ok := r.cache[existing]; ok && !now.Before(entry.expiresAt) {
