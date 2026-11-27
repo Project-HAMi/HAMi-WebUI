@@ -1,4 +1,4 @@
-import { buildDeviceSplit } from '../../../components/device-split.mjs';
+import { buildDeviceSplit } from '../../components/device-split.mjs';
 
 export const readAllocationNumber = (value) => {
   if (typeof value !== 'number' && typeof value !== 'string') return undefined;

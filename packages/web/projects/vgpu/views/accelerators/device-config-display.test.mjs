@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import en from '../../../../../src/locales/en.js';
-import zh from '../../../../../src/locales/zh.js';
+import en from '../../../../src/locales/en.js';
+import zh from '../../../../src/locales/zh.js';
 import {
   affectsAscendDevices,
   buildAllocationOptions,

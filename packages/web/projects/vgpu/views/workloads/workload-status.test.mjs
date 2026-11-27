@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import en from '../../../../../src/locales/en.js';
-import zh from '../../../../../src/locales/zh.js';
+import en from '../../../../src/locales/en.js';
+import zh from '../../../../src/locales/zh.js';
 import { getWorkloadStatus, getWorkloadStatusOptions, WORKLOAD_STATUS_CODES } from './workload-status.mjs';
 
 const translator = (messages) => (key, params = {}) => {

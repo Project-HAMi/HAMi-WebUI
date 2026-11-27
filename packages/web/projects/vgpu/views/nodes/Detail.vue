@@ -259,7 +259,7 @@ import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
 import ResourceTrend from '~/vgpu/components/ResourceTrend.vue';
 import { useI18n } from 'vue-i18n';
 import { getResourceColor, roundToDecimal } from '@/utils';
-import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/node/node-status.mjs';
+import { getNodeSchedulingEligibilityStatus } from '~/vgpu/views/nodes/node-status.mjs';
 import NodeDeviceAllocation from './NodeDeviceAllocation.vue';
 
 const NODE_TREND_MIN_RANGE_MS = 30 * 1000;

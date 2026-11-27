@@ -1,4 +1,4 @@
-import { promQLStringLiteral } from '../../../metrics/promql-template.mjs';
+import { promQLStringLiteral } from '../../metrics/promql-template.mjs';
 
 export function migInstanceMemoryQuery(uuid) {
   // A GI can be assigned to a Pod. Its Pod name alone says nothing about the memory scope.

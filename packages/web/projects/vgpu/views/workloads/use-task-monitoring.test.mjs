@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { nextTick, ref } from 'vue';
 
-import { REQUEST_STATUS } from '../../../../../src/hooks/request-state.mjs';
+import { REQUEST_STATUS } from '../../../../src/hooks/request-state.mjs';
 import useTaskMonitoring, {
   getTaskMonitoringAllocationShape,
 } from './useTaskMonitoring.js';

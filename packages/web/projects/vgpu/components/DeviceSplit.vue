@@ -172,8 +172,8 @@ import { buildDeviceSplit, collectHolders, splitKind } from './device-split.mjs'
 import { getSplitIcon, getSplitModeKey } from './split-mode.mjs';
 import VendorMark from './VendorMark.vue';
 import MetricHelp from './MetricHelp.vue';
-import { getShapeUnknownReasonKey } from '~/vgpu/views/task/admin/allocation-display.mjs';
-import { buildWorkloadDetailLocation, formatWorkloadName } from '~/vgpu/views/task/admin/workload-identity.mjs';
+import { getShapeUnknownReasonKey } from '~/vgpu/views/workloads/allocation-display.mjs';
+import { buildWorkloadDetailLocation, formatWorkloadName } from '~/vgpu/views/workloads/workload-identity.mjs';
 
 const props = defineProps({
   device: { type: Object, required: true },

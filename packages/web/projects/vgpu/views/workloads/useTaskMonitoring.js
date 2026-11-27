@@ -1,9 +1,9 @@
 import { computed, ref, unref, watch } from 'vue';
 
-import { REQUEST_STATUS } from '../../../../../src/hooks/request-state.mjs';
-import { readRangeVector } from '../../../hooks/range-vector-query-state.mjs';
-import { buildTaskMonitoringQueries } from '../../../metrics/query-contract.mjs';
-import { renderPromQLTemplate } from '../../../metrics/promql-template.mjs';
+import { REQUEST_STATUS } from '../../../../src/hooks/request-state.mjs';
+import { readRangeVector } from '../../hooks/range-vector-query-state.mjs';
+import { buildTaskMonitoringQueries } from '../../metrics/query-contract.mjs';
+import { renderPromQLTemplate } from '../../metrics/promql-template.mjs';
 
 const SERIES = Object.freeze([
   { key: 'computeUsage', titleKey: 'task.computeUsageTrend' },

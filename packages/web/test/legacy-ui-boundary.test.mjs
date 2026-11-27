@@ -11,7 +11,7 @@ const ALLOWED_LEGACY_EL_TAG_FILES = new Set([
   'projects/vgpu/components/EnvironmentSources.vue',
   'projects/vgpu/components/VersionTag.vue',
   'projects/vgpu/components/timeSelect.vue',
-  'projects/vgpu/views/task/admin/Detail.vue',
+  'projects/vgpu/views/workloads/Detail.vue',
   'src/App.vue',
   'src/components/EllipsisText.vue',
   'src/components/LangSelect/index.vue',

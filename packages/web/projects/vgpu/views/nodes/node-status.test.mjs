@@ -110,8 +110,8 @@ test('eligibility filtering uses the same combined Ready and cordon boundary', (
 });
 
 test('node list and detail share one combined scheduling eligibility status', () => {
-  const list = readFileSync(new URL('./admin/index.vue', import.meta.url), 'utf8');
-  const detail = readFileSync(new URL('./admin/Detail.vue', import.meta.url), 'utf8');
+  const list = readFileSync(new URL('./index.vue', import.meta.url), 'utf8');
+  const detail = readFileSync(new URL('./Detail.vue', import.meta.url), 'utf8');
 
   assert.match(list, /getNodeSchedulingEligibilityStatus/);
   assert.match(detail, /getNodeSchedulingEligibilityStatus/);

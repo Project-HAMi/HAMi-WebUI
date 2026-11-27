@@ -317,7 +317,7 @@ import {
 import { classifyDetailPayload } from '~/vgpu/hooks/detail-resource-state.mjs';
 import useDetailResource from '~/vgpu/hooks/useDetailResource';
 import { parseDeviceSplitPage } from '~/vgpu/components/device-split.mjs';
-import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
+import { buildNodeDetailLocation } from '~/vgpu/views/nodes/detail-location.mjs';
 import {
   buildTaskContainerResourceQueries,
   buildTaskResourceOverviewQueries,

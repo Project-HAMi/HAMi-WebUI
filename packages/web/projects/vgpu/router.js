@@ -5,41 +5,41 @@ export default (Layout) => ({
   children: [
     {
       path: '/overview',
-      component: () => import('~/vgpu/views/monitor/overview/index.vue'),
+      component: () => import('~/vgpu/views/overview/index.vue'),
       name: 'overview',
       meta: { title: 'routes.dashboard', icon: 'dashboard', noCache: true },
     },
     {
       path: '/nodes',
-      component: () => import('~/vgpu/views/node/admin/index.vue'),
+      component: () => import('~/vgpu/views/nodes/index.vue'),
       name: 'nodes',
       meta: { title: 'routes.nodes', icon: 'vgpu-node', noCache: true },
     },
     {
       path: '/nodes/:uid',
-      component: () => import('~/vgpu/views/node/admin/Detail.vue'),
+      component: () => import('~/vgpu/views/nodes/Detail.vue'),
       name: 'node-detail',
     },
     {
       path: '/accelerators',
-      component: () => import('~/vgpu/views/card/admin/index.vue'),
+      component: () => import('~/vgpu/views/accelerators/index.vue'),
       name: 'accelerators',
       meta: { title: 'routes.cards', icon: 'vgpu-card', noCache: true },
     },
     {
       path: '/accelerators/:uuid',
-      component: () => import('~/vgpu/views/card/admin/Detail.vue'),
+      component: () => import('~/vgpu/views/accelerators/Detail.vue'),
       name: 'accelerator-detail',
     },
     {
       path: '/workloads',
-      component: () => import('~/vgpu/views/task/admin/index.vue'),
+      component: () => import('~/vgpu/views/workloads/index.vue'),
       name: 'workloads',
       meta: { title: 'routes.tasks', icon: 'vgpu-task', noCache: true },
     },
     {
       path: '/workloads/:podUid/containers/:container',
-      component: () => import('~/vgpu/views/task/admin/Detail.vue'),
+      component: () => import('~/vgpu/views/workloads/Detail.vue'),
       name: 'workload-detail',
     },
   ],

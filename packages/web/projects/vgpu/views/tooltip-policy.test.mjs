@@ -11,9 +11,9 @@ const readSource = (relativePath) =>
   readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
 const ellipsisText = readSource('../../../src/components/EllipsisText.vue');
-const taskDetail = readSource('./task/admin/Detail.vue');
-const cardList = readSource('./card/admin/index.vue');
-const distribution = readSource('./monitor/overview/DeviceUsageDistribution.vue');
+const taskDetail = readSource('./workloads/Detail.vue');
+const cardList = readSource('./accelerators/index.vue');
+const distribution = readSource('./overview/DeviceUsageDistribution.vue');
 const gauge = readSource('../components/gauge.vue');
 
 test('long text tooltips wrap at a consistent readable width', () => {

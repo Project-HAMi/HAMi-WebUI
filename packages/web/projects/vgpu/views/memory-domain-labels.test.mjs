@@ -7,10 +7,10 @@ import { LONG_TEXT_TOOLTIP_STYLE } from '../components/tooltip-policy.mjs';
 const readSource = (relativePath) =>
   readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
-const overview = readSource('./monitor/overview/index.vue');
+const overview = readSource('./overview/index.vue');
 const resourceTrend = readSource('../components/ResourceTrend.vue');
-const nodeDetail = readSource('./node/admin/Detail.vue');
-const cardDetail = readSource('./card/admin/Detail.vue');
+const nodeDetail = readSource('./nodes/Detail.vue');
+const cardDetail = readSource('./accelerators/Detail.vue');
 const metricHelp = readSource('../components/MetricHelp.vue');
 const metricChart = readSource('../components/MetricChart.vue');
 const enLocale = readSource('../../../src/locales/en.js');

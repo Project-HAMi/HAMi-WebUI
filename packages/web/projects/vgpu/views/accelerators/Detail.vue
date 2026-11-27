@@ -335,7 +335,7 @@ import {
   buildMemoryUsageQueries,
 } from '~/vgpu/metrics/query-contract.mjs';
 import { renderPromQLTemplate } from '~/vgpu/metrics/promql-template.mjs';
-import { buildNodeDetailLocation } from '~/vgpu/views/node/detail-location.mjs';
+import { buildNodeDetailLocation } from '~/vgpu/views/nodes/detail-location.mjs';
 import { formatOptionalTelemetry } from './optional-telemetry-display.mjs';
 import { getAllocationSlotDisplay } from './allocation-slot-display.mjs';
 import DeviceFacts from './components/DeviceFacts.vue';
