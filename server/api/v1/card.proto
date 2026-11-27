@@ -81,6 +81,8 @@ message GPUReply {
   optional bool node_allocation_complete = 17;
   // An init or sidecar reservation contributes to the node-scoped device totals.
   optional bool has_init_reservation = 18;
+  // Opaque resourceview.DeviceID matching hami_webui_device_* telemetry series.
+  string telemetry_device_id = 19;
 }
 
 // One MIG device type and where NVML allows it on the GPU.

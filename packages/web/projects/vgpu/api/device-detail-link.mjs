@@ -22,5 +22,10 @@ export function matchDeviceRegistration(legacyRows) {
 }
 
 export function registrationDetail(row) {
-  return row ? { name: 'accelerator-detail', params: { uuid: row.uuid } } : null;
+  if (!row) return null;
+  return {
+    name: 'accelerator-detail',
+    params: { uuid: row.uuid },
+    ...(row.nodeUid ? { query: { nodeUid: row.nodeUid } } : {}),
+  };
 }

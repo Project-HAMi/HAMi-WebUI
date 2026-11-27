@@ -634,7 +634,7 @@ const overviewTrendCount = 1
 const trendPages = [
   ['overview', overviewTrendCount],
   ['nodes/node-1?nodeName=node-1', 1],
-  ['accelerators/gpu-1', 7],
+  ['accelerators/gpu-1', 3],
   ['workloads/pod-1/containers/worker', 2]
 ]
 
@@ -727,6 +727,7 @@ async function assertRefreshAnimation(page, button, originalIcon) {
 async function assertMissingDetail(target, route) {
   const page = await browser.newPage()
   const monitorRequests = trackMonitorRequests(page)
+  const trendRequests = trackTrendRequests(page)
   try {
     await page.goto(`${target}${route}`, { waitUntil: 'domcontentloaded' })
     await page.locator('[data-testid="detail-page-missing"]').waitFor()
@@ -736,7 +737,7 @@ async function assertMissingDetail(target, route) {
     )
     await delay(100)
     assert.equal(
-      monitorRequests.length,
+      monitorRequests.length + trendRequests.length,
       0,
       `Missing detail issued monitor requests: ${route}`
     )
@@ -759,8 +760,8 @@ before(async() => {
     const now = Math.floor(Date.now() / 1000)
     let payload = { code: 0, data: {}, list: [], total: 0 }
 
-    if (pathname === '/v1/gpu') {
-      const uid = requestURL.searchParams.get('uid') ?? ''
+    if (pathname === '/v1/gpu' || pathname === '/api/v1/device') {
+      const uid = (pathname === '/api/v1/device' ? requestURL.searchParams.get('id') : requestURL.searchParams.get('uid')) ?? ''
       const requestKey = `gpu:${uid}`
       countBackendRequest(requestKey)
       await waitForResponseGate(requestKey)
@@ -785,7 +786,8 @@ before(async() => {
         memoryTotal: 16_384,
         nodeUid: 'node-1',
         health: true,
-        mode: ''
+        mode: '',
+        telemetryDeviceId: Buffer.from(`NVIDIA\0node-1\0${uid}`).toString('base64url'),
       }
     } else if (pathname === '/v1/node') {
       const uid = requestURL.searchParams.get('uid') ?? ''
@@ -1013,12 +1015,19 @@ before(async() => {
     } else if (pathname === '/api/v1/device-config') {
       payload = { state: 'loaded', reason: '', issues: [], ascendModels: [] }
     } else if (pathname === '/api/v1/telemetry/trends') {
+      const scope = requestURL.searchParams.get('scope') || 'cluster'
       const start = requestURL.searchParams.get('start') || new Date((now - 60) * 1000).toISOString().replace('.000Z', 'Z')
       const end = requestURL.searchParams.get('end') || new Date(now * 1000).toISOString().replace('.000Z', 'Z')
+      const deviceId = requestURL.searchParams.get('device_id') || ''
+      if (deviceId === 'gpu-metric-new') {
+        const requestKey = 'monitor:gpu-metric-new'
+        countBackendRequest(requestKey)
+        await waitForResponseGate(requestKey)
+      }
       const points = [{ at: start, value: 20 }, { at: end, value: 42 }]
       const state = { state: 'known', reason: '', params: {}, source: 'prometheus', scope: 'device', observedAt: end }
       payload = {
-        scope: requestURL.searchParams.get('scope') || 'cluster',
+        scope,
         start,
         end,
         stepSeconds: 60,
@@ -1834,7 +1843,7 @@ test('GPU resource cards stay compact across panel widths and languages', async(
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
   let deviceMode = 'hami-core'
   let longValues = false
-  await page.route('**/v1/gpu?**', async(route) => {
+  await page.route('**/api/v1/device?**', async(route) => {
     const response = await route.fetch()
     const device = await response.json()
     return route.fulfill({ json: { ...device, vendor: 'NVIDIA', mode: deviceMode } })
@@ -2016,12 +2025,15 @@ test('device holders omit duplicate shared counts while keeping allocation distr
       migStart: current.migStart, migSize: current.migSize,
     }],
   })
-  await page.route('**/v1/gpu?**', (route) => route.fulfill({ json: {
+  await page.route(/\/api\/(?:vgpu\/)?v1\/(?:gpu|device)\?/, (route) => route.fulfill({ json: {
     uuid: 'gpu-1', type: 'NVIDIA', vendor: 'NVIDIA', nodeName: 'node-1', nodeUid: 'node-1', health: true,
     mode: current.mode, vgpuUsed: current.empty ? 0 : 1, vgpuTotal: 10, coreTotal: 100, memoryTotal: 16_384,
     migProfiles: [{ name: '1g.5gb', placements: [{ start: 0, size: 1 }, { start: 1, size: 1 }] }],
   } }))
   await page.route(workloadListPattern, (route) => fulfillWorkloadFixture(route, {
+    items: current.empty ? [] : [workload()],
+  }))
+  await page.route('**/api/v1/containers?*', (route) => fulfillWorkloadFixture(route, {
     items: current.empty ? [] : [workload()],
   }))
   await page.route('**/v1/container?**', (route) => route.fulfill({ json: workload() }))
@@ -2096,7 +2108,7 @@ test('runtime language updates the document and TDesign services', async() => {
 
   try {
     await page.goto(
-      `${target}${basePath}accelerators`,
+      `${target}${basePath}workloads`,
       { waitUntil: 'domcontentloaded' }
     )
     await page.locator('html[lang="en"]').waitFor()
@@ -2158,7 +2170,7 @@ test('compact Top5 switches retain sorted data, keyboard operation and readable 
   })
   await routePhysicalFixture(page, physicalCards)
   const module = { ...physicalCards[0], uuid: 'module-only', vendor: 'Ascend', type: 'Ascend910C', coreUsed: 100, memoryUsed: 100 }
-  await page.route('**/v1/gpus', route => route.fulfill({ json: { list: [...physicalCards, module] } }))
+  await page.route('**/api/v1/devices', route => route.fulfill({ json: { list: [...physicalCards, module] } }))
   const countQueries = Object.entries(buildTaskCountQueries()).map(([key, query]) => fixtureQueries(key === 'byNode' ? 'node' : 'device_uuid', { query })[0])
   const workloadQueries = fixtureQueries('container_pod_uuid', buildTaskAllocationTopQueries())
   const requests = trackMonitorRequests(page)
@@ -2512,7 +2524,7 @@ test('detail loading shells follow each page layout and container breakpoints', 
   const fixtures = [
     { name: 'node', route: 'nodes/node-1?nodeName=node-1', api: /\/api\/v1\/nodes\/[^/?]+$/, charts: 2, legendCounts: [2, 2], shells: '.node-overview-panel',
       groups: { '.node-overview-panel': 2, '.node-system-resource-cards > li': 2 } },
-    { name: 'card', route: 'accelerators/gpu-1', api: /\/v1\/gpu\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
+    { name: 'card', route: 'accelerators/gpu-1', api: /\/api\/v1\/device\?/, charts: 4, legendCounts: [2, 2, 0, 0], shells: '.node-block, .resource-overview-block',
       groups: { '.fact-identities > .fact': 2, '.device-facts__grid > .fact': 2, '.fact--sensors > .fact__sensor': 2, '.resource-overview-cards > li': 2 } },
     { name: 'workload', route: 'workloads/pod-1/containers/worker', api: /\/v1\/container\?/,
       charts: 2, legendCounts: [0, 0], shells: '.basic-info-block, .workload-overview', groups: { '.basic-info-cards > .basic-info-card': 4, '.workload-overview .row-card': 5 } },
@@ -2674,6 +2686,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
     const gate = createResponseGate(requestKey)
     const page = await browser.newPage()
     const monitorRequests = trackMonitorRequests(page)
+    const trendRequests = trackTrendRequests(page)
     try {
       await page.goto(
         `${target}${basePath}accelerators/gpu-delayed`,
@@ -2689,7 +2702,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
         'true'
       )
       assert.equal(
-        monitorRequests.length,
+        monitorRequests.length + trendRequests.length,
         0,
         'Monitoring started before the card identity resolved'
       )
@@ -2704,7 +2717,7 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
       )
       await page.locator('.layout-title').filter({ hasText: 'gpu-delayed' }).waitFor()
       await waitUntil(
-        () => monitorRequests.length > 0,
+        () => monitorRequests.length > 0 && trendRequests.length > 0,
         'Monitoring did not start after the card detail resolved'
       )
     } finally {
@@ -2856,7 +2869,7 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.goto(`${target}${basePath}${route}`, { waitUntil: 'networkidle' })
           assert.equal(requests.length, seriesCount)
           for (const request of requests) {
-            const expected = route === 'overview' || route.startsWith('nodes/')
+            const expected = request.scope
               ? { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z' }
               : { start: '2026-10-07T11:00:00Z', end: '2026-10-07T12:00:00Z', step: '1m' }
             assert.deepEqual(request.range, expected)
@@ -2866,7 +2879,7 @@ test('all trend pages send the same UTC seconds across browser time zones', { ti
           await page.waitForLoadState('networkidle')
           assert.equal(requests.length, seriesCount * 2)
           for (const request of requests.slice(seriesCount)) {
-            const expected = route === 'overview' || route.startsWith('nodes/')
+            const expected = request.scope
               ? { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z' }
               : { start: '2026-10-07T11:01:01Z', end: '2026-10-07T12:01:01Z', step: '1m' }
             assert.deepEqual(request.range, expected)
@@ -4150,7 +4163,7 @@ test('distribution legends keep each name and its count on one line', async() =>
       coreUsed: 0, coreTotal: 100, memoryUsed: 0, memoryTotal: 100,
     })))
   await routePhysicalFixture(page, devices)
-  await page.route('**/v1/gpus', route => route.fulfill({ json: { list: devices } }))
+  await page.route('**/api/v1/devices', route => route.fulfill({ json: { list: devices } }))
   const legendNodes = legends['count by (provider)'].flatMap(([provider, count]) =>
     Array.from({ length: count }, (_, index) => ({
       name: `${provider.toLowerCase()}-node-${index}`,
@@ -4244,7 +4257,7 @@ test('unconfigured accelerator allocation rates stay unavailable', async() => {
     // The API does not send isExternal today; this guards the existing frontend branch only.
     device('external', { isExternal: true }),
   ]
-  await page.route('**/v1/gpus', (route) => route.fulfill({ json: { code: 0, list: devices, total: devices.length } }))
+  await page.route('**/api/v1/devices', (route) => route.fulfill({ json: { code: 0, list: devices, total: devices.length } }))
   await routePhysicalFixture(page, devices)
   const rateCells = (uuid) => page.locator('.accelerator-table').evaluate((table, uuid) => {
     const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim())
@@ -4653,7 +4666,7 @@ test('resource names navigate while decorative table icons do not', async() => {
       path: 'accelerators',
       icon: '.accelerator-table .card-id-cell-icon',
       name: 'gpu-1',
-      detail: 'accelerators/gpu-1',
+      detail: 'accelerators/gpu-1?nodeUid=node-1',
     },
     {
       path: 'workloads',
@@ -5009,7 +5022,7 @@ test('node device allocation uses two node-scoped batches and shows at most four
       assert.equal(await expand.count(), count > 4 ? 1 : 0)
       if (count) {
         const deviceLink = cards.first().getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true })
-        assert.equal(await deviceLink.getAttribute('href'), `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+        assert.equal(await deviceLink.getAttribute('href'), `${basePath}accelerators/${allocationDeviceIDs[0]}?nodeUid=${allocationNode.uid}`)
         assert.match(await cards.first().textContent(), /2 workloads/)
         assert.doesNotMatch(await cards.first().textContent(), /[·•]/)
       }
@@ -5347,10 +5360,15 @@ test('node device allocation retains the same allocation display when opening de
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1366, height: 900 } })
   const state = nodeAllocationFixture()
   const requests = await installNodeAllocationFixture(page, state)
+  await page.route('**/api/v1/device?**', (route) => {
+    const id = new URL(route.request().url()).searchParams.get('id')
+    return route.fulfill({ json: state.devices.find((device) => device.uuid === id) || {} })
+  })
   await page.route('**/v1/gpu?**', (route) => {
     const uid = new URL(route.request().url()).searchParams.get('uid')
     return route.fulfill({ json: state.devices.find((device) => device.uuid === uid) || {} })
   })
+  await page.route('**/api/v1/containers?*', (route) => fulfillWorkloadFixture(route, { items: state.containers }))
   await page.route('**/v1/workloads', (route) => fulfillWorkloadFixture(route, { items: state.containers }))
   await page.route('**/v1/container?**', (route) => {
     const name = new URL(route.request().url()).searchParams.get('name')
@@ -5383,7 +5401,7 @@ test('node device allocation retains the same allocation display when opening de
     await captureTrendScreenshot(page, 'node-shared-device-split')
 
     await firstCard.getByRole('link', { name: `View device ${allocationDeviceIDs[0]}`, exact: true }).click()
-    await page.waitForURL((url) => url.pathname === `${basePath}accelerators/${allocationDeviceIDs[0]}`)
+    await page.waitForURL((url) => url.pathname === `${basePath}accelerators/${allocationDeviceIDs[0]}` && url.searchParams.get('nodeUid') === allocationNode.uid)
     const deviceSplit = page.locator('.device-split-block .device-split[aria-busy="false"]')
     assert.deepEqual(await allocationDisplay(deviceSplit), nodeDisplay, 'The device detail changed the allocation values or collapsed the per-holder segments')
     assert.equal(await deviceSplit.locator('.split-row').count(), 2)
@@ -5395,7 +5413,7 @@ test('node device allocation retains the same allocation display when opening de
     await page.waitForURL((url) => url.pathname === `${basePath}workloads/${container.podUid}/containers/${container.name}`)
     const workloadSplits = page.locator('.workload-split .device-split[aria-busy="false"]')
     await waitUntil(async() => await workloadSplits.count() === 8, 'The eight-device workload lost one of its allocation displays')
-    const workloadSplit = workloadSplits.filter({ has: page.locator(`a[href="${basePath}accelerators/${allocationDeviceIDs[0]}"]`) })
+    const workloadSplit = workloadSplits.filter({ has: page.locator(`a[href="${basePath}accelerators/${allocationDeviceIDs[0]}?nodeUid=${allocationNode.uid}"]`) })
     assert.deepEqual(await allocationDisplay(workloadSplit), nodeDisplay, 'The workload detail changed the same device allocation values or segments')
     assert.equal(await workloadSplit.locator('.split-row.is-current').count(), 1, 'The selected container must remain highlighted in its device allocation')
     assert.equal(await workloadSplit.locator('.split-row').count(), 2)
@@ -6039,7 +6057,7 @@ test('list loading tables reuse visible column geometry and retain rows during r
   const fixtures = [
     { name: 'node', route: 'nodes', api: /\/api\/v1\/nodes$/, table: '.node-table',
       layout: 'auto', widths: ['', '', '', '', ''], minWidths: ['200px', '200px', '100px', '280px', '280px'] },
-    { name: 'card', route: 'accelerators', api: /\/api\/vgpu\/v1\/gpus$/, table: '.accelerator-table',
+    { name: 'card', route: 'accelerators', api: /\/api\/v1\/devices$/, table: '.accelerator-table',
       layout: 'fixed', widths: ['250px', '150px', '170px', '200px', '220px', '180px', '220px', '180px'],
       minWidths: ['', '', '', '', '', '', '', ''] },
     { name: 'workload', route: 'workloads', api: workloadListPattern, table: '.workload-table',
@@ -6696,6 +6714,10 @@ const mockLocalSearchLists = async(page, counts = {}) => {
     return route.fulfill({ json: listFixture('nodes', localSearchRows.nodes) })
   })
   await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: listFixture('nodes', localSearchRows.nodes) }))
+  await page.route('**/api/v1/devices', (route) => {
+    counts.gpus = (counts.gpus ?? 0) + 1
+    return route.fulfill({ json: listFixture('gpus', localSearchRows.gpus) })
+  })
   await page.route('**/api/vgpu/v1/gpus', (route) => {
     counts.gpus = (counts.gpus ?? 0) + 1
     return route.fulfill({ json: listFixture('gpus', localSearchRows.gpus) })
@@ -6908,15 +6930,14 @@ test('accelerators restore page and node filters from the URL when the data arri
   await routePhysicalFixture(page, gpus)
   let release
   const gate = new Promise((resolve) => { release = resolve })
-  await page.route('**/api/vgpu/v1/gpus', async(route) => {
+  await page.route('**/api/v1/devices', async(route) => {
     await gate
     return route.fulfill({ json: { list: gpus } })
   })
-  await page.route('**/api/vgpu/v1/nodes', async(route) => {
+  await page.route('**/api/v1/nodes', async(route) => {
     await gate
     return route.fulfill({ json: { list: localSearchRows.nodes } })
   })
-  await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: [{ type: 'NVIDIA-A100-SXM4-80GB' }] } }))
   try {
     const query = 'type=NVIDIA-A100-SXM4-80GB&nodeName=gpu-node-a&page=3'
     await page.goto(`${target}${basePath}accelerators?${query}`, { waitUntil: 'domcontentloaded' })
@@ -6941,9 +6962,8 @@ test('long node dropdowns show the first matches and keep keyboard picks correct
   await routePhysicalFixture(page, nodes.map(node => ({
     uuid: 'GPU-' + node.name, nodeName: node.name, nodeUid: node.uid, type: node.type[0], vendor: 'NVIDIA', health: true,
   })))
-  await page.route('**/api/vgpu/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
-  await page.route('**/api/vgpu/v1/gpus', (route) => route.fulfill({ json: { list: nodes.map((node) => ({ uuid: `GPU-${node.name}`, nodeName: node.name, type: node.type[0], health: true })) } }))
-  await page.route('**/api/vgpu/v1/gpu-types', (route) => route.fulfill({ json: { list: [{ type: 'NVIDIA-A100-SXM4-80GB' }, { type: 'NVIDIA-H100-SXM5-80GB' }] } }))
+  await page.route('**/api/v1/nodes', (route) => route.fulfill({ json: { list: nodes } }))
+  await page.route('**/api/v1/devices', (route) => route.fulfill({ json: { list: nodes.map((node) => ({ uuid: `GPU-${node.name}`, nodeName: node.name, type: node.type[0], health: true })) } }))
   const options = page.locator('.t-select__dropdown:visible .t-select-option')
   const hint = page.locator('.t-select__dropdown:visible .select-more-hint')
   try {
@@ -7536,8 +7556,8 @@ test('device details distinguish missing physical health from a failed card and 
   ]
   await page.route('**/api/v1/overview/inventory', r => r.fulfill({ json: { nodes: [node], devices,
     nodeCoverage: coverageFixture('node', 1), deviceCoverage: { entity: 'device', observed: devices.length, complete: false } } }))
-  await page.route('**/v1/gpu?**', r => {
-    const uuid = new URL(r.request().url()).searchParams.get('uid')
+  await page.route('**/api/v1/device?**', r => {
+    const uuid = new URL(r.request().url()).searchParams.get('id')
     const fields = uuid === 'module' ? { type: 'Ascend910C', vendor: 'Ascend', health: true }
       : uuid === 'old-node' ? { nodeUid: 'previous-node' } : {}
     return r.fulfill({ json: { ...registration, uuid, ...fields } })
@@ -7574,6 +7594,87 @@ test('old physical bookmarks are replaced by the standard accelerator list and k
     await page.goBack()
     await page.waitForURL(target + basePath + 'nodes')
   } finally {
+    await page.close()
+  }
+})
+
+test('accelerator detail preserves nodeUid across duplicate-ID navigation and scopes holders and trends', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  const seenDevices = []
+  const seenContainers = []
+  const seenTrends = []
+  const telemetryIdA = Buffer.from('DCU\0node-a\0DCU-3').toString('base64url')
+  const telemetryIdB = Buffer.from('DCU\0node-b\0DCU-3').toString('base64url')
+  let releaseNodeA
+  const gateNodeA = new Promise((resolve) => { releaseNodeA = resolve })
+
+  await page.route('**/api/v1/device?**', async(route) => {
+    const params = new URL(route.request().url()).searchParams
+    const nodeUid = params.get('node_uid') || ''
+    seenDevices.push({ id: params.get('id'), nodeUid })
+    if (nodeUid === 'node-a') await gateNodeA
+    return route.fulfill({ json: {
+      uuid: 'DCU-3',
+      type: 'DCU',
+      vendor: 'Hygon',
+      nodeName: nodeUid === 'node-b' ? 'worker-b' : 'worker-a',
+      nodeUid,
+      health: true,
+      mode: 'hami-core',
+      vgpuUsed: 1,
+      vgpuTotal: 4,
+      coreTotal: 100,
+      memoryTotal: 16_384,
+      telemetryDeviceId: nodeUid === 'node-b' ? telemetryIdB : telemetryIdA,
+    } })
+  })
+  await page.route('**/api/v1/containers?*', (route) => {
+    const params = new URL(route.request().url()).searchParams
+    const nodeUid = params.get('node_uid') || ''
+    seenContainers.push({ deviceId: params.get('device_id'), nodeUid })
+    return fulfillWorkloadFixture(route, {
+      items: [{
+        name: `worker-${nodeUid}`,
+        appName: `job-${nodeUid}`,
+        podUid: `pod-${nodeUid}`,
+        namespace: 'default',
+        nodeName: nodeUid === 'node-b' ? 'worker-b' : 'worker-a',
+        nodeUid,
+        status: 'success',
+        type: 'DCU',
+        deviceIds: ['DCU-3'],
+        allocatedDevices: 1,
+        allocatedCores: 25,
+        allocatedMem: 4096,
+        devices: [{ id: 'DCU-3', allocationShape: 'soft', allocatedCores: 25, allocatedCoresKnown: true, allocatedMem: 4096 }],
+      }],
+    })
+  })
+  await page.route('**/api/v1/telemetry/trends?**', (route) => {
+    const params = new URL(route.request().url()).searchParams
+    seenTrends.push({ deviceId: params.get('device_id'), nodeUid: params.get('node_uid') })
+    return route.continue()
+  })
+
+  try {
+    await page.goto(`${target}${basePath}accelerators/DCU-3?nodeUid=node-a`, { waitUntil: 'domcontentloaded' })
+    await waitUntil(() => seenDevices.some((item) => item.nodeUid === 'node-a'), 'Pending node-a device request did not start')
+
+    await page.evaluate(async() => {
+      const app = document.querySelector('#app')?.__vue_app__
+      await app?.config.globalProperties.$router.push('/accelerators/DCU-3?nodeUid=node-b')
+    })
+    await page.locator('.detail-page-state[data-detail-state="ready"]').waitFor()
+    await page.locator('.device-facts').getByText('worker-b', { exact: true }).waitFor()
+    releaseNodeA()
+    await delay(100)
+    await page.locator('.device-facts').getByText('worker-b', { exact: true }).waitFor()
+    await waitUntil(() => seenContainers.some((item) => item.nodeUid === 'node-b'), 'Containers query did not scope to node-b')
+    await waitUntil(() => seenTrends.some((item) => item.deviceId === telemetryIdB && item.nodeUid === 'node-b'), 'Trends query did not use node-b telemetryDeviceId')
+    assert.ok(!seenTrends.some((item) => item.deviceId === telemetryIdA), 'Stale node-a trends query ran under node-b route')
+  } finally {
+    releaseNodeA()
     await page.close()
   }
 })

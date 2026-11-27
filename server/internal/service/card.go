@@ -2,23 +2,30 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"sort"
 	"strings"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
+	"vgpu/internal/resourceview"
 )
 
 type CardService struct {
 	pb.UnimplementedCardServer
 
-	node *biz.NodeUsecase
-	pod  *biz.PodUseCase
+	node   *biz.NodeUsecase
+	pod    *biz.PodUseCase
+	source resourceview.SnapshotSource
 }
 
-func NewCardService(node *biz.NodeUsecase, pod *biz.PodUseCase) *CardService {
-	return &CardService{node: node, pod: pod}
+func NewCardService(node *biz.NodeUsecase, pod *biz.PodUseCase, source *resourceview.ObservedSnapshotSource) *CardService {
+	var snapSource resourceview.SnapshotSource
+	if source != nil {
+		snapSource = source
+	}
+	return &CardService{node: node, pod: pod, source: snapSource}
 }
 
 func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*pb.GPUsReply, error) {
@@ -202,23 +209,53 @@ func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, r
 		}
 	}
 	return &pb.GPUReply{
-		Uuid:          device.Id,
-		NodeName:      device.NodeName,
-		Type:          device.Type,
-		VgpuTotal:     device.Count,
-		CoreTotal:     biz.PhysicalCoreBaselinePerDevice,
-		MemoryTotal:   device.Devmem,
-		NodeUid:       device.NodeUid,
-		Health:        device.Health,
-		Mode:          device.Mode,
-		Unconfigured:  device.Unconfigured,
-		Vendor:        device.Provider,
-		MigProfiles:   migProfiles(device.MigProfiles),
-		VgpuUsed:      vGPU,
-		CoreUsed:      core,
-		CoreUsedKnown: &coreKnown,
-		MemoryUsed:    memory,
+		Uuid:              device.Id,
+		NodeName:          device.NodeName,
+		Type:              device.Type,
+		VgpuTotal:         device.Count,
+		CoreTotal:         biz.PhysicalCoreBaselinePerDevice,
+		MemoryTotal:       device.Devmem,
+		NodeUid:           device.NodeUid,
+		Health:            device.Health,
+		Mode:              device.Mode,
+		Unconfigured:      device.Unconfigured,
+		Vendor:            device.Provider,
+		MigProfiles:       migProfiles(device.MigProfiles),
+		VgpuUsed:          vGPU,
+		CoreUsed:          core,
+		CoreUsedKnown:     &coreKnown,
+		MemoryUsed:        memory,
+		TelemetryDeviceId: s.telemetryDeviceIDForDevice(ctx, device),
 	}, nil
+}
+
+func (s *CardService) telemetryDeviceIDForDevice(ctx context.Context, device *biz.DeviceInfo) string {
+	if s == nil || s.source == nil || device == nil {
+		return ""
+	}
+	snapshot, err := s.source.Snapshot(ctx)
+	if err != nil {
+		return ""
+	}
+	inv := resourceview.GroupPhysicalDevices(snapshot)
+	for _, group := range inv.Groups {
+		if string(group.NodeUID) != device.NodeUid || len(group.Members) == 0 {
+			continue
+		}
+		for _, member := range group.Members {
+			if member.Identity.Node != device.NodeName || member.Identity.Provider != device.Provider {
+				continue
+			}
+			if member.Identity.DeviceID == device.Id || (device.AliasId != "" && (member.Identity.DeviceID == device.AliasId || slices.Contains(member.BindingAliases, device.AliasId))) {
+				first := group.Members[0].Identity
+				if id, err := resourceview.DeviceID(first.Provider, first.Node, first.DeviceID); err == nil {
+					return id
+				}
+				return ""
+			}
+		}
+	}
+	return ""
 }
 
 func migProfiles(profiles []biz.MigProfile) []*pb.MigProfile {

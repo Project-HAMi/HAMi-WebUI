@@ -8,7 +8,9 @@ import (
 
 	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
+	"k8s.io/apimachinery/pkg/types"
 
+	obsv1 "vgpu/api/observability/v1"
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
@@ -133,8 +135,38 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 	podUC := biz.NewPodUseCase(podRepo, log.DefaultLogger)
 	summaryUC := biz.NewSummaryUseCase(nodeRepo, podRepo, log.DefaultLogger)
 
-	nodeSvc := NewNodeService(nodeUC, podUC, summaryUC, resourceview.WithObservations(staticSnapshotSource{snap: resourceview.Snapshot{At: now}}, nil))
-	cardSvc := NewCardService(nodeUC, podUC)
+	snapDevices := []resourceview.Device{
+		{
+			Identity: resourceview.DeviceIdentity{Provider: "NVIDIA", Node: "node-1", NodeUID: types.UID("node-uid-1"), DeviceID: "GPU-1"},
+			Kind:     "physical",
+			States:   map[string]*obsv1.FieldState{"kind": {State: resourceview.Known}},
+		},
+		{
+			Identity: resourceview.DeviceIdentity{Provider: "HCU", Node: "node-1", NodeUID: types.UID("node-uid-1"), DeviceID: "HCU-serial-with-hyphens"},
+			Kind:     "physical",
+			States:   map[string]*obsv1.FieldState{"kind": {State: resourceview.Known}},
+		},
+		{
+			Identity: resourceview.DeviceIdentity{Provider: "DCU", Node: "node-1", NodeUID: types.UID("node-uid-1"), DeviceID: "DCU-3"},
+			Kind:     "physical",
+			States:   map[string]*obsv1.FieldState{"kind": {State: resourceview.Known}},
+		},
+		{
+			Identity: resourceview.DeviceIdentity{Provider: "DCU", Node: "node-2", NodeUID: types.UID("node-uid-2"), DeviceID: "DCU-3"},
+			Kind:     "physical",
+			States:   map[string]*obsv1.FieldState{"kind": {State: resourceview.Known}},
+		},
+	}
+	snapSource := resourceview.WithObservations(staticSnapshotSource{snap: resourceview.Snapshot{
+		At: now,
+		Nodes: []resourceview.Node{
+			{Name: "node-1", UID: types.UID("node-uid-1")},
+			{Name: "node-2", UID: types.UID("node-uid-2")},
+		},
+		Devices: snapDevices,
+	}}, nil)
+	nodeSvc := NewNodeService(nodeUC, podUC, summaryUC, snapSource)
+	cardSvc := NewCardService(nodeUC, podUC, snapSource)
 	ctrSvc := NewContainerService(nodeUC, podUC)
 	workloadSvc := NewWorkloadService(ctrSvc, biz.NewSchedulingUsecase(resourcesTestSchedulingRepo{}))
 	schedSvc := NewSchedulingService(biz.NewSchedulingUsecase(resourcesTestSchedulingRepo{}))
@@ -190,7 +222,7 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 	hcuDev := &biz.DeviceInfo{
 		Id: "serial-with-hyphens", AliasId: "HCU-serial-with-hyphens",
 		Count: 1, Devmem: 16384, Devcore: 100, Type: "HCU", Health: true,
-		NodeName: "node-1", NodeUid: "node-uid-1", Provider: biz.HygonGPUDevice,
+		NodeName: "node-1", NodeUid: "node-uid-1", Provider: biz.HygonHCUDevice,
 	}
 	dcuNode1 := &biz.DeviceInfo{
 		Id: "DCU-3", AliasId: "DCU-3",
@@ -212,7 +244,7 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 		&biz.Container{
 			Name: "hcu-worker", PodUID: "pod-hcu-1", PodName: "hcu-pod", Namespace: "default",
 			NodeName: "node-1", NodeUID: "node-uid-1", Status: biz.ContainerStatusSuccess, CreateTime: now,
-			ContainerDevices: biz.ContainerDevices{{UUID: "HCU-serial-with-hyphens", Type: "HCU", Vendor: biz.HygonGPUDevice, Usedmem: 4096, Usedcores: 50}},
+			ContainerDevices: biz.ContainerDevices{{UUID: "HCU-serial-with-hyphens", Type: "HCU", Vendor: biz.HygonHCUDevice, Usedmem: 4096, Usedcores: 50}},
 		},
 		&biz.Container{
 			Name: "dcu-n1", PodUID: "pod-dcu-1", PodName: "dcu-pod-1", Namespace: "default",
@@ -226,19 +258,26 @@ func TestResourcesServiceValidationAndDelegation(t *testing.T) {
 		},
 	)
 
-	hcuDetail, err := res.GetContainer(context.Background(), &pb.GetResourceContainerRequest{
+	hcuDetail, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "serial-with-hyphens", NodeUid: "node-uid-1"})
+	wantHCUTelemetryID, _ := resourceview.DeviceID("HCU", "node-1", "HCU-serial-with-hyphens")
+	if err != nil || hcuDetail.TelemetryDeviceId != wantHCUTelemetryID {
+		t.Fatalf("HCU device telemetryDeviceId = (%+v, %v), want %q", hcuDetail, err, wantHCUTelemetryID)
+	}
+
+	hcuContainer, err := res.GetContainer(context.Background(), &pb.GetResourceContainerRequest{
 		PodUid: "pod-hcu-1", Container: "hcu-worker", DeviceId: "serial-with-hyphens",
 	})
-	if err != nil || hcuDetail.AllocatedDevices != 1 || len(hcuDetail.DeviceIds) != 1 || hcuDetail.DeviceIds[0] != "serial-with-hyphens" {
-		t.Fatalf("HCU public device_id lookup got (%+v, %v)", hcuDetail, err)
+	if err != nil || hcuContainer.AllocatedDevices != 1 || len(hcuContainer.DeviceIds) != 1 || hcuContainer.DeviceIds[0] != "serial-with-hyphens" {
+		t.Fatalf("HCU public device_id lookup got (%+v, %v)", hcuContainer, err)
 	}
 
 	if _, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "DCU-3"}); !kratoserrors.IsConflict(err) {
 		t.Fatalf("ambiguous device without node_uid err = %v, want 409 Conflict", err)
 	}
 	dcu2, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "DCU-3", NodeUid: "node-uid-2"})
-	if err != nil || dcu2.NodeUid != "node-uid-2" || dcu2.MemoryUsed != 8192 || dcu2.CoreUsed != 75 {
-		t.Fatalf("disambiguated device detail = (%+v, %v), want node-uid-2 with 8192MiB/75 cores", dcu2, err)
+	wantDCU2TelemetryID, _ := resourceview.DeviceID("DCU", "node-2", "DCU-3")
+	if err != nil || dcu2.NodeUid != "node-uid-2" || dcu2.MemoryUsed != 8192 || dcu2.CoreUsed != 75 || dcu2.TelemetryDeviceId != wantDCU2TelemetryID {
+		t.Fatalf("disambiguated device detail = (%+v, %v), want node-uid-2 with 8192MiB/75 cores and telemetryDeviceId %q", dcu2, err, wantDCU2TelemetryID)
 	}
 	slashDetail, err := res.GetDevice(context.Background(), &pb.GetDeviceRequest{Id: "GPU/with space", NodeUid: "node-uid-1"})
 	if err != nil || slashDetail.Uuid != "GPU/with space" {

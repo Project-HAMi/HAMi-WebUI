@@ -1,10 +1,10 @@
 <template>
-  <div class="card-admin-page vgpu-admin-page" :class="{ 'is-embedded': hideTitle }">
-    <div v-if="!hideTitle" class="vgpu-admin-page-title">{{ $t('card.title') }}</div>
+  <div class="card-admin-page vgpu-admin-page">
+    <div class="vgpu-admin-page-title">{{ $t('card.title') }}</div>
 
     <DeviceConfigAlert />
 
-    <div class="card-admin-top-wrap" v-if="!hideTitle">
+    <div class="card-admin-top-wrap">
       <preview-bar
         :title="$t('dashboard.card')"
         type="device_uuid"
@@ -81,7 +81,7 @@
       >
         <t-table
           :key="`${locale}-card-table`"
-          :row-key="hideTitle ? 'uuid' : 'physicalKey'"
+          row-key="physicalKey"
           class="accelerator-table vgpu-table-skin"
           :data="pagedTableData"
           :columns="visibleColumns"
@@ -105,7 +105,7 @@
 
 <script setup lang="jsx">
 import cardApi from '~/vgpu/api/card';
-import nodeApi from '~/vgpu/api/node';
+import apiClient from '@/api/client.mjs';
 import { useRouter, useRoute } from 'vue-router';
 import { cardHealth, cardHealthDisplay, healthLabels } from './card-health.mjs';
 import VendorMark from '~/vgpu/components/VendorMark.vue';
@@ -116,9 +116,8 @@ import TablePagination from '@/components/TablePlus/Pagination.vue';
 import StatefulTable from '@/components/TablePlus/StatefulTable.vue';
 import EllipsisText from '@/components/EllipsisText.vue';
 import TextPlus from '@/components/TextPlus.vue';
-import request from '@/utils/request';
 import { SearchIcon } from 'tdesign-icons-vue-next';
-import { ref, watch, computed, reactive, onMounted } from 'vue';
+import { ref, watch, computed, reactive, onMounted, onUnmounted } from 'vue';
 import { roundToDecimal, getResourceColor } from '@/utils';
 import { useI18n } from 'vue-i18n';
 import useTableColumnVisibility from '~/vgpu/hooks/useTableColumnVisibility';
@@ -136,11 +135,9 @@ import { getSplitIcon, getSplitModeKey } from '~/vgpu/components/split-mode.mjs'
 import useFetchList from '@/hooks/useFetchList';
 import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
 
-const props = defineProps({ hideTitle: Boolean, filters: Object });
-
 const router = useRouter();
 const route = useRoute();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const parseTypeFromQuery = (value) => {
   if (typeof value === 'string') return value || undefined;
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0] || undefined;
@@ -148,19 +145,15 @@ const parseTypeFromQuery = (value) => {
 };
 
 const currentType = computed(() => filters.type || '');
-const hasManualNodeScope = ref(false);
 const filters = reactive({
   keyword: '',
   health: '',
-  nodeName: props.filters?.nodeName,
-  type: props.filters?.type ?? parseTypeFromQuery(route.query.type),
+  nodeName: undefined,
+  type: parseTypeFromQuery(route.query.type),
 });
 const registeredNodes = ref([]);
-const registeredTypes = ref([]);
-const registeredNodesLoaded = ref(false);
-const optionsReady = computed(() => props.hideTitle ? registeredNodesLoaded.value : tableStatus.value === REQUEST_STATUS.READY);
+const optionsReady = computed(() => tableStatus.value === REQUEST_STATUS.READY);
 const rawNodes = computed(() => {
-  if (props.hideTitle) return registeredNodes.value;
   const ips = new Map(registeredNodes.value.map(n => [n.name, n.ip]));
   const models = new Map();
   for (const row of tableData.value) {
@@ -169,8 +162,7 @@ const rawNodes = computed(() => {
   }
   return Array.from(models, ([name, types]) => ({ name, ip: ips.get(name), types: [...types] }));
 });
-const rawCardTypes = computed(() => props.hideTitle ? registeredTypes.value
-  : [...new Set(tableData.value.map(row => row.type).filter(Boolean))].sort());
+const rawCardTypes = computed(() => [...new Set(tableData.value.map(row => row.type).filter(Boolean))].sort());
 const nodeOptions = computed(() => {
   // When a card type is selected, only offer nodes that actually carry that type.
   const nodes = filters.type
@@ -207,22 +199,27 @@ const cardTypeOptions = computed(() => [
   })),
 ]);
 
+let filterOptionsController = null;
+onUnmounted(() => {
+  filterOptionsController?.abort();
+  filterOptionsController = null;
+});
+
 const fetchFilterOptions = async () => {
+  filterOptionsController?.abort();
+  const controller = new AbortController();
+  filterOptionsController = controller;
   try {
-    const [{ list: nodeList = [] }, { list: typeList = [] }] = await Promise.all([
-      request(nodeApi.getNodeList({ filters: {} })),
-      props.hideTitle ? request(cardApi.getCardType()) : {},
-    ]);
+    const { list: nodeList = [] } = await apiClient.listNodes({}, { signal: controller.signal });
+    if (controller.signal.aborted) return;
     registeredNodes.value = nodeList
       .filter((item) => item?.name)
-      .map((item) => ({ name: item.name, ip: item.ip, types: Array.isArray(item.type) ? item.type : [] }));
-    registeredNodesLoaded.value = true;
-    registeredTypes.value = typeList
-      .map((item) => item?.type)
-      .filter(Boolean);
+      .map((item) => ({ name: item.name, ip: item.ip }));
   } catch {
+    if (controller.signal.aborted) return;
     registeredNodes.value = [];
-    registeredTypes.value = [];
+  } finally {
+    if (filterOptionsController === controller) filterOptionsController = null;
   }
 };
 
@@ -237,7 +234,6 @@ const pruneNodeScopeByType = () => {
   const node = rawNodes.value.find((item) => item.name === filters.nodeName);
   if (!node || !node.types.includes(filters.type)) {
     filters.nodeName = undefined;
-    hasManualNodeScope.value = true;
   }
 };
 
@@ -271,7 +267,6 @@ const baseColumns = computed(() => [
     width: 250,
     hideTooltip: true,
     render: ({ uuid, type, vendor, detailTo }) => {
-      const to = props.hideTitle && uuid ? { name: 'accelerator-detail', params: { uuid } } : detailTo;
       const gpuModel = type || '';
       return (
         <div class="card-id-cell vgpu-table-name-cell">
@@ -282,7 +277,7 @@ const baseColumns = computed(() => [
             <span class="card-id-cell-name vgpu-table-name-text-wrap">
               <TextPlus
                 text={uuid}
-                to={to}
+                to={detailTo}
                 tooltipClass="vgpu-long-text-tooltip vgpu-single-line-tooltip"
               />
             </span>
@@ -480,13 +475,12 @@ watch(
   },
 );
 
-// Embedded lists keep their fixed server filters; the toolbar filters run locally while typing.
+// Summary charts cover the full physical inventory. Toolbar filters apply only to the table.
 const physicalModels = ref(null);
-const tableState = useFetchList(() => {
-  if (!props.hideTitle) return cardApi.getPhysicalCardList();
-  const { nodeName, type, ...baseFilters } = props.filters || {};
-  return request(cardApi.getCardList({ filters: baseFilters }));
-}, { immediate: false, onSuccess: reply => { physicalModels.value = reply.models; } });
+const tableState = useFetchList(() => cardApi.getPhysicalCardList(), {
+  immediate: false,
+  onSuccess: reply => { physicalModels.value = reply.models; },
+});
 const {
   data: tableData,
   refresh: fetchList,
@@ -495,7 +489,7 @@ const {
   status: tableStatus,
 } = tableState;
 const refreshTable = fetchList;
-const scopedNodeName = computed(() => (hasManualNodeScope.value ? filters.nodeName : props.filters?.nodeName));
+const scopedNodeName = computed(() => filters.nodeName);
 const keywords = computed(() => parseKeywords(filters.keyword));
 // Summary charts cover the full physical inventory. Toolbar filters apply only to the table.
 const rankings = computed(() => physicalCardRankings(tableData.value));
@@ -538,16 +532,13 @@ const typeCardCount = computed(() => {
 // Counts stay hidden until the list loads; a loaded empty list still shows 0.
 const cardCount = (count = 0) => (tableStatus.value === REQUEST_STATUS.READY ? { count, countLabel: t('card.deviceCount', { count }, count) } : {});
 const filtered = computed(() => Boolean(
-  keywords.value.length || filters.health
-  || (filters.type || '') !== (props.filters?.type || '')
-  || (scopedNodeName.value || '') !== (props.filters?.nodeName || '')
+  keywords.value.length || filters.health || filters.type || scopedNodeName.value
 ));
 const clearFilters = () => {
   filters.keyword = '';
   filters.health = '';
-  filters.type = props.filters?.type;
-  filters.nodeName = props.filters?.nodeName;
-  hasManualNodeScope.value = false;
+  filters.type = undefined;
+  filters.nodeName = undefined;
 };
 const { pagination, pagedTableData, syncTotalAndClamp, resetToFirstPage } = useLocalPagination(visibleCards);
 // A page restored from the URL waits for the list before it is clamped.
@@ -563,25 +554,19 @@ watch(filterKey, (key) => {
   if (key !== restoredFilterKey) resetToFirstPage();
   restoredFilterKey = undefined;
 });
-const onNodeNameChange = () => {
-  hasManualNodeScope.value = true;
-  applyFilters();
-};
+const onNodeNameChange = applyFilters;
 
-const syncsRoute = !props.hideTitle && !props.filters;
 const ROUTE_KEYS = ['q', 'type', 'nodeName', 'health', 'page', 'pageSize'];
 const DEFAULT_PAGE_SIZE = 10;
 watch(
   () => route.query,
   (query) => {
-    if (!syncsRoute) return;
     const values = readQuery(query, ROUTE_KEYS);
     // Keep the typed text, including spaces between words, when the query only trimmed it.
     if ((values.q ?? '') !== filters.keyword.trim()) filters.keyword = values.q ?? '';
     filters.type = values.type;
     filters.health = Object.hasOwn(healthLabels, values.health) ? values.health : '';
     filters.nodeName = values.nodeName;
-    hasManualNodeScope.value = Boolean(values.nodeName);
     const page = Number(values.page);
     const pageSize = Number(values.pageSize);
     pagination.pageSize = pagination.pageSizeOptions.includes(pageSize) ? pageSize : DEFAULT_PAGE_SIZE;
@@ -593,7 +578,6 @@ watch(
 watch(
   () => [filters.keyword, filters.health, filters.type, filters.nodeName, pagination.current, pagination.pageSize],
   () => {
-    if (!syncsRoute) return;
     const query = writeQuery(route.query, {
       q: filters.keyword.trim(),
       health: filters.health || undefined,
@@ -606,22 +590,6 @@ watch(
   },
 );
 
-watch(
-  () => [
-    props.filters?.uid,
-    props.filters?.type,
-    props.filters?.nodeName,
-  ],
-  () => {
-    hasManualNodeScope.value = false;
-    filters.keyword = '';
-    filters.health = '';
-    filters.type = props.filters?.type;
-    filters.nodeName = props.filters?.nodeName;
-    applyFilters();
-  },
-);
-
 onMounted(() => {
   fetchFilterOptions();
   refreshTable();
@@ -630,12 +598,6 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .card-admin-page {
-  &.is-embedded {
-    .card-admin-table-wrap {
-      margin-top: 15px;
-    }
-  }
-
   :deep(.preview) {
     margin-bottom: 0;
   }

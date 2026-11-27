@@ -283,6 +283,7 @@ import { ref, watch, computed } from 'vue';
 import { Tooltip as TTooltip } from 'tdesign-vue-next';
 import useInstantVector from '~/vgpu/hooks/useInstantVector';
 
+import apiClient from '@/api/client.mjs';
 import cardApi from '~/vgpu/api/card';
 import nodeApi from '~/vgpu/api/node';
 import { timeParse, calculatePrometheusStep, roundToDecimal } from '@/utils';
@@ -403,12 +404,15 @@ const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
   split.truncated = false;
   try {
     const [card, workloads] = await Promise.all([
-      cardApi.getCardDetail({ uid: split.uuid }),
+      apiClient.getDevice(split.uuid, { nodeUid: detail.value?.nodeUid || undefined }),
       taskApi.getWorkloads({ filters: { deviceId: split.uuid }, page: 1, pageSize: 100 }),
     ]);
     if (generation !== workloadSplitGeneration) return;
     if (!card || typeof card !== 'object' || !card.uuid) {
       throw new Error('Device not found');
+    }
+    if (detail.value?.nodeUid && card.nodeUid && card.nodeUid !== detail.value.nodeUid) {
+      throw new Error('Device node mismatch');
     }
     const page = parseDeviceSplitPage(workloads, 100);
     split.device = { ...card, uuid: split.uuid };
