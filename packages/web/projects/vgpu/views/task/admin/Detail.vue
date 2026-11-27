@@ -259,13 +259,13 @@
         :refresh-error="Boolean(item.refreshError)"
       >
         <template #action>
-          <el-button
+          <t-button
             v-if="item.status === REQUEST_STATUS.ERROR || item.status === REQUEST_STATUS.INVALID"
-            type="primary"
+            theme="primary"
             @click="retryTaskMonitoring"
           >
             {{ $t('common.retry') }}
-          </el-button>
+          </t-button>
         </template>
       </MetricChart>
     </block-box>
@@ -809,7 +809,7 @@ watch(
 
     &:hover,
     &:focus-visible {
-      color: var(--el-color-primary);
+      color: var(--td-brand-color, #2563eb);
 
       :deep(.ellipsis-text) {
         text-decoration-color: currentColor;
@@ -817,7 +817,7 @@ watch(
     }
 
     &:focus-visible {
-      outline: 2px solid var(--el-color-primary);
+      outline: 2px solid var(--td-brand-color, #2563eb);
       outline-offset: 2px;
     }
   }

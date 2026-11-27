@@ -378,7 +378,7 @@ function closeList() {
   color: #324558;
   font-size: 12px;
   line-height: 1.45;
-  --mark: var(--el-color-primary, #3b82f6);
+  --mark: var(--td-brand-color, #3b82f6);
 }
 .distribution-grid {
   display: grid;
@@ -452,8 +452,8 @@ function closeList() {
 .model-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
 .model-range { color: #697886; white-space: nowrap; margin-right: 4px; font-variant-numeric: tabular-nums; }
 .pager-action { display: grid; place-items: center; box-sizing: border-box; width: 28px; height: 28px; padding: 0; border: 1px solid #dce3ea; border-radius: 4px; color: #506478; background: #fff; font-size: inherit; cursor: pointer; }
-.pager-action:hover:enabled { color: var(--el-color-primary); border-color: var(--el-color-primary); }
-.pager-action:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+.pager-action:hover:enabled { color: var(--td-brand-color); border-color: var(--td-brand-color); }
+.pager-action:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 2px; }
 .usage-block :deep(.home-block-header) { flex-wrap: wrap; gap: 8px 12px; }
 .usage-block { container: usage-card / inline-size; }
 .range-short { display: none; }
@@ -500,7 +500,7 @@ function closeList() {
 .detail-count { color: #596c80; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .detail-action { flex-shrink: 0; }
 .detail-action:enabled:is(:hover, :focus-visible) {
-  color: var(--el-color-primary);
+  color: var(--td-brand-color);
   text-decoration: underline;
   text-underline-offset: 3px;
 }

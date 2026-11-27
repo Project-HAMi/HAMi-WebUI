@@ -23,14 +23,13 @@
       </button>
     </t-tooltip>
   </div>
-  <el-dropdown
+  <t-dropdown
     v-else
     trigger="click"
     :class="{ 'lang-select--sidebar': sidebar, 'is-collapsed': collapsed }"
-    :placement="sidebar ? 'top-start' : 'bottom-end'"
-    popper-class="lang-dropdown-popper"
-    @command="handleSetLanguage"
-    @visible-change="menuVisible = $event"
+    :placement="sidebar ? 'top-left' : 'bottom-right'"
+    :popup-props="dropdownPopupProps"
+    @click="(item) => handleSetLanguage(item.value)"
   >
     <button
       type="button"
@@ -42,31 +41,35 @@
     >
       <span class="lang-icon-wrap"><LanguageToggleIcon class="lang-icon" :english="language === 'en'" /></span>
       <span v-if="!collapsed" class="lang-text">{{ currentLanguage }}</span>
-      <el-icon v-if="!collapsed" class="lang-chevron">
-        <arrow-down />
-      </el-icon>
+      <ChevronDownIcon v-if="!collapsed" class="lang-chevron" aria-hidden="true" />
     </button>
     <template #dropdown>
-      <el-dropdown-menu class="lang-dropdown">
-        <el-dropdown-item 
-          command="zh" 
+      <t-dropdown-menu class="lang-dropdown">
+        <t-dropdown-item
+          value="zh"
+          :active="language === 'zh'"
           class="lang-item"
           :class="{ 'is-selected': language === 'zh' }"
         >
-          <span class="dropdown-item-text">{{ $t('common.lang.zh') }}</span>
-          <span v-if="language === 'zh'" class="check-mark">✓</span>
-        </el-dropdown-item>
-        <el-dropdown-item 
-          command="en" 
+          <div class="lang-item-row">
+            <span class="dropdown-item-text">{{ $t('common.lang.zh') }}</span>
+            <span v-if="language === 'zh'" class="check-mark">✓</span>
+          </div>
+        </t-dropdown-item>
+        <t-dropdown-item
+          value="en"
+          :active="language === 'en'"
           class="lang-item"
           :class="{ 'is-selected': language === 'en' }"
         >
-          <span class="dropdown-item-text">{{ $t('common.lang.en') }}</span>
-          <span v-if="language === 'en'" class="check-mark">✓</span>
-        </el-dropdown-item>
-      </el-dropdown-menu>
+          <div class="lang-item-row">
+            <span class="dropdown-item-text">{{ $t('common.lang.en') }}</span>
+            <span v-if="language === 'en'" class="check-mark">✓</span>
+          </div>
+        </t-dropdown-item>
+      </t-dropdown-menu>
     </template>
-  </el-dropdown>
+  </t-dropdown>
 </template>
 
 <script setup>
@@ -74,7 +77,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Cookies from 'js-cookie';
 import { LANG_KEY } from '@/locales';
-import { ArrowDown } from '@element-plus/icons-vue';
+import { ChevronDownIcon } from 'tdesign-icons-vue-next';
 import LanguageToggleIcon from './LanguageToggleIcon.vue';
 import SegmentedControl from '@/components/SegmentedControl/index.vue';
 
@@ -92,13 +95,19 @@ const switchLanguageLabel = computed(() => i18n.t('common.switchToLanguage', {
   language: i18n.t(`common.lang.${nextLanguage.value}`),
 }));
 const menuVisible = ref(false);
+const dropdownPopupProps = {
+  overlayClassName: 'lang-dropdown-popper',
+  onVisibleChange: (visible) => {
+    menuVisible.value = visible;
+  },
+};
 const languageOptions = computed(() => [
   { value: 'zh', label: i18n.t('common.lang.zh'), ariaLabel: i18n.t('common.lang.zh') },
   { value: 'en', label: 'EN', ariaLabel: i18n.t('common.lang.en') },
 ]);
 
 const handleSetLanguage = (lang) => {
-  if (lang === language.value) return;
+  if (!lang || lang === language.value) return;
   i18n.locale.value = lang;
   Cookies.set(LANG_KEY, lang);
 };
@@ -120,12 +129,12 @@ const handleSetLanguage = (lang) => {
   margin-right: 16px;
 
   &:hover {
-    color: var(--el-color-primary);
+    color: var(--td-brand-color, #2563eb);
     background: transparent;
   }
 
   &:focus-visible {
-    outline: 2px solid #2563eb;
+    outline: 2px solid var(--td-brand-color, #2563eb);
     outline-offset: -2px;
   }
 
@@ -139,7 +148,7 @@ const handleSetLanguage = (lang) => {
   .lang-icon {
     font-size: 18px;
   }
-  
+
   .lang-text {
     font-size: 14px;
     margin-right: 6px;
@@ -148,7 +157,7 @@ const handleSetLanguage = (lang) => {
   }
 
   .lang-chevron {
-    font-size: 12px;
+    font-size: 14px;
     opacity: 0.7;
   }
 }
@@ -224,48 +233,50 @@ const handleSetLanguage = (lang) => {
 <style lang="scss">
 // The dropdown is teleported outside this component, so these overrides must stay global.
 .lang-dropdown-popper {
-  .el-dropdown-menu {
+  .t-popup__content {
     padding: 6px;
     border-radius: 8px;
     border: 1px solid #e4e7ed;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 
-  .el-dropdown-menu__item {
+  .t-dropdown__item {
     padding: 8px 16px;
     border-radius: 4px;
     margin: 2px 0;
     line-height: 1.5;
     font-weight: 400;
+    min-width: 120px;
+    color: #606266;
+
+    &:hover {
+      background-color: #f5f7fa;
+      color: var(--td-brand-color, #2563eb);
+    }
+
+    &.is-selected,
+    &.t-dropdown__item--active {
+      color: var(--td-brand-color, #2563eb);
+      font-weight: 600;
+      background-color: var(--td-brand-color-light, #eff6ff);
+    }
+  }
+
+  .lang-item-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-width: 120px;
-    color: #606266;
-    
-    &:hover {
-      background-color: #f5f7fa;
-      color: var(--el-color-primary);
-    }
-    
-    &.is-selected {
-      color: var(--el-color-primary);
-      font-weight: 600;
-      background-color: var(--el-color-primary-light-9);
-    }
-
-    .dropdown-item-text {
-      flex: 1;
-    }
-
-    .check-mark {
-      font-weight: bold;
-      font-size: 14px;
-    }
+    gap: 12px;
+    width: 100%;
   }
-  
-  .el-popper__arrow {
-    display: none;
+
+  .dropdown-item-text {
+    flex: 1;
+  }
+
+  .check-mark {
+    font-weight: bold;
+    font-size: 14px;
   }
 }
 </style>

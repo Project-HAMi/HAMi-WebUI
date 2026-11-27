@@ -70,12 +70,12 @@ const dismiss = (event) => {
   }
 
   &:hover {
-    color: var(--el-color-primary);
+    color: var(--td-brand-color);
   }
 
   &:focus-visible {
     border-radius: 4px;
-    outline: 2px solid var(--el-color-primary);
+    outline: 2px solid var(--td-brand-color);
     outline-offset: 1px;
   }
 

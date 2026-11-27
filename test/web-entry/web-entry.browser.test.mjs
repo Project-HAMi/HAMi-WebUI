@@ -1073,7 +1073,7 @@ test('unknown routes render a local, responsive HAMi page', async(t) => {
       assert.equal(requestedURLs.some((url) => url.includes('wallstcn')), false)
 
       await page.locator('.lang-select-container').click()
-      await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
+      await page.locator('.lang-dropdown-popper .t-dropdown__item')
         .filter({ hasText: '中文' })
         .click()
       await page.locator('html[lang="zh-CN"]').waitFor()
@@ -1081,7 +1081,7 @@ test('unknown routes render a local, responsive HAMi page', async(t) => {
       assert.equal(page.url(), `${target}${unknownRoute}`)
 
       await page.locator('.lang-select-container').click()
-      await page.locator('.lang-dropdown-popper .el-dropdown-menu__item')
+      await page.locator('.lang-dropdown-popper .t-dropdown__item')
         .filter({ hasText: 'English' })
         .click()
       await page.locator('html[lang="en"]').waitFor()
@@ -1305,12 +1305,14 @@ test('workload and detail views keep dense identity content readable', async() =
     assert.equal(await workloadLink.count(), 1)
     assert.equal(await identities.first().locator('a').count(), 1)
     assert.equal(await workloadLink.getAttribute('aria-label'), `${podName} / worker-left`)
+    await identities.first().locator('.workload-container-name .ellipsis-text').hover()
     assert.equal(
-      await identities.first().locator('.workload-container-name .el-tooltip__trigger').count(),
+      await page.locator('[role="tooltip"].vgpu-long-text-tooltip:visible').count(),
       0
     )
+    await sameNameLink.locator('.workload-container-name .ellipsis-text').hover()
     assert.equal(
-      await sameNameLink.locator('.workload-container-name .el-tooltip__trigger').count(),
+      await page.locator('[role="tooltip"].vgpu-long-text-tooltip:visible').count(),
       0
     )
     await workloadLink.hover()
@@ -1950,7 +1952,7 @@ test('device holders omit duplicate shared counts while keeping allocation distr
   }
 }, { timeout: 60_000 })
 
-test('runtime language updates the document and Element Plus services', async() => {
+test('runtime language updates the document and TDesign services', async() => {
   const target = await startWebEntry({ frameAncestors: undefined })
   const page = await browser.newPage({ locale: 'en-US' })
   let failNextNodesRequest = true
@@ -1975,10 +1977,10 @@ test('runtime language updates the document and Element Plus services', async() 
     )
     await page.locator('html[lang="en"]').waitFor()
 
-    const messageBox = page.locator('.el-message-box')
+    const messageBox = page.locator('.t-dialog:visible')
     await messageBox.waitFor()
-    await messageBox.locator('.el-button--primary')
-      .filter({ hasText: 'OK' })
+    await messageBox.locator('.t-button--theme-primary')
+      .filter({ hasText: 'Confirm' })
       .click()
 
     await page.getByRole('button', { name: '中文', exact: true }).click()
@@ -1988,7 +1990,7 @@ test('runtime language updates the document and Element Plus services', async() 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.locator('html[lang="zh-CN"]').waitFor()
     await messageBox.waitFor()
-    await messageBox.locator('.el-button--primary')
+    await messageBox.locator('.t-button--theme-primary')
       .filter({ hasText: '确定' })
       .click()
 

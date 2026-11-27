@@ -210,11 +210,11 @@ watch(currentPage, () => {
 .issue-device-id { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
 .issue-device-actions { display: flex; gap: 12px; padding-top: 4px; }
 .issue-device-actions button { display: inline-flex; align-items: center; gap: 3px; border: 0; border-radius: 3px; background: transparent; padding: 4px 0; color: #405e7a; }
-.issue-device-actions button:hover { color: var(--el-color-primary, #2563eb); }
+.issue-device-actions button:hover { color: var(--td-brand-color, #2563eb); }
 .issue-pager { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex: none; padding: 8px var(--issue-inline-inset) 0; border-top: 1px solid #e4ebf1; color: #647688; }
 .issue-pager span { margin-inline-end: auto; }
 .issue-pager button { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #dce4eb; background: #fff; color: #475b6e; border-radius: 4px; }
 .issue-pager button:disabled { cursor: default; color: #a3afbb; background: #f8fafb; }
 .issue-state { padding: 0 var(--issue-inline-inset); margin: 0; color: #627588; }
-.node-issues :is(button, .issue-scroll):focus-visible { outline: 2px solid var(--el-color-primary, #2563eb); outline-offset: -2px; }
+.node-issues :is(button, .issue-scroll):focus-visible { outline: 2px solid var(--td-brand-color, #2563eb); outline-offset: -2px; }
 </style>

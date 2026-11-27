@@ -26,6 +26,6 @@ defineProps({
   text-decoration: none;
 }
 .model-name span { min-width: 0; overflow-wrap: anywhere; }
-.model-name:hover { color: var(--el-color-primary); text-decoration: underline; text-underline-offset: 3px; }
-.model-name:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 3px; border-radius: 2px; }
+.model-name:hover { color: var(--td-brand-color); text-decoration: underline; text-underline-offset: 3px; }
+.model-name:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 3px; border-radius: 2px; }
 </style>

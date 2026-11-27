@@ -156,7 +156,7 @@ const formatShare = (value) => Number.isFinite(value) ? shareFormat.value.format
     border-radius: 4px;
 
     &:focus-visible {
-      outline: 2px solid var(--el-color-primary);
+      outline: 2px solid var(--td-brand-color);
       outline-offset: -2px;
     }
   }
@@ -248,7 +248,7 @@ const formatShare = (value) => Number.isFinite(value) ? shareFormat.value.format
     border-radius: 4px;
 
     &:focus-visible {
-      outline: 2px solid var(--el-color-primary);
+      outline: 2px solid var(--td-brand-color);
       outline-offset: -2px;
     }
   }
@@ -333,7 +333,7 @@ const formatShare = (value) => Number.isFinite(value) ? shareFormat.value.format
       display: block;
       height: 100%;
       border-radius: inherit;
-      background: var(--el-color-primary);
+      background: var(--td-brand-color);
     }
   }
 

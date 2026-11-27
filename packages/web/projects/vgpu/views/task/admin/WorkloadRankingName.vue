@@ -72,7 +72,7 @@ const label = computed(() => {
 
   &:hover,
   &:focus-visible {
-    color: var(--el-color-primary);
+    color: var(--td-brand-color);
   }
 
   &:focus-visible {

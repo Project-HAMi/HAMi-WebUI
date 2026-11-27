@@ -12,7 +12,7 @@
 import TabTop from '~/vgpu/components/TabTop.vue';
 import { useRouter } from 'vue-router';
 import nodeApi from '~/vgpu/api/node';
-import { ElMessage } from 'element-plus';
+import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
 import { computed } from 'vue';
 import taskApi from '~/vgpu/api/task';
@@ -50,7 +50,7 @@ const handleChartClick = async (params) => {
       const uuid = node.uid;
       router.push(`/nodes/${uuid}?nodeName=${name}`);
     } else {
-      ElMessage.error(t('node.nodeNotFound'));
+      MessagePlugin.error(t('node.nodeNotFound'));
     }
   } else if (activeTabKey === 'device_uuid') {
     router.push({

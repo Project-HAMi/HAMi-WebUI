@@ -1,7 +1,7 @@
 <template>
   <div ref="root" class="environment-sources">
-    <el-tabs v-model="selected" :aria-label="t('about.sources.vendor')">
-      <el-tab-pane v-for="tab in tabs" :key="tab" :name="tab" lazy>
+    <t-tabs v-model="selected" :aria-label="t('about.sources.vendor')">
+      <t-tab-panel v-for="tab in tabs" :key="tab" :value="tab" :destroy-on-hide="false" lazy>
         <template #label>
           <span class="vendor-tag">
             <LayersIcon v-if="tab === 'cluster'" aria-hidden="true" />
@@ -68,8 +68,8 @@
             {{ t('catalog.contributeMonitoring') }}<JumpIcon aria-hidden="true" />
           </a>
         </p>
-      </el-tab-pane>
-    </el-tabs>
+      </t-tab-panel>
+    </t-tabs>
   </div>
 </template>
 
@@ -121,22 +121,22 @@ function repositoryName(url) {
 
 <style scoped>
 .environment-sources { min-width: 0; background: white; border: 1px solid #dce4ed; border-radius: 8px; overflow: hidden; }
-.environment-sources :deep(.el-tabs__header) { margin: 0; padding: 5px 9px; border-bottom: 1px solid #e2e8f0; }
-.environment-sources :deep(.el-tabs__nav-wrap::after), .environment-sources :deep(.el-tabs__active-bar) { display: none; }
-.environment-sources :deep(.el-tabs__item) { padding: 0 1px; height: 33px; }
-.environment-sources :deep(.el-tabs__nav-wrap.is-scrollable) { padding-inline: 32px; }
-.environment-sources :deep(:is(.el-tabs__nav-prev, .el-tabs__nav-next)) {
-  inset-block: 0; margin-block: auto; display: grid; place-items: center;
+.environment-sources :deep(.t-tabs__header) { margin: 0; padding: 5px 9px; border-bottom: 1px solid #e2e8f0; }
+.environment-sources :deep(.t-tabs__nav-container::after), .environment-sources :deep(.t-tabs__bar) { display: none; }
+.environment-sources :deep(.t-tabs__nav-item) { padding: 0 1px; height: 33px; line-height: 33px; }
+.environment-sources :deep(.t-tabs__nav-item-wrapper) { padding: 0; background: transparent; }
+.environment-sources :deep(.t-tabs__btn) {
+  display: grid; place-items: center;
   width: 28px; height: 28px; border-radius: 5px; line-height: 1; font-size: 14px; color: #526477;
 }
-.environment-sources :deep(:is(.el-tabs__nav-prev, .el-tabs__nav-next):hover:not(.is-disabled)) {
+.environment-sources :deep(.t-tabs__btn:hover:not(.t-is-disabled)) {
   color: #183455; background: #e9eff6;
 }
-.environment-sources :deep(:is(.el-tabs__nav-prev, .el-tabs__nav-next).is-disabled) { color: #b8c3ce; cursor: default; }
+.environment-sources :deep(.t-tabs__btn.t-is-disabled) { color: #b8c3ce; cursor: default; }
 .vendor-tag { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 5px; color: #526477; font-size: 12px; line-height: 18px; }
 .vendor-tag svg { width: 15px; height: 15px; }
-.environment-sources :deep(.el-tabs__item:hover) .vendor-tag { background: #f2f5f8; }
-.environment-sources :deep(.el-tabs__item.is-active) .vendor-tag { background: #e9eff6; color: #183455; font-weight: 600; }
+.environment-sources :deep(.t-tabs__nav-item:hover) .vendor-tag { background: #f2f5f8; }
+.environment-sources :deep(.t-tabs__nav-item.t-is-active) .vendor-tag { background: #e9eff6; color: #183455; font-weight: 600; }
 .coverage-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 4px; margin: 0; padding: 8px 14px; border-top: 1px solid #e2e8f0; color: #526477; font-size: 12px; }
 .component-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .component-column { min-width: 0; padding: 14px; }

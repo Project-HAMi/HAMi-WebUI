@@ -29,11 +29,11 @@ defineProps({
 }
 
 .overview-all-link:hover {
-  color: var(--el-color-primary);
+  color: var(--td-brand-color);
 }
 
 .overview-all-link:focus-visible {
-  outline: 2px solid var(--el-color-primary);
+  outline: 2px solid var(--td-brand-color);
   outline-offset: 2px;
   border-radius: 4px;
 }

@@ -10,31 +10,18 @@
     "test:homepage-promql": "node --test test/homepage-promql.test.mjs"
   },
   "dependencies": {
-    "@element-plus/icons-vue": "^2.1.0",
-    "@tabler/core": "1.0.0-beta20",
-    "@tabler/icons-vue": "^2.36.0",
-    "animate.css": "v4.1.1",
     "axios": "1.20.0",
-    "bootstrap": "5.3.1",
-    "core-js": "^3.8.3",
     "dayjs": "^1.11.20",
     "echarts": "6.1.0",
-    "element-plus": "^2.4.1",
-    "generate-avatar": "1.4.10",
     "js-cookie": "3.0.8",
     "lodash": "^4.18.1",
     "normalize.css": "^8.0.1",
-    "sortablejs": "^1.15.2",
     "tdesign-icons-vue-next": "^0.4.2",
-    "tdesign-vue-next": "^1.18.5",
-    "tom-select": "2.2.2",
+    "tdesign-vue-next": "1.18.5",
     "vue": "^3.5.25",
-    "vue-clipboard3": "2.0.0",
-    "vue-count-to": "1.0.13",
     "vue-echarts": "8.2.0",
     "vue-i18n": "9",
-    "vue-router": "^4.0.3",
-    "vuedraggable": "^4.1.0"
+    "vue-router": "^4.0.3"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
