@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import App from './App.vue';
 import router from './router';
+import { installChunkRecovery } from './router/chunk-recovery.mjs';
 import installTDesign from './plugins/tdesign';
 import './plugins/echarts';
 import 'normalize.css/normalize.css';
@@ -14,4 +15,5 @@ app.use(i18n);
 installTDesign(app);
 installIcons(app);
 
+installChunkRecovery(router);
 app.use(router).mount('#app');
