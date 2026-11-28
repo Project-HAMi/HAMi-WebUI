@@ -1,5 +1,4 @@
 import { onMounted, reactive, toRefs } from 'vue';
-import { isArray } from 'lodash';
 import {
   createRequestState,
   rejectRequest,
@@ -28,7 +27,7 @@ const useFetchList = (req, pathOrOptions = 'list') => {
     try {
       const response = await (typeof req === 'function' ? req() : req);
       const listData = response?.[path];
-      if (!isArray(listData)) {
+      if (!Array.isArray(listData)) {
         rejectRequest(state, new TypeError(`Expected response.${path} to be an array`), {
           hasResolved,
           requestId,
@@ -37,7 +36,7 @@ const useFetchList = (req, pathOrOptions = 'list') => {
         return;
       }
       const mappedData = mapData(listData);
-      if (!isArray(mappedData)) {
+      if (!Array.isArray(mappedData)) {
         rejectRequest(state, new TypeError('Expected mapData to return an array'), {
           hasResolved,
           requestId,

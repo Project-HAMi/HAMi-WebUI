@@ -209,7 +209,7 @@ test('serves the SPA shell at the root and an existing deep link', {
   assert.equal(trailingSlashResponse.status, 200)
   assert.equal(await trailingSlashResponse.text(), rootBody)
 
-  const dottedParameterResponse = await fetchFrontend('/redirect/example.com')
+  const dottedParameterResponse = await fetchFrontend('/nodes/node.example.com')
   assert.equal(dottedParameterResponse.status, 200)
   assert.equal(await dottedParameterResponse.text(), rootBody)
 })

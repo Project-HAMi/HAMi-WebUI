@@ -6,18 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const webRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-const ALLOWED_LEGACY_EL_TAG_FILES = new Set([
-  'src/App.vue',
-  'src/components/DetailPageState.vue',
-  'src/components/EllipsisText.vue',
-  'src/components/EnvironmentSources.vue',
-  'src/components/LangSelect/index.vue',
-  'src/components/PageHeader.vue',
-  'src/components/TablePlus/StatefulTable.vue',
-  'src/components/VersionTag.vue',
-  'src/layout/index.vue',
-  'src/views/workloads/Detail.vue',
-]);
+const ALLOWED_LEGACY_EL_TAG_FILES = new Set([]);
 
 const collectVueFiles = (dir, out = []) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

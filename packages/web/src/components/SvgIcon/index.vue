@@ -11,7 +11,6 @@
 </template>
 
 <script setup>
-import { isExternal as external } from '@/utils/validate';
 import { computed } from 'vue';
 const props = defineProps({
   icon: {
@@ -24,7 +23,7 @@ const props = defineProps({
   },
 });
 
-const isExternal = computed(() => external(props.icon));
+const isExternal = computed(() => /^(https?:|mailto:|tel:)/.test(props.icon));
 const styleExternalIcon = computed(() => ({
   mask: `url(${props.icon}) no-repeat 50% 50%`,
   '-webkit-mask': `url(${props.icon}) no-repeat 50% 50%`,
