@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	apiPrefix         = "/api/vgpu"
 	resourceAPIPrefix = "/api/v1"
 	indexFile         = "index.html"
 	noCache           = "no-cache"
@@ -42,8 +41,8 @@ var (
 )
 
 // HandlerConfig contains the dependencies of the Web entry HTTP handler.
-// StaticFS must contain index.html at its root. APIHandler receives requests
-// with /api/v1 unchanged, or after the legacy /api/vgpu prefix has been removed.
+// StaticFS must contain index.html at its root. APIHandler receives /api/v1/*
+// requests unchanged.
 type HandlerConfig struct {
 	StaticFS   fs.FS
 	APIHandler http.Handler
@@ -96,7 +95,6 @@ func NewHandler(config HandlerConfig) (http.Handler, error) {
 
 	return &entryHandler{
 		staticFS:        config.StaticFS,
-		api:             http.StripPrefix(apiPrefix, apiHandler),
 		resourceAPI:     apiHandler,
 		basePath:        basePath,
 		indexBody:       indexBody,
@@ -107,7 +105,6 @@ func NewHandler(config HandlerConfig) (http.Handler, error) {
 
 type entryHandler struct {
 	staticFS        fs.FS
-	api             http.Handler
 	resourceAPI     http.Handler
 	basePath        string
 	indexBody       []byte
@@ -165,17 +162,6 @@ func (h *entryHandler) serveApplication(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		h.resourceAPI.ServeHTTP(w, r)
-	case hasPathPrefix(r.URL.Path, apiPrefix):
-		if hasInvalidPathSegment(r.URL.Path) {
-			writeNotFound(w, r)
-			return
-		}
-		backendPath := path.Clean(strings.TrimPrefix(r.URL.Path, apiPrefix))
-		if !hasPathPrefix(backendPath, "/v1") {
-			writeNotFound(w, r)
-			return
-		}
-		h.api.ServeHTTP(w, r)
 	case r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/"):
 		writeNotFound(w, r)
 	case hasAnyPathPrefix(r.URL.Path, backendOnlyPaths):

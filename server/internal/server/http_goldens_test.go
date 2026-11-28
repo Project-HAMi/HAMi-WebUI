@@ -14,7 +14,6 @@ import (
 
 	"github.com/go-kratos/kratos/v2/errors"
 	"github.com/go-kratos/kratos/v2/log"
-	"github.com/prometheus/client_golang/prometheus"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"google.golang.org/protobuf/proto"
@@ -24,7 +23,6 @@ import (
 
 	obsv1 "vgpu/api/observability/v1"
 	"vgpu/internal/biz"
-	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/resourceview"
@@ -400,21 +398,18 @@ func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 		telemetry.NewHistoricalObservationReaderWithQuerier(goldenRangeQuerier{at: at, circuitOpen: empty}),
 	)
 
-	handler := NewHTTPServer(
-		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
+	handler := NewAPIHandler(
 		nodeSvc,
 		service.NewCardService(nodeUC, podUC, snapSource),
 		ctrSvc,
-		nil,
 		schedSvc,
 		service.NewWorkloadService(ctrSvc, schedUC),
 		deviceConfigSvc,
 		service.NewOverviewService(snapSource),
 		telemetrySvc,
 		aboutSvc,
-		prometheus.NewRegistry(),
 		logger,
-	).Handler
+	)
 	return handler, promServer.Close
 }
 
@@ -432,10 +427,6 @@ func TestHTTPJSONGoldens(t *testing.T) {
 	}{
 		{name: "overview-inventory.json", empty: false, method: "GET", target: "/api/v1/overview/inventory", wantStatus: 200},
 		{name: "overview-inventory-empty.json", empty: true, method: "GET", target: "/api/v1/overview/inventory", wantStatus: 200},
-		{name: "gpu-detail-ok.json", empty: false, method: "GET", target: "/v1/gpu?uid=GPU-1", wantStatus: 200},
-		{name: "gpu-detail-not-found.json", empty: false, method: "GET", target: "/v1/gpu?uid=GPU-MISSING", wantStatus: 404},
-		{name: "workloads-page.json", empty: false, method: "POST", target: "/v1/workloads", body: `{"page":1,"pageSize":100,"filters":{"deviceId":"GPU-1"}}`, wantStatus: 200},
-		{name: "workloads-empty.json", empty: true, method: "POST", target: "/v1/workloads", body: `{"page":1,"pageSize":100,"filters":{"deviceId":"GPU-1"}}`, wantStatus: 200},
 		{name: "telemetry-trends-cluster.json", empty: false, method: "GET", target: "/api/v1/telemetry/trends?scope=cluster&start=2023-11-14T22:11:00Z&end=2023-11-14T22:13:00Z&step=60s", wantStatus: 200},
 		{name: "telemetry-trends-circuit-open.json", empty: true, method: "GET", target: "/api/v1/telemetry/trends?scope=cluster&start=2023-11-14T22:11:00Z&end=2023-11-14T22:13:00Z&step=60s", wantStatus: 200},
 		{name: "telemetry-trends-invalid.json", empty: false, method: "GET", target: "/api/v1/telemetry/trends?scope=invalid", wantStatus: 400},
@@ -445,7 +436,9 @@ func TestHTTPJSONGoldens(t *testing.T) {
 		{name: "api-v1-node-containers.json", empty: false, method: "GET", target: "/api/v1/nodes/node-uid-1/containers?node_name=node-1", wantStatus: 200},
 		{name: "api-v1-devices.json", empty: false, method: "GET", target: "/api/v1/devices", wantStatus: 200},
 		{name: "api-v1-device-detail.json", empty: false, method: "GET", target: "/api/v1/device?id=GPU-1&node_uid=node-uid-1", wantStatus: 200},
+		{name: "api-v1-device-not-found.json", empty: false, method: "GET", target: "/api/v1/device?id=GPU-MISSING", wantStatus: 404},
 		{name: "api-v1-containers.json", empty: false, method: "GET", target: "/api/v1/containers?page=1&page_size=20", wantStatus: 200},
+		{name: "api-v1-containers-empty.json", empty: true, method: "GET", target: "/api/v1/containers?page=1&page_size=100&device_id=GPU-1", wantStatus: 200},
 		{name: "api-v1-containers-rankings.json", empty: false, method: "GET", target: "/api/v1/containers/rankings", wantStatus: 200},
 		{name: "api-v1-container-detail.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/trainer", wantStatus: 200},
 		{name: "api-v1-container-not-found.json", empty: false, method: "GET", target: "/api/v1/containers/pod-uid-1/missing", wantStatus: 404},
@@ -546,5 +539,31 @@ func TestHTTPDeviceRouteAcceptsEncodedSlash(t *testing.T) {
 	}
 	if errBody.Reason != "RESOURCE_GPU_NOT_FOUND" {
 		t.Fatalf("reason = %q, want RESOURCE_GPU_NOT_FOUND (route must dispatch encoded slash id cleanly)", errBody.Reason)
+	}
+}
+
+func TestAPIHandlerRejectsLegacyAndPrivateRoutes(t *testing.T) {
+	handler, cleanup := newGoldenHTTPHandler(false)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{nethttp.MethodPost, "/v1/nodes"},
+		{nethttp.MethodGet, "/v1/gpu?uid=GPU-1"},
+		{nethttp.MethodPost, "/v1/workloads"},
+		{nethttp.MethodPost, "/v1/monitor/query/range-vector"},
+		{nethttp.MethodGet, "/v1/about"},
+		{nethttp.MethodGet, "/q/openapi.yaml"},
+		{nethttp.MethodGet, "/metrics"},
+		{nethttp.MethodGet, "/readyz"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != nethttp.StatusNotFound {
+			t.Errorf("%s %s status = %d, want 404 (body=%s)", tc.method, tc.path, rec.Code, rec.Body.String())
+		}
 	}
 }

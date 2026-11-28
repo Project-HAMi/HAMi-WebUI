@@ -127,17 +127,20 @@ grep -Fq "Content-Security-Policy: frame-ancestors 'self' https://portal.example
 
 api_response="${workdir}/nodes.json"
 api_status=$("${curl_local[@]}" --silent --show-error \
-  --header 'Content-Type: application/json' \
-  --data '{"filters":{}}' \
   --output "${api_response}" \
   --write-out '%{http_code}' \
-  "http://127.0.0.1:${public_port}/gpu-ui/api/vgpu/v1/nodes")
+  "http://127.0.0.1:${public_port}/gpu-ui/api/v1/nodes")
 [[ "${api_status}" == "200" ]]
 node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "${api_response}"
 
-for private_path in /gpu-ui/metrics /gpu-ui/readyz; do
+for private_path in /gpu-ui/metrics /gpu-ui/readyz /gpu-ui/api/vgpu/v1/nodes; do
   [[ "$("${curl_local[@]}" --silent --output /dev/null --write-out '%{http_code}' \
     "http://127.0.0.1:${public_port}${private_path}")" == "404" ]]
+done
+
+for backend_blocked in /api/v1/nodes /api/v1/overview/inventory /v1/nodes /q/openapi.yaml; do
+  [[ "$("${curl_local[@]}" --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${backend_port}${backend_blocked}")" == "404" ]]
 done
 
 "${curl_local[@]}" --fail --silent --show-error \

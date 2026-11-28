@@ -13,7 +13,6 @@ import (
 	"github.com/go-kratos/kratos/v2/middleware/metrics"
 	"github.com/go-kratos/kratos/v2/middleware/recovery"
 	"github.com/go-kratos/kratos/v2/transport/http"
-	"github.com/go-kratos/swagger-api/openapiv2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -23,7 +22,42 @@ const (
 	httpReasonMethodNotAllowed = "METHOD_NOT_ALLOWED"
 )
 
-// NewHTTPServer new an HTTP server.
+// APIHandler serves the public /api/v1/* endpoints in-process behind the
+// unified Web entry on port 3000 without binding an external listener.
+type APIHandler struct {
+	nethttp.Handler
+}
+
+// NewAPIHandler builds the in-process HTTP handler serving canonical /api/v1/*
+// resources, cluster overview, and bounded telemetry endpoints.
+func NewAPIHandler(
+	node *service.NodeService,
+	card *service.CardService,
+	ctr *service.ContainerService,
+	scheduling *service.SchedulingService,
+	workload *service.WorkloadService,
+	deviceConfig *service.DeviceConfigService,
+	overview *service.OverviewService,
+	telemetrySvc *service.TelemetryService,
+	about *service.AboutService,
+	_ log.Logger,
+) APIHandler {
+	srv := http.NewServer(
+		http.Middleware(
+			recovery.Recovery(),
+			metrics.Server(),
+		),
+		http.RequestQueryDecoder(overviewQuery),
+		http.NotFoundHandler(httpErrorHandler(nethttp.StatusNotFound, httpReasonRouteNotFound)),
+		http.MethodNotAllowedHandler(httpErrorHandler(nethttp.StatusMethodNotAllowed, httpReasonMethodNotAllowed)),
+	)
+	v1.RegisterResourcesHTTPServer(srv, service.NewResourcesService(node, card, ctr, workload, scheduling, deviceConfig, about))
+	pb.RegisterOverviewHTTPServer(srv, overview)
+	pb.RegisterTelemetryHTTPServer(srv, telemetrySvc)
+	return APIHandler{Handler: srv}
+}
+
+// NewHTTPServer builds the internal :8000 HTTP server exposing /metrics and /readyz only.
 //
 // The /metrics endpoint here only serializes the in-memory Prometheus registry.
 // The registry is refreshed in the background by exporter.MetricsGenerator, which
@@ -38,16 +72,6 @@ const (
 // until the backend can actually serve — this is what prevents the Web entry from
 // getting "connection refused" against the not-yet-listening backend at startup.
 func NewHTTPServer(c *conf.Bootstrap,
-	node *service.NodeService,
-	card *service.CardService,
-	ctr *service.ContainerService,
-	monitor *service.MonitorService,
-	scheduling *service.SchedulingService,
-	workload *service.WorkloadService,
-	deviceConfig *service.DeviceConfigService,
-	overview *service.OverviewService,
-	telemetrySvc *service.TelemetryService,
-	about *service.AboutService,
 	gatherer prometheus.Gatherer,
 	logger log.Logger) *http.Server {
 	var opts = []http.ServerOption{
@@ -55,7 +79,6 @@ func NewHTTPServer(c *conf.Bootstrap,
 			recovery.Recovery(),
 			metrics.Server(),
 		),
-		http.RequestQueryDecoder(overviewQuery),
 		http.NotFoundHandler(httpErrorHandler(nethttp.StatusNotFound, httpReasonRouteNotFound)),
 		http.MethodNotAllowedHandler(httpErrorHandler(nethttp.StatusMethodNotAllowed, httpReasonMethodNotAllowed)),
 	}
@@ -69,18 +92,6 @@ func NewHTTPServer(c *conf.Bootstrap,
 		opts = append(opts, http.Timeout(c.Server.Http.Timeout.AsDuration()))
 	}
 	srv := http.NewServer(opts...)
-	v1.RegisterNodeHTTPServer(srv, node)
-	v1.RegisterCardHTTPServer(srv, card)
-	v1.RegisterContainerHTTPServer(srv, ctr)
-	v1.RegisterMonitorHTTPServer(srv, monitor)
-	v1.RegisterSchedulingHTTPServer(srv, scheduling)
-	v1.RegisterWorkloadHTTPServer(srv, workload)
-	v1.RegisterDeviceConfigHTTPServer(srv, deviceConfig)
-	v1.RegisterResourcesHTTPServer(srv, service.NewResourcesService(node, card, ctr, workload, scheduling, deviceConfig, about))
-	pb.RegisterOverviewHTTPServer(srv, overview)
-	pb.RegisterTelemetryHTTPServer(srv, telemetrySvc)
-	v1.RegisterAboutHTTPServer(srv, about)
-	srv.HandlePrefix("/q/", openapiv2.NewHandler())
 	srv.Handle("/metrics", promhttp.InstrumentMetricHandler(prometheus.DefaultRegisterer, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{})))
 	srv.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		// Reaching this handler means the server is listening and the informer

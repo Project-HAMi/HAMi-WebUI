@@ -46,11 +46,25 @@ func TestHTTPFallbackResponses(t *testing.T) {
 			wantReason: httpReasonRouteNotFound,
 		},
 		{
-			name:       "known route with unsupported method",
+			name:       "business API is not exposed on metrics listener",
 			method:     nethttp.MethodGet,
+			path:       "/api/v1/overview/inventory",
+			wantStatus: nethttp.StatusNotFound,
+			wantReason: httpReasonRouteNotFound,
+		},
+		{
+			name:       "legacy v1 route is removed",
+			method:     nethttp.MethodPost,
 			path:       "/v1/nodes",
-			wantStatus: nethttp.StatusMethodNotAllowed,
-			wantReason: httpReasonMethodNotAllowed,
+			wantStatus: nethttp.StatusNotFound,
+			wantReason: httpReasonRouteNotFound,
+		},
+		{
+			name:       "openapi docs route is removed",
+			method:     nethttp.MethodGet,
+			path:       "/q/openapi.yaml",
+			wantStatus: nethttp.StatusNotFound,
+			wantReason: httpReasonRouteNotFound,
 		},
 	}
 
@@ -82,28 +96,23 @@ func TestHTTPFallbackResponses(t *testing.T) {
 }
 
 func TestRegisteredHTTPHandlerTakesPrecedenceOverFallback(t *testing.T) {
-	request := httptest.NewRequest(nethttp.MethodGet, "/readyz", nil)
-	response := httptest.NewRecorder()
-	newTestHTTPHandler().ServeHTTP(response, request)
-
-	if response.Code != nethttp.StatusOK || response.Body.String() != "ok" {
-		t.Fatalf("readyz response = {%d %q}, want {200 %q}", response.Code, response.Body.String(), "ok")
+	handler := newTestHTTPHandler()
+	for _, route := range []string{"/readyz", "/metrics"} {
+		request := httptest.NewRequest(nethttp.MethodGet, route, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != nethttp.StatusOK {
+			t.Fatalf("%s status = %d, want 200", route, response.Code)
+		}
+		if route == "/readyz" && response.Body.String() != "ok" {
+			t.Fatalf("readyz response = {%d %q}, want {200 %q}", response.Code, response.Body.String(), "ok")
+		}
 	}
 }
 
 func newTestHTTPHandler() nethttp.Handler {
 	srv := NewHTTPServer(
 		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
 		prometheus.NewRegistry(),
 		nil,
 	)

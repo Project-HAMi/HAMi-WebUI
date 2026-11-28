@@ -74,17 +74,30 @@ func TestHandlerRoutes(t *testing.T) {
 			wantBody:   "console.log('app')",
 		},
 		{
-			name:        "api prefix is stripped",
-			method:      http.MethodPost,
-			path:        "/api/vgpu/v1/nodes",
-			wantStatus:  http.StatusTeapot,
-			wantBody:    `{"error":"upstream"}`,
-			wantAPIPath: "/v1/nodes",
-		},
-		{
 			name: "resource API keeps its prefix", method: http.MethodGet,
 			path: "/api/v1/overview/inventory", wantStatus: http.StatusTeapot,
 			wantBody: `{"error":"upstream"}`, wantAPIPath: "/api/v1/overview/inventory",
+		},
+		{
+			name:       "legacy vgpu api prefix is sunset",
+			method:     http.MethodPost,
+			path:       "/api/vgpu/v1/nodes",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "404 page not found\n",
+		},
+		{
+			name:       "legacy vgpu monitor proxy is sunset",
+			method:     http.MethodPost,
+			path:       "/api/vgpu/v1/monitor/query/range-vector",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "404 page not found\n",
+		},
+		{
+			name:       "resource API dot segments cannot reach backend-only paths",
+			method:     http.MethodGet,
+			path:       "/api/v1/../metrics",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "404 page not found\n",
 		},
 		{
 			name:       "unknown api is not a frontend route",
@@ -403,8 +416,8 @@ func TestHandlerConfiguredBasePath(t *testing.T) {
 		{name: "base root slash", method: http.MethodGet, path: "/gpu-ui/", wantStatus: http.StatusOK, wantIndex: true},
 		{name: "deep link", method: http.MethodGet, path: "/gpu-ui/nodes/node-1", wantStatus: http.StatusOK, wantIndex: true},
 		{name: "static asset", method: http.MethodGet, path: "/gpu-ui/static/app.js", wantStatus: http.StatusOK},
-		{name: "API", method: http.MethodPost, path: "/gpu-ui/api/vgpu/v1/nodes?limit=10", wantStatus: http.StatusNoContent, wantAPIPath: "/v1/nodes?limit=10"},
 		{name: "resource API", method: http.MethodGet, path: "/gpu-ui/api/v1/overview/inventory", wantStatus: http.StatusNoContent, wantAPIPath: "/api/v1/overview/inventory"},
+		{name: "legacy API is sunset", method: http.MethodPost, path: "/gpu-ui/api/vgpu/v1/nodes?limit=10", wantStatus: http.StatusNotFound},
 		{name: "unprefixed resource API", method: http.MethodGet, path: "/api/v1/overview/inventory", wantStatus: http.StatusNotFound},
 		{name: "similar resource API", method: http.MethodGet, path: "/gpu-ui/api/v1-extra/overview/inventory", wantStatus: http.StatusNotFound},
 		{name: "resource API dot escape", method: http.MethodGet, path: "/gpu-ui/api/v1/../metrics", wantStatus: http.StatusNotFound},
@@ -624,7 +637,7 @@ func TestHandlerForwardsRequestBodyAndHeaders(t *testing.T) {
 		StaticFS:   os.DirFS(newStaticDir(t)),
 		APIHandler: api,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/vgpu/v1/nodes?limit=10", bytes.NewReader(requestBody))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nodes?limit=10", bytes.NewReader(requestBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hami-Probe", "preserved")
 	recorder := httptest.NewRecorder()

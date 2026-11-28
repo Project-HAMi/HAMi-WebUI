@@ -60,17 +60,16 @@ test('the dev API guard keeps each raw route within its own API namespace', asyn
   const guard = config.plugins.find(plugin => plugin.name === 'hami-webui-dev-api-boundary')
   let middleware
   guard.configureServer({ middlewares: { use(fn) { middleware = fn } } })
-  for (const prefix of ['/api/v1', '/api/vgpu/v1']) {
-    const toRoot = '../'.repeat(prefix.split('/').length - 1)
-    for (const destination of ['example', prefix === '/api/v1' ? 'api/vgpu/v1/example' : 'api/v1/example']) {
-      const response = { setHeader() {}, end() {} }
-      middleware({ url: prefix + '/' + toRoot + destination }, response, () => assert.fail('Unexpected proxy handoff'))
-      assert.equal(response.statusCode, 404)
-    }
+  const prefix = '/api/v1'
+  const toRoot = '../'.repeat(prefix.split('/').length - 1)
+  for (const destination of ['example', 'api/vgpu/v1/example', 'metrics']) {
+    const response = { setHeader() {}, end() {} }
+    middleware({ url: prefix + '/' + toRoot + destination }, response, () => assert.fail('Unexpected proxy handoff'))
+    assert.equal(response.statusCode, 404)
   }
 })
 
-test('Vite serves the SPA and proxies the versioned Web API without NestJS', async() => {
+test('Vite serves the SPA and proxies /api/v1 without legacy /api/vgpu', async() => {
   const requests = []
   const backend = createHTTPServer(async(request, response) => {
     const chunks = []
@@ -104,8 +103,8 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     )
     assert.notEqual(loadedConfig, null)
     assert.equal(
-      loadedConfig.config.server.proxy['^/api/vgpu/v1(?:/|[?]|$)'].target,
-      'http://127.0.0.1:8000'
+      loadedConfig.config.server.proxy['^/api/v1(?:/|[?]|$)'].target,
+      'http://127.0.0.1:8080'
     )
 
     const backendURL = await listen(backend)
@@ -128,10 +127,9 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     assert.equal(vite.config.server.strictPort, true)
     assert.deepEqual(Object.keys(vite.config.server.proxy), [
       '^/api/v1(?:/|[?]|$)',
-      '^/api/vgpu/v1(?:/|[?]|$)',
     ])
     assert.equal(
-      vite.config.server.proxy['^/api/vgpu/v1(?:/|[?]|$)'].target,
+      vite.config.server.proxy['^/api/v1(?:/|[?]|$)'].target,
       backendURL
     )
 
@@ -139,14 +137,12 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
     const frontendURL = await listen(frontend)
 
     const apiResponse = await fetch(
-      `${frontendURL}/api/vgpu/v1/nodes?limit=10&name=contract%20probe`,
+      `${frontendURL}/api/v1/nodes?limit=10&name=contract%20probe`,
       {
-        body: JSON.stringify({ node: 'worker-1' }),
         headers: {
-          'content-type': 'application/json',
           'x-contract-request': 'preserved',
         },
-        method: 'POST',
+        method: 'GET',
       }
     )
 
@@ -157,13 +153,11 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
       message: 'contract response',
     })
     assert.equal(requests.length, 1)
-    assert.equal(requests[0].method, 'POST')
+    assert.equal(requests[0].method, 'GET')
     assert.equal(
       requests[0].url,
-      '/v1/nodes?limit=10&name=contract%20probe'
+      '/api/v1/nodes?limit=10&name=contract%20probe'
     )
-    assert.equal(requests[0].body, JSON.stringify({ node: 'worker-1' }))
-    assert.equal(requests[0].headers['content-type'], 'application/json')
     assert.equal(requests[0].headers['x-contract-request'], 'preserved')
 
     const inventoryResponse = await fetch(`${frontendURL}/api/v1/overview/inventory`)
@@ -184,6 +178,7 @@ test('Vite serves the SPA and proxies the versioned Web API without NestJS', asy
       '/api/v1-extra/overview/inventory',
       '/api/v2/overview/inventory',
       '/api/v1/../metrics',
+      '/api/vgpu/v1/nodes',
       '/api/vgpu-extra/v1/nodes',
       '/api/vgpu/metrics',
       '/api/vgpu/readyz',

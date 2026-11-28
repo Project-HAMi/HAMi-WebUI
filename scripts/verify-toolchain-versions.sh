@@ -8,9 +8,7 @@ go_version="$(<"${repo_root}/server/.go-version")"
 
 grep -Fq "node:${node_version}-bookworm@" "${repo_root}/Dockerfile"
 grep -Fq "golang:${go_version}-bookworm@" "${repo_root}/Dockerfile"
-grep -Fq "golang:${go_version}-bookworm@" "${repo_root}/server/Dockerfile"
 grep -Fq "server/hack/install-protoc.sh" "${repo_root}/Dockerfile"
-grep -Fq "hack/install-protoc.sh" "${repo_root}/server/Dockerfile"
 go_workflow="${repo_root}/.github/workflows/pr-go.yaml"
 ci_installer="bash hack/install-protoc.sh \"\${RUNNER_TEMP}/protoc\""
 [[ "$(grep -Fc "${ci_installer}" "${go_workflow}")" == "2" ]]

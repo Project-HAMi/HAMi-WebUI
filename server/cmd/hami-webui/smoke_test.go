@@ -139,8 +139,12 @@ func TestUnifiedBinarySmokeEndToEnd(t *testing.T) {
 					UtilizationRatio *float64 `json:"utilizationRatio"`
 					MemoryUsageRatio *float64 `json:"memoryUsageRatio"`
 				} `json:"devices"`
-				NodeCoverage   struct{ Complete bool `json:"complete"` } `json:"nodeCoverage"`
-				DeviceCoverage struct{ Complete bool `json:"complete"` } `json:"deviceCoverage"`
+				NodeCoverage struct {
+					Complete bool `json:"complete"`
+				} `json:"nodeCoverage"`
+				DeviceCoverage struct {
+					Complete bool `json:"complete"`
+				} `json:"deviceCoverage"`
 			}
 			invURL := webBase + prefix + "/api/v1/overview/inventory"
 			var inv inventoryReply
@@ -182,20 +186,20 @@ func TestUnifiedBinarySmokeEndToEnd(t *testing.T) {
 				t.Fatalf("expected nil telemetry ratios under Prometheus outage, got util=%v mem=%v", inv.Devices[0].UtilizationRatio, inv.Devices[0].MemoryUsageRatio)
 			}
 
-			// 3. Nodes list via /api/vgpu/v1/nodes.
-			nodesResp, nodesBody := doRequest(t, client, http.MethodPost, webBase+prefix+"/api/vgpu/v1/nodes", []byte(`{"filters":{}}`))
+			// 3. Nodes list via /api/v1/nodes.
+			nodesResp, nodesBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/v1/nodes", nil)
 			if nodesResp.StatusCode != http.StatusOK || !strings.Contains(string(nodesBody), `"node-gpu-01"`) {
-				t.Fatalf("POST /v1/nodes = (%d) %s", nodesResp.StatusCode, nodesBody)
+				t.Fatalf("GET /api/v1/nodes = (%d) %s", nodesResp.StatusCode, nodesBody)
 			}
 
-			// 4. GPUs list & detail (200 and 404).
-			gpusResp, gpusBody := doRequest(t, client, http.MethodPost, webBase+prefix+"/api/vgpu/v1/gpus", []byte(`{"filters":{}}`))
+			// 4. Devices list & detail (200 and 404).
+			gpusResp, gpusBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/v1/devices", nil)
 			if gpusResp.StatusCode != http.StatusOK || !strings.Contains(string(gpusBody), `"`+deviceUUID+`"`) {
-				t.Fatalf("POST /v1/gpus = (%d) %s", gpusResp.StatusCode, gpusBody)
+				t.Fatalf("GET /api/v1/devices = (%d) %s", gpusResp.StatusCode, gpusBody)
 			}
-			gpuResp, gpuBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/vgpu/v1/gpu?uid="+deviceUUID, nil)
+			gpuResp, gpuBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/v1/device?id="+deviceUUID, nil)
 			if gpuResp.StatusCode != http.StatusOK {
-				t.Fatalf("GET /v1/gpu status = %d, body = %s", gpuResp.StatusCode, gpuBody)
+				t.Fatalf("GET /api/v1/device status = %d, body = %s", gpuResp.StatusCode, gpuBody)
 			}
 			var gpuDetail struct {
 				UUID        string `json:"uuid"`
@@ -204,27 +208,34 @@ func TestUnifiedBinarySmokeEndToEnd(t *testing.T) {
 				MemoryTotal int    `json:"memoryTotal"`
 			}
 			if err := json.Unmarshal(gpuBody, &gpuDetail); err != nil {
-				t.Fatalf("decode gpu detail: %v (%s)", err, gpuBody)
+				t.Fatalf("decode device detail: %v (%s)", err, gpuBody)
 			}
 			if gpuDetail.UUID != deviceUUID || gpuDetail.CoreUsed != 50 || gpuDetail.MemoryUsed != 16384 || gpuDetail.MemoryTotal != 81920 {
-				t.Fatalf("unexpected gpu detail: %+v", gpuDetail)
+				t.Fatalf("unexpected device detail: %+v", gpuDetail)
 			}
-			missResp, missBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/vgpu/v1/gpu?uid=GPU-missing", nil)
+			missResp, missBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/v1/device?id=GPU-missing", nil)
 			if missResp.StatusCode != http.StatusNotFound || !strings.Contains(string(missBody), `"RESOURCE_GPU_NOT_FOUND"`) {
-				t.Fatalf("GET missing gpu = (%d) %s", missResp.StatusCode, missBody)
+				t.Fatalf("GET missing device = (%d) %s", missResp.StatusCode, missBody)
 			}
 
-			// 5. Workloads list.
-			wkResp, wkBody := doRequest(t, client, http.MethodPost, webBase+prefix+"/api/vgpu/v1/workloads", []byte(`{"page":1,"pageSize":10}`))
+			// 5. Containers list.
+			wkResp, wkBody := doRequest(t, client, http.MethodGet, webBase+prefix+"/api/v1/containers?page=1&page_size=10", nil)
 			if wkResp.StatusCode != http.StatusOK || !strings.Contains(string(wkBody), `"train-pod-0"`) || !strings.Contains(string(wkBody), `"`+deviceUUID+`"`) {
-				t.Fatalf("POST /v1/workloads = (%d) %s", wkResp.StatusCode, wkBody)
+				t.Fatalf("GET /api/v1/containers = (%d) %s", wkResp.StatusCode, wkBody)
 			}
 
-			// 6. Private routes stay unreachable on public Web port.
-			for _, priv := range []string{"/metrics", "/readyz"} {
-				privResp, _ := doRequest(t, client, http.MethodGet, webBase+prefix+priv, nil)
+			// 6. Legacy routes stay sunset and private routes stay unreachable on public Web port;
+			// business APIs stay unreachable on the :8000 metrics/readiness listener.
+			for _, blocked := range []string{"/metrics", "/readyz", "/api/vgpu/v1/nodes"} {
+				privResp, _ := doRequest(t, client, http.MethodGet, webBase+prefix+blocked, nil)
 				if privResp.StatusCode != http.StatusNotFound {
-					t.Fatalf("public %s status = %d, want 404", prefix+priv, privResp.StatusCode)
+					t.Fatalf("public %s status = %d, want 404", prefix+blocked, privResp.StatusCode)
+				}
+			}
+			for _, backendBlocked := range []string{"/api/v1/nodes", "/api/v1/overview/inventory", "/v1/nodes", "/q/openapi.yaml"} {
+				privResp, _ := doRequest(t, client, http.MethodGet, backendBase+backendBlocked, nil)
+				if privResp.StatusCode != http.StatusNotFound {
+					t.Fatalf("backend %s status = %d, want 404", backendBlocked, privResp.StatusCode)
 				}
 			}
 
