@@ -197,7 +197,7 @@ func TestSyntheticTelemetryDialectRequiresZeroCoreChanges(t *testing.T) {
 
 func TestSingleTelemetryFlowFeedsBothLegacyAndSchema2Metrics(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Second)
-	sampledSec := float64(at.Add(-10 * time.Second).UnixMilli()) / 1000
+	sampledSec := float64(at.Add(-10*time.Second).UnixMilli()) / 1000
 	const (
 		deviceID   = "GPU-single-flow"
 		nodeName   = "node-single-flow"

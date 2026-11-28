@@ -50,12 +50,27 @@ type resourcesTestPodRepo struct{ containers []*biz.Container }
 
 func (r *resourcesTestPodRepo) NodeHolders(_ context.Context, node, uid string) (biz.NodeHolders, error) {
 	var matched []*biz.Container
+	reservations := make(map[string]biz.DeviceReservation)
 	for _, c := range r.containers {
 		if c.NodeName == node && c.NodeUID == uid {
 			matched = append(matched, c)
+			for _, cd := range c.ContainerDevices {
+				if cd.UUID == "" {
+					continue
+				}
+				entry := reservations[cd.UUID]
+				entry.Slots++
+				entry.Cores += cd.Usedcores
+				entry.MemoryMiB += cd.Usedmem
+				if cd.CoreAllocationUnknown {
+					entry.CoreUnknown = true
+					entry.CoreUnknownCount++
+				}
+				reservations[cd.UUID] = entry
+			}
 		}
 	}
-	return biz.NodeHolders{Containers: matched}, nil
+	return biz.NodeHolders{Reservations: reservations, Containers: matched}, nil
 }
 func (r *resourcesTestPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
 	return r.containers, nil
@@ -371,4 +386,142 @@ type cardObsReader map[resourceview.DeviceIdentity]resourceview.DeviceObservatio
 
 func (r cardObsReader) DeviceObservations() resourceview.DeviceObservations {
 	return resourceview.DeviceObservations(r)
+}
+
+func TestGlobalAuditFixesForCardsAndReservations(t *testing.T) {
+	now := time.Now()
+	npuA := &biz.DeviceInfo{
+		Id: "NPU-0", AliasId: "NPU-0", Count: 2, Devmem: 32768, Devcore: 100,
+		Type: "Ascend910", Health: true, NodeName: "node-a", NodeUid: "uid-a", Provider: biz.AscendGPUDevice,
+	}
+	npuB := &biz.DeviceInfo{
+		Id: "NPU-0", AliasId: "NPU-0", Count: 2, Devmem: 32768, Devcore: 100,
+		Type: "Ascend910", Health: true, NodeName: "node-b", NodeUid: "uid-b", Provider: biz.AscendGPUDevice,
+	}
+	mluDev := &biz.DeviceInfo{
+		Id: "MLU-0", AliasId: "MLU-0", Count: 4, Devmem: 24576, Devcore: 100,
+		Type: "MLU370", Health: true, NodeName: "node-a", NodeUid: "uid-a", Provider: biz.CambriconGPUDevice,
+	}
+	dcuDev := &biz.DeviceInfo{
+		Id: "legacy-serial-03", AliasId: "node-a-dcu-3", RegistrationID: "DCU-3", Count: 4, Devmem: 16384, Devcore: 100,
+		Type: "DCU", Health: true, NodeName: "node-a", NodeUid: "uid-a", Provider: biz.HygonGPUDevice,
+	}
+	nodeUC := biz.NewNodeUsecase(&resourcesTestNodeRepo{
+		nodes: []*biz.Node{
+			{Name: "node-a", Uid: "uid-a", Devices: []*biz.DeviceInfo{npuA, mluDev, dcuDev}},
+			{Name: "node-b", Uid: "uid-b", Devices: []*biz.DeviceInfo{npuB}},
+		},
+		devices: []*biz.DeviceInfo{npuA, npuB, mluDev, dcuDev},
+	}, log.NewStdLogger(io.Discard))
+	podUC := biz.NewPodUseCase(&resourcesTestPodRepo{containers: []*biz.Container{
+		{
+			Name: "ctr-a", PodUID: "pod-a", NodeName: "node-a", NodeUID: "uid-a", CreateTime: now,
+			ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Usedcores: 50, Usedmem: 4096}},
+		},
+	}}, log.NewStdLogger(io.Discard))
+	sumUC := biz.NewSummaryUseCase(
+		&resourcesTestNodeRepo{devices: []*biz.DeviceInfo{npuA, npuB}},
+		&resourcesTestPodRepo{containers: []*biz.Container{
+			{Name: "ctr-a", PodUID: "pod-a", NodeName: "node-a", NodeUID: "uid-a", ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Usedcores: 50, Usedmem: 4096}}},
+		}},
+		log.NewStdLogger(io.Discard),
+	)
+	q := func(v, unit string) resourceview.Quantity {
+		qty := resource.MustParse(v)
+		return resourceview.Quantity{
+			Value: &qty, Unit: unit,
+			State: &obsv1.FieldState{State: resourceview.Known, Source: "exporter", Scope: "device", ObservedAt: timestamppb.New(now)},
+		}
+	}
+	mluObsID := resourceview.DeviceIdentity{Provider: biz.CambriconGPUDevice, Node: "node-a", NodeUID: "uid-a", DeviceID: "MLU-0"}
+	cardSvc := NewCardService(nodeUC, podUC, resourceview.WithObservations(
+		cardTestSnapshotSource{snap: resourceview.Snapshot{At: now}},
+		cardObsReader{
+			mluObsID: {
+				UtilizationRatio:    q("0.37", "ratio"),
+				MemoryUsedBytes:     q("4294967296", "bytes"),
+				MemoryPhysicalBytes: q("25769803776", "bytes"),
+			},
+		},
+	))
+	nodeSvc := NewNodeService(nodeUC, podUC, sumUC, nil)
+
+	// C3: unscoped list must keep node-a NPU-0 separate from node-b NPU-0, and include DCU RegistrationId (C4).
+	listReply, err := cardSvc.GetAllGPUs(context.Background(), &pb.GetAllGpusReq{})
+	if err != nil {
+		t.Fatalf("GetAllGPUs() error = %v", err)
+	}
+	var seenNpuB, seenDcu bool
+	for _, row := range listReply.List {
+		if row.Uuid == "NPU-0" && row.NodeUid == "uid-b" {
+			seenNpuB = true
+			if row.MemoryUsed != 0 || row.VgpuUsed != 0 || row.CoreUsed != 0 {
+				t.Fatalf("cross-node alias bleed on uid-b NPU-0: %+v", row)
+			}
+		}
+		if row.Uuid == "legacy-serial-03" {
+			seenDcu = true
+			if row.GetRegistrationId() != "DCU-3" {
+				t.Fatalf("DCU registrationId = %q, want DCU-3", row.GetRegistrationId())
+			}
+		}
+	}
+	if !seenNpuB || !seenDcu {
+		t.Fatalf("missing expected rows (npuB=%t dcu=%t)", seenNpuB, seenDcu)
+	}
+	nodesReply, err := nodeSvc.GetAllNodes(context.Background(), &pb.GetAllNodesReq{})
+	if err != nil || len(nodesReply.List) != 2 {
+		t.Fatalf("GetAllNodes() = (%+v, %v)", nodesReply, err)
+	}
+	for _, n := range nodesReply.List {
+		if n.Uid == "uid-b" && *n.MemoryUsed != 0 {
+			t.Fatalf("uid-b node leaked memoryUsed = %d", *n.MemoryUsed)
+		}
+	}
+
+	// C2: MLU absent from PhysicalInventory still gets utilization & memory from obsReader fallback.
+	mluDetail, err := cardSvc.getDevice(context.Background(), "MLU-0", "uid-a", true)
+	if err != nil {
+		t.Fatalf("getDevice(MLU-0) error = %v", err)
+	}
+	if mluDetail.GetUtilizationRatio() != 0.37 || mluDetail.GetMemoryUsedBytes() != 4294967296 || mluDetail.GetMemoryPhysicalBytes() != 25769803776 {
+		t.Fatalf("MLU detail telemetry = %+v", mluDetail)
+	}
+	if !mluDetail.GetNodeAllocationComplete() {
+		t.Fatalf("MLU detail expected nodeAllocationComplete=true")
+	}
+
+	// P1 #3: transient NodeHolders cache wait must not fail getDevice with HTTP 500.
+	lagCardSvc := NewCardService(
+		nodeUC,
+		biz.NewPodUseCase(&transientNodeHoldersPodRepo{containers: []*biz.Container{
+			{Name: "ctr-a", PodUID: "pod-a", NodeName: "node-a", NodeUID: "uid-a", ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Usedcores: 50, Usedmem: 4096}}},
+		}}, log.NewStdLogger(io.Discard)),
+		resourceview.WithObservations(
+			cardTestSnapshotSource{snap: resourceview.Snapshot{At: now}},
+			cardObsReader{mluObsID: {UtilizationRatio: q("0.37", "ratio")}},
+		),
+	)
+	lagDetail, err := lagCardSvc.getDevice(context.Background(), "MLU-0", "uid-a", true)
+	if err != nil {
+		t.Fatalf("getDevice() failed on transient NodeHolders lag: %v", err)
+	}
+	if lagDetail.NodeAllocationComplete == nil || *lagDetail.NodeAllocationComplete {
+		t.Fatalf("expected nodeAllocationComplete=false on NodeHolders fallback, got %v", lagDetail.NodeAllocationComplete)
+	}
+	if lagDetail.GetUtilizationRatio() != 0.37 {
+		t.Fatalf("expected telemetry preserved on fallback, got %v", lagDetail.GetUtilizationRatio())
+	}
+}
+
+type transientNodeHoldersPodRepo struct{ containers []*biz.Container }
+
+func (r *transientNodeHoldersPodRepo) NodeHolders(context.Context, string, string) (biz.NodeHolders, error) {
+	return biz.NodeHolders{}, os.ErrDeadlineExceeded
+}
+func (r *transientNodeHoldersPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
+	return r.containers, nil
+}
+func (*transientNodeHoldersPodRepo) FindOne(context.Context, string, string) (*biz.Container, error) {
+	return nil, os.ErrNotExist
 }

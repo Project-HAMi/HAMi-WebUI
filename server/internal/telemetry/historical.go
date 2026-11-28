@@ -691,7 +691,7 @@ func buildDeviceSensorTrendSpecs(deviceID string) []namedTrendSpec {
 		if parts[0] == "HCU" {
 			rawUUID = strings.TrimPrefix(rawUUID, "HCU-")
 		}
-		selector = fmt.Sprintf("node=%s,device_uuid=%s", strconv.Quote(parts[1]), strconv.Quote(rawUUID))
+		selector = fmt.Sprintf("node=%s,provider=%s,device_uuid=%s", strconv.Quote(parts[1]), strconv.Quote(parts[0]), strconv.Quote(rawUUID))
 	}
 	return []namedTrendSpec{
 		{

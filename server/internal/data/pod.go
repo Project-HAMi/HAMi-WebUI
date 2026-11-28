@@ -479,11 +479,25 @@ func (r *podRepo) GetStartTime(pod *corev1.Pod) time.Time {
 func (r *podRepo) ListAll(context.Context) ([]*biz.Container, error) {
 	snapshot := r.ascend.Snapshot()
 	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	var containerList []*biz.Container
+	pods := make([]*biz.PodInfo, 0, len(r.pods))
 	for _, pod := range r.pods {
+		pods = append(pods, pod)
+	}
+	r.mutex.RUnlock()
+	var containerList []*biz.Container
+	for _, pod := range pods {
+		var factNodeUID string
+		if r.facts != nil {
+			factNodeUID = string(r.facts.NodeAssignment(pod.UID).UID)
+		}
 		for _, container := range pod.Ctrs {
-			containerList = append(containerList, r.interpretContainer(snapshot, container))
+			item := r.interpretContainer(snapshot, container)
+			if item.NodeUID == "" && factNodeUID != "" {
+				copied := *item
+				copied.NodeUID = factNodeUID
+				item = &copied
+			}
+			containerList = append(containerList, item)
 		}
 	}
 	return containerList, nil
@@ -560,7 +574,10 @@ func (r *podRepo) NodeHolders(_ context.Context, name, uid string) (biz.NodeHold
 				total.Slots++
 				total.MemoryMiB += d.Usedmem
 				total.Cores += d.Usedcores
-				total.CoreUnknown = total.CoreUnknown || d.CoreAllocationUnknown
+				if d.CoreAllocationUnknown {
+					total.CoreUnknown = true
+					total.CoreUnknownCount++
+				}
 				result.Reservations[d.UUID] = total
 			}
 		}
@@ -625,6 +642,7 @@ func addInitReservations(h *biz.NodeHolders, ids map[string]bool, allocation pod
 		total.MemoryMiB += int32(memory.Value.Value() / (1 << 20))
 		if cores.Value == nil || cores.Unit != "percent" {
 			total.CoreUnknown = true
+			total.CoreUnknownCount++
 		} else {
 			// Device details report whole percentages, including for fractional Ascend templates.
 			total.Cores += int32(math.Round(cores.Value.AsApproximateFloat64()))

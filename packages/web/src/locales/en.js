@@ -527,6 +527,7 @@ export default {
       sharedBy: 'Shared by {count} of {limit}',
       sharedByCount: 'Shared by {count}',
       truncatedNotice: 'Showing first {loaded} of {total} holders; remaining capacity unknown',
+      incompleteNotice: 'Showing visible app containers only; additional or unconfirmed reservations exist',
       strandedLegend: 'Hatched area cannot fit an instance',
       separator: ', ',
       listSeparator: ' or ',

@@ -299,11 +299,71 @@ func TestMetricsRefreshUsesCycleContextForNestedQueries(t *testing.T) {
 
 func TestQueryDeviceAdditionalTreatsEmptyVectorAsExpectedOmission(t *testing.T) {
 	generator := &MetricsGenerator{monitorService: &fakeInstantQuerier{responses: []*pb.InstantResponse{{}}}}
-	_, err := generator.queryDeviceAdditional(context.Background(), biz.NvidiaGPUDevice, "GPU-empty-additional")
+	_, err := generator.queryDeviceAdditional(context.Background(), "", biz.NvidiaGPUDevice, "GPU-empty-additional")
 	if !errors.Is(err, errNoMetricData) {
 		t.Fatalf("queryDeviceAdditional() error = %v, want errNoMetricData", err)
 	}
 }
+
+func TestMetricsRefreshExpiresRetainedCellsAfterMaxSampleAgeFatalFailures(t *testing.T) {
+	resetRefreshSelfMetrics(t)
+	device := &biz.DeviceInfo{
+		Id: "GPU-expire-1", Devmem: 40960, Devcore: 100, Count: 1,
+		Type: "A100", NodeName: "node-expire", Provider: biz.NvidiaGPUDevice,
+	}
+	now := time.Unix(1000, 0)
+	var listErr error
+	nodeRepo := &failListDevicesRepo{devices: []*biz.DeviceInfo{device}, errFn: func() error { return listErr }}
+	querier := &fakeInstantQuerier{query: func(context.Context, *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+		return instantValue(55), nil
+	}}
+	logger := log.NewStdLogger(io.Discard)
+	gen := &MetricsGenerator{
+		nodeUsecase:    biz.NewNodeUsecase(nodeRepo, logger),
+		podUsecase:     biz.NewPodUseCase(&fakePodRepo{}, logger),
+		monitorService: querier,
+		timeout:        time.Minute,
+		log:            log.NewHelper(logger),
+		now:            func() time.Time { return now },
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(gen) })
+
+	gen.runOnce(context.Background())
+	labels := map[string]string{
+		"node": "node-expire", "provider": biz.NvidiaGPUDevice, "device_type": "A100",
+		"device_uuid": "GPU-expire-1", "driver_version": "", "device_no": "",
+	}
+	assertGaugeLabelsPresent(t, HamiDeviceTemperature, labels, true)
+
+	// Transient fatal failure within TelemetryMaxSampleAge retains last-known cells.
+	listErr = errors.New("temporary apiserver glitch")
+	now = now.Add(time.Minute)
+	gen.runOnce(context.Background())
+	assertGaugeLabelsPresent(t, HamiDeviceTemperature, labels, true)
+
+	// Sustained fatal failure past TelemetryMaxSampleAge expires retained legacy cells.
+	now = now.Add(5 * time.Minute)
+	gen.runOnce(context.Background())
+	assertGaugeLabelsPresent(t, HamiDeviceTemperature, labels, false)
+	assertGaugeLabelsPresent(t, HamiVgpuCount, labels, false)
+}
+
+type failListDevicesRepo struct {
+	devices []*biz.DeviceInfo
+	errFn   func() error
+}
+
+func (r *failListDevicesRepo) ListAll(context.Context) ([]*biz.Node, error)        { return nil, nil }
+func (r *failListDevicesRepo) GetNode(context.Context, string) (*biz.Node, error) { return nil, nil }
+func (r *failListDevicesRepo) ListAllDevices(context.Context) ([]*biz.DeviceInfo, error) {
+	if r.errFn != nil {
+		if err := r.errFn(); err != nil {
+			return nil, err
+		}
+	}
+	return r.devices, nil
+}
+func (r *failListDevicesRepo) FindDeviceByAliasId(string) (*biz.DeviceInfo, error) { return nil, nil }
 
 func TestMetricsRefreshDurationAndTimestampAreRecordedAfterCommit(t *testing.T) {
 	resetRefreshSelfMetrics(t)

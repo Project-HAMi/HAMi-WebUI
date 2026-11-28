@@ -15,6 +15,7 @@
   "unconfigured": false,
   "vendor": "NVIDIA",
   "migProfiles": [],
+  "nodeAllocationComplete": true,
   "telemetryDeviceId": "TlZJRElBAG5vZGUtMQBHUFUtMQ",
   "coreUnknownCount": 0,
   "utilizationRatio": 0.42,

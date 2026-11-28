@@ -98,9 +98,10 @@ type DeviceUsage struct {
 }
 
 type DeviceInfo struct {
-	ID      string
-	AliasId string
-	Index   uint
+	ID             string
+	AliasId        string
+	RegistrationID string
+	Index          uint
 	Count   int32
 	Devmem  int32
 	Devcore int32

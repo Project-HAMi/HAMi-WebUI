@@ -58,7 +58,10 @@ func TestFillLessSamplePointPreservesRealZeroAndMarksInternalGap(t *testing.T) {
 		{Value: 2, Timestamp: 3_000},
 	}
 
-	got := fillLessSamplePoint(start, end, time.Second, values)
+	got, err := fillLessSamplePoint(context.Background(), start, end, time.Second, values)
+	if err != nil {
+		t.Fatalf("fillLessSamplePoint() error = %v", err)
+	}
 	want := []*pb.SamplePair{
 		{Value: 0, Timestamp: 1_000, Missing: false},
 		{Value: 0, Timestamp: 2_000, Missing: true},
@@ -74,7 +77,10 @@ func TestFillLessSamplePointMarksLeadingAndTrailingGaps(t *testing.T) {
 		{Value: 7, Timestamp: 3_000},
 	}
 
-	got := fillLessSamplePoint(start, end, time.Second, values)
+	got, err := fillLessSamplePoint(context.Background(), start, end, time.Second, values)
+	if err != nil {
+		t.Fatalf("fillLessSamplePoint() error = %v", err)
+	}
 	want := []*pb.SamplePair{
 		{Value: 0, Timestamp: 1_000, Missing: true},
 		{Value: 0, Timestamp: 2_000, Missing: true},
@@ -93,7 +99,10 @@ func TestFillLessSamplePointKeepsVictoriaMetricsAlignment(t *testing.T) {
 		{Value: 9, Timestamp: 3_500},
 	}
 
-	got := fillLessSamplePoint(start, end, time.Second, values)
+	got, err := fillLessSamplePoint(context.Background(), start, end, time.Second, values)
+	if err != nil {
+		t.Fatalf("fillLessSamplePoint() error = %v", err)
+	}
 	want := []*pb.SamplePair{
 		{Value: 0, Timestamp: 1_500, Missing: false},
 		{Value: 0, Timestamp: 2_500, Missing: true},

@@ -574,7 +574,7 @@ const computeAllocUncounted = computed(() => {
 });
 
 const computeAllocUsedRaw = computed(() => (
-  !isDetailReady.value || detail.value?.isExternal || detail.value?.unconfigured
+  !isDetailReady.value || detail.value?.isExternal || detail.value?.unconfigured || detail.value?.nodeAllocationComplete === false
     ? undefined
     : toFiniteNumber(detail.value?.coreUsed)
 ));
@@ -598,7 +598,7 @@ const computeUsageUsedText = computed(() =>
 );
 
 const memoryAllocUsedMiB = computed(() => (
-  !isDetailReady.value || detail.value?.isExternal || detail.value?.unconfigured
+  !isDetailReady.value || detail.value?.isExternal || detail.value?.unconfigured || detail.value?.nodeAllocationComplete === false
     ? undefined
     : toFiniteNumber(detail.value?.memoryUsed)
 ));

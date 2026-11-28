@@ -60,7 +60,7 @@ func (t *SummaryUseCase) GetGPUSummary(ctx context.Context, deviceId string, nod
 			res.VgpuTotal = res.VgpuTotal + device.Count
 		}
 
-		reservation := reservations[device.AliasId]
+		reservation := reservations[DeviceReservationKey{NodeUID: device.NodeUid, DeviceID: device.AliasId}]
 		res.CoreUsed += reservation.Cores
 		if reservation.CoreUnknown {
 			res.CoreUsedKnown = false

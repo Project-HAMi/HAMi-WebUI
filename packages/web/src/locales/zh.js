@@ -523,6 +523,7 @@ export default {
       sharedBy: '共享 {count} / {limit}',
       sharedByCount: '共享 {count}',
       truncatedNotice: '仅加载前 {loaded} / {total} 个持有者，空闲容量暂无法确认',
+      incompleteNotice: '仅展示可见应用容器；存在初始化阶段或未确认预留',
       strandedLegend: '斜纹区域无法放置实例',
       separator: '，',
       listSeparator: ' 或 ',

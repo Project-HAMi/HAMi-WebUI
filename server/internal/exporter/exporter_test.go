@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -293,13 +294,13 @@ func TestOptionalDeviceTelemetryDistinguishesMissingNonFiniteAndZero(t *testing.
 		read func(*MetricsGenerator, string) (float32, error)
 	}{
 		{name: "temperature", read: func(generator *MetricsGenerator, provider string) (float32, error) {
-			return generator.gpuTemperature(context.Background(), provider, "GPU-1")
+			return generator.gpuTemperature(context.Background(), "", provider, "GPU-1")
 		}},
 		{name: "memory temperature", read: func(generator *MetricsGenerator, provider string) (float32, error) {
-			return generator.memoryTemperature(context.Background(), provider, "GPU-1")
+			return generator.memoryTemperature(context.Background(), "", provider, "GPU-1")
 		}},
 		{name: "power", read: func(generator *MetricsGenerator, provider string) (float32, error) {
-			return generator.gpuPower(context.Background(), provider, "GPU-1")
+			return generator.gpuPower(context.Background(), "", provider, "GPU-1")
 		}},
 		{name: "fan speed", read: func(generator *MetricsGenerator, provider string) (float32, error) {
 			return generator.fanSpeed(context.Background(), provider, "GPU-1")
@@ -455,7 +456,7 @@ func TestProviderDeviceTelemetryUsesPhysicalMetricSeries(t *testing.T) {
 			provider:  biz.AscendGPUDevice,
 			wantQuery: `avg(npu_chip_info_hbm_temperature{vdie_id="device-1"})`,
 			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
-				return generator.memoryTemperature(context.Background(), provider, deviceUUID)
+				return generator.memoryTemperature(context.Background(), "", provider, deviceUUID)
 			},
 		},
 		{
@@ -463,7 +464,7 @@ func TestProviderDeviceTelemetryUsesPhysicalMetricSeries(t *testing.T) {
 			provider:  biz.MetaxGPUDevice,
 			wantQuery: `avg(mx_chip_hbm_temp{uuid="device-1"})`,
 			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
-				return generator.memoryTemperature(context.Background(), provider, deviceUUID)
+				return generator.memoryTemperature(context.Background(), "", provider, deviceUUID)
 			},
 		},
 		{
@@ -471,7 +472,7 @@ func TestProviderDeviceTelemetryUsesPhysicalMetricSeries(t *testing.T) {
 			provider:  biz.CambriconGPUDevice,
 			wantQuery: `avg(mlu_memory_temperature{uuid="device-1",memory_die=""})`,
 			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
-				return generator.memoryTemperature(context.Background(), provider, deviceUUID)
+				return generator.memoryTemperature(context.Background(), "", provider, deviceUUID)
 			},
 		},
 		{
@@ -479,7 +480,7 @@ func TestProviderDeviceTelemetryUsesPhysicalMetricSeries(t *testing.T) {
 			provider:  biz.CambriconGPUDevice,
 			wantQuery: `avg(mlu_power_usage{uuid="device-1",vf=""})`,
 			read: func(generator *MetricsGenerator, provider, deviceUUID string) (float32, error) {
-				return generator.gpuPower(context.Background(), provider, deviceUUID)
+				return generator.gpuPower(context.Background(), "", provider, deviceUUID)
 			},
 		},
 	}
@@ -514,7 +515,7 @@ func TestMLUAdditionalInfoUsesPhysicalPowerSeries(t *testing.T) {
 	}}
 	generator := &MetricsGenerator{monitorService: querier}
 
-	info, err := generator.queryDeviceAdditional(context.Background(), biz.CambriconGPUDevice, "device-1")
+	info, err := generator.queryDeviceAdditional(context.Background(), "", biz.CambriconGPUDevice, "device-1")
 	if err != nil {
 		t.Fatalf("queryDeviceAdditional() error = %v", err)
 	}
@@ -571,7 +572,7 @@ func TestDeviceAdditionalInfoKeepsUnknownDriverVersionEmpty(t *testing.T) {
 			}}}
 			generator := &MetricsGenerator{monitorService: querier}
 
-			info, err := generator.queryDeviceAdditional(context.Background(), tt.provider, "device-1")
+			info, err := generator.queryDeviceAdditional(context.Background(), "", tt.provider, "device-1")
 			if err != nil {
 				t.Fatalf("queryDeviceAdditional() error = %v", err)
 			}
@@ -1740,4 +1741,74 @@ func TestLegacyVendorMetricsSurviveSecondRefreshWithSupplementalSensorsAndHCUKey
 	if v, ok := hcuObs.PowerWatts.KnownValue(); !ok || v != 160 {
 		t.Fatalf("HCU power = (%v, %v), want (160, true)", v, ok)
 	}
+
+	mluObs, ok := gen.DeviceObservations()[resourceview.DeviceIdentity{
+		Provider: biz.CambriconGPUDevice,
+		Node:     "node-1",
+		NodeUID:  "node-uid-1",
+		DeviceID: "MLU-0",
+	}]
+	if !ok {
+		t.Fatal("missing MLU supplemental physical observations")
+	}
+	if v, ok := mluObs.UtilizationRatio.KnownValue(); !ok || v != 0.37 {
+		t.Fatalf("MLU UtilizationRatio = (%v, %v), want (0.37, true)", v, ok)
+	}
+	if mluObs.MemoryUsedBytes.Value == nil || mluObs.MemoryUsedBytes.Value.Value() != 4096*bytesPerMiB {
+		t.Fatalf("MLU MemoryUsedBytes = %+v, want 4GiB", mluObs.MemoryUsedBytes.Value)
+	}
+}
+
+func TestAscendSensorQueriesAndContainerMetricsScopeByNode(t *testing.T) {
+	now := time.Unix(1760000000, 0).UTC()
+	npuA := &biz.DeviceInfo{
+		Id: "NPU-0", AliasId: "NPU-0", NodeName: "node-a", NodeUid: "uid-a",
+		Provider: biz.AscendGPUDevice, Type: "Ascend910", Devmem: 32768,
+	}
+	npuB := &biz.DeviceInfo{
+		Id: "NPU-0", AliasId: "NPU-0", NodeName: "node-b", NodeUid: "uid-b",
+		Provider: biz.AscendGPUDevice, Type: "Ascend910", Devmem: 32768,
+	}
+	ctrA := &biz.Container{
+		Name: "ctr", PodName: "pod-a", PodUID: "p-a", Namespace: "ml", NodeName: "node-a", NodeUID: "uid-a",
+		ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Vendor: biz.AscendGPUDevice, Usedmem: 4096, Usedcores: 50}},
+	}
+	ctrUnbound := &biz.Container{
+		Name: "ctr-unbound", PodName: "pod-unbound", PodUID: "p-u", Namespace: "ml",
+		ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Vendor: biz.AscendGPUDevice, Usedmem: 4096, Usedcores: 50}},
+	}
+	var seen []string
+	gen := &MetricsGenerator{
+		nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{npuA, npuB}}, log.NewStdLogger(io.Discard)),
+		podUsecase:  biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{ctrA, ctrUnbound}}, log.NewStdLogger(io.Discard)),
+		monitorService: &fakeInstantQuerier{query: func(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
+			seen = append(seen, req.GetQuery())
+			return instantValue(50), nil
+		}},
+		now: func() time.Time { return now },
+		log: log.NewHelper(log.NewStdLogger(io.Discard)),
+	}
+	t.Cleanup(func() { deleteTrackedTestCells(gen) })
+	if err := gen.GenerateDeviceMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateDeviceMetrics() error = %v", err)
+	}
+	if !slices.Contains(seen, `avg(npu_chip_info_temperature{node="node-a",vdie_id="NPU-0"})`) ||
+		!slices.Contains(seen, `avg(npu_chip_info_power{node="node-b",vdie_id="NPU-0"})`) {
+		t.Fatalf("expected node-scoped Ascend sensor queries, got %v", seen)
+	}
+	if err := gen.GenerateContainerMetrics(context.Background()); err != nil {
+		t.Fatalf("GenerateContainerMetrics() error = %v", err)
+	}
+	labelsNodeB := map[string]string{
+		"node": "node-b", "provider": biz.AscendGPUDevice, "device_type": "Ascend910",
+		"device_uuid": "NPU-0", "pod_name": "pod-a", "container_name": "ctr",
+		"pod_namespace": "ml", "container_pod_uuid": "ctr:p-a",
+	}
+	assertGaugeLabelsPresent(t, HamiContainerVgpuAllocated, labelsNodeB, false)
+	labelsUnboundOnA := map[string]string{
+		"node": "node-a", "provider": biz.AscendGPUDevice, "device_type": "Ascend910",
+		"device_uuid": "NPU-0", "pod_name": "pod-unbound", "container_name": "ctr-unbound",
+		"pod_namespace": "ml", "container_pod_uuid": "ctr-unbound:p-u",
+	}
+	assertGaugeLabelsPresent(t, HamiContainerVgpuAllocated, labelsUnboundOnA, false)
 }

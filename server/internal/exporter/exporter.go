@@ -10,8 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	pb "vgpu/api/v1"
 	viewv1 "vgpu/api/observability/v1"
+	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
@@ -110,9 +110,10 @@ type MetricsGenerator struct {
 	// current holds tuples written during the in-progress cycle; prev holds the
 	// last committed cycle so we know which tuples to delete when a device or
 	// container disappears.
-	cellMu  sync.Mutex
-	current map[cellKey]cell
-	prev    map[cellKey]cell
+	cellMu       sync.Mutex
+	current      map[cellKey]cell
+	prev         map[cellKey]cell
+	lastCommitAt time.Time
 
 	degradedCount int
 	firstDegraded error
@@ -120,10 +121,10 @@ type MetricsGenerator struct {
 
 	now func() time.Time
 
-	resourceSource    resourceview.SnapshotSource
-	telemetryDialects []provider.TelemetryDialect
-	batchTimeout      time.Duration
-	splitCounts       [len(batchSplitReasons)]atomic.Uint64
+	resourceSource           resourceview.SnapshotSource
+	telemetryDialects        []provider.TelemetryDialect
+	batchTimeout             time.Duration
+	splitCounts              [len(batchSplitReasons)]atomic.Uint64
 	observationsMu           sync.RWMutex
 	resourceSnapshot         *resourceview.Snapshot
 	physicalGroups           []resourceview.PhysicalGroup
@@ -378,6 +379,9 @@ func (s *MetricsGenerator) runOnce(parent context.Context) {
 	if isFatalRefreshFailure(err) {
 		s.dropCurrentCycle()
 		finished := s.clockNow()
+		if s.expireCommittedCells(finished, provider.TelemetryMaxSampleAge) {
+			s.log.Warnw("msg", "expired stale metrics cells after repeated fatal refresh failures", "maxAge", provider.TelemetryMaxSampleAge)
+		}
 		HamiWebUIMetricsRefreshDurationSeconds.Set(finished.Sub(start).Seconds())
 		HamiWebUIMetricsRefreshSuccess.Set(0)
 		s.log.Errorw("msg", "metrics refresh failed (partial cycle, last-known cells retained)", "err", err, "elapsed", finished.Sub(start))
@@ -385,6 +389,7 @@ func (s *MetricsGenerator) runOnce(parent context.Context) {
 	}
 	s.commitCycle()
 	finished := s.clockNow()
+	s.recordCommitTime(finished)
 	HamiWebUIMetricsRefreshDurationSeconds.Set(finished.Sub(start).Seconds())
 	if refreshErr := errors.Join(resourceErr, err); refreshErr != nil {
 		HamiWebUIMetricsRefreshSuccess.Set(0)
@@ -430,7 +435,7 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		return s.recordFatalError(fmt.Errorf("list devices: %w", err))
 	}
 	var now time.Time
-	observations := s.DeviceObservations()
+	observations := s.publishedDeviceObservations()
 	supplemental := resourceview.DeviceObservations{}
 	for _, device := range deviceInfos {
 		if err := ctx.Err(); err != nil {
@@ -442,7 +447,7 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		provider := device.Provider
 		var driver, deviceNo = "", ""
 		if device.Id != "" {
-			if deviceAdditional, err := s.queryDeviceAdditional(ctx, provider, device.Id); err == nil && deviceAdditional != nil {
+			if deviceAdditional, err := s.queryDeviceAdditional(ctx, device.NodeName, provider, device.Id); err == nil && deviceAdditional != nil {
 				driver = deviceAdditional.DriverVersion
 				deviceNo = deviceAdditional.DeviceNo
 			}
@@ -459,6 +464,7 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		var (
 			deviceMemUsed, deviceMemSize, actualCoreUtil float32
 			hasMemUsed, hasMemSize, hasCoreUtil          bool
+			obsEntry                                     resourceview.DeviceObservation
 		)
 		if obs, observed := lookupDeviceObservation(observations, provider, device.NodeName, device.NodeUid, device.Id, device.AliasId); observed {
 			if usedBytes, known := obs.MemoryUsedBytes.KnownValue(); known {
@@ -477,14 +483,25 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 			if v, err := s.deviceMemUsed(ctx, provider, device.Id); err == nil {
 				deviceMemUsed = v
 				hasMemUsed = true
+				if bytes := int64(math.Round(float64(v) * bytesPerMiB)); bytes >= 0 {
+					obsEntry.MemoryUsedBytes = supplementalBytesQuantity(bytes, now)
+				}
 			}
 			if v, err := s.deviceMemTotal(ctx, provider, device.Id); err == nil {
 				deviceMemSize = v
 				hasMemSize = true
+				if v > 0 {
+					if bytes := int64(math.Round(float64(v) * bytesPerMiB)); bytes > 0 {
+						obsEntry.MemoryPhysicalBytes = supplementalBytesQuantity(bytes, now)
+					}
+				}
 			}
 			if v, err := s.deviceCoreUtil(ctx, provider, device.Id); err == nil {
 				actualCoreUtil = v
 				hasCoreUtil = true
+				if q, ok := supplementalFloatQuantity(float64(v)/100, "ratio", now); ok {
+					obsEntry.UtilizationRatio = q
+				}
 			}
 		}
 		if hasMemUsed {
@@ -508,19 +525,18 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 		if device.Id == "" {
 			continue
 		}
-		var obsEntry resourceview.DeviceObservation
-		gpuTemperature, err := s.gpuTemperature(ctx, provider, device.Id)
+		gpuTemperature, err := s.gpuTemperature(ctx, device.NodeName, provider, device.Id)
 		if err == nil {
 			s.set(HamiDeviceTemperature, float64(gpuTemperature), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			if q, ok := supplementalFloatQuantity(float64(gpuTemperature), "celsius", now); ok {
 				obsEntry.TemperatureCelsius = q
 			}
 		}
-		memoryTemperature, err := s.memoryTemperature(ctx, provider, device.Id)
+		memoryTemperature, err := s.memoryTemperature(ctx, device.NodeName, provider, device.Id)
 		if err == nil {
 			s.set(HamiDeviceMemoryTemperature, float64(memoryTemperature), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 		}
-		gpuPower, err := s.gpuPower(ctx, provider, device.Id)
+		gpuPower, err := s.gpuPower(ctx, device.NodeName, provider, device.Id)
 		if err == nil {
 			s.set(HamiDevicePower, float64(gpuPower), device.NodeName, provider, device.Type, device.Id, driver, deviceNo)
 			if q, ok := supplementalFloatQuantity(float64(gpuPower), "watts", now); ok {
@@ -551,7 +567,7 @@ func (s *MetricsGenerator) GenerateDeviceMetrics(ctx context.Context) error {
 				}
 			}
 		}
-		if device.NodeUid != "" && (obsEntry.TemperatureCelsius.State != nil || obsEntry.PowerWatts.State != nil || obsEntry.MigMemoryUsedBytes.State != nil) {
+		if device.NodeUid != "" && (hasPhysicalObservation(obsEntry) || obsEntry.TemperatureCelsius.State != nil || obsEntry.PowerWatts.State != nil || obsEntry.MigMemoryUsedBytes.State != nil) {
 			normProvider := provider
 			if normProvider == metax.MetaxSGPUDevice {
 				normProvider = biz.MetaxGPUDevice
@@ -836,6 +852,17 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return s.recordFatalError(err)
 			}
+			if device.NodeUid != "" {
+				if c.NodeUID != "" {
+					if c.NodeUID != device.NodeUid {
+						continue
+					}
+				} else if c.NodeName == "" || (device.NodeName != "" && c.NodeName != device.NodeName) {
+					continue
+				}
+			} else if device.NodeName != "" && c.NodeName != "" && c.NodeName != device.NodeName {
+				continue
+			}
 			var vGPU int32 = 0
 			var core int32 = 0
 			var memory int32 = 0
@@ -940,6 +967,7 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
+		// mxExporter attaches exported_* labels onto physical card series while a Pod holds the card.
 		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
@@ -1147,7 +1175,14 @@ func (s *MetricsGenerator) taskMemoryUsed(ctx context.Context, provider, namespa
 	return s.queryRequiredInstantVal(ctx, query)
 }
 
-func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
+func ascendDeviceSelector(nodeName, deviceUUID string) string {
+	if nodeName != "" {
+		return fmt.Sprintf(`node=%q,vdie_id=%q`, nodeName, deviceUUID)
+	}
+	return fmt.Sprintf(`vdie_id=%q`, deviceUUID)
+}
+
+func (s *MetricsGenerator) gpuTemperature(ctx context.Context, nodeName, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -1155,7 +1190,7 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_temperature{uuid=\"%s\"})", deviceUUID)
 	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_temperature{vdie_id=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(npu_chip_info_temperature{%s})", ascendDeviceSelector(nodeName, deviceUUID))
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_temp{device_id=\"%s\"})", deviceUUID)
 	case biz.HygonHCUDevice:
@@ -1168,7 +1203,7 @@ func (s *MetricsGenerator) gpuTemperature(ctx context.Context, provider, deviceU
 	return s.queryRequiredInstantVal(ctx, query)
 }
 
-func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, deviceUUID string) (float32, error) {
+func (s *MetricsGenerator) memoryTemperature(ctx context.Context, nodeName, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -1176,7 +1211,7 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_memory_temperature{uuid=\"%s\",memory_die=\"\"})", deviceUUID)
 	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_hbm_temperature{vdie_id=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(npu_chip_info_hbm_temperature{%s})", ascendDeviceSelector(nodeName, deviceUUID))
 	case biz.HygonHCUDevice:
 		query = fmt.Sprintf("avg(hcu_temp_mem{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
@@ -1187,7 +1222,7 @@ func (s *MetricsGenerator) memoryTemperature(ctx context.Context, provider, devi
 	return s.queryRequiredInstantVal(ctx, query)
 }
 
-func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID string) (float32, error) {
+func (s *MetricsGenerator) gpuPower(ctx context.Context, nodeName, provider, deviceUUID string) (float32, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
@@ -1195,7 +1230,7 @@ func (s *MetricsGenerator) gpuPower(ctx context.Context, provider, deviceUUID st
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("avg(mlu_power_usage{uuid=\"%s\",vf=\"\"})", deviceUUID)
 	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("avg(npu_chip_info_power{vdie_id=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(npu_chip_info_power{%s})", ascendDeviceSelector(nodeName, deviceUUID))
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_power_usage{device_id=\"%s\"})", deviceUUID)
 	case biz.HygonHCUDevice:
@@ -1249,13 +1284,13 @@ type DeviceAdditionalInfo struct {
 	DeviceNo      string
 }
 
-func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, provider, deviceUUID string) (*DeviceAdditionalInfo, error) {
+func (s *MetricsGenerator) queryDeviceAdditional(ctx context.Context, nodeName, provider, deviceUUID string) (*DeviceAdditionalInfo, error) {
 	query := ""
 	switch provider {
 	case biz.NvidiaGPUDevice:
 		query = fmt.Sprintf("DCGM_FI_DEV_POWER_USAGE{UUID=\"%s\"}", deviceUUID)
 	case biz.AscendGPUDevice:
-		query = fmt.Sprintf("npu_chip_info_power{vdie_id=\"%s\"}", deviceUUID)
+		query = fmt.Sprintf("npu_chip_info_power{%s}", ascendDeviceSelector(nodeName, deviceUUID))
 	case biz.CambriconGPUDevice:
 		query = fmt.Sprintf("mlu_power_usage{uuid=\"%s\",vf=\"\"}", deviceUUID)
 	case biz.HygonGPUDevice:

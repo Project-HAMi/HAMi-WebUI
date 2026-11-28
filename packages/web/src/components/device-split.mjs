@@ -85,7 +85,7 @@ const fitting = (profiles, occupied) => profiles.map((profile) => {
 
 // MIG devices are drawn in the placement space the plugin registered, one
 // lane per set of instances that do not overlap.
-export const buildMigSplit = (device, holders, { truncated = false } = {}) => {
+export const buildMigSplit = (device, holders, { truncated = false, incomplete = false } = {}) => {
   const profiles = migProfiles(device);
   const registered = profiles.reduce((widest, profile) => profile.placements.reduce(
     (edge, placement) => Math.max(edge, placement.start + placement.size), widest,
@@ -106,7 +106,7 @@ export const buildMigSplit = (device, holders, { truncated = false } = {}) => {
     });
   const occupied = Array(slots).fill(false);
   blocks.forEach((block) => covers(block.placement).forEach((slot) => { occupied[slot] = true; }));
-  const completeProfiles = profiles.length > 0 && !truncated;
+  const completeProfiles = profiles.length > 0 && !truncated && !incomplete;
   const fits = completeProfiles ? fitting(profiles, occupied) : [];
   const usable = Array(slots).fill(false);
   fits.forEach((fit) => fit.open.forEach((placement) => covers(placement).forEach((slot) => { usable[slot] = true; })));
@@ -133,16 +133,16 @@ export const buildMigSplit = (device, holders, { truncated = false } = {}) => {
 };
 
 // Templates and whole cards are fixed parts of the device memory.
-export const buildMemorySplit = (device, holders, { truncated = false } = {}) => {
+export const buildMemorySplit = (device, holders, { truncated = false, incomplete = false } = {}) => {
   const total = positive(device.memoryTotal);
   const used = holders.reduce((sum, holder) => sum + holder.memoryMiB, 0);
   const scale = Math.max(total, used);
-  const freeKnown = !truncated && total > 0;
+  const freeKnown = !truncated && !incomplete && total > 0;
   return {
     kind: 'memory',
     total,
     used,
-    free: truncated ? 0 : Math.max(total - used, 0),
+    free: (truncated || incomplete) ? 0 : Math.max(total - used, 0),
     freeKnown,
     over: total ? Math.max(used - total, 0) : 0,
     truncated,
@@ -163,7 +163,7 @@ const meter = (total, parts) => {
 
 // HAMi-core shares the whole device: each holder has a memory and a compute
 // quota, and nothing is carved out.
-export const buildSharedSplit = (device, holders, { truncated = false } = {}) => ({
+export const buildSharedSplit = (device, holders, { truncated = false, incomplete = false } = {}) => ({
   kind: 'shared',
   memory: meter(positive(device.memoryTotal), holders.map((holder) => ({
     key: holder.key, value: holder.memoryMiB, current: holder.current,
@@ -175,6 +175,7 @@ export const buildSharedSplit = (device, holders, { truncated = false } = {}) =>
   holderCount: holders.length,
   limit: positive(device.vgpuTotal),
   truncated,
+  incomplete,
 });
 
 export const splitKind = (device, holders) => {
@@ -198,6 +199,14 @@ export const parseDeviceSplitPage = (result, pageSize = 100) => {
   return { items, totalContainers, truncated };
 };
 
+export const hasIncompleteOccupancy = (device = {}, holders = [], truncated = false) => Boolean(
+  truncated
+    || device.hasInitReservation === true
+    || device.nodeAllocationComplete === false
+    || positive(device.vgpuUsed) > holders.length
+    || (positive(device.memoryUsed) > 0 && holders.length === 0),
+);
+
 export const buildDeviceSplit = ({
   device = {},
   containers = [],
@@ -209,15 +218,17 @@ export const buildDeviceSplit = ({
   const hasKnownTotal = Number.isFinite(parsedTotal) && parsedTotal >= containers.length;
   const isTruncated = Boolean(truncated || (Number.isFinite(parsedTotal) && parsedTotal > containers.length));
   const holders = collectHolders(device, containers, highlight);
+  const incomplete = hasIncompleteOccupancy(device, holders, isTruncated);
   const kind = splitKind(device, holders);
   const split = {
     mig: buildMigSplit,
     shared: buildSharedSplit,
     memory: buildMemorySplit,
-  }[kind](device, holders, { truncated: isTruncated });
+  }[kind](device, holders, { truncated: isTruncated, incomplete });
   return {
     holders,
     ...split,
+    incomplete,
     truncated: isTruncated,
     totalContainers: hasKnownTotal ? parsedTotal : undefined,
   };

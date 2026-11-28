@@ -151,10 +151,17 @@ func (uc *PodUseCase) ListAll(ctx context.Context) ([]*Container, error) {
 	return uc.repo.ListAll(ctx)
 }
 
+// DeviceReservationKey scopes reservations to a specific node incarnation and
+// registered device alias so repeated aliases across nodes never bleed.
+type DeviceReservationKey struct {
+	NodeUID  string
+	DeviceID string
+}
+
 // AggregateDeviceReservations totals container allocations across all device
 // aliases in a single O(C) pass.
-func AggregateDeviceReservations(containers []*Container) map[string]DeviceReservation {
-	res := make(map[string]DeviceReservation)
+func AggregateDeviceReservations(containers []*Container) map[DeviceReservationKey]DeviceReservation {
+	res := make(map[DeviceReservationKey]DeviceReservation)
 	for _, ctr := range containers {
 		if ctr == nil {
 			continue
@@ -163,7 +170,8 @@ func AggregateDeviceReservations(containers []*Container) map[string]DeviceReser
 			if cd.UUID == "" {
 				continue
 			}
-			entry := res[cd.UUID]
+			key := DeviceReservationKey{NodeUID: ctr.NodeUID, DeviceID: cd.UUID}
+			entry := res[key]
 			entry.Slots++
 			entry.Cores += cd.Usedcores
 			entry.MemoryMiB += cd.Usedmem
@@ -171,7 +179,7 @@ func AggregateDeviceReservations(containers []*Container) map[string]DeviceReser
 				entry.CoreUnknown = true
 				entry.CoreUnknownCount++
 			}
-			res[cd.UUID] = entry
+			res[key] = entry
 		}
 	}
 	return res

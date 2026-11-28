@@ -26,6 +26,7 @@ test('a positive count does not establish support for an unknown mode or provide
     assert.equal(getAllocationSlotDisplay({ ...shared, vendor }), undefined);
   }
   assert.equal(getAllocationSlotDisplay({ ...shared, unconfigured: true }), undefined);
+  assert.equal(getAllocationSlotDisplay({ ...shared, nodeAllocationComplete: false }), undefined);
   assert.equal(getAllocationSlotDisplay(), undefined);
   assert.equal(getAllocationSlotDisplay(null), undefined);
 });

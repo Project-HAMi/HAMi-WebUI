@@ -59,7 +59,7 @@ func TestUnconfiguredDevicesAddNoSchedulableCapacity(t *testing.T) {
 		devices: []*biz.DeviceInfo{configured, stale},
 	}
 	// A Pod still holds the stale device after its model left the configuration.
-	podRepo := &containerTestPodRepo{containers: []*biz.Container{{Name: "stale", PodUID: "pod-9", Status: biz.ContainerStatusSuccess, ContainerDevices: biz.ContainerDevices{
+	podRepo := &containerTestPodRepo{containers: []*biz.Container{{Name: "stale", PodUID: "pod-9", NodeName: "node-a", NodeUID: "node-uid-a", Status: biz.ContainerStatusSuccess, ContainerDevices: biz.ContainerDevices{
 		{UUID: "B3-9", Type: "Ascend910B9", Usedmem: 16384, Usedcores: 100},
 	}}}}
 	nodeUsecase := biz.NewNodeUsecase(nodeRepo, log.DefaultLogger)
