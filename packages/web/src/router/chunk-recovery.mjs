@@ -1,3 +1,5 @@
+import { NavigationFailureType } from 'vue-router';
+
 export const CHUNK_RELOAD_STORAGE_KEY = 'hami-webui:chunk-reload';
 
 const CHUNK_ERROR_PATTERNS = [
@@ -89,16 +91,28 @@ export function installChunkRecovery(router, options = {}) {
     pendingTargetHref = resolveTargetHref(to);
   });
 
-  const stopAfterEach = router.afterEach((_to, _from, failure) => {
-    if (!failure && !reloading) {
+  const stopAfterEach = router.afterEach((to, _from, failure) => {
+    if (reloading) return;
+    if (!failure) {
       pendingTargetHref = '';
       clearStorageAttempt(win);
+      return;
+    }
+    if (
+      failure.type &&
+      ((failure.type & NavigationFailureType.duplicated) !== 0 ||
+        ((failure.type & NavigationFailureType.aborted) !== 0 &&
+          resolveTargetHref(to) === pendingTargetHref))
+    ) {
+      pendingTargetHref = '';
     }
   });
 
   const stopOnError = router.onError((error, to) => {
     if (!isChunkLoadError(error)) return;
-    attemptReload(resolveTargetHref(to));
+    const targetHref = resolveTargetHref(to);
+    if (!pendingTargetHref || targetHref !== pendingTargetHref) return;
+    attemptReload(targetHref);
   });
 
   const onPreloadError = (event) => {
@@ -106,8 +120,8 @@ export function installChunkRecovery(router, options = {}) {
       event?.preventDefault?.();
       return;
     }
-    const targetHref = pendingTargetHref || win.location.href;
-    if (attemptReload(targetHref)) {
+    if (!pendingTargetHref) return;
+    if (attemptReload(pendingTargetHref)) {
       event?.preventDefault?.();
     }
   };

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createMemoryHistory, createRouter } from 'vue-router';
 
 import {
   CHUNK_RELOAD_STORAGE_KEY,
@@ -251,4 +252,63 @@ test('dispose unregisters router hooks and window preload listener', () => {
   assert.equal(router.afterHooks.size, 0);
   assert.equal(router.errorHooks.size, 0);
   assert.equal(listeners.get('vite:preloadError')?.size, 0);
+});
+
+test('superseded navigation chunk 404 never pulls user back to abandoned route', async () => {
+  let rejectNodes;
+  let rejectWorkloads;
+  const router = createRouter({
+    history: createMemoryHistory('/gpu-ui/'),
+    routes: [
+      { path: '/overview', name: 'overview', component: { template: '<div>overview</div>' } },
+      { path: '/nodes', name: 'nodes', component: () => new Promise((_, reject) => { rejectNodes = reject; }) },
+      { path: '/workloads', name: 'workloads', component: { template: '<div>workloads</div>' } },
+      { path: '/accelerators', name: 'accelerators', component: () => new Promise((_, reject) => { rejectWorkloads = reject; }) },
+    ],
+  });
+
+  const { win, navigated } = createFakeWindow();
+  const dispose = installChunkRecovery(router, { win });
+
+  try {
+    await router.push('/overview');
+    await router.isReady();
+
+    // 1. Overview -> Nodes (pending) -> Overview (duplicated) -> late Nodes 404 must not reload to /nodes.
+    const nodesNav1 = router.push('/nodes').catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    await router.push('/overview');
+    rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
+    win.dispatchEvent({ type: 'vite:preloadError', preventDefault() {} });
+    await nodesNav1;
+    assert.deepEqual(navigated, []);
+    assert.equal(win.sessionStorage.getItem(CHUNK_RELOAD_STORAGE_KEY), null);
+    assert.equal(router.currentRoute.value.fullPath, '/overview');
+
+    // 2. Overview -> Nodes (pending) -> Workloads (committed) -> late Nodes 404 must not reload to /nodes.
+    const nodesNav2 = router.push('/nodes').catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    await router.push('/workloads');
+    rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
+    win.dispatchEvent({ type: 'vite:preloadError', preventDefault() {} });
+    await nodesNav2;
+    assert.deepEqual(navigated, []);
+    assert.equal(router.currentRoute.value.fullPath, '/workloads');
+
+    // 3. Workloads -> Nodes (pending) -> Accelerators (also pending) -> late Nodes onError must not reload to /nodes.
+    const nodesNav3 = router.push('/nodes').catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    const accelNav = router.push('/accelerators').catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
+    await nodesNav3;
+    assert.deepEqual(navigated, []);
+
+    // Clean up pending Accelerators promise after uninstalling.
+    dispose();
+    rejectWorkloads(new Error('cleanup'));
+    await accelNav;
+  } finally {
+    dispose();
+  }
 });
