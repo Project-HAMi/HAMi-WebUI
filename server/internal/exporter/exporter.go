@@ -852,8 +852,15 @@ func (s *MetricsGenerator) GenerateContainerMetrics(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return s.recordFatalError(err)
 			}
-			if (device.NodeUid != "" && c.NodeUID != "" && c.NodeUID != device.NodeUid) ||
-				(device.NodeName != "" && c.NodeName != "" && c.NodeName != device.NodeName) {
+			if device.NodeUid != "" {
+				if c.NodeUID != "" {
+					if c.NodeUID != device.NodeUid {
+						continue
+					}
+				} else if c.NodeName == "" || (device.NodeName != "" && c.NodeName != device.NodeName) {
+					continue
+				}
+			} else if device.NodeName != "" && c.NodeName != "" && c.NodeName != device.NodeName {
 				continue
 			}
 			var vGPU int32 = 0
@@ -960,7 +967,7 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\", exported_pod=\"\", exported_namespace=\"\", exported_container=\"\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -986,7 +993,7 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\", exported_pod=\"\", exported_namespace=\"\", exported_container=\"\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -1012,7 +1019,7 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\", exported_pod=\"\", exported_namespace=\"\", exported_container=\"\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}

@@ -163,7 +163,7 @@ const meter = (total, parts) => {
 
 // HAMi-core shares the whole device: each holder has a memory and a compute
 // quota, and nothing is carved out.
-export const buildSharedSplit = (device, holders, { truncated = false } = {}) => ({
+export const buildSharedSplit = (device, holders, { truncated = false, incomplete = false } = {}) => ({
   kind: 'shared',
   memory: meter(positive(device.memoryTotal), holders.map((holder) => ({
     key: holder.key, value: holder.memoryMiB, current: holder.current,
@@ -175,6 +175,7 @@ export const buildSharedSplit = (device, holders, { truncated = false } = {}) =>
   holderCount: holders.length,
   limit: positive(device.vgpuTotal),
   truncated,
+  incomplete,
 });
 
 export const splitKind = (device, holders) => {
@@ -223,6 +224,7 @@ export const buildDeviceSplit = ({
   return {
     holders,
     ...split,
+    incomplete,
     truncated: isTruncated,
     totalContainers: hasKnownTotal ? parsedTotal : undefined,
   };

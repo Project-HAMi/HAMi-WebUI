@@ -154,8 +154,12 @@ func (r *podRepo) onAddPod(obj interface{}) {
 
 func (r *podRepo) decodePodInfo(pod *corev1.Pod, node *corev1.Node, snapshot *devicecatalog.Snapshot) *biz.PodInfo {
 	pod = nvidia.AlignPodAllocation(pod, snapshot)
+	assignedNodeName := pod.Spec.NodeName
+	if assignedNodeName == "" {
+		assignedNodeName = pod.Annotations[util.AssignedNodeAnnotations]
+	}
 	nodeUID := ""
-	if node != nil && node.Name == pod.Spec.NodeName {
+	if node != nil && node.Name == assignedNodeName {
 		nodeUID = string(node.UID)
 	}
 	podDev, failures := util.DecodePodDevices(pod, r.log)
@@ -377,11 +381,15 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 			containerDevices = bizContainerDevices[deviceIdx]
 		}
 		cpuLimit, memoryLimit := containerResourceLimits(ctr.Resources.Limits)
+		nodeName := pod.Spec.NodeName
+		if nodeName == "" {
+			nodeName = pod.Annotations[util.AssignedNodeAnnotations]
+		}
 		c := &biz.Container{
 			Name:             ctr.Name,
 			UUID:             containerID,
 			ContainerIdx:     i,
-			NodeName:         pod.Spec.NodeName,
+			NodeName:         nodeName,
 			PodName:          pod.Name,
 			PodUID:           string(pod.UID),
 			Image:            ctr.Image,

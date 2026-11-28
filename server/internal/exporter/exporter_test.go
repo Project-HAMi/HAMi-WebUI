@@ -1773,10 +1773,14 @@ func TestAscendSensorQueriesAndContainerMetricsScopeByNode(t *testing.T) {
 		Name: "ctr", PodName: "pod-a", PodUID: "p-a", Namespace: "ml", NodeName: "node-a", NodeUID: "uid-a",
 		ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Vendor: biz.AscendGPUDevice, Usedmem: 4096, Usedcores: 50}},
 	}
+	ctrUnbound := &biz.Container{
+		Name: "ctr-unbound", PodName: "pod-unbound", PodUID: "p-u", Namespace: "ml",
+		ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Vendor: biz.AscendGPUDevice, Usedmem: 4096, Usedcores: 50}},
+	}
 	var seen []string
 	gen := &MetricsGenerator{
 		nodeUsecase: biz.NewNodeUsecase(&fakeNodeRepo{devices: []*biz.DeviceInfo{npuA, npuB}}, log.NewStdLogger(io.Discard)),
-		podUsecase:  biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{ctrA}}, log.NewStdLogger(io.Discard)),
+		podUsecase:  biz.NewPodUseCase(&fakePodRepo{containers: []*biz.Container{ctrA, ctrUnbound}}, log.NewStdLogger(io.Discard)),
 		monitorService: &fakeInstantQuerier{query: func(_ context.Context, req *pb.QueryInstantRequest) (*pb.InstantResponse, error) {
 			seen = append(seen, req.GetQuery())
 			return instantValue(50), nil
@@ -1801,4 +1805,10 @@ func TestAscendSensorQueriesAndContainerMetricsScopeByNode(t *testing.T) {
 		"pod_namespace": "ml", "container_pod_uuid": "ctr:p-a",
 	}
 	assertGaugeLabelsPresent(t, HamiContainerVgpuAllocated, labelsNodeB, false)
+	labelsUnboundOnA := map[string]string{
+		"node": "node-a", "provider": biz.AscendGPUDevice, "device_type": "Ascend910",
+		"device_uuid": "NPU-0", "pod_name": "pod-unbound", "container_name": "ctr-unbound",
+		"pod_namespace": "ml", "container_pod_uuid": "ctr-unbound:p-u",
+	}
+	assertGaugeLabelsPresent(t, HamiContainerVgpuAllocated, labelsUnboundOnA, false)
 }

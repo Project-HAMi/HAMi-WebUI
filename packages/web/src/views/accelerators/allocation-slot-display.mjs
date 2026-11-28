@@ -9,7 +9,8 @@ export const getAllocationSlotDisplay = (device = {}) => {
   // Partition profiles are not equal-sized shares; only show a verified sharing quota.
   if (!device || !['NVIDIA', 'Ascend'].includes(device.vendor)
     || device.mode !== 'hami-core'
-    || device.unconfigured) return undefined;
+    || device.unconfigured
+    || device.nodeAllocationComplete === false) return undefined;
 
   const used = readSlotCount(device.vgpuUsed);
   const limit = readSlotCount(device.vgpuTotal);

@@ -229,4 +229,11 @@ test('init reservations or incomplete node occupancy prevent advertising open MI
   assert.equal(memHidden.kind, 'memory');
   assert.equal(memHidden.freeKnown, false);
   assert.equal(memHidden.free, 0);
+
+  const sharedHidden = buildDeviceSplit({
+    device: { uuid: 'GPU-C', mode: 'hami-core', memoryTotal: 24000, coreTotal: 100, hasInitReservation: true },
+    containers: [container('p1', 'app', [{ id: 'GPU-C', allocationShape: 'soft', allocatedMem: 4000, allocatedCores: 25 }])],
+  });
+  assert.equal(sharedHidden.kind, 'shared');
+  assert.equal(sharedHidden.incomplete, true);
 });

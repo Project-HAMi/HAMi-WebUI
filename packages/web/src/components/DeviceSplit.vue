@@ -282,12 +282,13 @@ const swatchClass = (holder) => ({
 });
 
 const meters = computed(() => {
-  const { memory, compute, unlimited } = split.value;
+  const { memory, compute, unlimited, incomplete } = split.value;
   if (split.value.kind !== 'shared') return [];
+  const prefix = incomplete ? '≥ ' : '';
   const memoryValue = memory.total
-    ? `${memoryText(memory.used)} / ${memoryText(memory.total)}`
-    : joinParts([memoryText(memory.used), t('card.split.memoryUnknown')]);
-  const computeValue = [`${trimmed(compute.used)}% / ${trimmed(compute.total)}%`];
+    ? `${prefix}${memoryText(memory.used)} / ${memoryText(memory.total)}`
+    : joinParts([`${prefix}${memoryText(memory.used)}`, t('card.split.memoryUnknown')]);
+  const computeValue = [`${prefix}${trimmed(compute.used)}% / ${trimmed(compute.total)}%`];
   if (unlimited) computeValue.push(t('card.split.unlimitedCount', { count: unlimited }));
   return [
     { key: 'memory', name: t('card.split.memory'), meter: memory, value: memoryValue },
@@ -330,6 +331,11 @@ const summary = computed(() => {
         loaded: value.holders.length,
         total: value.totalContainers ?? `${value.holders.length}+`,
       }),
+      warning: true,
+    });
+  } else if (value.incomplete) {
+    parts.push({
+      text: t('card.split.incompleteNotice'),
       warning: true,
     });
   }

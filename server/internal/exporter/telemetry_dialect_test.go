@@ -375,11 +375,11 @@ func TestLegacyPhysicalFallbackScopedToUnobservedNativeMetaxAndNumericDCU(t *tes
 			t.Fatalf("unexpected blank DCU device_id query: %s", q)
 		}
 		switch q {
-		case `avg(mx_memory_used{uuid="mx-native-0", type="vram"})`:
+		case `avg(mx_memory_used{uuid="mx-native-0", type="vram", exported_pod="", exported_namespace="", exported_container=""})`:
 			return instantValue(2048 * bytesPerKiB), nil
-		case `avg(mx_memory_total{uuid="mx-native-0", type="vram"})`:
+		case `avg(mx_memory_total{uuid="mx-native-0", type="vram", exported_pod="", exported_namespace="", exported_container=""})`:
 			return instantValue(65536 * bytesPerKiB), nil
-		case `avg(mx_gpu_usage{uuid="mx-native-0"})`:
+		case `avg(mx_gpu_usage{uuid="mx-native-0", exported_pod="", exported_namespace="", exported_container=""})`:
 			return instantValue(40), nil
 		case `avg(dcu_usedmemory_bytes{device_id="legacy-serial"})`:
 			return instantValue(4096 * bytesPerMiB), nil

@@ -76,6 +76,10 @@ func TestNodeHoldersDuringNodeReplay(t *testing.T) {
 				if got.Reservations[card.UUID].MemoryMiB != 2048 || card.Shape != "soft" || card.CoreAllocationUnknown {
 					t.Fatalf("got %+v reservation=%+v, want 2048 MiB with soft allocation and known cores", card, got.Reservations[card.UUID])
 				}
+				listed, err := repo.ListAll(context.Background())
+				if err != nil || len(listed) != 1 || listed[0].NodeName != node.Name || listed[0].NodeUID != string(node.UID) {
+					t.Fatalf("ListAll() node attribution = (%+v, %v), want node=%s uid=%s", listed, err, node.Name, node.UID)
+				}
 			})
 		}
 	}

@@ -490,4 +490,38 @@ func TestGlobalAuditFixesForCardsAndReservations(t *testing.T) {
 	if !mluDetail.GetNodeAllocationComplete() {
 		t.Fatalf("MLU detail expected nodeAllocationComplete=true")
 	}
+
+	// P1 #3: transient NodeHolders cache wait must not fail getDevice with HTTP 500.
+	lagCardSvc := NewCardService(
+		nodeUC,
+		biz.NewPodUseCase(&transientNodeHoldersPodRepo{containers: []*biz.Container{
+			{Name: "ctr-a", PodUID: "pod-a", NodeName: "node-a", NodeUID: "uid-a", ContainerDevices: biz.ContainerDevices{{UUID: "NPU-0", Usedcores: 50, Usedmem: 4096}}},
+		}}, log.NewStdLogger(io.Discard)),
+		resourceview.WithObservations(
+			cardTestSnapshotSource{snap: resourceview.Snapshot{At: now}},
+			cardObsReader{mluObsID: {UtilizationRatio: q("0.37", "ratio")}},
+		),
+	)
+	lagDetail, err := lagCardSvc.getDevice(context.Background(), "MLU-0", "uid-a", true)
+	if err != nil {
+		t.Fatalf("getDevice() failed on transient NodeHolders lag: %v", err)
+	}
+	if lagDetail.NodeAllocationComplete == nil || *lagDetail.NodeAllocationComplete {
+		t.Fatalf("expected nodeAllocationComplete=false on NodeHolders fallback, got %v", lagDetail.NodeAllocationComplete)
+	}
+	if lagDetail.GetUtilizationRatio() != 0.37 {
+		t.Fatalf("expected telemetry preserved on fallback, got %v", lagDetail.GetUtilizationRatio())
+	}
+}
+
+type transientNodeHoldersPodRepo struct{ containers []*biz.Container }
+
+func (r *transientNodeHoldersPodRepo) NodeHolders(context.Context, string, string) (biz.NodeHolders, error) {
+	return biz.NodeHolders{}, os.ErrDeadlineExceeded
+}
+func (r *transientNodeHoldersPodRepo) ListAll(context.Context) ([]*biz.Container, error) {
+	return r.containers, nil
+}
+func (*transientNodeHoldersPodRepo) FindOne(context.Context, string, string) (*biz.Container, error) {
+	return nil, os.ErrNotExist
 }

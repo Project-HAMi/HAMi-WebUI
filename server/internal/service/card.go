@@ -205,20 +205,34 @@ func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, r
 	)
 	if device.AliasId != "" {
 		if device.NodeName != "" && device.NodeUid != "" {
-			holders, err := s.pod.NodeHolders(ctx, device.NodeName, device.NodeUid)
-			if err != nil {
-				return nil, err
-			}
-			res := holders.Reservations[device.AliasId]
-			vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
-			coreUnknownCount = res.CoreUnknownCount
-			coreKnown = !res.CoreUnknown
-			unreadable := holders.UnreadableDeviceIDs(devices, device.NodeName, device.NodeUid)
-			complete := !holders.UncertainDeviceIDs[device.AliasId] && !unreadable[device.Id]
-			nodeAllocationComplete = &complete
-			if res.HasInit {
-				hasInit := res.HasInit
-				hasInitReservation = &hasInit
+			if holders, err := s.pod.NodeHolders(ctx, device.NodeName, device.NodeUid); err == nil {
+				res := holders.Reservations[device.AliasId]
+				vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
+				coreUnknownCount = res.CoreUnknownCount
+				coreKnown = !res.CoreUnknown
+				unreadable := holders.UnreadableDeviceIDs(devices, device.NodeName, device.NodeUid)
+				complete := !holders.UncertainDeviceIDs[device.AliasId] && !unreadable[device.Id]
+				nodeAllocationComplete = &complete
+				if res.HasInit {
+					hasInit := res.HasInit
+					hasInitReservation = &hasInit
+				}
+			} else {
+				// Transient informer lag on another Pod must not fail device identity or telemetry;
+				// fall back to node-scoped ListAllContainers and mark allocations incomplete.
+				containers, listErr := s.pod.ListAllContainers(ctx)
+				if listErr != nil {
+					return nil, listErr
+				}
+				res := biz.AggregateDeviceReservations(containers)[biz.DeviceReservationKey{
+					NodeUID:  device.NodeUid,
+					DeviceID: device.AliasId,
+				}]
+				vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
+				coreUnknownCount = res.CoreUnknownCount
+				coreKnown = !res.CoreUnknown
+				complete := false
+				nodeAllocationComplete = &complete
 			}
 		} else {
 			containers, err := s.pod.ListAllContainers(ctx)
