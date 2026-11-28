@@ -199,6 +199,14 @@ export const parseDeviceSplitPage = (result, pageSize = 100) => {
   return { items, totalContainers, truncated };
 };
 
+export const hasIncompleteOccupancy = (device = {}, holders = [], truncated = false) => Boolean(
+  truncated
+    || device.hasInitReservation === true
+    || device.nodeAllocationComplete === false
+    || positive(device.vgpuUsed) > holders.length
+    || (positive(device.memoryUsed) > 0 && holders.length === 0),
+);
+
 export const buildDeviceSplit = ({
   device = {},
   containers = [],
@@ -210,11 +218,7 @@ export const buildDeviceSplit = ({
   const hasKnownTotal = Number.isFinite(parsedTotal) && parsedTotal >= containers.length;
   const isTruncated = Boolean(truncated || (Number.isFinite(parsedTotal) && parsedTotal > containers.length));
   const holders = collectHolders(device, containers, highlight);
-  const hiddenOccupancy = device.hasInitReservation === true
-    || device.nodeAllocationComplete === false
-    || positive(device.vgpuUsed) > holders.length
-    || (positive(device.memoryUsed) > 0 && holders.length === 0);
-  const incomplete = isTruncated || hiddenOccupancy;
+  const incomplete = hasIncompleteOccupancy(device, holders, isTruncated);
   const kind = splitKind(device, holders);
   const split = {
     mig: buildMigSplit,

@@ -154,12 +154,8 @@ func (r *podRepo) onAddPod(obj interface{}) {
 
 func (r *podRepo) decodePodInfo(pod *corev1.Pod, node *corev1.Node, snapshot *devicecatalog.Snapshot) *biz.PodInfo {
 	pod = nvidia.AlignPodAllocation(pod, snapshot)
-	assignedNodeName := pod.Spec.NodeName
-	if assignedNodeName == "" {
-		assignedNodeName = pod.Annotations[util.AssignedNodeAnnotations]
-	}
 	nodeUID := ""
-	if node != nil && node.Name == assignedNodeName {
+	if node != nil && node.Name == pod.Spec.NodeName {
 		nodeUID = string(node.UID)
 	}
 	podDev, failures := util.DecodePodDevices(pod, r.log)
@@ -381,15 +377,11 @@ func (r *podRepo) fetchContainerInfo(pod *corev1.Pod, pdevices biz.PodDevices, n
 			containerDevices = bizContainerDevices[deviceIdx]
 		}
 		cpuLimit, memoryLimit := containerResourceLimits(ctr.Resources.Limits)
-		nodeName := pod.Spec.NodeName
-		if nodeName == "" {
-			nodeName = pod.Annotations[util.AssignedNodeAnnotations]
-		}
 		c := &biz.Container{
 			Name:             ctr.Name,
 			UUID:             containerID,
 			ContainerIdx:     i,
-			NodeName:         nodeName,
+			NodeName:         pod.Spec.NodeName,
 			PodName:          pod.Name,
 			PodUID:           string(pod.UID),
 			Image:            ctr.Image,
@@ -487,11 +479,25 @@ func (r *podRepo) GetStartTime(pod *corev1.Pod) time.Time {
 func (r *podRepo) ListAll(context.Context) ([]*biz.Container, error) {
 	snapshot := r.ascend.Snapshot()
 	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	var containerList []*biz.Container
+	pods := make([]*biz.PodInfo, 0, len(r.pods))
 	for _, pod := range r.pods {
+		pods = append(pods, pod)
+	}
+	r.mutex.RUnlock()
+	var containerList []*biz.Container
+	for _, pod := range pods {
+		var factNodeUID string
+		if r.facts != nil {
+			factNodeUID = string(r.facts.NodeAssignment(pod.UID).UID)
+		}
 		for _, container := range pod.Ctrs {
-			containerList = append(containerList, r.interpretContainer(snapshot, container))
+			item := r.interpretContainer(snapshot, container)
+			if item.NodeUID == "" && factNodeUID != "" {
+				copied := *item
+				copied.NodeUID = factNodeUID
+				item = &copied
+			}
+			containerList = append(containerList, item)
 		}
 	}
 	return containerList, nil

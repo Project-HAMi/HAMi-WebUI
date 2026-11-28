@@ -72,7 +72,7 @@
           </div>
         </div>
 
-        <div v-else-if="showChart && split.kind === 'shared' && (split.holders.length || !showHolders)" class="split-meters">
+        <div v-else-if="showChart && split.kind === 'shared' && (split.holders.length || split.incomplete || !showHolders)" class="split-meters">
           <div v-for="row in meters" :key="row.key" class="split-meter">
             <span class="split-meter__name">{{ row.name }}</span>
             <div class="split-meter__track" :class="{ 'is-unlimited': row.unlimited }" aria-hidden="true">
@@ -157,7 +157,7 @@
           </span>
         </li>
       </ul>
-      <p v-else-if="showHolders" class="device-split__empty">{{ $t('card.split.empty') }}</p>
+      <p v-else-if="showHolders && !split.incomplete" class="device-split__empty">{{ $t('card.split.empty') }}</p>
     </template>
     <footer v-if="$slots.footer" class="device-split__footer"><slot name="footer" /></footer>
   </section>
@@ -168,7 +168,7 @@ import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import EllipsisText from '@/components/EllipsisText.vue';
-import { buildDeviceSplit, collectHolders, splitKind } from './device-split.mjs';
+import { buildDeviceSplit, collectHolders, hasIncompleteOccupancy, splitKind } from './device-split.mjs';
 import { getSplitIcon, getSplitModeKey } from './split-mode.mjs';
 import VendorMark from './VendorMark.vue';
 import MetricHelp from './MetricHelp.vue';
@@ -197,7 +197,12 @@ const active = ref('');
 const split = computed(() => {
   if (!props.showChart && !props.showSummary) {
     const holders = collectHolders(props.device, props.containers, props.highlight);
-    return { holders, kind: splitKind(props.device, holders), truncated: props.truncated };
+    return {
+      holders,
+      kind: splitKind(props.device, holders),
+      truncated: props.truncated,
+      incomplete: hasIncompleteOccupancy(props.device, holders, props.truncated),
+    };
   }
   return buildDeviceSplit({
     device: props.device,

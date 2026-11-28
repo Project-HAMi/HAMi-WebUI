@@ -236,4 +236,12 @@ test('init reservations or incomplete node occupancy prevent advertising open MI
   });
   assert.equal(sharedHidden.kind, 'shared');
   assert.equal(sharedHidden.incomplete, true);
+
+  const sharedInitOnly = buildDeviceSplit({
+    device: { uuid: 'GPU-C', mode: 'hami-core', memoryTotal: 24000, coreTotal: 100, hasInitReservation: true, vgpuUsed: 1 },
+    containers: [],
+  });
+  assert.equal(sharedInitOnly.kind, 'shared');
+  assert.equal(sharedInitOnly.holders.length, 0);
+  assert.equal(sharedInitOnly.incomplete, true);
 });

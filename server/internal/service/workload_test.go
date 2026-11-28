@@ -491,3 +491,21 @@ func TestGetWorkloadRankingsAggregatesClusterTop5(t *testing.T) {
 		t.Fatalf("ByVgpu = %+v", reply.ByVgpu)
 	}
 }
+
+func TestMergeWorkloadsKeepsPreBindPendingRowWithVerifiedNodeUID(t *testing.T) {
+	prebind := workloadTestContainer("pending-pod", biz.ContainerStatusWaiting)
+	prebind.NodeName = ""
+	prebind.NodeUID = "node-a-uid"
+	pending := workloadTestPending("pending-pod", workloadTestRequest("main", "regular", "1"))
+	pending.Stage = "filtering"
+	pending.Preallocated = true
+
+	result, err := workloadTestService([]*biz.Container{prebind}, pending).ListWorkloads(context.Background(), &pb.ListWorkloadsRequest{})
+	if err != nil || len(result.Items) != 1 {
+		t.Fatalf("ListWorkloads() = (%+v, %v), want 1 item", result, err)
+	}
+	row := result.Items[0]
+	if !row.Pending || row.NodeName != "" || row.Scheduling == nil || row.Request == nil {
+		t.Fatalf("pre-bind workload row = %+v, want Pending=true, empty NodeName, non-nil Scheduling and Request", row)
+	}
+}

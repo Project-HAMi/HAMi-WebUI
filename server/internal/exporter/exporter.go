@@ -10,8 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	pb "vgpu/api/v1"
 	viewv1 "vgpu/api/observability/v1"
+	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
 	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
@@ -121,10 +121,10 @@ type MetricsGenerator struct {
 
 	now func() time.Time
 
-	resourceSource    resourceview.SnapshotSource
-	telemetryDialects []provider.TelemetryDialect
-	batchTimeout      time.Duration
-	splitCounts       [len(batchSplitReasons)]atomic.Uint64
+	resourceSource           resourceview.SnapshotSource
+	telemetryDialects        []provider.TelemetryDialect
+	batchTimeout             time.Duration
+	splitCounts              [len(batchSplitReasons)]atomic.Uint64
 	observationsMu           sync.RWMutex
 	resourceSnapshot         *resourceview.Snapshot
 	physicalGroups           []resourceview.PhysicalGroup
@@ -967,7 +967,8 @@ func (s *MetricsGenerator) deviceMemUsed(ctx context.Context, provider, deviceUU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_usedmemory_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\", exported_pod=\"\", exported_namespace=\"\", exported_container=\"\"})", deviceUUID)
+		// mxExporter attaches exported_* labels onto physical card series while a Pod holds the card.
+		query = fmt.Sprintf("avg(mx_memory_used{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -993,7 +994,7 @@ func (s *MetricsGenerator) deviceMemTotal(ctx context.Context, provider, deviceU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_memorycap_bytes{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\", exported_pod=\"\", exported_namespace=\"\", exported_container=\"\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mx_memory_total{uuid=\"%s\", type=\"vram\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
@@ -1019,7 +1020,7 @@ func (s *MetricsGenerator) deviceCoreUtil(ctx context.Context, provider, deviceU
 	case biz.HygonGPUDevice:
 		query = fmt.Sprintf("avg(dcu_utilizationrate{device_id=\"%s\"})", deviceUUID)
 	case biz.MetaxGPUDevice, metax.MetaxGPUDevice:
-		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\", exported_pod=\"\", exported_namespace=\"\", exported_container=\"\"})", deviceUUID)
+		query = fmt.Sprintf("avg(mx_gpu_usage{uuid=\"%s\"})", deviceUUID)
 	default:
 		return 0, fmt.Errorf("%w: %q", errTelemetryUnsupported, provider)
 	}
