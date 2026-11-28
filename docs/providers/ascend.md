@@ -25,7 +25,7 @@ ConfigMap through a Role in HAMi's namespace, so installing the Chart requires
 permission to create Roles there. WebUI watches the ConfigMap and applies edits
 without a restart; HAMi's scheduler reads it only at startup. Setting
 `enabled: false` removes the Role, and template compute shares then show as
-unknown. `GET /api/vgpu/v1/device-config` returns what WebUI read: its state,
+unknown. `GET /api/v1/device-config` returns what WebUI read: its state,
 the Ascend models and templates, and any problems found in the file.
 
 | State | Meaning |
