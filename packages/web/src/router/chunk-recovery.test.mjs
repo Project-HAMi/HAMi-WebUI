@@ -150,28 +150,6 @@ test('router.onError triggers a single recovery reload to resolved basePath URL 
   disposeSecond();
 });
 
-test('vite:preloadError reloads toward pending route target, prevents default, and deduplicates onError', () => {
-  const { win, navigated } = createFakeWindow();
-  const router = createFakeRouter('/gpu-ui/');
-  const dispose = installChunkRecovery(router, { win });
-  const target = { fullPath: '/accelerators' };
-
-  router.emitBeforeEach(target);
-  let defaultPrevented = false;
-  win.dispatchEvent({
-    type: 'vite:preloadError',
-    preventDefault() {
-      defaultPrevented = true;
-    },
-  });
-  // Router onError firing for the same failed dynamic import must not double-navigate.
-  router.emitError(new TypeError('Failed to fetch dynamically imported module'), target);
-
-  assert.equal(defaultPrevented, true);
-  assert.deepEqual(navigated, ['https://webui.example/gpu-ui/accelerators']);
-  dispose();
-});
-
 test('successful afterEach clears reload guard, while failed afterEach preserves it', () => {
   const { win, navigated } = createFakeWindow();
   const router = createFakeRouter('/gpu-ui/');
@@ -224,34 +202,24 @@ test('blocked sessionStorage in sandboxed iframe fails closed without throwing o
 
   router.emitBeforeEach({ fullPath: '/nodes' });
   router.emitError(new TypeError('Failed to fetch dynamically imported module'), { fullPath: '/nodes' });
-  let defaultPrevented = false;
-  win.dispatchEvent({
-    type: 'vite:preloadError',
-    preventDefault() {
-      defaultPrevented = true;
-    },
-  });
 
   assert.deepEqual(navigated, []);
-  assert.equal(defaultPrevented, false);
   dispose();
 });
 
-test('dispose unregisters router hooks and window preload listener', () => {
-  const { win, listeners } = createFakeWindow();
+test('dispose unregisters router hooks', () => {
+  const { win } = createFakeWindow();
   const router = createFakeRouter('/gpu-ui/');
   const dispose = installChunkRecovery(router, { win });
 
   assert.equal(router.beforeHooks.size, 1);
   assert.equal(router.afterHooks.size, 1);
   assert.equal(router.errorHooks.size, 1);
-  assert.equal(listeners.get('vite:preloadError')?.size, 1);
 
   dispose();
   assert.equal(router.beforeHooks.size, 0);
   assert.equal(router.afterHooks.size, 0);
   assert.equal(router.errorHooks.size, 0);
-  assert.equal(listeners.get('vite:preloadError')?.size, 0);
 });
 
 test('superseded navigation chunk 404 never pulls user back to abandoned route', async () => {
@@ -263,7 +231,8 @@ test('superseded navigation chunk 404 never pulls user back to abandoned route',
       { path: '/overview', name: 'overview', component: { template: '<div>overview</div>' } },
       { path: '/nodes', name: 'nodes', component: () => new Promise((_, reject) => { rejectNodes = reject; }) },
       { path: '/workloads', name: 'workloads', component: { template: '<div>workloads</div>' } },
-      { path: '/accelerators', name: 'accelerators', component: () => new Promise((_, reject) => { rejectWorkloads = reject; }) },
+      { path: '/accelerators', name: 'accelerators', component: { template: '<div>accelerators</div>' } },
+      { path: '/slow-accelerators', name: 'slow-accelerators', component: () => new Promise((_, reject) => { rejectWorkloads = reject; }) },
     ],
   });
 
@@ -279,7 +248,6 @@ test('superseded navigation chunk 404 never pulls user back to abandoned route',
     await new Promise((r) => setTimeout(r, 10));
     await router.push('/overview');
     rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
-    win.dispatchEvent({ type: 'vite:preloadError', preventDefault() {} });
     await nodesNav1;
     assert.deepEqual(navigated, []);
     assert.equal(win.sessionStorage.getItem(CHUNK_RELOAD_STORAGE_KEY), null);
@@ -290,24 +258,31 @@ test('superseded navigation chunk 404 never pulls user back to abandoned route',
     await new Promise((r) => setTimeout(r, 10));
     await router.push('/workloads');
     rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
-    win.dispatchEvent({ type: 'vite:preloadError', preventDefault() {} });
     await nodesNav2;
     assert.deepEqual(navigated, []);
     assert.equal(router.currentRoute.value.fullPath, '/workloads');
 
-    // 3. Workloads -> Nodes (pending) -> Accelerators (also pending) -> late Nodes onError must not reload to /nodes.
+    // 3. Workloads -> Nodes (pending) -> same-tick Accelerators push + synchronous Nodes 404 (Window B) -> 0 reloads.
     const nodesNav3 = router.push('/nodes').catch(() => {});
     await new Promise((r) => setTimeout(r, 10));
-    const accelNav = router.push('/accelerators').catch(() => {});
+    const accelNav = router.push('/accelerators');
+    rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
+    await Promise.all([nodesNav3, accelNav]);
+    assert.deepEqual(navigated, []);
+    assert.equal(router.currentRoute.value.fullPath, '/accelerators');
+
+    // 4. Accelerators -> Nodes (pending) -> slow-accelerators (also pending) -> late Nodes 404 must not reload to /nodes.
+    const nodesNav4 = router.push('/nodes').catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    const slowNav = router.push('/slow-accelerators').catch(() => {});
     await new Promise((r) => setTimeout(r, 10));
     rejectNodes(new TypeError('Failed to fetch dynamically imported module: /gpu-ui/static/Nodes.js'));
-    await nodesNav3;
+    await nodesNav4;
     assert.deepEqual(navigated, []);
 
-    // Clean up pending Accelerators promise after uninstalling.
     dispose();
     rejectWorkloads(new Error('cleanup'));
-    await accelNav;
+    await slowNav;
   } finally {
     dispose();
   }

@@ -115,27 +115,9 @@ export function installChunkRecovery(router, options = {}) {
     attemptReload(targetHref);
   });
 
-  const onPreloadError = (event) => {
-    if (reloading) {
-      event?.preventDefault?.();
-      return;
-    }
-    if (!pendingTargetHref) return;
-    if (attemptReload(pendingTargetHref)) {
-      event?.preventDefault?.();
-    }
-  };
-
-  if (typeof win.addEventListener === 'function') {
-    win.addEventListener('vite:preloadError', onPreloadError);
-  }
-
   return () => {
     stopBeforeEach?.();
     stopAfterEach?.();
     stopOnError?.();
-    if (typeof win.removeEventListener === 'function') {
-      win.removeEventListener('vite:preloadError', onPreloadError);
-    }
   };
 }
