@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/model"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/api/resource"
 
@@ -117,24 +118,84 @@ func (f *sequenceFacts) Snapshot(context.Context) (resourceview.Snapshot, error)
 func TestInterruptedInventoryIsRetriedAndIncompleteBatchWithdrawn(t *testing.T) {
 	at := time.Now()
 	partial := resourceview.Snapshot{At: at, NodeCoverage: &viewv1.Coverage{Sources: []*viewv1.SourceState{{State: resourceview.Unknown, Params: map[string]string{"continuity": "source_changed_during_snapshot"}}}}}
-	good := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 0)}
-	f := &sequenceFacts{available: []resourceview.Snapshot{partial, good, partial, partial}}
-	g := &MetricsGenerator{resourceSource: f, now: func() time.Time { return at }}
-	if err := g.refreshResourceSnapshot(context.Background(), nil); err != nil || f.reads != 2 || g.resourceSnapshot == nil {
-		t.Fatal("did not recover from local retry", err)
-	}
-	if err := g.refreshResourceSnapshot(context.Background(), nil); err == nil || f.reads != 4 || g.resourceSnapshot != nil {
-		t.Fatal("republished unstable inventory", err)
-	}
-	// A disconnected watch continues serving old informer objects. A fresh
-	// assembly time must not turn those objects back into live inventory.
-	f.available = append(f.available, resourceview.Snapshot{At: at.Add(time.Minute), NodeCoverage: &viewv1.Coverage{
+	pending := resourceview.Snapshot{At: at, NodeCoverage: &viewv1.Coverage{Sources: []*viewv1.SourceState{{State: resourceview.Unknown, Params: map[string]string{"continuity": "consumer_pending_or_changed"}}}}}
+	relisting := resourceview.Snapshot{At: at, NodeCoverage: &viewv1.Coverage{Sources: []*viewv1.SourceState{{State: resourceview.Unknown, Params: map[string]string{"continuity": "relisting"}}}}}
+	watchClosed := resourceview.Snapshot{At: at, NodeCoverage: &viewv1.Coverage{
 		Entity: "node", Sources: []*viewv1.SourceState{{Source: "shared_node_informer", State: resourceview.Unknown, Reason: "unverified", Params: map[string]string{"continuity": "watch_closed"}}},
-	}})
-	g.resourceSnapshot = &good
-	if err := g.refreshResourceSnapshot(context.Background(), nil); err == nil || f.reads != 5 || g.resourceSnapshot != nil {
-		t.Fatal("lost watch published an apparently fresh inventory", err)
+	}}
+	good := resourceview.Snapshot{At: at, NodeCoverage: completeCoverage("node", "shared_node_informer", 0)}
+	allocTransient := resourceview.Snapshot{
+		At:           at,
+		NodeCoverage: completeCoverage("node", "shared_node_informer", 0),
+		Devices: []resourceview.Device{{
+			Identity:           resourceview.DeviceIdentity{Node: "n", NodeUID: "u", Provider: "NVIDIA", DeviceID: "0"},
+			Kind:               "physical",
+			States:             map[string]*viewv1.FieldState{"kind": {State: resourceview.Known}},
+			AllocationCoverage: &viewv1.Coverage{Sources: []*viewv1.SourceState{{State: resourceview.Unknown, Params: map[string]string{"continuity": "source_changed_during_snapshot"}}}},
+		}},
 	}
+
+	// 1. Transient node churn/handshake/relist states recover within retry budget.
+	f := &sequenceFacts{available: []resourceview.Snapshot{pending, partial, relisting, good}}
+	g := &MetricsGenerator{resourceSource: f, now: func() time.Time { return at }}
+	if err := g.refreshResourceSnapshot(context.Background(), nil); err != nil || f.reads != 4 || g.resourceSnapshot == nil {
+		t.Fatalf("did not recover from transient retry: reads=%d err=%v snap=%v", f.reads, err, g.resourceSnapshot)
+	}
+
+	// 2. Transient Pod AllocationCoverage interruption triggers retry even when NodeCoverage is complete.
+	f = &sequenceFacts{available: []resourceview.Snapshot{allocTransient, good}}
+	g.resourceSource = f
+	if err := g.refreshResourceSnapshot(context.Background(), nil); err != nil || f.reads != 2 || g.resourceSnapshot == nil {
+		t.Fatalf("did not recover Pod allocation transient continuity: reads=%d err=%v", f.reads, err)
+	}
+
+	// 3. Tight exporter timeout during allocation-only retry preserves healthy physical inventory.
+	tightCtx, tightCancel := context.WithTimeout(context.Background(), snapshotRetryDelay*2)
+	defer tightCancel()
+	noopQuery := func(context.Context, string, time.Time) (model.Value, error) { return model.Vector{}, nil }
+	f = &sequenceFacts{available: []resourceview.Snapshot{allocTransient, allocTransient}}
+	g.resourceSource = f
+	if err := g.refreshResourceSnapshot(tightCtx, noopQuery); err != nil || f.reads != 1 || g.resourceSnapshot == nil {
+		t.Fatalf("allocation-only tight deadline cleared healthy physical inventory: reads=%d err=%v snap=%v", f.reads, err, g.resourceSnapshot)
+	}
+
+	// 3b. Persistent allocation-only churn caps retries cleanly and preserves healthy physical inventory.
+	f = &sequenceFacts{available: []resourceview.Snapshot{allocTransient, allocTransient, allocTransient, allocTransient}}
+	g.resourceSource = f
+	if err := g.refreshResourceSnapshot(context.Background(), noopQuery); err != nil || f.reads != allocSnapshotRetryAttempts+1 || g.resourceSnapshot == nil {
+		t.Fatalf("allocation-only retry budget unexpected: reads=%d err=%v snap=%v", f.reads, err, g.resourceSnapshot)
+	}
+
+	// 4. Persistent transient continuity exhausts retries and withdraws stale inventory.
+	persistent := make([]resourceview.Snapshot, snapshotRetryAttempts+1)
+	for i := range persistent {
+		persistent[i] = pending
+	}
+	f = &sequenceFacts{available: persistent}
+	g.resourceSource = f
+	if err := g.refreshResourceSnapshot(context.Background(), nil); err == nil || f.reads != len(persistent) || g.resourceSnapshot != nil {
+		t.Fatalf("republished persistently unstable inventory: reads=%d err=%v snap=%v", f.reads, err, g.resourceSnapshot)
+	}
+
+	// 5. Disconnected watch (watch_closed) withdraws immediately even if a device carries alloc transient state.
+	f = &sequenceFacts{available: []resourceview.Snapshot{{
+		At:           at.Add(time.Minute),
+		NodeCoverage: watchClosed.NodeCoverage,
+		Devices: []resourceview.Device{{
+			Identity:           resourceview.DeviceIdentity{Node: "n", NodeUID: "u", Provider: "NVIDIA", DeviceID: "0"},
+			Kind:               "physical",
+			States:             map[string]*viewv1.FieldState{"kind": {State: resourceview.Known}},
+			AllocationCoverage: &viewv1.Coverage{Sources: []*viewv1.SourceState{{State: resourceview.Unknown, Params: map[string]string{"continuity": "dependent_fact_replay_pending"}}}},
+		}},
+	}}}
+	g.resourceSource = f
+	g.resourceSnapshot = &good
+	if err := g.refreshResourceSnapshot(context.Background(), nil); err == nil || f.reads != 1 || g.resourceSnapshot != nil {
+		t.Fatalf("lost watch published an apparently fresh inventory: reads=%d err=%v snap=%v", f.reads, err, g.resourceSnapshot)
+	}
+
+	// 6. Direct snapshot source error withdraws immediately.
+	g.resourceSource = &sequenceFacts{}
 	g.resourceSnapshot = &good
 	if err := g.refreshResourceSnapshot(context.Background(), nil); err == nil || g.resourceSnapshot != nil {
 		t.Fatal("cache outage republished earlier allocation")
