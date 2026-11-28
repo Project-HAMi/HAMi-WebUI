@@ -48,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -63,33 +64,6 @@ jobs:
         run: make install-deps
       - name: Generate, build, vet, and test
         run: make verify
-
-  lint:
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: server/.go-version
-          cache-dependency-path: server/go.sum
-      - name: Install checksum-verified protoc
-        run: |
-          bash hack/install-protoc.sh "${RUNNER_TEMP}/protoc"
-          echo "${RUNNER_TEMP}/protoc/bin" >>"${GITHUB_PATH}"
-      - name: Install codegen tools (wire / kratos / protoc-gen-*)
-        run: make install-deps
-      - name: Generate proto + wire
-        run: make generate
-      - name: Verify module metadata
-        run: make verify-mod
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
@@ -126,7 +100,6 @@ jobs:
     needs:
       - changes
       - build-test
-      - lint
       - protoc-arm64
     if: always()
     steps:
@@ -142,7 +115,6 @@ jobs:
           fi
           for result in \
             "${{ needs.build-test.result }}" \
-            "${{ needs.lint.result }}" \
             "${{ needs.protoc-arm64.result }}"; do
             if [[ "${result}" != "success" ]]; then
               echo "Go checks did not complete successfully: ${result}"

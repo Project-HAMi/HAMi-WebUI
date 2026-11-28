@@ -71,7 +71,6 @@ FROM frontend-runtime AS frontend
 FROM go-base AS unified-builder
 
 ARG BUILDARCH
-ARG TARGETARCH
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
 ARG UNZIP_VERSION=6.0-28
 
@@ -96,11 +95,13 @@ COPY server/go.mod server/go.sum ./
 RUN go mod download
 
 COPY server/ ./
+RUN make generate verify-mod
+
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/go/pkg/mod \
-    make generate verify-mod build-linux TARGET_ARCH=${TARGETARCH} DIRS=hami-webui VERSION="${VERSION}" COMMIT="${COMMIT}"
+    make build-linux TARGET_ARCH=${TARGETARCH} DIRS=hami-webui VERSION="${VERSION}" COMMIT="${COMMIT}"
 
 FROM scratch AS unified
 
