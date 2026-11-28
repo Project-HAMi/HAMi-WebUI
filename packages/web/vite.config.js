@@ -55,7 +55,6 @@ export default defineConfig(() => {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
         '@brand': fileURLToPath(new URL('../../brand/svg', import.meta.url)),
-        '~': fileURLToPath(new URL('./projects', import.meta.url)),
       },
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']
     },

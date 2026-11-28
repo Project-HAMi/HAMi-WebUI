@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
-import { parseDeviceSplitPage } from '../projects/vgpu/components/device-split.mjs';
-import { readOverviewInventory } from '../projects/vgpu/api/overview-inventory.mjs';
-import { classifyDetailPayload } from '../projects/vgpu/hooks/detail-resource-state.mjs';
+import { parseDeviceSplitPage } from '../src/components/device-split.mjs';
+import { readOverviewInventory } from '../src/api/overview-inventory.mjs';
+import { classifyDetailPayload } from '../src/hooks/detail-resource-state.mjs';
 import { REQUEST_STATUS } from '../src/hooks/request-state.mjs';
 
 const goldensDir = resolve(new URL('../../../test/contracts/http-goldens', import.meta.url).pathname);
