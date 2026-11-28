@@ -22,6 +22,8 @@ help:
 		'  make verify                 Run all frontend and Web-entry checks' \
 		'  make build-image            Build the application image' \
 		'' \
+		'Backend Go checks: make -C server verify' \
+		'' \
 		'Use PLATFORM=linux/amd64 (or linux/arm64) for an explicit image platform.'
 
 .PHONY: bootstrap

@@ -34,6 +34,7 @@ help:
 		'  make bootstrap        Install pinned Go code generators' \
 		'  make run              Generate code and start the backend' \
 		'  make test             Generate code and run all Go tests' \
+		'  make test-race        Generate code and run Go tests with -race' \
 		'  make vet              Generate code and run go vet' \
 		'  make verify           Generate, build, vet, and test all Go packages' \
 		'  make build            Generate and build Linux commands for TARGET_ARCH' \
@@ -134,6 +135,11 @@ run: generate
 test: generate
 	$(MAKE) verify-mod
 	go test -mod=readonly ./...
+
+.PHONY: test-race
+test-race: generate
+	$(MAKE) verify-mod
+	go test -race -mod=readonly ./...
 
 .PHONY: vet
 vet: generate
