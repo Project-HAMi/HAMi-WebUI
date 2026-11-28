@@ -1,7 +1,6 @@
 <template>
   <div class="page">
     <aside
-      v-if="!isNoSidebar"
       :style="{ width: sidebarWidth + 'px' }"
       class="page-aside"
     >
@@ -11,17 +10,14 @@
       />
     </aside>
     <main class="page-main">
-      <AppMain :show-language-switch="isNoSidebar" />
+      <AppMain />
     </main>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue';
-import { useRoute } from 'vue-router';
 import { AppMain, Sidebar } from './components';
-
-const route = useRoute();
 
 const expandedWidth = 200;
 const collapsedWidth = 72;
@@ -34,15 +30,6 @@ const sidebarWidth = computed(() =>
 const toggleSidebar = () => {
   isSidebarCollapsed.value = !isSidebarCollapsed.value;
 };
-
-const noSidebarPaths = [
-  '/admin/home',
-  '/admin/message-center',
-  '/admin/about-system',
-  '/admin/settings/config-map',
-];
-
-const isNoSidebar = computed(() => noSidebarPaths.includes(route.fullPath));
 </script>
 
 <style lang="scss" scoped>

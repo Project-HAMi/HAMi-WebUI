@@ -1,7 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import { pick, uniqBy } from 'lodash';
 import { getBasePath } from '@/utils/base-path.mjs';
-import { safeStorage } from '@/utils/safe-storage.mjs';
 /* Layout */
 import Layout from '@/layout';
 
@@ -42,17 +40,6 @@ const legacyRoutes = [
  */
 
 export const constantRoutes = [
-  {
-    path: '/redirect',
-    component: Layout,
-    hidden: true,
-    children: [
-      {
-        path: '/redirect/:path(.*)',
-        component: () => import('@/views/redirect/index'),
-      },
-    ],
-  },
   {
     path: '/',
     component: Layout,
@@ -118,19 +105,6 @@ router.beforeEach((to) => {
   if (to.name === 'accelerators' && to.query.scope === 'physical') {
     return { path: to.path, query: { ...to.query, scope: undefined }, hash: to.hash, replace: true };
   }
-});
-
-router.afterEach((to) => {
-  const stored = safeStorage.getJson('route-history', []);
-  const history = Array.isArray(stored) ? [...stored] : [];
-  if (to.path !== '/home') {
-    history.unshift(to);
-  }
-  const newData = uniqBy(history, 'path')
-    .slice(0, 7)
-    .map((item) => pick(item, ['path', 'meta']));
-
-  safeStorage.setJson('route-history', newData);
 });
 
 export default router;

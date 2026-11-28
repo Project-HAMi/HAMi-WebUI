@@ -72,7 +72,7 @@
 import { computed, nextTick, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import AboutPanel from '@/components/AboutPanel.vue';
-import Logo from '@/layout/components/TopBar/logo.vue';
+import Logo from './logo.vue';
 import LangSelect from '@/components/LangSelect/index.vue';
 
 defineProps({

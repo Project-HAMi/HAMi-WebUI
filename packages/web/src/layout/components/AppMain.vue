@@ -1,8 +1,5 @@
 <template>
   <div id="content">
-    <div v-if="showLanguageSwitch" class="content-header-row">
-      <LangSelect />
-    </div>
     <div class="content-main-card">
       <div ref="contentBody" class="content-body">
         <router-view />
@@ -14,11 +11,6 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import LangSelect from '@/components/LangSelect/index.vue';
-
-defineProps({
-  showLanguageSwitch: { type: Boolean, default: false },
-});
 
 const contentBody = ref(null);
 const route = useRoute();
@@ -34,20 +26,6 @@ watch(() => route.path, () => contentBody.value?.scrollTo(0, 0), { flush: 'post'
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.content-header-row {
-  flex-shrink: 0;
-  min-height: 0;
-  margin-bottom: 4px;
-  padding: 0 4px 4px 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  background: transparent;
-  border-radius: 0;
-  border: none;
-  box-shadow: none;
 }
 
 .content-main-card {
