@@ -4,5 +4,6 @@ export const formatOptionalTelemetry = (value, unit) => {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return '--';
 
-  return `${numericValue} ${unit}`;
+  const rounded = Number(numericValue.toFixed(1));
+  return `${rounded === 0 ? 0 : rounded} ${unit}`;
 };

@@ -9,6 +9,7 @@ import (
 	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 
 	pb "vgpu/api/v1"
 	"vgpu/internal/resourceview"
@@ -23,6 +24,7 @@ func (s *NodeService) inventoryNodeRows(ctx context.Context, uid string, filters
 	}
 	inv := makeInventory(snapshot)
 	nodes, coverage := inv.nodeRows(uid, observeNodeAllocation)
+	addUnresolvedDeviceMetadata(nodes, snapshot.Devices)
 	reply := &pb.NodesReply{InventoryCoverage: coverage}
 	filtered := filters.GetIp() != "" || filters.GetType() != "" || filters.GetIsSchedulable() != ""
 	if filtered {
@@ -78,6 +80,42 @@ func canonicalNodeProvider(provider string) string {
 		return "Hygon"
 	default:
 		return trimmed
+	}
+}
+
+// Surface registered model and provider metadata from unresolved devices (e.g.
+// Ascend910C npu_module registrations) without altering physical card counts.
+func addUnresolvedDeviceMetadata(nodes []inventoryNode, devices []resourceview.Device) {
+	if len(nodes) == 0 || len(devices) == 0 {
+		return
+	}
+	byUID := make(map[types.UID]*inventoryNode, len(nodes))
+	for i := range nodes {
+		byUID[nodes[i].fact.UID] = &nodes[i]
+	}
+	for _, d := range devices {
+		if d.Kind == "physical" && d.States["kind"].GetState() == resourceview.Known {
+			continue
+		}
+		if d.ParentIdentity != nil && d.States["parentId"].GetState() == resourceview.Known {
+			continue
+		}
+		n := byUID[d.Identity.NodeUID]
+		if n == nil || d.Identity.Node != n.fact.Name {
+			continue
+		}
+		if d.Model != "" && d.States["model"].GetState() == resourceview.Known {
+			if n.models == nil {
+				n.models = make(map[string]struct{})
+			}
+			n.models[d.Model] = struct{}{}
+		}
+		if provider := canonicalNodeProvider(d.Identity.Provider); provider != "" {
+			if n.providers == nil {
+				n.providers = make(map[string]struct{})
+			}
+			n.providers[provider] = struct{}{}
+		}
 	}
 }
 

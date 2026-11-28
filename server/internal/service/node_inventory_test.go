@@ -280,6 +280,72 @@ func TestNodeInventoryUsageAndProviders(t *testing.T) {
 	}
 }
 
+func TestNodeInventoryUnresolvedDeviceMetadata(t *testing.T) {
+	node := testNode("ascend-910c-000", proto.Bool(true))
+	node.DeviceCoverage = &view.Coverage{Entity: "device", Complete: false}
+
+	module := testCard(node, "Ascend", "C-0", "", "Ascend910C")
+	module.Kind = "unknown"
+	module.UUID = nil
+	module.States["kind"] = &view.FieldState{State: resourceview.Unknown, Source: "node_registration", Scope: "device", Reason: "unverified"}
+	module.States["model"] = &view.FieldState{State: resourceview.Known, Source: "node_registration", Scope: "device"}
+
+	unverifiedModel := testCard(node, "Ascend", "C-1", "", "UnverifiedModel")
+	unverifiedModel.Kind = "unknown"
+	unverifiedModel.UUID = nil
+	unverifiedModel.States["kind"] = &view.FieldState{State: resourceview.Unknown}
+	unverifiedModel.States["model"] = &view.FieldState{State: resourceview.Unknown}
+
+	childInstance := testCard(node, "Other", "I-0", "", "ChildInstance")
+	childInstance.Kind = "instance"
+	parent := module.Identity
+	childInstance.ParentIdentity = &parent
+	childInstance.States["kind"] = &view.FieldState{State: resourceview.Known}
+	childInstance.States["parentId"] = &view.FieldState{State: resourceview.Known}
+	childInstance.States["model"] = &view.FieldState{State: resourceview.Known}
+
+	src := overviewSource{
+		Nodes:        []resourceview.Node{node},
+		Devices:      []resourceview.Device{module, unverifiedModel, childInstance},
+		NodeCoverage: &view.Coverage{Entity: "node", Complete: true},
+	}
+	ctx := context.Background()
+	nodes := &NodeService{source: &src}
+
+	all, err := nodes.GetAllNodes(ctx, &pb.GetAllNodesReq{UseResourceInventory: true})
+	if err != nil || len(all.List) != 1 {
+		t.Fatalf("GetAllNodes = %v, err = %v", all, err)
+	}
+	row := all.List[0]
+	if row.CardCnt != nil || row.InventoryCoverage == nil || row.InventoryCoverage.GetComplete() {
+		t.Fatalf("expected uncounted unresolved device coverage, got CardCnt=%v coverage=%v", row.CardCnt, row.InventoryCoverage)
+	}
+	if len(row.Type) != 1 || row.Type[0] != "Ascend910C" {
+		t.Fatalf("Type = %v, want [Ascend910C]", row.Type)
+	}
+	if len(row.Providers) != 1 || row.Providers[0] != "Ascend" {
+		t.Fatalf("Providers = %v, want [Ascend]", row.Providers)
+	}
+
+	detail, err := nodes.GetNode(ctx, &pb.GetNodeReq{Uid: string(node.UID), UseResourceInventory: true})
+	if err != nil || !proto.Equal(row, detail) {
+		t.Fatalf("GetNode = %v, err = %v, want %v", detail, err, row)
+	}
+
+	filtered, err := nodes.GetAllNodes(ctx, &pb.GetAllNodesReq{
+		UseResourceInventory: true,
+		Filters:              &pb.GetAllNodesReq_Filters{Type: "Ascend910C"},
+	})
+	if err != nil || len(filtered.List) != 1 || filtered.List[0].Uid != row.Uid {
+		t.Fatalf("filtered by Ascend910C = %v, err = %v", filtered, err)
+	}
+
+	overview, err := (&OverviewService{source: &src}).GetInventory(ctx, &view.InventoryRequest{})
+	if err != nil || len(overview.Nodes) != 1 || overview.Nodes[0].PhysicalDevices != nil || len(overview.Devices) != 0 {
+		t.Fatalf("overview leaked unresolved physical devices: %v, err = %v", overview, err)
+	}
+}
+
 func BenchmarkInventoryNodeList(b *testing.B) {
 	for _, n := range []int{501, 10000} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {

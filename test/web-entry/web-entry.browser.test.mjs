@@ -2855,6 +2855,25 @@ test('detail pages expose truthful asynchronous resource states', async(t) => {
       await page.close()
     }
   })
+
+  await t.test('detail page header separator adapts to locale', async() => {
+    const page = await browser.newPage({ locale: 'en-US' })
+    try {
+      await page.goto(
+        `${target}${basePath}accelerators/gpu-metric-old`,
+        { waitUntil: 'domcontentloaded' }
+      )
+      const title = page.locator('.layout-title')
+      await title.filter({ hasText: ': gpu-metric-old' }).waitFor()
+      assert.equal((await title.textContent())?.includes('\uff1a'), false)
+
+      await page.getByRole('button', { name: '中文', exact: true }).click()
+      await page.locator('html[lang="zh-CN"]').waitFor()
+      await title.filter({ hasText: '\uff1agpu-metric-old' }).waitFor()
+    } finally {
+      await page.close()
+    }
+  })
 }, { timeout: 90_000 })
 
 test('ECharts runtime renders, updates and handles interaction in Chromium', async() => {
