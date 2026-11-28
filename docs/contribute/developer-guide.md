@@ -73,20 +73,27 @@ The backend reads the active kubeconfig context and
 development cluster you are authorized to inspect and configure a reachable
 Prometheus address before starting it.
 
-Generate the API code and start the backend from the repository root:
+Build the SPA assets, generate the Go API code, and launch `hami-webui` from the
+repository root:
 
 ```bash
-make -C server run
+make build
+make -C server generate
+(cd server && go run ./cmd/hami-webui --conf ./config/config.yaml --static-dir ../public --listen-address 127.0.0.1:8080)
 ```
 
-Swagger is available at `http://localhost:8000/q/swagger-ui`.
+`cmd/hami-webui` defaults `--listen-address` to `:3000` (for standalone use
+without Vite) and serves `/metrics` and `/readyz` on `:8000` (from
+`server/config/config.yaml`). Passing `127.0.0.1:8080` leaves `:3000` free for
+the Vite development server.
 
 ### Frontend development
 
-Start the backend first, then run `make dev` in the repository root. This starts
-the Vite development server; NestJS is not part of the browser development
-path. Vite forwards `/api/vgpu/v1/*` to `http://127.0.0.1:8000` and removes the
-`/api/vgpu` prefix.
+Start the backend on `127.0.0.1:8080`, then run `make dev` in the repository
+root. This starts the Vite development server; NestJS is not part of the browser
+development path. Vite forwards `/api/v1/*` directly to
+`HAMI_WEBUI_BACKEND_URL` (default `http://127.0.0.1:8080`) without stripping a
+prefix.
 
 Open `http://localhost:3000/`. Set `HAMI_WEBUI_BACKEND_URL` when the backend
 uses another origin:
@@ -113,11 +120,11 @@ contract:
 
 ```bash
 make build build-web-entry
-server/build/web-entry --static-dir ./public
+server/build/web-entry --static-dir ./public --backend-url http://127.0.0.1:8080
 ```
 
-The backend must be available at `http://127.0.0.1:8000` for API requests in
-this standalone mode.
+The backend API listener must be available at `--backend-url` for `/api/v1/*`
+requests in this standalone mode.
 
 ### Detail page sections
 
@@ -151,9 +158,9 @@ implementation-specific command. The image runs as a numeric non-root user and
 is verified on amd64 and arm64 with a read-only root filesystem.
 
 The public listener exposes the SPA and only the versioned HAMi Web API below
-`/api/vgpu/v1/*`. Backend-only `/metrics`, `/readyz`, and `/q` endpoints remain
-on port `8000` for internal diagnostics and scraping. The browser API calls the
-backend handler directly in-process; there is no loopback reverse proxy.
+`/api/v1/*`. Internal `/metrics` and `/readyz` endpoints remain on port `8000`
+for readiness probes and Prometheus scraping. The browser API calls the backend
+handler directly in-process; there is no loopback reverse proxy.
 
 The unified application accepts these optional environment variables:
 

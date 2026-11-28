@@ -153,6 +153,20 @@ Do not copy these Chart 1.x settings:
 - `frontend.proxyTimeout`, `backend.grpc`, or `service.legacyBackendPort`, which
   no longer apply to the in-process API and single-container Service topology.
 
+HAMi-WebUI 2.0 also removes legacy dual-port and duplicate API prefixes:
+
+- External callers must target `/api/v1/*` (or `<frontend.basePath>api/v1/*`)
+  on port `3000`. The legacy `/api/vgpu/v1/*`, unprefixed `/v1/*`, and `/q/`
+  OpenAPI/Swagger routes, as well as the standalone `cmd/server` binary, are
+  removed in 2.0.
+- Port `8000` serves only `/readyz` and `/metrics` for probes and Prometheus
+  scraping; business API endpoints are no longer exposed on `:8000`.
+- All `hami_*` Prometheus metric names and labels (aside from the
+  `hami_device_hardware_health` -> `hami_device_last_xid_error_code` rename
+  below), `/readyz`, `/health_check`, `frontend.basePath`,
+  `frontend.frameAncestors`, and `/admin/vgpu/*` SPA route redirects remain
+  preserved.
+
 Chart 2 also renames the NVIDIA device metric
 `hami_device_hardware_health` to `hami_device_last_xid_error_code`. The value
 has always been the raw `DCGM_FI_DEV_XID_ERRORS` code: `0` means that no XID
@@ -451,17 +465,16 @@ Chart 2 runs the SPA, browser API, metrics collector, and Kubernetes providers
 in one Go process and one container. The process keeps two listeners:
 
 - port `3000` is exposed by the primary Service and is the supported browser
-  entry for the SPA and `/api/vgpu/v1/*`;
+  entry for the SPA and `/api/v1/*`;
 - port `8000` is exposed only through the generated internal `*-backend`
-  ClusterIP Service for `/readyz`, `/metrics`, and diagnostics.
+  ClusterIP Service and serves strictly `/readyz` and `/metrics`.
 
-The port `8000` listener also contains implementation-level API and Swagger
-routes. It is not a public compatibility contract or an authorization boundary.
-The primary Service no longer exposes it, and Chart 2 removes
+Port `8000` does not serve application API or Swagger routes in 2.0. The
+primary Service never exposes port `8000`, and Chart 2 removes
 `service.legacyBackendPort`.
 
-For local diagnostics, forward the internal Service instead of changing the
-primary Service type:
+For local diagnostics against `/metrics` or `/readyz`, forward the internal
+Service instead of changing the primary Service type:
 
 ```bash
 kubectl port-forward service/my-hami-webui-backend 8000:8000 --namespace=kube-system
@@ -479,6 +492,19 @@ Custom ServiceMonitors that still select the primary Service—whether by
 `component: hami-webui` or only the common name and instance labels—and port
 `metrics` must move to `component: backend` and port `backend-http`; otherwise
 they no longer find a target in Chart 2.
+
+### Resource sizing
+
+HAMi-WebUI strips bulky unused Pod and Node metadata in its shared informer
+caches and publishes immutable indexed snapshots for lock-free lookups. Treat
+these `resources` tiers as starting points based on total watched Pods across
+all namespaces and tune from observed peak CPU and memory:
+
+| Cluster size | Watched Pods (cluster-wide) | Starting `resources` |
+| --- | --- | --- |
+| Small (default) | `< 1,000` Pods | `cpu: 250m`, `memory: 750Mi` |
+| Medium | `1,000 - 5,000` Pods | `cpu: 500m`, `memory: 1Gi` |
+| Large | `5,000 - 10,000` Pods | `cpu: 1000m`, `memory: 2Gi` |
 
 ### Serve from a URL prefix or embed in a platform
 

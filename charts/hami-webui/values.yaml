@@ -91,6 +91,7 @@ ingress:
   #    hosts:
   #      - chart-example.local
 
+# Default starting budget targets clusters with fewer than 1,000 watched Pods; see docs/installation/helm/index.md#resource-sizing.
 resources:
   limits:
     cpu: 250m

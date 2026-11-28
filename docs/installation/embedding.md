@@ -34,9 +34,10 @@ ingress:
 ```
 
 The official Go application accepts `/hami/`, its SPA deep links, static assets,
-and `/hami/api/vgpu/v1/*`. The unprefixed `/health_check` endpoint remains
-available for Kubernetes probes. HAMi-WebUI deliberately does not trust
-`X-Forwarded-Prefix`; configure a non-stripping proxy instead.
+and `/hami/api/v1/*` (for example, `GET /hami/api/v1/nodes`). The unprefixed
+`/health_check` endpoint remains available for Kubernetes probes. HAMi-WebUI
+deliberately does not trust `X-Forwarded-Prefix`; configure a non-stripping
+proxy instead.
 
 For Helm installs, use `frontend.basePath` and `frontend.frameAncestors`
 directly. The Chart reserves their generated `HAMI_WEBUI_*` environment
