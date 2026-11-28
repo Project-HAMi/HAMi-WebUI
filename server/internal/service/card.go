@@ -3,29 +3,37 @@ package service
 import (
 	"context"
 	"slices"
-
-	kratoserrors "github.com/go-kratos/kratos/v2/errors"
 	"sort"
 	"strings"
+
+	kratoserrors "github.com/go-kratos/kratos/v2/errors"
+	"k8s.io/apimachinery/pkg/types"
+
 	pb "vgpu/api/v1"
 	"vgpu/internal/biz"
+	"vgpu/internal/provider/metax"
 	"vgpu/internal/resourceview"
 )
 
 type CardService struct {
 	pb.UnimplementedCardServer
 
-	node   *biz.NodeUsecase
-	pod    *biz.PodUseCase
-	source resourceview.SnapshotSource
+	node      *biz.NodeUsecase
+	pod       *biz.PodUseCase
+	source    resourceview.SnapshotSource
+	obsReader resourceview.ObservationReader
 }
 
 func NewCardService(node *biz.NodeUsecase, pod *biz.PodUseCase, source *resourceview.ObservedSnapshotSource) *CardService {
-	var snapSource resourceview.SnapshotSource
+	var (
+		snapSource resourceview.SnapshotSource
+		obsReader  resourceview.ObservationReader
+	)
 	if source != nil {
 		snapSource = source
+		obsReader = source.Reader
 	}
-	return &CardService{node: node, pod: pod, source: snapSource}
+	return &CardService{node: node, pod: pod, source: snapSource, obsReader: obsReader}
 }
 
 func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*pb.GPUsReply, error) {
@@ -41,7 +49,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 	// Fetch the container list once. StatisticsByDeviceId re-lists all containers
 	// on every call, so calling it per device turned this into an O(devices)
 	// re-scan; at large scale (100+ cards) that alone was seconds of work.
-	var reservations map[string]biz.DeviceReservation
+	var reservations map[biz.DeviceReservationKey]biz.DeviceReservation
 	var scoped *biz.NodeHolders
 	var unreadable map[string]bool
 	if filters.NodeUid != "" {
@@ -96,6 +104,10 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 		gpu.Unconfigured = device.Unconfigured
 		gpu.Vendor = device.Provider
 		gpu.MigProfiles = migProfiles(device.MigProfiles)
+		if device.RegistrationID != "" && device.RegistrationID != device.Id {
+			regID := device.RegistrationID
+			gpu.RegistrationId = &regID
+		}
 
 		var coreKnown bool
 		if scoped != nil {
@@ -106,7 +118,7 @@ func (s *CardService) GetAllGPUs(ctx context.Context, req *pb.GetAllGpusReq) (*p
 				gpu.HasInitReservation = &reservation.HasInit
 			}
 		} else {
-			reservation := reservations[device.AliasId]
+			reservation := reservations[biz.DeviceReservationKey{NodeUID: device.NodeUid, DeviceID: device.AliasId}]
 			gpu.VgpuUsed, gpu.CoreUsed, gpu.MemoryUsed = reservation.Slots, reservation.Cores, reservation.MemoryMiB
 			coreKnown = !reservation.CoreUnknown
 		}
@@ -188,46 +200,66 @@ func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, r
 	var (
 		vGPU, core, memory, coreUnknownCount int32
 		coreKnown                            bool
+		nodeAllocationComplete               *bool
+		hasInitReservation                   *bool
 	)
-	containers, err := s.pod.ListAllContainers(ctx)
-	if err != nil {
-		return nil, err
-	}
 	if device.AliasId != "" {
-		scoped := containers
-		if nodeUID != "" {
-			scoped = make([]*biz.Container, 0, len(containers))
-			for _, c := range containers {
-				if c.NodeUID == device.NodeUid {
-					scoped = append(scoped, c)
-				}
+		if device.NodeName != "" && device.NodeUid != "" {
+			holders, err := s.pod.NodeHolders(ctx, device.NodeName, device.NodeUid)
+			if err != nil {
+				return nil, err
 			}
+			res := holders.Reservations[device.AliasId]
+			vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
+			coreUnknownCount = res.CoreUnknownCount
+			coreKnown = !res.CoreUnknown
+			unreadable := holders.UnreadableDeviceIDs(devices, device.NodeName, device.NodeUid)
+			complete := !holders.UncertainDeviceIDs[device.AliasId] && !unreadable[device.Id]
+			nodeAllocationComplete = &complete
+			if res.HasInit {
+				hasInit := res.HasInit
+				hasInitReservation = &hasInit
+			}
+		} else {
+			containers, err := s.pod.ListAllContainers(ctx)
+			if err != nil {
+				return nil, err
+			}
+			res := biz.AggregateDeviceReservations(containers)[biz.DeviceReservationKey{
+				NodeUID:  device.NodeUid,
+				DeviceID: device.AliasId,
+			}]
+			vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
+			coreUnknownCount = res.CoreUnknownCount
+			coreKnown = !res.CoreUnknown
 		}
-		res := biz.AggregateDeviceReservations(scoped)[device.AliasId]
-		vGPU, core, memory = res.Slots, res.Cores, res.MemoryMiB
-		coreUnknownCount = res.CoreUnknownCount
-		coreKnown = !res.CoreUnknown
 	}
 	telemetryDeviceID, obs, hasObs := s.devicePhysicalSnapshot(ctx, device)
 	reply := &pb.GPUReply{
-		Uuid:              device.Id,
-		NodeName:          device.NodeName,
-		Type:              device.Type,
-		VgpuTotal:         device.Count,
-		CoreTotal:         biz.PhysicalCoreBaselinePerDevice,
-		MemoryTotal:       device.Devmem,
-		NodeUid:           device.NodeUid,
-		Health:            device.Health,
-		Mode:              device.Mode,
-		Unconfigured:      device.Unconfigured,
-		Vendor:            device.Provider,
-		MigProfiles:       migProfiles(device.MigProfiles),
-		VgpuUsed:          vGPU,
-		CoreUsed:          core,
-		CoreUsedKnown:     &coreKnown,
-		CoreUnknownCount:  &coreUnknownCount,
-		MemoryUsed:        memory,
-		TelemetryDeviceId: telemetryDeviceID,
+		Uuid:                   device.Id,
+		NodeName:               device.NodeName,
+		Type:                   device.Type,
+		VgpuTotal:              device.Count,
+		CoreTotal:              biz.PhysicalCoreBaselinePerDevice,
+		MemoryTotal:            device.Devmem,
+		NodeUid:                device.NodeUid,
+		Health:                 device.Health,
+		Mode:                   device.Mode,
+		Unconfigured:           device.Unconfigured,
+		Vendor:                 device.Provider,
+		MigProfiles:            migProfiles(device.MigProfiles),
+		NodeAllocationComplete: nodeAllocationComplete,
+		HasInitReservation:     hasInitReservation,
+		VgpuUsed:               vGPU,
+		CoreUsed:               core,
+		CoreUsedKnown:          &coreKnown,
+		CoreUnknownCount:       &coreUnknownCount,
+		MemoryUsed:             memory,
+		TelemetryDeviceId:      telemetryDeviceID,
+	}
+	if device.RegistrationID != "" && device.RegistrationID != device.Id {
+		regID := device.RegistrationID
+		reply.RegistrationId = &regID
 	}
 	if hasObs {
 		if util, ok := obs.UtilizationRatio.KnownValue(); ok {
@@ -258,40 +290,66 @@ func (s *CardService) getDevice(ctx context.Context, deviceID, nodeUID string, r
 }
 
 func (s *CardService) devicePhysicalSnapshot(ctx context.Context, device *biz.DeviceInfo) (string, resourceview.DeviceObservation, bool) {
-	if s == nil || s.source == nil || device == nil {
+	if s == nil || device == nil {
 		return "", resourceview.DeviceObservation{}, false
 	}
-	snapshot, err := s.source.Snapshot(ctx)
-	if err != nil {
-		return "", resourceview.DeviceObservation{}, false
-	}
-	inv := resourceview.GroupPhysicalDevices(snapshot)
-	for _, group := range inv.Groups {
-		if string(group.NodeUID) != device.NodeUid || len(group.Members) == 0 {
-			continue
-		}
-		for _, member := range group.Members {
-			if member.Identity.Node != device.NodeName || member.Identity.Provider != device.Provider {
-				continue
-			}
-			if member.Identity.DeviceID == device.Id || (device.AliasId != "" && (member.Identity.DeviceID == device.AliasId || slices.Contains(member.BindingAliases, device.AliasId))) {
-				first := group.Members[0].Identity
-				telemetryID, err := resourceview.DeviceID(first.Provider, first.Node, first.DeviceID)
-				if err != nil {
-					telemetryID = ""
+	if s.source != nil {
+		snapshot, err := s.source.Snapshot(ctx)
+		if err == nil {
+			inv := resourceview.GroupPhysicalDevices(snapshot)
+			for _, group := range inv.Groups {
+				if string(group.NodeUID) != device.NodeUid || len(group.Members) == 0 {
+					continue
 				}
-				obs := group.Observation(func(d resourceview.Device) resourceview.DeviceObservation {
-					return resourceview.DeviceObservation{
-						UtilizationRatio:    d.UtilizationRatio,
-						MemoryUsedBytes:     d.MemoryUsedBytes,
-						MemoryPhysicalBytes: d.MemoryPhysicalBytes,
-						TemperatureCelsius:  d.TemperatureCelsius,
-						PowerWatts:          d.PowerWatts,
-						MigMemoryUsedBytes:  d.MigMemoryUsedBytes,
-						MigMemoryTotalBytes: d.MigMemoryTotalBytes,
+				for _, member := range group.Members {
+					if member.Identity.Node != device.NodeName || member.Identity.Provider != device.Provider {
+						continue
 					}
-				})
-				return telemetryID, obs, true
+					if member.Identity.DeviceID == device.Id || (device.AliasId != "" && (member.Identity.DeviceID == device.AliasId || slices.Contains(member.BindingAliases, device.AliasId))) {
+						first := group.Members[0].Identity
+						telemetryID, err := resourceview.DeviceID(first.Provider, first.Node, first.DeviceID)
+						if err != nil {
+							telemetryID = ""
+						}
+						obs := group.Observation(func(d resourceview.Device) resourceview.DeviceObservation {
+							return resourceview.DeviceObservation{
+								UtilizationRatio:    d.UtilizationRatio,
+								MemoryUsedBytes:     d.MemoryUsedBytes,
+								MemoryPhysicalBytes: d.MemoryPhysicalBytes,
+								TemperatureCelsius:  d.TemperatureCelsius,
+								PowerWatts:          d.PowerWatts,
+								MigMemoryUsedBytes:  d.MigMemoryUsedBytes,
+								MigMemoryTotalBytes: d.MigMemoryTotalBytes,
+							}
+						})
+						return telemetryID, obs, true
+					}
+				}
+			}
+		}
+	}
+	// Devices omitted from PhysicalInventory (e.g. Cambricon SMLU or native MetaX)
+	// still publish identity-scoped telemetry into ObservationReader.
+	if s.obsReader != nil && device.NodeUid != "" {
+		observations := s.obsReader.DeviceObservations()
+		if len(observations) > 0 {
+			providerName := device.Provider
+			if providerName == metax.MetaxSGPUDevice {
+				providerName = biz.MetaxGPUDevice
+			}
+			uid := types.UID(device.NodeUid)
+			for _, candidateID := range []string{device.Id, device.AliasId} {
+				if candidateID == "" {
+					continue
+				}
+				if obs, ok := observations[resourceview.DeviceIdentity{
+					Provider: providerName,
+					Node:     device.NodeName,
+					NodeUID:  uid,
+					DeviceID: candidateID,
+				}]; ok {
+					return "", obs, true
+				}
 			}
 		}
 	}

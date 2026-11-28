@@ -204,3 +204,29 @@ test('parseDeviceSplitPage validates shape and marks full pages truncated when t
     { items: fullPage, totalContainers: undefined, truncated: true },
   );
 });
+
+test('init reservations or incomplete node occupancy prevent advertising open MIG slots or free memory', () => {
+  const migInit = buildDeviceSplit({
+    device: { ...a100, vgpuUsed: 1, hasInitReservation: true },
+    containers: [],
+  });
+  assert.equal(migInit.kind, 'mig');
+  assert.equal(migInit.fits, undefined);
+  assert.ok(migInit.cells.every((cell) => cell.state === 'unknown'));
+
+  const migIncomplete = buildDeviceSplit({
+    device: { ...a100, vgpuUsed: 1, nodeAllocationComplete: false },
+    containers: [container('p1', 'train', [mig('GPU-A', '1g.5gb', 0, 1)])],
+  });
+  assert.equal(migIncomplete.fits, undefined);
+  assert.equal(migIncomplete.cells[0].state, 'used');
+  assert.ok(migIncomplete.cells.slice(1).every((cell) => cell.state === 'unknown'));
+
+  const memHidden = buildDeviceSplit({
+    device: { uuid: 'B3-0', mode: 'template', memoryTotal: 65536, vgpuUsed: 1, memoryUsed: 16384 },
+    containers: [],
+  });
+  assert.equal(memHidden.kind, 'memory');
+  assert.equal(memHidden.freeKnown, false);
+  assert.equal(memHidden.free, 0);
+});

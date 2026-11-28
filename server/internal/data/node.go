@@ -120,10 +120,11 @@ func (r *nodeRepo) updateLocalNodes() {
 				}
 				for _, device := range devices {
 					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
-						Index:        int(device.Index),
-						Id:           device.ID,
-						AliasId:      device.AliasId,
-						Count:        device.Count,
+						Index:          int(device.Index),
+						Id:             device.ID,
+						AliasId:        device.AliasId,
+						RegistrationID: device.RegistrationID,
+						Count:          device.Count,
 						Devmem:       device.Devmem,
 						Devcore:      device.Devcore,
 						Type:         device.Type,

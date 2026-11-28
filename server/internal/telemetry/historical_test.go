@@ -163,8 +163,8 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 			t.Fatalf("device query missing optional node_uid filter: %s", q)
 		}
 	}
-	if seenQueries[4] != `avg(hami_device_temperature{node="worker-1",device_uuid="dev-1"})` ||
-		seenQueries[5] != `avg(hami_device_power{node="worker-1",device_uuid="dev-1"})` {
+	if seenQueries[4] != `avg(hami_device_temperature{node="worker-1",provider="hami-nvidia",device_uuid="dev-1"})` ||
+		seenQueries[5] != `avg(hami_device_power{node="worker-1",provider="hami-nvidia",device_uuid="dev-1"})` {
 		t.Fatalf("device sensor queries = %v", seenQueries[4:])
 	}
 
@@ -193,8 +193,8 @@ func TestHistoricalReaderBuildsSafeNamedPromQLQueries(t *testing.T) {
 		t.Fatalf("HCU device trends failed: %v", err)
 	}
 	if len(seenQueries) != 6 ||
-		seenQueries[4] != `avg(hami_device_temperature{node="worker-1",device_uuid="serial-01"})` ||
-		seenQueries[5] != `avg(hami_device_power{node="worker-1",device_uuid="serial-01"})` {
+		seenQueries[4] != `avg(hami_device_temperature{node="worker-1",provider="HCU",device_uuid="serial-01"})` ||
+		seenQueries[5] != `avg(hami_device_power{node="worker-1",provider="HCU",device_uuid="serial-01"})` {
 		t.Fatalf("HCU device sensor queries = %v", seenQueries)
 	}
 

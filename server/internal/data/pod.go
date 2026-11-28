@@ -560,7 +560,10 @@ func (r *podRepo) NodeHolders(_ context.Context, name, uid string) (biz.NodeHold
 				total.Slots++
 				total.MemoryMiB += d.Usedmem
 				total.Cores += d.Usedcores
-				total.CoreUnknown = total.CoreUnknown || d.CoreAllocationUnknown
+				if d.CoreAllocationUnknown {
+					total.CoreUnknown = true
+					total.CoreUnknownCount++
+				}
 				result.Reservations[d.UUID] = total
 			}
 		}
@@ -625,6 +628,7 @@ func addInitReservations(h *biz.NodeHolders, ids map[string]bool, allocation pod
 		total.MemoryMiB += int32(memory.Value.Value() / (1 << 20))
 		if cores.Value == nil || cores.Unit != "percent" {
 			total.CoreUnknown = true
+			total.CoreUnknownCount++
 		} else {
 			// Device details report whole percentages, including for fractional Ascend templates.
 			total.Cores += int32(math.Round(cores.Value.AsApproximateFloat64()))

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 	pb "vgpu/api/v1"
@@ -34,7 +35,15 @@ func NewMonitorService(
 	}
 }
 
+const (
+	maxRangePointsPerSeries int64 = 11000
+	maxRangeTotalPoints     int64 = 200000
+)
+
 func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeRequest) (*pb.RangeResponse, error) {
+	if req.GetRange() == nil {
+		return nil, pb.ErrorTransformError("range is required")
+	}
 	startTime, err := parseRangeTime(req.Range.GetStart())
 	if err != nil {
 		return nil, pb.ErrorTransformError("%s", err)
@@ -47,6 +56,18 @@ func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeReque
 	if err != nil {
 		return nil, pb.ErrorTransformError("%s", err)
 	}
+	if step <= 0 {
+		return nil, pb.ErrorTransformError("step must be positive")
+	}
+	if endTime.Before(startTime) {
+		return nil, pb.ErrorTransformError("end time must not be before start time")
+	}
+	steps := int64(endTime.Sub(startTime) / step)
+	if steps >= maxRangePointsPerSeries {
+		return nil, pb.ErrorTransformError("range query exceeds maximum %d points per series", maxRangePointsPerSeries)
+	}
+	pointsPerSeries := steps + 1
+
 	value, err := s.promClient.QueryRange(ctx, req.GetQuery(), v1.Range{Start: startTime, End: endTime, Step: step})
 	if err != nil {
 		return nil, pb.ErrorVgpuDomainError("%s", err)
@@ -57,9 +78,16 @@ func (s *MonitorService) QueryRange(ctx context.Context, req *pb.QueryRangeReque
 	}
 	var res = &pb.RangeResponse{}
 	copier.Copy(&res.Data, &matrixValue)
+	if len(res.Data) > 0 && int64(len(res.Data)) > maxRangeTotalPoints/pointsPerSeries {
+		return nil, pb.ErrorTransformError("range query exceeds maximum %d total points", maxRangeTotalPoints)
+	}
 
 	for _, sample := range res.Data {
-		sample.Values = fillLessSamplePoint(startTime, endTime, step, sample.Values)
+		filled, err := fillLessSamplePoint(ctx, startTime, endTime, step, sample.Values)
+		if err != nil {
+			return nil, pb.ErrorVgpuDomainError("%s", err)
+		}
+		sample.Values = filled
 	}
 	return res, nil
 }
@@ -72,15 +100,26 @@ func parseRangeTime(value string) (time.Time, error) {
 	return time.ParseInLocation(time.DateTime, value, time.Local)
 }
 
-func fillLessSamplePoint(startTime, endTime time.Time, step time.Duration, values []*pb.SamplePair) []*pb.SamplePair {
-	existingPoints := make(map[int64]float32)
+func fillLessSamplePoint(ctx context.Context, startTime, endTime time.Time, step time.Duration, values []*pb.SamplePair) ([]*pb.SamplePair, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	existingPoints := make(map[int64]float32, len(values))
 	for _, pair := range values {
 		existingPoints[pair.Timestamp] = pair.Value
 	}
 
 	var filledValues []*pb.SamplePair
 	currentTime := getSamplePointStartTime(startTime, step, values)
-	for !currentTime.After(endTime) {
+	for iterations := 0; !currentTime.After(endTime); iterations++ {
+		if iterations&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if int64(len(filledValues)) >= maxRangePointsPerSeries {
+			return nil, fmt.Errorf("expanded series exceeds maximum %d points", maxRangePointsPerSeries)
+		}
 		currentTimestamp := currentTime.UnixMilli()
 		if value, exists := existingPoints[currentTimestamp]; exists {
 			filledValues = append(filledValues, &pb.SamplePair{Value: value, Timestamp: currentTimestamp, Missing: false})
@@ -89,7 +128,7 @@ func fillLessSamplePoint(startTime, endTime time.Time, step time.Duration, value
 		}
 		currentTime = currentTime.Add(step)
 	}
-	return filledValues
+	return filledValues, nil
 }
 
 // Compatible with both Prometheus and VictoriaMetrics

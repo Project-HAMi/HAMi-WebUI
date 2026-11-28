@@ -21,11 +21,26 @@ function links(device, inventory) {
   return devices[0].detailTo;
 }
 
-test('opens the globally unique legacy ID for this node and provider', () => {
+test('opens matching device for this node and provider, even when ID repeats on another node', () => {
   assert.deepEqual(links(source, [target]), route('GPU-1'));
+  // Same UUID on a distinct node must stay linkable and keep its own nodeUid.
+  const otherNode = { node: 'other', nodeUid: 'node-b', id: 'GPU-1', provider: 'NVIDIA' };
+  const otherTarget = { nodeName: 'other', nodeUid: 'node-b', uuid: 'GPU-1', vendor: 'NVIDIA' };
+  assert.deepEqual(
+    attachLegacyDeviceLinks({ devices: [source, otherNode], issues: [] }, [target, otherTarget]).devices.map((d) => d.detailTo),
+    [route('GPU-1', 'node-a'), route('GPU-1', 'node-b')],
+  );
+  // Collisions on the same nodeUid stay unlinked.
   for (const extra of [{ ...target, nodeName: 'other' }, { ...target, vendor: 'DCU' }, target]) {
     assert.equal(links(source, [extra, target]), null);
   }
+});
+
+test('legacy DCU registration IDs join against physical serial rows on the same node', () => {
+  const dcuOverview = { node: 'worker', nodeUid: 'node-a', id: 'DCU-3', provider: 'DCU' };
+  const dcuLegacy = { nodeName: 'worker', nodeUid: 'node-a', uuid: 'legacy-serial-03', registrationId: 'DCU-3', vendor: 'DCU' };
+  assert.deepEqual(links(dcuOverview, [dcuLegacy]), route('legacy-serial-03'));
+  assert.equal(links({ ...dcuOverview, nodeUid: 'node-b' }, [dcuLegacy]), null);
 });
 
 test('missing, replaced, and mismatched targets stay readable without a link', () => {

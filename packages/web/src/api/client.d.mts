@@ -208,6 +208,7 @@ export interface DeviceItem {
   temperatureCelsius?: number;
   powerWatts?: number;
   migInstanceMemory?: MigInstanceMemory | null;
+  registrationId?: string;
 }
 
 export interface MigInstanceMemory {

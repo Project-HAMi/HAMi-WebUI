@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -107,4 +108,34 @@ func (s *MetricsGenerator) dropCurrentCycle() {
 	s.firstDegraded = nil
 	s.fatalErr = nil
 	s.cellMu.Unlock()
+}
+
+func (s *MetricsGenerator) recordCommitTime(at time.Time) {
+	if at.IsZero() {
+		return
+	}
+	s.cellMu.Lock()
+	if len(s.prev) > 0 {
+		s.lastCommitAt = at
+	} else {
+		s.lastCommitAt = time.Time{}
+	}
+	s.cellMu.Unlock()
+}
+
+// expireCommittedCells prunes retained legacy GaugeVec cells once repeated fatal
+// refresh failures outlast maxAge so Prometheus stops re-scraping expired values
+// with fresh timestamps.
+func (s *MetricsGenerator) expireCommittedCells(now time.Time, maxAge time.Duration) bool {
+	s.cellMu.Lock()
+	defer s.cellMu.Unlock()
+	if len(s.prev) == 0 || s.lastCommitAt.IsZero() || maxAge <= 0 || now.Sub(s.lastCommitAt) <= maxAge {
+		return false
+	}
+	for _, c := range s.prev {
+		c.gauge.DeleteLabelValues(c.labels...)
+	}
+	s.prev = nil
+	s.lastCommitAt = time.Time{}
+	return true
 }

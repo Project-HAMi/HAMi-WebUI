@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -115,6 +116,10 @@ func TestQueryRangeHTTPRejectsInvalidInput(t *testing.T) {
 		{"missing timezone", "2026-10-07T04:00:00", "2026-10-07T04:01:00Z", "1m"},
 		{"invalid offset", "2026-10-07T04:00:00+25:00", "2026-10-07T04:01:00Z", "1m"},
 		{"invalid step", "2026-10-07T04:00:00Z", "2026-10-07T04:01:00Z", "not-a-duration"},
+		{"zero step", "2026-10-07T04:00:00Z", "2026-10-07T04:01:00Z", "0s"},
+		{"negative step", "2026-10-07T04:00:00Z", "2026-10-07T04:01:00Z", "-1m"},
+		{"end before start", "2026-10-07T04:02:00Z", "2026-10-07T04:01:00Z", "1m"},
+		{"too many points per series", "2026-10-01T00:00:00Z", "2026-10-10T00:00:00Z", "1m"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -176,4 +181,38 @@ func queryRangeHTTP(t *testing.T, handler http.Handler, start, end, step string)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestQueryRangeHTTPRejectsOversizedTotalMatrixBeforeExpansion(t *testing.T) {
+	prometheus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"success","data":{"resultType":"matrix","result":[`)
+		for i := 0; i < 30; i++ {
+			if i > 0 {
+				_, _ = io.WriteString(w, `,`)
+			}
+			_, _ = fmt.Fprintf(w, `{"metric":{"pod":"p-%d"},"values":[[1791345600,"1"]]}`, i)
+		}
+		_, _ = io.WriteString(w, `]}}`)
+	}))
+	defer prometheus.Close()
+	client, err := prom.NewClient(prometheus.URL, time.Second, prom.HTTPConfig{}, log.NewStdLogger(io.Discard))
+	if err != nil {
+		t.Fatalf("create Prometheus client: %v", err)
+	}
+	handler := kratoshttp.NewServer()
+	pb.RegisterMonitorHTTPServer(handler, NewMonitorService(client, nil, nil))
+	// 7000 points/series * 30 series = 210,000 > maxRangeTotalPoints (200,000).
+	response := queryRangeHTTP(t, handler, "2026-10-01T00:00:00Z", "2026-10-05T20:39:00Z", "1m")
+	if response.Code != 522 {
+		t.Fatalf("status = %d, want 522 TRANSFORM_ERROR; body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestFillLessSamplePointStopsOnCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := fillLessSamplePoint(ctx, time.UnixMilli(0), time.UnixMilli(10_000), time.Second, nil); err == nil {
+		t.Fatal("expected cancellation error")
+	}
 }

@@ -90,6 +90,8 @@ message GPUReply {
   optional double temperature_celsius = 24;
   optional double power_watts = 25;
   optional MigInstanceMemory mig_instance_memory = 26;
+  // Original node-registration ID before a legacy provider (e.g. DCU) rewrites uuid to physical serial.
+  optional string registration_id = 27;
 }
 
 message MigInstanceMemory {

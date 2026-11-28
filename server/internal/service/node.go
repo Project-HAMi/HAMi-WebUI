@@ -122,7 +122,7 @@ func (s *NodeService) GetNode(ctx context.Context, req *pb.GetNodeReq) (*pb.Node
 // buildNodeReply assembles a node reply from in-memory state only. The caller
 // passes pre-aggregated per-device reservations so per-device lookups stay O(1)
 // rather than rescanning all containers for every device.
-func (s *NodeService) buildNodeReply(node *biz.Node, reservations map[string]biz.DeviceReservation) *pb.NodeReply {
+func (s *NodeService) buildNodeReply(node *biz.Node, reservations map[biz.DeviceReservationKey]biz.DeviceReservation) *pb.NodeReply {
 	coreUsedKnown := true
 	nodeReply := &pb.NodeReply{
 		Name:                    node.Name,
@@ -148,7 +148,7 @@ func (s *NodeService) buildNodeReply(node *biz.Node, reservations map[string]biz
 			coreTotal += biz.PhysicalCoreBaselinePerDevice
 			memoryTotal += device.Devmem
 		}
-		reservation := reservations[device.AliasId]
+		reservation := reservations[biz.DeviceReservationKey{NodeUID: device.NodeUid, DeviceID: device.AliasId}]
 		vgpuUsed += reservation.Slots
 		coreUsed += reservation.Cores
 		if reservation.CoreUnknown {

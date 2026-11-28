@@ -40,10 +40,11 @@ type MigProfile struct {
 }
 
 type DeviceInfo struct {
-	Index    int
-	Id       string
-	AliasId  string
-	Count    int32
+	Index          int
+	Id             string
+	AliasId        string
+	RegistrationID string
+	Count          int32
 	Devmem   int32
 	Devcore  int32
 	Type     string

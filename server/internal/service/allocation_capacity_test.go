@@ -131,9 +131,36 @@ func (r *capacityTestNodeRepo) FindDeviceByAliasId(aliasID string) (*biz.DeviceI
 }
 
 type capacityTestPodRepo struct {
-	biz.NodeHolderReader
 	containers []*biz.Container
 	err        error
+}
+
+func (r *capacityTestPodRepo) NodeHolders(_ context.Context, node, uid string) (biz.NodeHolders, error) {
+	if r.err != nil {
+		return biz.NodeHolders{}, r.err
+	}
+	var matched []*biz.Container
+	reservations := make(map[string]biz.DeviceReservation)
+	for _, c := range r.containers {
+		if c.NodeName == node && c.NodeUID == uid {
+			matched = append(matched, c)
+			for _, cd := range c.ContainerDevices {
+				if cd.UUID == "" {
+					continue
+				}
+				entry := reservations[cd.UUID]
+				entry.Slots++
+				entry.Cores += cd.Usedcores
+				entry.MemoryMiB += cd.Usedmem
+				if cd.CoreAllocationUnknown {
+					entry.CoreUnknown = true
+					entry.CoreUnknownCount++
+				}
+				reservations[cd.UUID] = entry
+			}
+		}
+	}
+	return biz.NodeHolders{Reservations: reservations, Containers: matched}, nil
 }
 
 func (r *capacityTestPodRepo) ListAll(context.Context) ([]*biz.Container, error) {

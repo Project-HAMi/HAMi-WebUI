@@ -31,6 +31,19 @@ func (s *MetricsGenerator) snapshotObservations() (resourceview.DeviceObservatio
 	return s.observations, s.supplementalObservations
 }
 
+func (s *MetricsGenerator) publishedDeviceObservations() resourceview.DeviceObservations {
+	published := s.publishedObservations()
+	if len(published) == 0 {
+		return resourceview.DeviceObservations{}
+	}
+	result := make(resourceview.DeviceObservations, len(published))
+	now := s.clockNow()
+	for identity, observation := range published {
+		result[identity] = resourceview.AgeObservation(observation, now, provider.TelemetryMaxSampleAge)
+	}
+	return result
+}
+
 // DeviceObservations never queries upstream. Both API source wrapping and the
 // new metric collector consume this detached view of the same published round.
 func (s *MetricsGenerator) DeviceObservations() resourceview.DeviceObservations {
@@ -57,6 +70,15 @@ func (s *MetricsGenerator) DeviceObservations() resourceview.DeviceObservations 
 }
 
 func mergeSupplementalObservation(base, extra resourceview.DeviceObservation) resourceview.DeviceObservation {
+	if base.UtilizationRatio.State == nil && extra.UtilizationRatio.State != nil {
+		base.UtilizationRatio = extra.UtilizationRatio
+	}
+	if base.MemoryUsedBytes.State == nil && extra.MemoryUsedBytes.State != nil {
+		base.MemoryUsedBytes = extra.MemoryUsedBytes
+	}
+	if base.MemoryPhysicalBytes.State == nil && extra.MemoryPhysicalBytes.State != nil {
+		base.MemoryPhysicalBytes = extra.MemoryPhysicalBytes
+	}
 	if extra.TemperatureCelsius.State != nil {
 		base.TemperatureCelsius = extra.TemperatureCelsius
 	}
