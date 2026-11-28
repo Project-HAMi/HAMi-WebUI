@@ -4552,6 +4552,7 @@ test('overview issue status opens details only for unhealthy devices or unready 
     await trigger.getByText('1 node with issues', { exact: true }).waitFor()
     assert.equal(await dialog.count(), 0)
     await nextSnapshot(snapshot([], []))
+    await trigger.waitFor({ state: 'detached' })
     assert.equal(await header.innerText(), await header.locator(':scope > span').first().innerText())
     assert.equal(await header.locator('[tabindex="0"], button').count(), 0)
 
@@ -7703,6 +7704,61 @@ test('accelerator detail preserves nodeUid across duplicate-ID navigation and sc
     assert.ok(!seenTrends.some((item) => item.deviceId === telemetryIdA), 'Stale node-a trends query ran under node-b route')
   } finally {
     releaseNodeA()
+    await page.close()
+  }
+})
+
+test('router recovers once from transient chunk 404 during rolling upgrade and avoids reload loops', async() => {
+  const target = await startWebEntry({ frameAncestors: undefined })
+  const page = await browser.newPage({ locale: 'en-US' })
+  let injectTransient404 = false
+  let injectPermanent404 = false
+  let transientDropped = false
+  let documentNavigations = 0
+  const preloadedAssets = new Set()
+
+  page.on('request', (request) => {
+    if (request.frame() === page.mainFrame() && request.resourceType() === 'document') {
+      documentNavigations += 1
+    }
+  })
+
+  await page.route('**/static/*.js', async(route) => {
+    const url = route.request().url()
+    if (injectTransient404 && !transientDropped && !preloadedAssets.has(url)) {
+      transientDropped = true
+      injectTransient404 = false
+      return route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'not found' })
+    }
+    if (injectPermanent404 && !preloadedAssets.has(url)) {
+      return route.fulfill({ status: 404, contentType: 'text/plain; charset=utf-8', body: 'not found' })
+    }
+    preloadedAssets.add(url)
+    return route.continue()
+  })
+
+  try {
+    await page.goto(`${target}${basePath}overview`, { waitUntil: 'networkidle' })
+    await page.getByRole('link', { name: 'Nodes', exact: true }).waitFor()
+
+    // Phase 1: a transient 404 on the lazy Nodes chunk recovers via a single controlled reload.
+    documentNavigations = 0
+    injectTransient404 = true
+    await page.getByRole('link', { name: 'Nodes', exact: true }).click()
+    await page.waitForURL((url) => url.pathname.endsWith('/nodes'))
+    await page.locator('.node-admin-page').waitFor()
+    await waitUntil(() => transientDropped && documentNavigations >= 1, 'Expected one controlled reload on transient chunk 404')
+    assert.equal(documentNavigations, 1, 'Transient chunk 404 should trigger exactly one reload')
+    await page.waitForLoadState('networkidle')
+
+    // Phase 2: a permanent 404 on the lazy Workloads chunk must trigger at most one reload, never a loop.
+    documentNavigations = 0
+    injectPermanent404 = true
+    await page.getByRole('link', { name: 'Workloads', exact: true }).click()
+    await waitUntil(() => documentNavigations === 1, 'Expected a single recovery reload attempt on persistent chunk 404')
+    await delay(500)
+    assert.equal(documentNavigations, 1, 'Persistent chunk 404 must not enter an infinite reload loop')
+  } finally {
     await page.close()
   }
 })

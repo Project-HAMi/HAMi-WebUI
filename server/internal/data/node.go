@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"math"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/go-kratos/kratos/v2/log"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	listerscorev1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"math"
-	"strings"
-	"sync"
 	"vgpu/internal/biz"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/provider"
@@ -24,14 +27,17 @@ import (
 	"vgpu/internal/provider/util"
 )
 
+const defaultNodeRefreshInterval = 30 * time.Second
+
 type nodeRepo struct {
-	data       *Data
-	nodeNotify chan struct{}
-	nodeLister listerscorev1.NodeLister
-	nodes      map[k8stypes.UID]*biz.Node
-	log        *log.Helper
-	mutex      sync.RWMutex
-	providers  []nodeProvider
+	data            *Data
+	nodeNotify      chan struct{}
+	refreshInterval time.Duration
+	nodeLister      listerscorev1.NodeLister
+	nodes           map[k8stypes.UID]*biz.Node
+	log             *log.Helper
+	mutex           sync.RWMutex
+	providers       []nodeProvider
 }
 
 type nodeProvider struct {
@@ -65,18 +71,16 @@ func NewNodeProviders(data *Data, nodeSelectors map[string]string, logger log.Lo
 
 func NewNodeRepo(data *Data, providers []nodeProvider, logger log.Logger, catalog devicecatalog.Source) (biz.NodeRepo, error) {
 	nodeRepo := &nodeRepo{
-		data:       data,
-		nodeNotify: make(chan struct{}, 1),
-		nodes:      map[k8stypes.UID]*biz.Node{},
-		log:        log.NewHelper(logger),
-		providers:  providers,
+		data:            data,
+		nodeNotify:      make(chan struct{}, 1),
+		refreshInterval: defaultNodeRefreshInterval,
+		nodes:           map[k8stypes.UID]*biz.Node{},
+		log:             log.NewHelper(logger),
+		providers:       providers,
 	}
 	// Subscribe first: the initial node sync must not miss a catalog change.
 	catalog.Subscribe(func(_, _ *devicecatalog.Snapshot) {
-		select {
-		case nodeRepo.nodeNotify <- struct{}{}:
-		default:
-		}
+		nodeRepo.notifyNodeChange()
 	})
 	if err := nodeRepo.init(); err != nil {
 		return nil, err
@@ -84,67 +88,110 @@ func NewNodeRepo(data *Data, providers []nodeProvider, logger log.Logger, catalo
 	return nodeRepo, nil
 }
 
+func (r *nodeRepo) notifyNodeChange() {
+	select {
+	case r.nodeNotify <- struct{}{}:
+	default:
+	}
+}
+
+func (r *nodeRepo) stopChan() <-chan struct{} {
+	if r.data == nil {
+		return nil
+	}
+	return r.data.stopCh
+}
+
 func (r *nodeRepo) updateLocalNodes() {
+	stopCh := r.stopChan()
+	var tickCh <-chan time.Time
+	if r.refreshInterval > 0 {
+		ticker := time.NewTicker(r.refreshInterval)
+		defer ticker.Stop()
+		tickCh = ticker.C
+	}
 	for {
 		select {
+		case <-stopCh:
+			return
 		case <-r.nodeNotify:
+		case <-tickCh:
 		}
-		r.mutex.RLock()
-		prevNodes := r.nodes
-		r.mutex.RUnlock()
-		n := map[k8stypes.UID]*biz.Node{}
-		for _, p := range r.providers {
-			nodes, err := r.nodeLister.List(p.selector)
-			if err != nil {
-				r.log.Warnf("list node info error: %s", err)
-				continue
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+		r.refreshLocalNodes(stopCh)
+	}
+}
+
+func (r *nodeRepo) refreshLocalNodes(stopCh <-chan struct{}) {
+	r.mutex.RLock()
+	prevNodes := r.nodes
+	r.mutex.RUnlock()
+	n := map[k8stypes.UID]*biz.Node{}
+	for _, p := range r.providers {
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+		nodes, err := r.nodeLister.List(p.selector)
+		if err != nil {
+			r.log.Warnf("list node info error: %s", err)
+			continue
+		}
+		for _, node := range nodes {
+			select {
+			case <-stopCh:
+				return
+			default:
 			}
-			for _, node := range nodes {
-				bizNode := r.fetchNodeInfo(node)
-				if _, ok := n[node.UID]; !ok {
-					n[node.UID] = bizNode
-				}
-				devices, err := p.FetchDevices(node)
-				if err != nil {
-					r.log.Warnf("list devices info error: %s", err)
-					if errors.Is(err, util.ErrTelemetryUnavailable) {
-						if prev := prevNodes[node.UID]; prev != nil {
-							for _, d := range prev.Devices {
-								if d.Provider == p.GetProvider() {
-									n[node.UID].Devices = append(n[node.UID].Devices, d)
-								}
+			bizNode := r.fetchNodeInfo(node)
+			if _, ok := n[node.UID]; !ok {
+				n[node.UID] = bizNode
+			}
+			devices, err := p.FetchDevices(node)
+			if err != nil {
+				r.log.Warnf("list devices info error: %s", err)
+				if errors.Is(err, util.ErrTelemetryUnavailable) {
+					if prev := prevNodes[node.UID]; prev != nil {
+						for _, d := range prev.Devices {
+							if d.Provider == p.GetProvider() {
+								n[node.UID].Devices = append(n[node.UID].Devices, d)
 							}
 						}
 					}
-					continue
 				}
-				for _, device := range devices {
-					n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
-						Index:          int(device.Index),
-						Id:             device.ID,
-						AliasId:        device.AliasId,
-						RegistrationID: device.RegistrationID,
-						Count:          device.Count,
-						Devmem:       device.Devmem,
-						Devcore:      device.Devcore,
-						Type:         device.Type,
-						Numa:         device.Numa,
-						Mode:         device.Mode,
-						Health:       device.Health,
-						NodeName:     node.Name,
-						NodeUid:      string(node.UID),
-						Provider:     p.GetProvider(),
-						Driver:       device.Driver,
-						MigProfiles:  bizMigProfiles(device.MigProfiles),
-						Unconfigured: device.Unconfigured,
-					})
-				}
+				continue
+			}
+			for _, device := range devices {
+				n[node.UID].Devices = append(n[node.UID].Devices, &biz.DeviceInfo{
+					Index:          int(device.Index),
+					Id:             device.ID,
+					AliasId:        device.AliasId,
+					RegistrationID: device.RegistrationID,
+					Count:          device.Count,
+					Devmem:         device.Devmem,
+					Devcore:        device.Devcore,
+					Type:           device.Type,
+					Numa:           device.Numa,
+					Mode:           device.Mode,
+					Health:         device.Health,
+					NodeName:       node.Name,
+					NodeUid:        string(node.UID),
+					Provider:       p.GetProvider(),
+					Driver:         device.Driver,
+					MigProfiles:    bizMigProfiles(device.MigProfiles),
+					Unconfigured:   device.Unconfigured,
+				})
 			}
 		}
-		r.mutex.Lock()
-		r.nodes = n
-		r.mutex.Unlock()
 	}
+	r.mutex.Lock()
+	r.nodes = n
+	r.mutex.Unlock()
 }
 
 func bizMigProfiles(profiles []util.MigProfile) []biz.MigProfile {
@@ -177,7 +224,6 @@ profiles:
 func (r *nodeRepo) init() error {
 	nodes := r.data.informers.Core().V1().Nodes()
 	r.nodeLister = nodes.Lister()
-	go r.updateLocalNodes()
 	if _, err := nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddNode,
 		UpdateFunc: r.onUpdateNode,
@@ -185,20 +231,77 @@ func (r *nodeRepo) init() error {
 	}); err != nil {
 		return fmt.Errorf("watch nodes: %w", err)
 	}
+	go r.updateLocalNodes()
 	r.data.startInformers()
+	r.notifyNodeChange()
 	return nil
 }
 
 func (r *nodeRepo) onAddNode(obj interface{}) {
-	r.nodeNotify <- struct{}{}
+	r.notifyNodeChange()
 }
 
 func (r *nodeRepo) onUpdateNode(old interface{}, new interface{}) {
-	r.nodeNotify <- struct{}{}
+	if !nodeUpdateAffectsInventory(old, new) {
+		return
+	}
+	r.notifyNodeChange()
 }
 
 func (r *nodeRepo) onDeletedNode(obj interface{}) {
-	r.nodeNotify <- struct{}{}
+	r.notifyNodeChange()
+}
+
+func nodeUpdateAffectsInventory(oldObj, newObj interface{}) bool {
+	oldNode, okOld := oldObj.(*corev1.Node)
+	newNode, okNew := newObj.(*corev1.Node)
+	if !okOld || !okNew || oldNode == nil || newNode == nil {
+		return true
+	}
+	if oldNode.UID != newNode.UID ||
+		oldNode.Name != newNode.Name ||
+		!oldNode.CreationTimestamp.Equal(&newNode.CreationTimestamp) ||
+		oldNode.Spec.Unschedulable != newNode.Spec.Unschedulable ||
+		oldNode.Status.NodeInfo != newNode.Status.NodeInfo ||
+		nodeInternalIP(oldNode) != nodeInternalIP(newNode) ||
+		nodeReady(oldNode) != nodeReady(newNode) {
+		return true
+	}
+	return !maps.Equal(oldNode.Labels, newNode.Labels) ||
+		!maps.Equal(oldNode.Annotations, newNode.Annotations) ||
+		!resourceListsEqual(oldNode.Status.Capacity, newNode.Status.Capacity) ||
+		!resourceListsEqual(oldNode.Status.Allocatable, newNode.Status.Allocatable)
+}
+
+func resourceListsEqual(a, b corev1.ResourceList) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || !av.Equal(bv) {
+			return false
+		}
+	}
+	return true
+}
+
+func nodeInternalIP(node *corev1.Node) string {
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP {
+			return addr.Address
+		}
+	}
+	return ""
+}
+
+func nodeReady(node *corev1.Node) bool {
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // A Node that no kubelet created can lack nodeInfo.
@@ -211,17 +314,10 @@ func capitalize(value string) string {
 }
 
 func (r *nodeRepo) fetchNodeInfo(node *corev1.Node) *biz.Node {
-	n := &biz.Node{IsSchedulable: !node.Spec.Unschedulable}
-	for _, addr := range node.Status.Addresses {
-		if addr.Type == corev1.NodeInternalIP {
-			n.IP = addr.Address
-			break
-		}
-	}
-	for _, cond := range node.Status.Conditions {
-		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-			n.IsReady = true
-		}
+	n := &biz.Node{
+		IsSchedulable: !node.Spec.Unschedulable,
+		IP:            nodeInternalIP(node),
+		IsReady:       nodeReady(node),
 	}
 	n.Uid = string(node.UID)
 	n.Name = node.Name
