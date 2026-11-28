@@ -10,6 +10,10 @@ test('optional telemetry distinguishes missing and non-finite values from zero',
 
   assert.equal(formatOptionalTelemetry(0, 'W'), '0 W');
   assert.equal(formatOptionalTelemetry(42.5, 'W'), '42.5 W');
+  assert.equal(formatOptionalTelemetry(45.200000763000006, 'W'), '45.2 W');
+  assert.equal(formatOptionalTelemetry(38.404399872, 'W'), '38.4 W');
+  assert.equal(formatOptionalTelemetry(-0.01, 'W'), '0 W');
   assert.equal(formatOptionalTelemetry(0, '℃'), '0 ℃');
   assert.equal(formatOptionalTelemetry(65, '℃'), '65 ℃');
+  assert.equal(formatOptionalTelemetry(65.96, '℃'), '66 ℃');
 });

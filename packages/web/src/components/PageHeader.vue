@@ -11,7 +11,7 @@
     <span class="layout-page-header__divider" aria-hidden="true" />
     <div class="layout-header-title">
       <slot name="title">
-        <h3 class="layout-title">{{ title }}：{{ name }}</h3>
+        <h3 class="layout-title">{{ title }}{{ titleSeparator }}{{ name }}</h3>
       </slot>
       <div v-if="status" class="layout-header-title-run-state">
         <slot name="status">
@@ -30,8 +30,15 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { ArrowLeftIcon } from 'tdesign-icons-vue-next';
 import { useRouter } from 'vue-router';
+
+const { locale } = useI18n();
+const titleSeparator = computed(() => (
+  String(locale.value || '').toLowerCase().startsWith('zh') ? '：' : ': '
+));
 
 const router = useRouter();
 
