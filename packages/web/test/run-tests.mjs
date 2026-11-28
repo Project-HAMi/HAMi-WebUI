@@ -19,7 +19,6 @@ const discoverTests = (dir, out = []) => {
 
 const tests = [
   ...discoverTests(join(webRoot, 'src')),
-  ...discoverTests(join(webRoot, 'projects')),
   ...discoverTests(join(webRoot, 'test')),
 ].sort();
 

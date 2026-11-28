@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildTimeSeriesOptions } from '../../projects/vgpu/metrics/chart-presets.mjs';
+import { buildTimeSeriesOptions } from '../metrics/chart-presets.mjs';
 import { timeParse } from './index.js';
 import { formatQueryTimestamp } from './query-time.mjs';
 

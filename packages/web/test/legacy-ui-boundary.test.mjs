@@ -7,17 +7,16 @@ import { fileURLToPath } from 'node:url';
 const webRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 const ALLOWED_LEGACY_EL_TAG_FILES = new Set([
-  'projects/vgpu/components/DetailPageState.vue',
-  'projects/vgpu/components/EnvironmentSources.vue',
-  'projects/vgpu/components/VersionTag.vue',
-  'projects/vgpu/components/timeSelect.vue',
-  'projects/vgpu/views/workloads/Detail.vue',
   'src/App.vue',
+  'src/components/DetailPageState.vue',
   'src/components/EllipsisText.vue',
+  'src/components/EnvironmentSources.vue',
   'src/components/LangSelect/index.vue',
   'src/components/PageHeader.vue',
   'src/components/TablePlus/StatefulTable.vue',
+  'src/components/VersionTag.vue',
   'src/layout/index.vue',
+  'src/views/workloads/Detail.vue',
 ]);
 
 const collectVueFiles = (dir, out = []) => {
@@ -33,10 +32,7 @@ const collectVueFiles = (dir, out = []) => {
 };
 
 test('no new Vue files introduce Element Plus <el-*>, <El*>, or <el*> template tags', () => {
-  const vueFiles = [
-    ...collectVueFiles(join(webRoot, 'src')),
-    ...collectVueFiles(join(webRoot, 'projects')),
-  ];
+  const vueFiles = collectVueFiles(join(webRoot, 'src'));
   const violations = [];
   for (const filePath of vueFiles) {
     const rel = relative(webRoot, filePath).replace(/\\/g, '/');

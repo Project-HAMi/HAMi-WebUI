@@ -7,8 +7,8 @@ import { SVGRenderer } from 'echarts/renderers';
 
 import { init } from '../src/plugins/echarts.mjs';
 import { use } from 'echarts/core';
-import { buildTimeSeriesOptions } from '../projects/vgpu/metrics/chart-presets.mjs';
-import { layoutTimeSeriesOptions } from '../projects/vgpu/metrics/time-axis.mjs';
+import { buildTimeSeriesOptions } from '../src/metrics/chart-presets.mjs';
+import { layoutTimeSeriesOptions } from '../src/metrics/time-axis.mjs';
 
 use([SVGRenderer]);
 
@@ -217,7 +217,7 @@ test('a one-second query and the strongest allowed zoom retain a readable time a
   }
 });
 
-const sourceRoots = ['src', 'projects'];
+const sourceRoots = ['src'];
 const sourceExtensions = new Set(['.js', '.mjs', '.vue']);
 
 async function collectSourceFiles(directory) {

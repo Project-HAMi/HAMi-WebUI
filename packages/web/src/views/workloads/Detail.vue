@@ -1,0 +1,1082 @@
+<template>
+  <page-header
+    :title="$t('task.workload')"
+    :name="workloadDisplayName"
+    :status="headerStatusDisplay.label"
+  >
+    <template #status>
+      <WorkloadStatus v-if="detailStatus === REQUEST_STATUS.READY" :workload="detail" />
+    </template>
+  </page-header>
+
+  <detail-page-state :status="detailStatus" @retry="retryDetail">
+    <template #loading>
+      <div class="task-top">
+        <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
+          <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
+            <div class="left">
+              <div class="basic-info-cards">
+                <div v-for="label in [$t('task.namespace'), $t('task.node'), dt('task.gpuModel'), dt('task.relatedGpu')]" :key="label" class="basic-info-card">
+                  <div class="basic-info-card-title"><LoadingValue :height="28" width="100px" /></div>
+                  <div class="basic-info-card-sub-title">{{ label }}</div>
+                </div>
+              </div>
+              <div class="basic-info-summary">
+                <div v-for="label in [$t('task.detail.podName'), $t('task.detail.containerName'), $t('task.image'), $t('task.createTime')]" :key="label" class="summary-item">
+                  <span class="summary-item-label">{{ label }}</span>
+                  <span class="summary-item-value"><LoadingValue :height="24" width="80%" /></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </block-box>
+      </div>
+      <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview" variant="detail">
+        <div class="row">
+          <div v-for="label in [dt('task.gpuCardCount'), $t('task.computePowerLimit'), $t('task.singleCardMemory'), $t('task.cpuLimit'), $t('task.memoryLimit')]" :key="label" class="row-card">
+            <div class="row-card-content">
+              <div class="row-card-content-icon"><LoadingValue :height="20" width="20px" /></div>
+              <div class="row-card-content-info">
+                <div class="row-card-title"><LoadingValue :height="28" width="80px" /></div>
+                <div class="row-card-sub-title">{{ label }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </block-box>
+      <TrendTimeFilter :model-value="times" loading class="workload-trend-filter" />
+      <div class="task-trend-row">
+        <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
+          <MetricChart :option="item.option" />
+        </block-box>
+      </div>
+    </template>
+
+  <div class="task-top">
+    <block-box :title="$t('task.detail.detailInfo')" class="basic-info-block" variant="detail">
+      <div class="task-detail" :class="{ 'is-en': locale.startsWith('en') }">
+        <div class="left">
+          <div class="basic-info-cards">
+            <div class="basic-info-card">
+              <div class="basic-info-card-title">{{ detail.namespace || '--' }}</div>
+              <div class="basic-info-card-sub-title">{{ $t('task.namespace') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <RouterLink
+                v-if="nodeDetailLocation"
+                :to="nodeDetailLocation"
+                class="basic-info-card-title node-link"
+              >
+                <EllipsisText :text="detail.nodeName || '--'" mode="middle" tooltip="always" />
+                <svg-icon icon="jump" class="node-link-icon" aria-hidden="true" />
+              </RouterLink>
+              <div v-else class="basic-info-card-title">
+                <EllipsisText :text="detail.nodeName || '--'" mode="middle" tooltip="always" />
+              </div>
+              <div class="basic-info-card-sub-title">{{ $t('task.node') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <div class="basic-info-card-title">
+                <div v-if="gpuModelList.length === 0">--</div>
+                <div v-else class="gpu-model-container">
+                  <template v-for="(item, index) in gpuModelList" :key="`${item.model}-${index}`">
+                    <div class="gpu-model-item">
+                      <t-tag theme="default" size="medium" variant="light">{{ item.model }}</t-tag>
+                      <span class="gpu-count">× {{ item.count }}</span>
+                    </div>
+                    <span v-if="index < gpuModelList.length - 1" class="gpu-separator"></span>
+                  </template>
+                </div>
+              </div>
+              <div class="basic-info-card-sub-title">{{ dt('task.gpuModel') }}</div>
+            </div>
+            <div class="basic-info-card">
+              <div class="basic-info-card-title">
+                <span class="related-gpu-count-text">{{ relatedGpuCountText }}</span>
+                <t-popup
+                  v-if="safeDeviceIds.length > 0"
+                  destroy-on-close
+                  theme="light"
+                  trigger="click"
+                  placement="bottom"
+                  show-arrow
+                  overlay-class-name="relative-gpu-tooltip"
+                >
+                  <template #default>
+                    <svg-icon icon="related-gpu-eye" class="gpu-eye-icon" />
+                  </template>
+                  <template #content>
+                    <div class="relative-gpu-tooltip-content">
+                      <div class="popup-title">{{ dt('task.relatedGpu') }}：</div>
+                      <t-table row-key="uuid" :data="relatedGpuTableData" :columns="relatedGpuTableColumns" />
+                    </div>
+                  </template>
+                </t-popup>
+              </div>
+              <div class="basic-info-card-sub-title">{{ dt('task.relatedGpu') }}</div>
+            </div>
+          </div>
+          <div class="basic-info-summary">
+            <div class="summary-item">
+              <span class="summary-item-label">{{ $t('task.detail.podName') }}</span>
+              <span class="summary-item-value summary-identity-value">{{ detail.appName || '--' }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-item-label">{{ $t('task.detail.containerName') }}</span>
+              <span class="summary-item-value summary-identity-value">{{ detail.name || '--' }}</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-item-label">{{ $t('task.image') }}</span>
+              <span class="summary-item-value summary-item-image">
+                <TTooltip
+                  v-if="basicImageTooltip"
+                  :content="basicImageTooltip"
+                  :visible="imageTooltipHovered || imageTooltipFocused"
+                  :overlay-inner-style="LONG_TEXT_TOOLTIP_STYLE"
+                >
+                  <span
+                    class="image-reference"
+                    tabindex="0"
+                    @mouseenter="imageTooltipHovered = true"
+                    @mouseleave="imageTooltipHovered = false"
+                    @focus="imageTooltipFocused = true"
+                    @blur="imageTooltipFocused = false"
+                    @keydown.esc="dismissImageTooltip"
+                  >{{ basicImage }}</span>
+                </TTooltip>
+                <EllipsisText v-else :text="basicImage" mode="end" tooltip="overflow" />
+              </span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-item-label">{{ $t('task.createTime') }}</span>
+              <span class="summary-item-value">{{ basicCreateTime }}</span>
+            </div>
+            <div v-if="allocationShapeText" class="summary-item">
+              <span class="summary-item-label">{{ $t('task.allocation.label') }}</span>
+              <span class="summary-item-value summary-item-allocation">
+                <svg-icon v-if="allocationIcon" :icon="allocationIcon" aria-hidden="true" />
+                {{ allocationShapeText }}
+                <MetricHelp
+                  v-if="shapeUnknownReason"
+                  multiline
+                  :description="shapeUnknownReason"
+                  :help-label="$t('task.allocation.shapeReasonLabel')"
+                />
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </block-box>
+  </div>
+
+  <block-box :title="$t('task.detail.resourceOverview')" class="workload-overview" variant="detail">
+    <div class="row">
+      <div class="row-card">
+        <div class="row-card-content">
+          <div class="row-card-content-icon"><svg-icon icon="vgpu-card" /></div>
+          <div class="row-card-content-info">
+            <div class="row-card-title">{{ resourceOverviewTexts.gpuCards }}</div>
+            <div class="row-card-sub-title">{{ dt('task.gpuCardCount') }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="row-card">
+        <div class="row-card-content">
+          <div class="row-card-content-icon"><svg-icon icon="vgpu-core" /></div>
+          <div class="row-card-content-info">
+            <div class="row-card-title">{{ resourceOverviewTexts.computeLimit }}</div>
+            <div class="row-card-sub-title">
+              {{ $t('task.computePowerLimit') }}
+              <MetricHelp
+                v-if="coresUnknownReason"
+                :description="coresUnknownReason"
+                :help-label="$t('task.allocation.reasonLabel')"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="row-card">
+        <div class="row-card-content">
+          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
+          <div class="row-card-content-info">
+            <div class="row-card-title">{{ resourceOverviewTexts.singleCardMemory }}</div>
+            <div class="row-card-sub-title">{{ $t('task.singleCardMemory') }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="row-card">
+        <div class="row-card-content">
+          <div class="row-card-content-icon"><svg-icon icon="node-cpu-total" /></div>
+          <div class="row-card-content-info">
+            <div class="row-card-title">{{ resourceOverviewTexts.cpuLimit }}</div>
+            <div class="row-card-sub-title">{{ $t('task.cpuLimit') }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="row-card">
+        <div class="row-card-content">
+          <div class="row-card-content-icon"><svg-icon icon="node-memory-total" /></div>
+          <div class="row-card-content-info">
+            <div class="row-card-title">{{ resourceOverviewTexts.memoryLimit }}</div>
+            <div class="row-card-sub-title">{{ $t('task.memoryLimit') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </block-box>
+
+  <block-box v-if="deviceSplits.length" :title="$t('card.split.title')" class="workload-split" variant="detail">
+    <template v-if="deviceSplits.some((split) => split.device.mode === 'mig')" #extra>
+      <MetricHelp multiline :description="$t('card.split.help')" :help-label="$t('card.split.title')" />
+    </template>
+    <div class="workload-split-devices">
+      <DeviceSplit
+        v-for="split in deviceSplits"
+        :key="split.uuid"
+        show-device
+        :device="split.device"
+        :containers="split.containers"
+        :total-containers="split.totalContainers"
+        :truncated="split.truncated"
+        :status="split.status"
+        :highlight="splitHighlight"
+        @retry="loadDeviceSplit(split)"
+      />
+    </div>
+  </block-box>
+
+  <TrendTimeFilter
+    v-model="times"
+    :loading="trendLoading"
+    :min-range-ms="CONTAINER_TREND_MIN_RANGE_MS"
+    :max-range-ms="CONTAINER_TREND_MAX_RANGE_MS"
+    class="workload-trend-filter"
+  />
+
+  <div class="task-trend-row">
+    <block-box v-for="item in lineConfigView" :key="item.key" :title="item.title">
+      <MetricChart
+        :status="item.status"
+        :option="item.option"
+        :state-text="item.stateText"
+        :refreshing="item.refreshing"
+        :refresh-error="Boolean(item.refreshError)"
+      >
+        <template #action>
+          <t-button
+            v-if="item.status === REQUEST_STATUS.ERROR || item.status === REQUEST_STATUS.INVALID"
+            theme="primary"
+            @click="retryTaskMonitoring"
+          >
+            {{ $t('common.retry') }}
+          </t-button>
+        </template>
+      </MetricChart>
+    </block-box>
+  </div>
+  </detail-page-state>
+</template>
+
+<script setup lang="jsx">
+import PageHeader from '@/components/PageHeader.vue';
+import EllipsisText from '@/components/EllipsisText.vue';
+import TrendTimeFilter from '@/components/TrendTimeFilter.vue';
+import { REQUEST_STATUS } from '@/hooks/request-state.mjs';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
+import { ref, watch, computed, onBeforeUnmount } from 'vue';
+import { Tooltip as TTooltip } from 'tdesign-vue-next';
+
+import apiClient from '@/api/client.mjs';
+import { useTelemetryTrends } from '@/hooks/useTelemetryTrends.mjs';
+import { timeParse, roundToDecimal } from '@/utils';
+import BlockBox from '@/components/BlockBox.vue';
+import MetricChart from '@/components/MetricChart.vue';
+import { buildTimeSeriesOptions } from '@/metrics/chart-presets.mjs';
+import { CHART_COLORS } from '@/metrics/chart-colors.mjs';
+import { useI18n } from 'vue-i18n';
+import { formatWorkloadName } from './workload-identity.mjs';
+import WorkloadStatus from './WorkloadStatus.vue';
+import { getWorkloadStatus } from './workload-status.mjs';
+import DetailPageState from '@/components/DetailPageState.vue';
+import LoadingValue from '@/components/LoadingValue.vue';
+import MetricHelp from '@/components/MetricHelp.vue';
+import { deviceWording } from '@/components/device-copy.mjs';
+import { getAllocationShapeCopy, getCoresOnlyReasonKey, getShapeUnknownReasonKey, isUnreservedSoftSplit } from './allocation-display.mjs';
+import { getSplitIcon } from '@/components/split-mode.mjs';
+import DeviceSplit from '@/components/DeviceSplit.vue';
+import {
+  GPU_UUID_TOOLTIP_STYLE,
+  LONG_TEXT_TOOLTIP_STYLE,
+} from '@/components/tooltip-policy.mjs';
+import { classifyDetailPayload } from '@/hooks/detail-resource-state.mjs';
+import useDetailResource from '@/hooks/useDetailResource';
+import { parseDeviceSplitPage } from '@/components/device-split.mjs';
+import { buildNodeDetailLocation } from '@/views/nodes/detail-location.mjs';
+
+const route = useRoute();
+const router = useRouter();
+const { t, locale } = useI18n();
+
+const routeParam = (value) => (typeof value === 'string' ? value.trim() : '');
+const requestedIdentity = computed(() => ({
+  name: routeParam(route.params.container),
+  podUid: routeParam(route.params.podUid),
+}));
+const {
+  data: detail,
+  status: detailStatus,
+  retry: retryDetail,
+} = useDetailResource({
+  source: requestedIdentity,
+  isValidSource: ({ name, podUid } = {}) => Boolean(name && podUid),
+  request: async ({ name, podUid }, signal) => {
+    try {
+      return await apiClient.getContainer(podUid, name, { signal });
+    } catch (error) {
+      if (error?.status === 404 && error?.reason === 'RESOURCE_CONTAINER_NOT_FOUND') {
+        return {};
+      }
+      throw error;
+    }
+  },
+  classify: (payload, identity) => classifyDetailPayload(payload, {
+    identityKeys: ['name', 'podUid'],
+    expectedIdentity: identity,
+  }),
+});
+const dt = (key) => deviceWording(t(key), detailStatus.value === REQUEST_STATUS.READY ? detail.value?.vendor : '');
+const workloadDisplayName = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY
+    ? formatWorkloadName(detail.value)
+    : requestedIdentity.value.name || '--'
+));
+const nodeUid = ref('');
+const nodeDetailLocation = computed(() => buildNodeDetailLocation({
+  uid: nodeUid.value,
+  nodeName: detail.value?.nodeName || detail.value?.node_name,
+}));
+const cardTypeById = ref({});
+
+const end = new Date();
+const start = new Date();
+start.setTime(start.getTime() - 3600 * 1000);
+
+const times = ref([start, end]);
+
+const safeDeviceIds = computed(() => (
+  Array.isArray(detail.value?.deviceIds) ? detail.value.deviceIds : []
+));
+// One request can hold two MIG instances of the same GPU.
+const distinctDeviceIds = computed(() => [...new Set(safeDeviceIds.value)]);
+const hasText = (value) => typeof value === 'string' && value.trim() !== '';
+const hasValidAllocationShape = computed(() => {
+  const expectedVgpuCount = Number(detail.value?.allocatedDevices);
+  return (
+    Number.isSafeInteger(expectedVgpuCount) &&
+    expectedVgpuCount > 0 &&
+    safeDeviceIds.value.length === expectedVgpuCount &&
+    safeDeviceIds.value.every(hasText)
+  );
+});
+const gpuModelList = computed(() => {
+  if (!distinctDeviceIds.value.length) return [];
+  const grouped = new Map();
+  distinctDeviceIds.value.forEach((id) => {
+    const model = cardTypeById.value?.[id] || detail.value?.type || '--';
+    grouped.set(model, (grouped.get(model) || 0) + 1);
+  });
+  return Array.from(grouped.entries()).map(([model, count]) => ({ model, count }));
+});
+const allocationShapeText = computed(() => {
+  const copy = detailStatus.value === REQUEST_STATUS.READY ? getAllocationShapeCopy(detail.value) : undefined;
+  return copy ? t(copy.key, copy.params) : '';
+});
+// Plugins that register no split mode leave the allocation without a shape and nothing to lay out.
+const splitDeviceIds = computed(() => {
+  const devices = Array.isArray(detail.value?.devices) ? detail.value.devices : [];
+  return distinctDeviceIds.value.filter((uuid) => devices.some((device) => device.id === uuid && device.allocationShape));
+});
+const deviceSplits = ref([]);
+const splitHighlight = computed(() => ({ podUid: detail.value?.podUid, container: detail.value?.name }));
+let workloadSplitGeneration = 0;
+const splitControllers = new Map();
+const abortSplitRequests = () => {
+  for (const controller of splitControllers.values()) {
+    controller.abort();
+  }
+  splitControllers.clear();
+};
+onBeforeUnmount(abortSplitRequests);
+const loadDeviceSplit = async (split, generation = workloadSplitGeneration) => {
+  splitControllers.get(split.uuid)?.abort();
+  const controller = new AbortController();
+  splitControllers.set(split.uuid, controller);
+  split.status = 'loading';
+  split.totalContainers = undefined;
+  split.truncated = false;
+  try {
+    const scopeNodeUid = detail.value?.nodeUid || undefined;
+    const [card, workloads] = await Promise.all([
+      apiClient.getDevice(split.uuid, { nodeUid: scopeNodeUid, signal: controller.signal }),
+      apiClient.listContainers(
+        { deviceId: split.uuid, nodeUid: scopeNodeUid, page: 1, pageSize: 100 },
+        { signal: controller.signal },
+      ),
+    ]);
+    if (controller.signal.aborted || generation !== workloadSplitGeneration) return;
+    if (!card || typeof card !== 'object' || !card.uuid) {
+      throw new Error('Device not found');
+    }
+    if (scopeNodeUid && card.nodeUid && card.nodeUid !== scopeNodeUid) {
+      throw new Error('Device node mismatch');
+    }
+    const page = parseDeviceSplitPage(workloads, 100);
+    split.device = { ...card, uuid: split.uuid };
+    split.containers = page.items;
+    split.totalContainers = page.totalContainers;
+    split.truncated = page.truncated;
+    split.status = 'ready';
+  } catch {
+    if (!controller.signal.aborted && generation === workloadSplitGeneration) {
+      split.status = 'error';
+    }
+  } finally {
+    if (splitControllers.get(split.uuid) === controller) {
+      splitControllers.delete(split.uuid);
+    }
+  }
+};
+watch([() => detail.value?.podUid, splitDeviceIds], ([podUid, uuids]) => {
+  const generation = ++workloadSplitGeneration;
+  abortSplitRequests();
+  deviceSplits.value = podUid
+    ? uuids.map((uuid) => ({ uuid, device: { uuid }, containers: [], totalContainers: undefined, truncated: false, status: 'loading' }))
+    : [];
+  deviceSplits.value.forEach((split) => loadDeviceSplit(split, generation));
+}, { immediate: true });
+const allocationIcon = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY ? getSplitIcon(detail.value?.allocationShape) : ''
+));
+const shapeUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getShapeUnknownReasonKey(detail.value) : '';
+  return key ? t(key) : '';
+});
+const coresUnknownReason = computed(() => {
+  const key = detailStatus.value === REQUEST_STATUS.READY ? getCoresOnlyReasonKey(detail.value) : '';
+  return key ? t(key) : '';
+});
+const relatedGpuCountText = computed(() => {
+  const count = distinctDeviceIds.value.length;
+  return deviceWording(t('task.relatedGpuCards', { count }, count), detail.value?.vendor);
+});
+const relatedGpuTableData = computed(() => distinctDeviceIds.value.map((uuid) => ({
+  model: cardTypeById.value?.[uuid] || detail.value?.type || '--',
+  uuid,
+})));
+const relatedGpuTableColumns = computed(() => [
+  {
+    colKey: 'model',
+    title: dt('task.gpuModel'),
+    width: 104,
+    ellipsis: true,
+  },
+  {
+    colKey: 'uuid',
+    title: dt('card.detail.title'),
+    width: 236,
+    ellipsis: true,
+    cell: (_h, { row }) => (
+      <TTooltip content={row.uuid} overlayInnerStyle={GPU_UUID_TOOLTIP_STYLE}>
+        <div class="node-link-container" onClick={() => handleGpuJump(row.uuid)}>
+          <div class="text">{row.uuid || '--'}</div>
+          <svg-icon icon="jump" class="related-gpu-link-icon" />
+        </div>
+      </TTooltip>
+    ),
+  },
+]);
+const extractImageList = (payload) => {
+  const all = (Array.isArray(payload?.images) ? payload.images : [])
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+
+  return Array.from(new Set(all));
+};
+
+const basicImage = computed(() => {
+  const imageList = extractImageList(detail.value);
+  if (!imageList.length) return '--';
+  if (imageList.length === 1) return imageList[0];
+  return `${imageList[0]} +${imageList.length - 1}`;
+});
+const basicImageTooltip = computed(() => {
+  const imageList = extractImageList(detail.value);
+  if (imageList.length <= 1) return '';
+  return imageList.join('\n');
+});
+const imageTooltipHovered = ref(false);
+const imageTooltipFocused = ref(false);
+const dismissImageTooltip = () => {
+  imageTooltipHovered.value = false;
+  imageTooltipFocused.value = false;
+};
+watch(basicImageTooltip, dismissImageTooltip);
+const basicCreateTime = computed(() => (
+  detail.value?.createTime ? timeParse(detail.value.createTime) : '--'
+));
+const formatPositiveNumber = (value, formatter) => {
+  const number = Number(value);
+  return value !== null && value !== undefined && Number.isFinite(number) && number > 0
+    ? formatter(number)
+    : undefined;
+};
+const resourceOverviewTexts = computed(() => {
+  if (detailStatus.value !== REQUEST_STATUS.READY || !detail.value) {
+    return {
+      gpuCards: '--',
+      computeLimit: '--',
+      singleCardMemory: '--',
+      cpuLimit: '--',
+      memoryLimit: '--',
+    };
+  }
+  const current = detail.value;
+  const allocatedDevices = Number(current.allocatedDevices);
+  const allocatedCores = Number(current.allocatedCores);
+  const allocatedMem = Number(current.allocatedMem);
+  const gpuCards = Number.isFinite(allocatedDevices) && allocatedDevices > 0
+    ? `${Math.round(allocatedDevices)}`
+    : '--';
+  const computeLimit = isUnreservedSoftSplit(current)
+    ? t('common.notLimited')
+    : current.allocatedCoresKnown !== false && Number.isFinite(allocatedCores)
+      ? `${roundToDecimal(allocatedCores / 100, 2)}`
+      : '--';
+  const singleCardMemory = Number.isFinite(allocatedDevices) && allocatedDevices > 0 && Number.isFinite(allocatedMem)
+    ? `${roundToDecimal(allocatedMem / allocatedDevices / 1024, 2)} GiB`
+    : '--';
+  const cpuLimit = formatPositiveNumber(
+    current.cpuLimitCores,
+    (cores) => `${roundToDecimal(cores, 3)} Core`,
+  ) || t('common.notLimited');
+  const memoryLimit = formatPositiveNumber(
+    current.memoryLimitBytes,
+    (bytes) => `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`,
+  ) || t('common.notLimited');
+  return { gpuCards, computeLimit, singleCardMemory, cpuLimit, memoryLimit };
+});
+
+const handleGpuJump = (uuid) => {
+  if (!uuid) return;
+  router.push({
+    name: 'accelerator-detail',
+    params: { uuid },
+    ...(nodeUid.value ? { query: { nodeUid: nodeUid.value } } : {}),
+  });
+};
+
+const headerStatusDisplay = computed(() => (
+  detailStatus.value === REQUEST_STATUS.READY
+    ? getWorkloadStatus(detail.value, t)
+    : { label: '' }
+));
+
+const CONTAINER_TREND_MIN_RANGE_MS = 30 * 1000;
+const CONTAINER_TREND_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+const CONTAINER_TREND_METRICS = Object.freeze([
+  {
+    key: 'computeUsage',
+    titleKey: 'task.computeUsageTrend',
+    metric: 'compute_utilization_percent',
+    sectionIndex: 'compute',
+  },
+  {
+    key: 'memoryUsage',
+    titleKey: 'task.memUsageTrend',
+    metric: 'memory_utilization_percent',
+    sectionIndex: 'memory',
+  },
+]);
+
+const trendParams = computed(() => {
+  if (detailStatus.value !== REQUEST_STATUS.READY || !hasValidAllocationShape.value) return {};
+  const namespace = detail.value?.namespace || '';
+  const pod = detail.value?.appName || '';
+  const container = detail.value?.name || '';
+  const podUid = detail.value?.podUid || requestedIdentity.value.podUid || '';
+  if (!hasText(namespace) || !hasText(pod) || !hasText(container) || !hasText(podUid)) {
+    return {};
+  }
+  return { namespace, pod, container, podUid };
+});
+const {
+  data: taskMonitoringSeries,
+  refresh: retryTaskMonitoring,
+} = useTelemetryTrends({
+  scope: 'container',
+  params: trendParams,
+  metrics: CONTAINER_TREND_METRICS,
+  times,
+});
+const lineConfigView = computed(() => {
+  const missingAllocation = detailStatus.value === REQUEST_STATUS.READY && !trendParams.value.podUid;
+  return taskMonitoringSeries.value.map((item) => {
+    const resolved = missingAllocation
+      ? { ...item, status: REQUEST_STATUS.MISSING, data: [], refreshing: false, refreshError: null }
+      : item;
+    return {
+      ...resolved,
+      title: dt(resolved.titleKey),
+      stateText: getTaskMonitoringStateText(resolved.status),
+      option: buildTimeSeriesOptions({
+        series: [
+          {
+            name: t('dashboard.usageRateLegend'),
+            data: resolved.data,
+            color: CHART_COLORS.single,
+          },
+        ],
+      }),
+    };
+  });
+});
+const trendLoading = computed(() => lineConfigView.value.some((item) => item.refreshing || item.status === REQUEST_STATUS.LOADING));
+const getTaskMonitoringStateText = (status) => {
+  if (status === REQUEST_STATUS.ERROR) return t('dashboard.metricQueryFailed');
+  if (status === REQUEST_STATUS.INVALID) return t('dashboard.metricInvalid');
+  return t('task.noCompleteMonitorData');
+};
+
+let enrichmentGeneration = 0;
+watch(
+  [detailStatus, detail],
+  ([status, currentDetail], _prev, onCleanup) => {
+    const generation = ++enrichmentGeneration;
+    nodeUid.value = '';
+    cardTypeById.value = {};
+    if (status !== REQUEST_STATUS.READY) return;
+
+    const controller = new AbortController();
+    onCleanup(() => controller.abort());
+
+    const isCurrent = () => (
+      !controller.signal.aborted &&
+      generation === enrichmentGeneration &&
+      detailStatus.value === REQUEST_STATUS.READY &&
+      detail.value?.name === currentDetail?.name &&
+      detail.value?.podUid === currentDetail?.podUid
+    );
+
+    nodeUid.value = currentDetail.nodeUid || currentDetail.node_uid || '';
+
+    void (async () => {
+      try {
+        const cards = await apiClient.listDevices({}, { signal: controller.signal });
+        if (!isCurrent()) return;
+        cardTypeById.value = (cards?.list || []).reduce((acc, item) => {
+          if (item?.uuid && item?.type) acc[item.uuid] = item.type;
+          if (item?.id && item?.type) acc[item.id] = item.type;
+          return acc;
+        }, {});
+      } catch {
+        // Device enrichment is optional; keep the core detail usable.
+      }
+    })();
+
+    const nodeName = currentDetail.nodeName || currentDetail.node_name || '';
+    if (!nodeUid.value && nodeName) {
+      void (async () => {
+        try {
+          const { list = [] } = await apiClient.listNodes({}, { signal: controller.signal });
+          if (!isCurrent()) return;
+          const node = list.find((item) => item?.name === nodeName);
+          nodeUid.value = node?.uid || '';
+        } catch {
+          // Node enrichment is optional; keep the core detail usable.
+        }
+      })();
+    }
+  },
+  { deep: true, immediate: true },
+);
+</script>
+
+<style scoped lang="scss">
+.task-top {
+  display: block;
+}
+
+.task-detail {
+  width: 100%;
+
+  .basic-info-cards {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 0;
+    margin-bottom: 16px;
+  }
+
+  .basic-info-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    flex: 1;
+    border-radius: 8px;
+    padding: 15px 20px;
+    background: #f5f7fa;
+    box-shadow: none;
+    min-width: 0;
+    align-self: normal;
+  }
+
+  .basic-info-card-title {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+    color: #1d2b3a;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 28px;
+    min-height: 28px;
+    min-width: 0;
+  }
+
+  .gpu-model-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .gpu-model-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .gpu-count {
+    color: #324558;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 22px;
+    white-space: nowrap;
+  }
+
+  .gpu-separator {
+    width: 1px;
+    height: 22px;
+    background: #e4ebf1;
+    flex-shrink: 0;
+  }
+
+  :deep(.t-tag) {
+    flex-shrink: 0;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 22px;
+    height: auto;
+    padding: 2px 5px;
+    color: #324558;
+    border-radius: 6px;
+    background-color: #e4ebf1;
+    border-color: #d5dee7;
+    white-space: nowrap;
+  }
+
+  .basic-info-card-sub-title {
+    color: #939ea9;
+    font-size: 12px;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+
+  .node-link {
+    align-self: flex-start;
+    max-width: 100%;
+    border-radius: 3px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.2s ease;
+
+    :deep(.ellipsis-text) {
+      flex: 1;
+      min-width: 0;
+      text-decoration: underline;
+      text-decoration-color: transparent;
+      text-underline-offset: 3px;
+      transition: text-decoration-color 0.2s ease;
+    }
+
+    .node-link-icon {
+      flex-shrink: 0;
+    }
+
+    &:hover,
+    &:focus-visible {
+      color: var(--td-brand-color, #2563eb);
+
+      :deep(.ellipsis-text) {
+        text-decoration-color: currentColor;
+      }
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--td-brand-color, #2563eb);
+      outline-offset: 2px;
+    }
+  }
+
+  .gpu-eye-icon {
+    cursor: pointer;
+    color: #697886;
+    font-size: 16px;
+  }
+
+  .related-gpu-count-text {
+    color: #324558;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 28px;
+  }
+
+  .basic-info-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .summary-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .summary-item-allocation {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+  }
+
+  .summary-item-label {
+    width: 120px;
+    color: #939ea9;
+    font-size: 14px;
+    line-height: 24px;
+    flex-shrink: 0;
+  }
+
+  .summary-item-value {
+    flex: 1;
+    color: #324558;
+    font-size: 14px;
+    line-height: 24px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .summary-identity-value {
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+
+  .image-reference {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+  }
+
+  .summary-item-image :deep(.ellipsis-text) {
+    vertical-align: top;
+  }
+
+  &.is-en {
+    .summary-item-label { width: 120px; }
+  }
+}
+
+.task-trend-row {
+  container: metric-trends / inline-size;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+
+  > .home-block {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 0;
+    margin-bottom: 0;
+  }
+}
+
+// Narrow rows stack like the other trend pages, though these single-line charts have no legend.
+@container metric-trends (max-width: 699px) {
+  .task-trend-row > .home-block {
+    flex-basis: 100%;
+  }
+}
+
+.workload-overview {
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin: 0;
+  }
+
+  .row-card {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    gap: 8px;
+    padding: 15px 20px;
+    border-radius: 8px;
+    border: 0;
+    background-color: #f5f7fa;
+    align-self: normal;
+  }
+
+  .row-card-content {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .row-card-content-icon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow:
+      0 2px 8px 0 rgb(2 5 8 / 4%),
+      0 6px 20px 0 rgb(2 5 8 / 8%);
+    flex-shrink: 0;
+  }
+
+  .row-card-content-icon :deep(svg) {
+    font-size: 20px;
+  }
+
+  .row-card-content-info {
+    min-width: 0;
+  }
+
+  .row-card-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 16px;
+    font-weight: 500;
+    color: #324558;
+    line-height: 28px;
+    min-height: 28px;
+  }
+
+  .row-card-sub-title {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    color: #939ea9;
+    font-size: 12px;
+    line-height: 20px;
+  }
+}
+
+.workload-trend-filter {
+  margin-top: 24px;
+}
+
+.workload-split-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.relative-gpu-tooltip-content {
+  width: 400px;
+  max-width: 50vw;
+  max-height: 40vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 12px;
+}
+
+.popup-title {
+  color: #1d2b3a;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.relative-gpu-tooltip-content :deep(.node-link-container) {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.relative-gpu-tooltip-content :deep(.node-link-container .text) {
+  width: 236px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.relative-gpu-tooltip-content :deep(.t-table__header th) {
+  background: #f5f7fa;
+  color: #939ea9;
+  font-size: 14px;
+  font-weight: 400;
+  border: none;
+}
+
+.relative-gpu-tooltip-content :deep(.t-table__header th:first-child) {
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+}
+
+.relative-gpu-tooltip-content :deep(.t-table__header th:last-child) {
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+.relative-gpu-tooltip-content :deep(.t-table__body td) {
+  border: none;
+  color: #1d2b3a;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.related-gpu-link-icon {
+  flex-shrink: 0;
+  color: #697886;
+  font-size: 14px;
+}
+
+</style>

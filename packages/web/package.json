@@ -3,7 +3,7 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "lint": "eslint --ext .js,.mjs,.vue build projects src test vite.config.js",
+    "lint": "eslint --ext .js,.mjs,.vue build src test vite.config.js",
     "build": "vite build",
     "dev": "vite",
     "test": "node test/run-tests.mjs"
