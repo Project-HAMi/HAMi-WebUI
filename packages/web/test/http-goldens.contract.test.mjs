@@ -26,7 +26,7 @@ test('frontend contract parsers match serialized Kratos HTTP JSON goldens', () =
   assert.deepEqual(parsedEmptyOverview.devices, []);
   assert.equal(parsedEmptyOverview.nodeCoverage.complete, true);
 
-  const gpuDetail = loadGolden('gpu-detail-ok.json');
+  const gpuDetail = loadGolden('api-v1-device-detail.json');
   assert.equal(
     classifyDetailPayload(gpuDetail, {
       identityKeys: ['uuid'],
@@ -35,7 +35,7 @@ test('frontend contract parsers match serialized Kratos HTTP JSON goldens', () =
     REQUEST_STATUS.READY,
   );
 
-  const gpuNotFound = loadGolden('gpu-detail-not-found.json');
+  const gpuNotFound = loadGolden('api-v1-device-not-found.json');
   assert.equal(gpuNotFound.code, 404);
   assert.equal(gpuNotFound.reason, 'RESOURCE_GPU_NOT_FOUND');
   assert.equal(
@@ -43,13 +43,13 @@ test('frontend contract parsers match serialized Kratos HTTP JSON goldens', () =
     REQUEST_STATUS.MISSING,
   );
 
-  const workloadsPage = loadGolden('workloads-page.json');
+  const workloadsPage = loadGolden('api-v1-containers.json');
   const page = parseDeviceSplitPage(workloadsPage, 100);
   assert.equal(page.items.length, 1);
   assert.equal(page.totalContainers, 1);
   assert.equal(page.truncated, false);
 
-  const workloadsEmpty = loadGolden('workloads-empty.json');
+  const workloadsEmpty = loadGolden('api-v1-containers-empty.json');
   const emptyPage = parseDeviceSplitPage(workloadsEmpty, 100);
   assert.deepEqual(emptyPage, { items: [], totalContainers: 0, truncated: false });
 });

@@ -1,15 +1,21 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	obsv1 "vgpu/api/observability/v1"
 	"vgpu/internal/conf"
+	"vgpu/internal/resourceview"
+	"vgpu/internal/service"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func TestHTTPFallbackResponses(t *testing.T) {
@@ -46,11 +52,25 @@ func TestHTTPFallbackResponses(t *testing.T) {
 			wantReason: httpReasonRouteNotFound,
 		},
 		{
-			name:       "known route with unsupported method",
+			name:       "business API is not exposed on metrics listener",
 			method:     nethttp.MethodGet,
+			path:       "/api/v1/overview/inventory",
+			wantStatus: nethttp.StatusNotFound,
+			wantReason: httpReasonRouteNotFound,
+		},
+		{
+			name:       "legacy v1 route is removed",
+			method:     nethttp.MethodPost,
 			path:       "/v1/nodes",
-			wantStatus: nethttp.StatusMethodNotAllowed,
-			wantReason: httpReasonMethodNotAllowed,
+			wantStatus: nethttp.StatusNotFound,
+			wantReason: httpReasonRouteNotFound,
+		},
+		{
+			name:       "openapi docs route is removed",
+			method:     nethttp.MethodGet,
+			path:       "/q/openapi.yaml",
+			wantStatus: nethttp.StatusNotFound,
+			wantReason: httpReasonRouteNotFound,
 		},
 	}
 
@@ -82,30 +102,59 @@ func TestHTTPFallbackResponses(t *testing.T) {
 }
 
 func TestRegisteredHTTPHandlerTakesPrecedenceOverFallback(t *testing.T) {
-	request := httptest.NewRequest(nethttp.MethodGet, "/readyz", nil)
-	response := httptest.NewRecorder()
-	newTestHTTPHandler().ServeHTTP(response, request)
-
-	if response.Code != nethttp.StatusOK || response.Body.String() != "ok" {
-		t.Fatalf("readyz response = {%d %q}, want {200 %q}", response.Code, response.Body.String(), "ok")
+	handler := newTestHTTPHandler()
+	for _, route := range []string{"/readyz", "/metrics"} {
+		request := httptest.NewRequest(nethttp.MethodGet, route, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != nethttp.StatusOK {
+			t.Fatalf("%s status = %d, want 200", route, response.Code)
+		}
+		if route == "/readyz" && response.Body.String() != "ok" {
+			t.Fatalf("readyz response = {%d %q}, want {200 %q}", response.Code, response.Body.String(), "ok")
+		}
 	}
 }
 
 func newTestHTTPHandler() nethttp.Handler {
 	srv := NewHTTPServer(
 		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
 		prometheus.NewRegistry(),
 		nil,
 	)
 	return srv.Handler
+}
+
+type deadlineCapturingSource struct {
+	remaining time.Duration
+	ok        bool
+}
+
+func (s *deadlineCapturingSource) Snapshot(ctx context.Context) (resourceview.Snapshot, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		s.ok = true
+		s.remaining = time.Until(deadline)
+	}
+	return resourceview.Snapshot{
+		NodeCoverage:   &obsv1.Coverage{},
+		DeviceCoverage: &obsv1.Coverage{},
+	}, nil
+}
+
+func TestAPIHandlerHonorsConfiguredTimeout(t *testing.T) {
+	src := &deadlineCapturingSource{}
+	overview := service.NewOverviewService(resourceview.WithObservations(src, nil))
+	handler := NewAPIHandler(
+		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{Timeout: durationpb.New(5 * time.Second)}}},
+		nil, nil, nil, nil, nil, nil, overview, nil, nil,
+	)
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/v1/overview/inventory", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if !src.ok || src.remaining < 3*time.Second || src.remaining > 6*time.Second {
+		t.Fatalf("configured deadline missing or wrong: ok=%t remaining=%s (want ~5s, not Kratos 1s default)", src.ok, src.remaining)
+	}
 }

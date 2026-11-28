@@ -148,7 +148,7 @@ before(async() => {
       return
     }
 
-    if (req.url === '/v1/contract-timeout') {
+    if (req.url === '/api/v1/contract-timeout') {
       await delay(500)
       if (!res.destroyed) {
         res.writeHead(200, { 'content-type': 'application/json' })
@@ -157,7 +157,7 @@ before(async() => {
       return
     }
 
-    if (req.method !== 'POST' || req.url !== '/v1/nodes?limit=10') {
+    if (req.method !== 'POST' || req.url !== '/api/v1/nodes?limit=10') {
       res.writeHead(404, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'unexpected contract-test request' }))
       return
@@ -240,7 +240,7 @@ test('reports Web-entry liveness without asserting backend readiness', {
 test('reports an unavailable backend as HTTP 502 JSON', {
   timeout: 10_000
 }, async() => {
-  const response = await fetchFrontend('/api/vgpu/v1/nodes', {
+  const response = await fetchFrontend('/api/v1/nodes', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{}'
@@ -259,7 +259,7 @@ test('preserves the supported API request and non-success response', {
   const requestBody = JSON.stringify({
     filters: { name: 'contract-probe' }
   })
-  const response = await fetchFrontend('/api/vgpu/v1/nodes?limit=10', {
+  const response = await fetchFrontend('/api/v1/nodes?limit=10', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -271,7 +271,7 @@ test('preserves the supported API request and non-success response', {
 
   assert.deepEqual(lastBackendRequest, {
     method: 'POST',
-    url: '/v1/nodes?limit=10',
+    url: '/api/v1/nodes?limit=10',
     contentType: 'application/json',
     probeHeader: 'preserved',
     body: requestBody
@@ -284,7 +284,7 @@ test('preserves the supported API request and non-success response', {
 test('reports an upstream timeout as HTTP 504 JSON', {
   timeout: 10_000
 }, async() => {
-  const response = await fetchFrontend('/api/vgpu/v1/contract-timeout')
+  const response = await fetchFrontend('/api/v1/contract-timeout')
 
   assert.equal(response.status, 504)
   assert.match(response.headers.get('content-type') ?? '', /application\/json/)
@@ -294,7 +294,7 @@ test('reports an upstream timeout as HTTP 504 JSON', {
 test('preserves the backend JSON response for an unknown v1 API', {
   timeout: 10_000
 }, async() => {
-  const response = await fetchFrontend('/api/vgpu/v1/contract-missing')
+  const response = await fetchFrontend('/api/v1/contract-missing')
 
   assert.equal(response.status, 404)
   assert.match(response.headers.get('content-type') ?? '', /application\/json/)
@@ -312,6 +312,7 @@ test('returns 404 for missing static assets and private backend paths', {
     '/metrics',
     '/readyz',
     '/q/openapi.yaml',
+    '/api/vgpu/v1/nodes',
     '/api/vgpu/metrics',
     '/api/vgpu/readyz',
     '/api/vgpu/q/openapi.yaml',

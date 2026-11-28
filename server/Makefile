@@ -1,14 +1,10 @@
 .DEFAULT_GOAL := help
 
-DOCKER ?= docker
-DOCKER_IMAGE ?= hami-webui-backend
 CMD_PATH ?= ./cmd/
 BUILD_PATH ?= ./build/
 VERSION ?= dev
 COMMIT ?=
 GO_LDFLAGS = -X vgpu/internal/buildinfo.Version=$(VERSION) -X vgpu/internal/buildinfo.Commit=$(COMMIT)
-PLATFORM ?=
-DOCKER_PLATFORM_FLAG := $(if $(strip $(PLATFORM)),--platform $(PLATFORM),)
 DIRS ?= $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard $(CMD_PATH)*/main.go)))))
 WIRE_DIRS = $(patsubst $(CMD_PATH)%/wire.go,%,$(wildcard $(CMD_PATH)*/wire.go))
 TARGET_ARCH ?= amd64
@@ -43,9 +39,8 @@ help:
 		'  make build            Generate and build Linux commands for TARGET_ARCH' \
 		'  make build-local      Generate and build commands for the host platform' \
 		'  make build-web-entry  Build only the production Web entry' \
-		'  make build-image      Build a local backend image' \
 		'' \
-		'Install protoc separately before bootstrap; use PLATFORM for Docker builds.'
+		'Install protoc separately before bootstrap.'
 
 .PHONY: bootstrap
 bootstrap:
@@ -129,18 +124,6 @@ build-web-entry:
 build-hami-webui: generate
 	@mkdir -p "$(BUILD_PATH)"
 	go build -mod=readonly -trimpath -o "$(BUILD_PATH)hami-webui" ./cmd/hami-webui
-
-# This target creates one local development image. Stable multi-platform images
-# are published only by ../.github/workflows/release.yaml.
-.PHONY: build-image
-build-image:
-	$(DOCKER) build $(DOCKER_PLATFORM_FLAG) --build-arg VERSION="$(VERSION)" --build-arg COMMIT="$(COMMIT)" -t $(DOCKER_IMAGE):$(VERSION) .
-
-.PHONY: save-image
-save-image:
-	@mkdir -p "$(BUILD_PATH)"
-	$(DOCKER) save -o "$(BUILD_PATH)hami_webui_release_$(VERSION).tar" $(DOCKER_IMAGE):$(VERSION)
-	gzip -f "$(BUILD_PATH)hami_webui_release_$(VERSION).tar"
 
 .PHONY: run
 run: generate

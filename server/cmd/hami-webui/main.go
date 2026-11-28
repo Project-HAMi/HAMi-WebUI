@@ -17,6 +17,7 @@ import (
 	"vgpu/internal/buildinfo"
 	"vgpu/internal/conf"
 	"vgpu/internal/exporter"
+	"vgpu/internal/server"
 	"vgpu/internal/webentry"
 
 	"github.com/go-kratos/kratos/v2"
@@ -145,7 +146,7 @@ func envOrDefault(lookupEnv func(string) (string, bool), key, fallback string) s
 	return fallback
 }
 
-func newWebServer(config webConfig, bootstrap *conf.Bootstrap, api *kratoshttp.Server) (*webentry.LifecycleServer, error) {
+func newWebServer(config webConfig, bootstrap *conf.Bootstrap, api server.APIHandler) (*webentry.LifecycleServer, error) {
 	handler, err := newWebHandler(config, api)
 	if err != nil {
 		return nil, err

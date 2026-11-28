@@ -4,8 +4,6 @@ import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
 import { createSvgIconsPlugin } from './build/svg-icons-plugin.mjs'
 
-const versionedAPIPrefix = '/api/vgpu/v1'
-const apiProxyContext = '^/api/vgpu/v1(?:/|[?]|$)'
 const resourceAPIPrefix = '/api/v1'
 const resourceAPIProxyContext = '^/api/v1(?:/|[?]|$)'
 
@@ -14,7 +12,7 @@ const hasPathPrefix = (requestPath, prefix) =>
 
 export default defineConfig(() => {
   const backendURL =
-    process.env.HAMI_WEBUI_BACKEND_URL || 'http://127.0.0.1:8000'
+    process.env.HAMI_WEBUI_BACKEND_URL || 'http://127.0.0.1:8080'
 
   return {
     // Keep assets relative so the Web entry can inject the runtime base path.
@@ -29,9 +27,7 @@ export default defineConfig(() => {
             const path = new URL(url, 'http://vite.local').pathname
             // Vite matches proxy routes against the raw URL.
             const isAPIRequest = hasPathPrefix(rawPath, '/api') || hasPathPrefix(path, '/api')
-            const allowed = [versionedAPIPrefix, resourceAPIPrefix].some(prefix =>
-              hasPathPrefix(rawPath, prefix) && hasPathPrefix(path, prefix)
-            )
+            const allowed = hasPathPrefix(rawPath, resourceAPIPrefix) && hasPathPrefix(path, resourceAPIPrefix)
 
             if (isAPIRequest && !allowed) {
               response.statusCode = 404
@@ -65,12 +61,6 @@ export default defineConfig(() => {
         [resourceAPIProxyContext]: {
           target: backendURL,
           changeOrigin: true,
-        },
-        [apiProxyContext]: {
-          target: backendURL,
-          changeOrigin: true,
-          rewrite: (requestPath) =>
-            requestPath.replace(/^\/api\/vgpu(?=\/|\?|$)/, ''),
         },
       },
     },

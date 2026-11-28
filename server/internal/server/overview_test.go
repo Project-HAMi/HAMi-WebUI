@@ -11,7 +11,6 @@ import (
 	"github.com/go-kratos/kratos/v2/middleware"
 	"github.com/go-kratos/kratos/v2/transport"
 	"github.com/go-kratos/kratos/v2/transport/http"
-	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "vgpu/api/observability/v1"
@@ -27,7 +26,7 @@ func (s overviewFixture) Snapshot(context.Context) (resourceview.Snapshot, error
 }
 func newOverviewHTTPFixture(complete bool) nethttp.Handler {
 	overview := service.NewOverviewService(resourceview.WithObservations(overviewFixture{complete: complete}, nil))
-	return NewHTTPServer(&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}}, nil, nil, nil, nil, nil, nil, nil, overview, nil, nil, prometheus.NewRegistry(), nil).Handler
+	return NewAPIHandler(&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}}, nil, nil, nil, nil, nil, nil, overview, nil, nil)
 }
 
 func TestOverviewHTTPContract(t *testing.T) {

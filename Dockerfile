@@ -75,8 +75,7 @@ ARG TARGETARCH
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
 ARG UNZIP_VERSION=6.0-28
 
-# Match the pinned backend toolchain while the standalone backend image remains
-# independently buildable from server/Dockerfile.
+# Match the pinned Go toolchain across unified and CI build paths.
 RUN sed -i -E \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \

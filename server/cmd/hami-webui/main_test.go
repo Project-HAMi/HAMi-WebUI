@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"vgpu/internal/conf"
+	"vgpu/internal/server"
 
 	"github.com/go-kratos/kratos/v2/transport"
 	kratoshttp "github.com/go-kratos/kratos/v2/transport/http"
@@ -154,11 +155,11 @@ func TestWebHandlerInvokesKratosAPIDirectly(t *testing.T) {
 
 	staticDir := newStaticDir(t)
 	api := kratoshttp.NewServer()
-	api.Handle("/v1/contract-probe", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	api.Handle("/api/v1/contract-probe", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := transport.FromServerContext(r.Context()); !ok {
 			t.Error("request is missing Kratos server transport context")
 		}
-		if r.URL.RequestURI() != "/v1/contract-probe?limit=10" {
+		if r.URL.RequestURI() != "/api/v1/contract-probe?limit=10" {
 			t.Errorf("request URI = %q", r.URL.RequestURI())
 		}
 		if r.Header.Get("X-Hami-Probe") != "preserved" {
@@ -180,13 +181,13 @@ func TestWebHandlerInvokesKratosAPIDirectly(t *testing.T) {
 		staticDir:      staticDir,
 		basePath:       "/gpu-ui/",
 		frameAncestors: []string{"'self'"},
-	}, api)
+	}, server.APIHandler{Handler: api})
 	if err != nil {
 		t.Fatalf("newWebHandler: %v", err)
 	}
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/gpu-ui/api/vgpu/v1/contract-probe?limit=10",
+		"/gpu-ui/api/v1/contract-probe?limit=10",
 		bytes.NewBufferString(`{"name":"worker"}`),
 	)
 	request.Header.Set("X-Hami-Probe", "preserved")
@@ -213,7 +214,7 @@ func TestWebHandlerKeepsBackendOnlyRoutesPrivate(t *testing.T) {
 	handler, err := newWebHandler(webConfig{
 		staticDir: newStaticDir(t),
 		basePath:  "/gpu-ui/",
-	}, api)
+	}, server.APIHandler{Handler: api})
 	if err != nil {
 		t.Fatalf("newWebHandler: %v", err)
 	}
@@ -221,6 +222,7 @@ func TestWebHandlerKeepsBackendOnlyRoutesPrivate(t *testing.T) {
 		"/gpu-ui/metrics",
 		"/gpu-ui/readyz",
 		"/gpu-ui/q/openapi.yaml",
+		"/gpu-ui/api/vgpu/v1/nodes",
 		"/gpu-ui/api/vgpu/v2/private",
 		"/gpu-ui/api/vgpu/../metrics",
 	} {
@@ -272,12 +274,12 @@ func TestWebHandlerPreservesKratosJSONNotFound(t *testing.T) {
 			_, _ = io.WriteString(w, `{"reason":"ROUTE_NOT_FOUND"}`)
 		})),
 	)
-	handler, err := newWebHandler(webConfig{staticDir: newStaticDir(t)}, api)
+	handler, err := newWebHandler(webConfig{staticDir: newStaticDir(t)}, server.APIHandler{Handler: api})
 	if err != nil {
 		t.Fatalf("newWebHandler: %v", err)
 	}
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/vgpu/v1/missing", nil))
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/missing", nil))
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "ROUTE_NOT_FOUND") {
 		t.Fatalf("response = {%d %q}, want Kratos JSON 404", response.Code, response.Body.String())
 	}
