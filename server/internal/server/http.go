@@ -31,6 +31,7 @@ type APIHandler struct {
 // NewAPIHandler builds the in-process HTTP handler serving canonical /api/v1/*
 // resources, cluster overview, and bounded telemetry endpoints.
 func NewAPIHandler(
+	c *conf.Bootstrap,
 	node *service.NodeService,
 	card *service.CardService,
 	ctr *service.ContainerService,
@@ -40,9 +41,8 @@ func NewAPIHandler(
 	overview *service.OverviewService,
 	telemetrySvc *service.TelemetryService,
 	about *service.AboutService,
-	_ log.Logger,
 ) APIHandler {
-	srv := http.NewServer(
+	opts := []http.ServerOption{
 		http.Middleware(
 			recovery.Recovery(),
 			metrics.Server(),
@@ -50,7 +50,11 @@ func NewAPIHandler(
 		http.RequestQueryDecoder(overviewQuery),
 		http.NotFoundHandler(httpErrorHandler(nethttp.StatusNotFound, httpReasonRouteNotFound)),
 		http.MethodNotAllowedHandler(httpErrorHandler(nethttp.StatusMethodNotAllowed, httpReasonMethodNotAllowed)),
-	)
+	}
+	if c != nil && c.Server != nil && c.Server.Http != nil && c.Server.Http.Timeout != nil {
+		opts = append(opts, http.Timeout(c.Server.Http.Timeout.AsDuration()))
+	}
+	srv := http.NewServer(opts...)
 	v1.RegisterResourcesHTTPServer(srv, service.NewResourcesService(node, card, ctr, workload, scheduling, deviceConfig, about))
 	pb.RegisterOverviewHTTPServer(srv, overview)
 	pb.RegisterTelemetryHTTPServer(srv, telemetrySvc)

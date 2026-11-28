@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "vgpu/api/observability/v1"
+	"vgpu/internal/conf"
 	"vgpu/internal/resourceview"
 	"vgpu/internal/service"
 )
@@ -25,7 +26,7 @@ func (s overviewFixture) Snapshot(context.Context) (resourceview.Snapshot, error
 }
 func newOverviewHTTPFixture(complete bool) nethttp.Handler {
 	overview := service.NewOverviewService(resourceview.WithObservations(overviewFixture{complete: complete}, nil))
-	return NewAPIHandler(nil, nil, nil, nil, nil, nil, overview, nil, nil, nil)
+	return NewAPIHandler(&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}}, nil, nil, nil, nil, nil, nil, overview, nil, nil)
 }
 
 func TestOverviewHTTPContract(t *testing.T) {

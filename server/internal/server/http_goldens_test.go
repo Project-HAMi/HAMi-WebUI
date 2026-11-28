@@ -23,6 +23,7 @@ import (
 
 	obsv1 "vgpu/api/observability/v1"
 	"vgpu/internal/biz"
+	"vgpu/internal/conf"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/devicecatalog"
 	"vgpu/internal/resourceview"
@@ -399,6 +400,7 @@ func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 	)
 
 	handler := NewAPIHandler(
+		&conf.Bootstrap{Server: &conf.Server{Http: &conf.Server_HTTP{}}},
 		nodeSvc,
 		service.NewCardService(nodeUC, podUC, snapSource),
 		ctrSvc,
@@ -408,7 +410,6 @@ func newGoldenHTTPHandler(empty bool) (nethttp.Handler, func()) {
 		service.NewOverviewService(snapSource),
 		telemetrySvc,
 		aboutSvc,
-		logger,
 	)
 	return handler, promServer.Close
 }
