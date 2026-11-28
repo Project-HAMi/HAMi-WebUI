@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/common/model"
 	"k8s.io/apimachinery/pkg/types"
 
+	viewv1 "vgpu/api/observability/v1"
 	"vgpu/internal/data/prom"
 	"vgpu/internal/provider"
 	"vgpu/internal/resourceview"
@@ -220,21 +221,56 @@ func queryChunk(
 	return raw, devices, chunkCtx, err
 }
 
+const (
+	snapshotRetryAttempts      = 12
+	allocSnapshotRetryAttempts = 2
+	snapshotRetryDelay         = 200 * time.Millisecond
+)
+
 func (s *MetricsGenerator) refreshResourceSnapshot(ctx context.Context, query queryAtFunc) error {
 	snapshot, err := s.resourceSource.Snapshot(ctx)
-	if err == nil && snapshotChanged(snapshot) {
-		// A Node, Pod or configuration changed during assembly. Retry once on the
-		// local informer cache before allowing a gap in this collection.
-		snapshot, err = s.resourceSource.Snapshot(ctx)
-	}
-	if err == nil && snapshotChanged(snapshot) {
-		err = errors.New("inventory changed during both reads")
+	allocRetries := 0
+	for range snapshotRetryAttempts {
+		if err != nil {
+			break
+		}
+		nodeValid := snapshot.NodeCoverage.GetComplete() && resourceview.ValidateCoverage(snapshot.NodeCoverage) == nil
+		transientNode, transientAlloc := transientContinuityScope(snapshot)
+		if !nodeValid {
+			if !transientNode {
+				break
+			}
+		} else {
+			if !transientAlloc || allocRetries >= allocSnapshotRetryAttempts {
+				break
+			}
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= snapshotRetryDelay*3 {
+				break
+			}
+			allocRetries++
+		}
+		timer := time.NewTimer(snapshotRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			err = ctx.Err()
+		case <-timer.C:
+			snapshot, err = s.resourceSource.Snapshot(ctx)
+			if err == nil {
+				continue
+			}
+		}
+		break
 	}
 	// Listing a disconnected informer still succeeds against its old cache.
 	// The assembly time cannot establish when those nodes were last current.
 	// Pod completeness is assessed separately for each card's allocations.
 	if err == nil && (!snapshot.NodeCoverage.GetComplete() || resourceview.ValidateCoverage(snapshot.NodeCoverage) != nil) {
-		err = errors.New("node inventory continuity is unverified")
+		if transientNode, _ := transientContinuityScope(snapshot); transientNode {
+			err = errors.New("inventory changed during retries")
+		} else {
+			err = errors.New("node inventory continuity is unverified")
+		}
 	}
 	if err != nil {
 		s.observationsMu.Lock()
@@ -395,16 +431,30 @@ func sampleInstanceError(samples provider.TelemetryRawFamilies, failedInstances 
 	return nil
 }
 
-func snapshotChanged(snapshot resourceview.Snapshot) bool {
-	for _, source := range snapshot.NodeCoverage.GetSources() {
-		if source.GetParams()["continuity"] == "source_changed_during_snapshot" {
-			return true
+func transientContinuityScope(snapshot resourceview.Snapshot) (nodeTransient, allocTransient bool) {
+	hasTransientSource := func(c *viewv1.Coverage) bool {
+		if c == nil || c.GetComplete() {
+			return false
+		}
+		for _, source := range c.GetSources() {
+			switch source.GetParams()["continuity"] {
+			case "source_changed_during_snapshot",
+				"consumer_pending_or_changed",
+				"relist_required",
+				"relisting",
+				"awaiting_watch",
+				"dependent_fact_replay_pending":
+				return true
+			}
+		}
+		return false
+	}
+	nodeTransient = hasTransientSource(snapshot.NodeCoverage) || hasTransientSource(snapshot.DeviceCoverage)
+	for i := range snapshot.Devices {
+		if hasTransientSource(snapshot.Devices[i].AllocationCoverage) {
+			allocTransient = true
+			break
 		}
 	}
-	for _, source := range snapshot.DeviceCoverage.GetSources() {
-		if source.GetParams()["continuity"] == "source_changed_during_snapshot" {
-			return true
-		}
-	}
-	return false
+	return nodeTransient, allocTransient
 }
